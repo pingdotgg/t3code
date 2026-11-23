@@ -657,8 +657,8 @@ export const readLoadedOpenCode2Catalog = Effect.fn(
   environment?: NodeJS.ProcessEnv,
 ) {
   if (!(yield* loaded)) {
-    yield* Effect.ignore(read);
-    yield* updated.pipe(
+    yield* Effect.ignore(read).pipe(
+      Effect.andThen(updated),
       Effect.timeoutOption(
         resolveProviderProbeTimeoutMs(
           "opencode",

@@ -1327,6 +1327,22 @@ it.effect("waits for model.updated before settling a cold OpenCode 2 location's 
   }),
 );
 
+it.effect("bounds a cold OpenCode 2 location's bootstrap read by the settle budget", () =>
+  Effect.gen(function* () {
+    const catalog: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+    ];
+    let reads = 0;
+    const load = yield* readLoadedOpenCode2Catalog(
+      Effect.suspend(() => (reads++ === 0 ? Effect.never : Effect.succeed(catalog))),
+      Effect.never,
+      Effect.succeed(false),
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust("6 seconds");
+    NodeAssert.deepEqual(yield* Fiber.join(load), Option.some(catalog));
+  }),
+);
+
 it.effect("settles an already loaded OpenCode 2 location without waiting for model.updated", () =>
   Effect.gen(function* () {
     const catalog: ReadonlyArray<OpenCode2Model> = [
