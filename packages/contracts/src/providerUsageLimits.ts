@@ -87,6 +87,7 @@ export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 export const HttpQuotaAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
   label: TrimmedNonEmptyString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
   windows: Schema.Array(
     Schema.Struct({
       id: ServerProviderUsageWindow.fields.id,

@@ -209,6 +209,7 @@ Return JSON in this format, with stable IDs for accounts and their windows.
     {
       "id": "primary",
       "label": "My coding plan",
+      "providerInstanceId": "work-codex",
       "windows": [
         {
           "id": "monthly",
@@ -225,7 +226,10 @@ Return JSON in this format, with stable IDs for accounts and their windows.
 
 Set `kind` to `session`, `weekly`, `monthly`, or `other`. Use a percentage from 0 to 100 and
 omit `resetsAt` when the reset time is unknown. Your quota server handles the upstream provider
-credentials and APIs. HTTP sources supply display data for the Limits view.
+credentials and APIs. Set the optional `providerInstanceId` to the exact instance ID configured for that environment
+in **Settings → Providers**. The account’s quota windows then appear in the
+thread details usage card on web and desktop when that instance is selected. Accounts without
+a binding still appear in **Usage → Limits**.
 
 ## Subscription usage widget
 

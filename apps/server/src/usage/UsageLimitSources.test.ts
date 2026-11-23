@@ -111,7 +111,9 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
 
 it.effect("publishes validated HTTP quotas as display-only accounts", () => {
   const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 };
-  const accounts = [{ id: "account", label: "External plan", windows: [window] }];
+  const accounts = [
+    { id: "account", label: "External plan", providerInstanceId: "work-codex", windows: [window] },
+  ];
   let usedPercent = 35;
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {

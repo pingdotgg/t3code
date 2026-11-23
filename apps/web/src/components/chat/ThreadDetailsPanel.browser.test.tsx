@@ -1,6 +1,8 @@
 import {
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
+  UsageLimitSourceId,
   ThreadId,
   type ScopedThreadRef,
   type ThreadPullRequestLink,
@@ -82,11 +84,13 @@ vi.mock(import("~/state/vcs"), async (importOriginal) => {
 });
 
 import { render } from "../../../test/render";
+import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsPanel } from "./ThreadDetailsPanel";
+import type { ThreadDetailsUsageInput } from "./ThreadDetailsUsage";
 
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
@@ -110,7 +114,13 @@ function setup(input: {
   folder: string;
   pullRequests?: ThreadPullRequestLink[];
   configLoaded?: boolean;
+  showUsage?: boolean;
 }) {
+  const previousSettings = getClientSettings();
+  __setClientSettingsForTests({
+    ...previousSettings,
+    threadDetailsItems: { ...previousSettings.threadDetailsItems, usage: input.showUsage ?? false },
+  });
   state.configLoaded = input.configLoaded ?? true;
   state.workspaceRoot = input.workspaceRoot;
   state.folder = input.folder;
@@ -121,11 +131,26 @@ function setup(input: {
   return {
     anchor: { current: anchor },
     handle: PopoverCreateHandle(),
-    [Symbol.dispose]: () => anchor.remove(),
+    [Symbol.dispose]: () => {
+      anchor.remove();
+      __setClientSettingsForTests(previousSettings);
+    },
   };
 }
 
-function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
+function Panel({
+  fixture,
+  usage = {
+    providerInstanceId: null,
+    model: null,
+    providers: [],
+    sources: [],
+    contextWindow: null,
+  },
+}: {
+  fixture: ReturnType<typeof setup>;
+  usage?: ThreadDetailsUsageInput;
+}) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
   return (
@@ -172,7 +197,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         onAddProjectScript={scriptResult}
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
-        usage={{} as never}
+        usage={usage}
       />
     </ChatCanvasContext>
   );
@@ -214,4 +239,57 @@ it("offers no Initialize Git before the server config says where No project live
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();
+});
+
+it("shows HTTP quota windows only for the selected provider instance", async () => {
+  using fixture = setup({
+    workspaceRoot: "/work/plain",
+    folder: "/work/plain",
+    showUsage: true,
+  });
+  const providerInstanceId = ProviderInstanceId.make("work-codex");
+  const window = {
+    id: "monthly",
+    kind: "monthly",
+    label: "Monthly budget",
+    usedPercent: 35,
+  } as const;
+  await using _screen = await render(
+    <Panel
+      fixture={fixture}
+      usage={{
+        providerInstanceId,
+        model: null,
+        providers: [],
+        contextWindow: null,
+        sources: [
+          {
+            id: UsageLimitSourceId.make("quota"),
+            kind: "http",
+            label: "Quota server",
+            checkedAt: "2026-10-30T11:59:00.000Z",
+            accounts: [],
+            quotaAccounts: [
+              { id: "bound", label: "Work plan", providerInstanceId, windows: [window] },
+              {
+                id: "unbound",
+                label: "Unbound",
+                windows: [{ ...window, label: "Unbound budget" }],
+              },
+              {
+                id: "other",
+                label: "Other plan",
+                providerInstanceId: ProviderInstanceId.make("other-codex"),
+                windows: [{ ...window, label: "Other budget" }],
+              },
+            ],
+          },
+        ],
+      }}
+    />,
+  );
+  await expect.element(page.getByText("Monthly budget", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("65%", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Unbound budget")).not.toBeInTheDocument();
+  await expect.element(page.getByText("Other budget")).not.toBeInTheDocument();
 });
