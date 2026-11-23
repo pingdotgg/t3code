@@ -1763,26 +1763,30 @@ export function DiffsSettingsPanel() {
             ) : null
           }
           control={
-            <Select
-              value={settings.diffFileView}
-              onValueChange={(value) => {
-                if (value === "all" || value === "single") {
-                  updateSettings({ diffFileView: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Changes view")}>
-                <SelectValue>{messages(DIFF_FILE_VIEW_LABELS[settings.diffFileView])}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="all">
-                  {messages(DIFF_FILE_VIEW_LABELS.all)}
-                </SelectItem>
-                <SelectItem hideIndicator value="single">
-                  {messages(DIFF_FILE_VIEW_LABELS.single)}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.diffFileView}
+                onValueChange={(value) => {
+                  if (value === "all" || value === "single") {
+                    updateSettings({ diffFileView: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" aria-label={gt("Changes view")}>
+                  <SelectValue>
+                    {messages(DIFF_FILE_VIEW_LABELS[settings.diffFileView])}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="all">
+                    {messages(DIFF_FILE_VIEW_LABELS.all)}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="single">
+                    {messages(DIFF_FILE_VIEW_LABELS.single)}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
         <SettingsRow
@@ -1801,26 +1805,30 @@ export function DiffsSettingsPanel() {
             ) : null
           }
           control={
-            <Select
-              value={settings.fileTreeSide}
-              onValueChange={(value) => {
-                if (value === "left" || value === "right") {
-                  updateSettings({ fileTreeSide: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("File tree side")}>
-                <SelectValue>{messages(FILE_TREE_SIDE_LABELS[settings.fileTreeSide])}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="left">
-                  {messages(FILE_TREE_SIDE_LABELS.left)}
-                </SelectItem>
-                <SelectItem hideIndicator value="right">
-                  {messages(FILE_TREE_SIDE_LABELS.right)}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.fileTreeSide}
+                onValueChange={(value) => {
+                  if (value === "left" || value === "right") {
+                    updateSettings({ fileTreeSide: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" aria-label={gt("File tree side")}>
+                  <SelectValue>
+                    {messages(FILE_TREE_SIDE_LABELS[settings.fileTreeSide])}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="left">
+                    {messages(FILE_TREE_SIDE_LABELS.left)}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="right">
+                    {messages(FILE_TREE_SIDE_LABELS.right)}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
         <SettingsRow

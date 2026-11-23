@@ -180,12 +180,12 @@ describe("diff comment drafts", () => {
     await click("Comment on first.ts");
     await typeComment("Unfinished thought");
     await screen.rerender(view([second], "second", [], hidden, show));
-    expect(container.querySelector("textarea")).toBeNull();
-    expect(container.textContent).toContain("Unfinished comment on first.ts");
+    await expect.element(screen.getByRole("textbox")).not.toBeInTheDocument();
+    await expect.element(screen.getByText("Unfinished comment on first.ts")).toBeVisible();
     await click("Show");
     expect(shown).toEqual(["first.ts"]);
     await screen.rerender(view([first], "first", [], hidden, show));
-    expect(container.textContent).not.toContain("Unfinished comment on");
-    expect(editor().value).toBe("Unfinished thought");
+    await expect.element(screen.getByText(/Unfinished comment on/)).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("textbox")).toHaveValue("Unfinished thought");
   });
 });

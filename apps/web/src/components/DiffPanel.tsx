@@ -902,6 +902,7 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().focusFile(routeThreadRef, { scope: focusScope, path: filePath });
   };
+  const onSelectTreeFile = useStableCallback(selectTreeFile);
 
   // A file another view asked to reveal (a chat diff link): retried as the diff loads until it
   // holds the file, then not again until a new request, so it does not undo what the user did since.
@@ -1704,7 +1705,7 @@ export default function DiffPanel({
         entries={fileTreeEntries}
         selectedPath={treeSelectedPath}
         revealRequestId={selectedFileRevealRequestId}
-        onSelectFile={selectTreeFile}
+        onSelectFile={onSelectTreeFile}
         headerAccessory={
           <Tooltip>
             <TooltipTrigger
@@ -1885,7 +1886,7 @@ export default function DiffPanel({
                     {...(singleFileView
                       ? {
                           hiddenFileKeys: new Set(shownFileKeys),
-                          onShowHiddenDraft: selectTreeFile,
+                          onShowHiddenDraft: onSelectTreeFile,
                         }
                       : {})}
                     {...(singleFileView ? {} : { renderCodeViewFooter: renderLoadingBoundary })}

@@ -291,15 +291,16 @@ export function AnnotatableCodeView({
                 <span className="min-w-0 truncate">
                   {gt("Unfinished comment on {file}", { file: basenameOfPath(hiddenDraftPath) })}
                 </span>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  className="ms-auto shrink-0"
-                  onClick={() => onShowHiddenDraft(hiddenDraftPath)}
-                >
-                  {gt("Show", { $context: "show the file an unfinished comment is on" })}
-                </Button>
+                <div className="ms-auto shrink-0">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => onShowHiddenDraft(hiddenDraftPath)}
+                  >
+                    {gt("Show", { $context: "show the file an unfinished comment is on" })}
+                  </Button>
+                </div>
               </div>
             ),
           }
