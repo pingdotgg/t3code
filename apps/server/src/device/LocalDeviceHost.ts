@@ -590,19 +590,25 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       token: file.token,
       entryPath: agentTool.entryPath,
     });
-    if (existing._tag === "Some") {
-      const alive = yield* HttpClient.withScope(httpClient)
-        .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
+    const daemonAnswersHealth = (httpPort: number) =>
+      HttpClient.withScope(httpClient)
+        .get(`http://127.0.0.1:${httpPort}/health`)
         .pipe(
-          Effect.timeout(Duration.seconds(2)),
           Effect.flatMap((response) =>
             response.arrayBuffer.pipe(Effect.as(response.status === 200)),
           ),
+          Effect.timeout(Duration.seconds(2)),
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+    if (existing._tag === "Some") {
+      const alive = yield* daemonAnswersHealth(existing.value.httpPort);
+      const samePin =
+        existing.value.version === undefined || existing.value.version === AGENT_DEVICE_VERSION;
+      if (alive && samePin) return toEndpoint(existing.value);
+      // A live daemon from another pin may speak another RPC protocol. Keep its registration so
+      // the pinned CLI retires it, which that CLI does only while the daemon holds no work.
+      if (!alive) yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
@@ -614,9 +620,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.result);
-    // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
+    // A failed run can stop the previous daemon and leave its file. Keep that registration
+    // only while it still answers; a successful run has published the endpoint it reached.
     const started = yield* readDaemonFile().pipe(Effect.option);
-    if (started._tag === "Some") return toEndpoint(started.value);
+    if (started._tag === "Some") {
+      const runSucceeded =
+        runResult._tag === "Success" && !runResult.success.timedOut && runResult.success.code === 0;
+      if (runSucceeded || (yield* daemonAnswersHealth(started.value.httpPort))) {
+        return toEndpoint(started.value);
+      }
+    }
     if (runResult._tag === "Failure") {
       return yield* new DeviceHost.DeviceHostError({
         hostId,
