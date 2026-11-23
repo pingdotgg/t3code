@@ -42,7 +42,11 @@ You do **not** need a relay, Cloudflare account, or Clerk account to connect des
 
 If you want cloud discovery and Cloudflare Tunnel endpoints:
 
-1. Create a free [Clerk](https://clerk.com) application and configure a JWT template (`t3-relay`) with audience `t3-code-relay`.
+1. Create a free [Clerk](https://clerk.com) application and configure, in the Clerk Dashboard:
+   - A JWT template named `t3-relay` with `{ "aud": "t3-code-relay" }`.
+   - A public OAuth application (authorization code + PKCE) with redirect URI `http://127.0.0.1:34338/callback`, scopes `openid profile email offline_access`, and the device authorization grant enabled. Its client ID is `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`.
+   - Native API enabled, Android apps `com.kbcode.app`, `com.kbcode.app.dev`, and `com.kbcode.app.preview` registered, and `kbcode://app/` plus `kbcode-dev://app/` on the redirect allowlist (the `t3code` values in the Connect runbook do not apply to this fork).
+   - `KBCODE_CLERK_RELYING_PARTY` set to your instance's Frontend API host for mobile builds.
 2. Copy `infra/relay/.env.example` to `infra/relay/.env`, set:
    - `RELAY_PUBLIC_URL=https://relay.yourdomain.com` (or `RELAY_API_ZONE_NAME` + `RELAY_TUNNEL_ZONE_NAME`)
    - `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_AUDIENCE`
