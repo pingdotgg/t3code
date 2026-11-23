@@ -164,6 +164,8 @@ it("bounds saved thread mappings while keeping live registrations", async () => 
   }
 });
 
+let historyDocumentCount = 0;
+
 async function openHistoryDocument(
   disposables: DisposableStack,
   { withoutIndexedDB = false } = {},
@@ -171,9 +173,18 @@ async function openHistoryDocument(
   const source = new URL(import.meta.url);
   source.pathname = source.pathname.replace(/\.browser\.test\.ts$/, ".ts");
   source.search = "";
+  if (!withoutIndexedDB) {
+    // A fresh store module gets its own connection and channel like another tab, without
+    // an iframe re-evaluating the whole app graph (seconds per document on CI).
+    source.searchParams.set("document", String(++historyDocumentCount));
+    const instance: typeof import("./browserHistoryStore") = await import(
+      /* @vite-ignore */ source.href
+    );
+    return instance.useBrowserHistoryStore;
+  }
   const frame = document.createElement("iframe");
   disposables.defer(() => frame.remove());
-  frame.srcdoc = `${withoutIndexedDB ? '<script>Object.defineProperty(window, "indexedDB", { value: { open() { throw new Error("blocked"); } } });</script>' : ""}
+  frame.srcdoc = `<script>Object.defineProperty(window, "indexedDB", { value: { open() { throw new Error("blocked"); } } });</script>
     <script type="module">
       import { useBrowserHistoryStore } from ${JSON.stringify(source.href)};
       window.historyStore = useBrowserHistoryStore;
