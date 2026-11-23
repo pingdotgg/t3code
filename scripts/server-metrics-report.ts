@@ -39,8 +39,19 @@ const Soak = Schema.Struct({
   rssMBPerHour: Schema.Number,
 });
 
+const MachineState = Schema.Struct({
+  /** The higher 1-minute load average of the run's start and end; none on Windows. */
+  load1: Schema.NullOr(Schema.Number),
+  /** Cores other node, T3 and agent processes kept busy over the run; Linux only. */
+  otherCpuCores: Schema.NullOr(Schema.Number),
+  minutes: Schema.Number,
+});
+export type MachineState = typeof MachineState.Type;
+
 /** One pass over the scenarios. */
 export const Measured = Schema.Struct({
+  /** What else the machine was doing during the pass; never compared, only warned about. */
+  machine: Schema.optional(MachineState),
   startup: Schema.optional(Schema.Struct({ readyMs: Schema.Number })),
   rest: Schema.optional(Window),
   firstWord: Schema.optional(Schema.Struct({ inPlace: FirstWord, worktree: FirstWord })),
@@ -202,20 +213,80 @@ export function flatten(measured: Measured): Map<string, number> {
   return values;
 }
 
-function noiseFloor(metric: string) {
-  if (metric.startsWith("scaling.")) return metric.endsWith("cpuPctPerThread") ? 0.2 : 2;
-  if (metric.startsWith("soak.")) return 20;
-  if (metric.endsWith("cpuPct")) return 1;
-  if (metric.endsWith("wakeupsPerSec")) return 20;
-  if (metric.endsWith("MB")) return 15;
-  if (metric.endsWith("KB")) return 20;
-  if (metric.includes(".shellMs.") || metric.includes(".openMs.")) return 50;
-  if (metric.endsWith("loopDelayP50Ms")) return 2;
-  if (metric.endsWith("loopDelayP99Ms")) return 5;
-  if (metric.endsWith("loopDelayMaxMs")) return 20;
-  if (metric.endsWith("gcPauseMs")) return 10;
-  if (metric.endsWith("gcCount")) return 20;
-  return 300;
+/**
+ * How far a metric moves between runs of the same commit, and whether it moves little enough to
+ * gate on. First match wins. Re-derive from A/A files with `server-metrics noise`; see
+ * docs/internals/performance-regressions.md for the runs these came from.
+ */
+export interface NoiseRule {
+  readonly pattern: RegExp;
+  /** Absolute change a metric must clear on top of the relative threshold. */
+  readonly floor: number;
+  /** False for metrics an A/A run moves too far to gate on: shown, never counted. */
+  readonly gate: boolean;
+}
+
+export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
+  { pattern: /^scaling\..*cpuPctPerThread$/, floor: 0.2, gate: true },
+  { pattern: /^scaling\./, floor: 2, gate: true },
+  { pattern: /^soak\./, floor: 20, gate: true },
+  { pattern: /cpuPct$/, floor: 1, gate: true },
+  { pattern: /wakeupsPerSec$/, floor: 20, gate: true },
+  { pattern: /MB$/, floor: 15, gate: true },
+  { pattern: /KB$/, floor: 20, gate: true },
+  { pattern: /\.(shellMs|openMs)\./, floor: 50, gate: true },
+  { pattern: /loopDelayP50Ms$/, floor: 2, gate: true },
+  { pattern: /loopDelayP99Ms$/, floor: 5, gate: true },
+  { pattern: /loopDelayMaxMs$/, floor: 20, gate: true },
+  { pattern: /gcPauseMs$/, floor: 10, gate: true },
+  { pattern: /gcCount$/, floor: 20, gate: true },
+  { pattern: /./, floor: 300, gate: true },
+];
+
+export function noiseRule(metric: string, rules: ReadonlyArray<NoiseRule> = NOISE_RULES) {
+  return rules.find((rule) => rule.pattern.test(metric)) ?? { floor: 0, gate: true };
+}
+
+/** Fields that describe a run rather than measure it. */
+const isMetric = (metric: string) =>
+  !(
+    metric === "soak.minutes" ||
+    metric.startsWith("machine.") ||
+    metric.endsWith("loopSamples") ||
+    metric === "busy.projects" ||
+    metric === "busy.ballastMB" ||
+    metric.endsWith(".clients") ||
+    metric.endsWith(".threads") ||
+    metric === "busy.largeThread.messages" ||
+    metric.startsWith("scaling.points")
+  );
+
+/**
+ * A run is loaded when other node, T3 and agent processes kept this share of the cores busy, or,
+ * where that is unknown, when the 1-minute load passed this much per CPU. The load counts the
+ * run's own agents too, so it is only the fallback.
+ */
+export const HEAVY_LOAD_PER_CPU = 0.75;
+export const HEAVY_OTHER_CPU_SHARE = 0.25;
+
+/** One line per side whose runs shared the machine with heavy load, so its numbers are suspect. */
+export function loadWarnings(side: string, metrics: ServerMetrics) {
+  const cpus = typeof metrics.meta.cpus === "number" ? metrics.meta.cpus : null;
+  if (cpus === null) return [];
+  const loaded = metrics.runs.flatMap(({ machine }) =>
+    machine &&
+    (machine.otherCpuCores === null
+      ? (machine.load1 ?? 0) >= cpus * HEAVY_LOAD_PER_CPU
+      : machine.otherCpuCores >= cpus * HEAVY_OTHER_CPU_SHARE)
+      ? [machine]
+      : [],
+  );
+  if (loaded.length === 0) return [];
+  const worstLoad = Math.max(...loaded.map(({ load1 }) => load1 ?? 0));
+  const worstOther = Math.max(...loaded.map(({ otherCpuCores }) => otherCpuCores ?? 0));
+  return [
+    `${side} ran under heavy load in ${loaded.length} of ${metrics.runs.length} runs (load up to ${worstLoad} on ${cpus} CPUs, other node/T3/agent processes up to ${worstOther} cores); rerun on a quieter machine before trusting a change`,
+  ];
 }
 
 const median = (values: ReadonlyArray<number>) => {
@@ -241,16 +312,96 @@ export function bootstrapMedianDifference(a: ReadonlyArray<number>, b: ReadonlyA
   return [differences[49]!, differences[1_949]!] as const;
 }
 
-export function compareMetrics(before: ServerMetrics, after: ServerMetrics, threshold = 10) {
-  const collect = (metrics: ServerMetrics) => {
-    const values = new Map<string, number[]>();
-    for (const run of metrics.runs) {
-      for (const [metric, value] of flatten(run)) {
-        values.set(metric, [...(values.get(metric) ?? []), value]);
-      }
+/** Every metric's values across a file's runs. */
+const collect = (metrics: ServerMetrics) => {
+  const values = new Map<string, number[]>();
+  for (const run of metrics.runs) {
+    for (const [metric, value] of flatten(run)) {
+      values.set(metric, [...(values.get(metric) ?? []), value]);
     }
-    return values;
-  };
+  }
+  return values;
+};
+
+/** Two significant digits, rounded up, so a derived floor never sits under what was seen. */
+const ceilSignificant = (value: number) => {
+  if (value <= 0) return 0;
+  const step = 10 ** (Math.floor(Math.log10(value)) - 1);
+  return round(Math.ceil(value / step) * step, 6);
+};
+
+/** A swing past this share of a metric's median makes it informational. */
+export const NOISY_SHARE = 0.5;
+
+export interface NoiseRow {
+  readonly metric: string;
+  readonly median: number;
+  /** Half the pooled range: how far one run lands from the middle. */
+  readonly halfRange: number;
+  /** The largest |median(A) - median(B)| over the A/A pairs. */
+  readonly aaDifference: number;
+  readonly floor: number;
+  readonly suggestedFloor: number;
+  readonly gate: boolean;
+  readonly suggestedGate: boolean;
+}
+
+/**
+ * Run-to-run spread of every metric over A/A pairs (one commit against itself), and the floor
+ * each needs so the same commit never counts as a change: at least half the pooled range of one
+ * pair and the A/A median difference, over every pair.
+ */
+export function noiseReport(
+  pairs: ReadonlyArray<readonly [ServerMetrics, ServerMetrics]>,
+  rules: ReadonlyArray<NoiseRule> = NOISE_RULES,
+) {
+  const found = new Map<string, { medians: number[]; halfRange: number; aaDifference: number }>();
+  for (const [before, after] of pairs) {
+    const a = collect(before);
+    const b = collect(after);
+    for (const [metric, x] of a) {
+      const y = b.get(metric);
+      if (!y || !isMetric(metric)) continue;
+      const pooled = [...x, ...y];
+      const entry = found.get(metric) ?? { medians: [], halfRange: 0, aaDifference: 0 };
+      entry.medians.push(median(pooled));
+      entry.halfRange = Math.max(entry.halfRange, (Math.max(...pooled) - Math.min(...pooled)) / 2);
+      entry.aaDifference = Math.max(entry.aaDifference, Math.abs(median(y) - median(x)));
+      found.set(metric, entry);
+    }
+  }
+  const rows: NoiseRow[] = [...found].map(([metric, entry]) => {
+    const middle = median(entry.medians);
+    const rule = noiseRule(metric, rules);
+    const suggestedFloor = ceilSignificant(Math.max(entry.halfRange, entry.aaDifference));
+    return {
+      metric,
+      median: round(middle, 2),
+      halfRange: round(entry.halfRange, 2),
+      aaDifference: round(entry.aaDifference, 2),
+      floor: rule.floor,
+      suggestedFloor,
+      gate: rule.gate,
+      suggestedGate: entry.halfRange <= Math.abs(middle) * NOISY_SHARE,
+    };
+  });
+  const lines = [
+    "| metric | median | ± half range | A/A diff | floor | suggested | gated | suggested |",
+    "| :-- | --: | --: | --: | --: | --: | :-: | :-: |",
+    ...rows.map(
+      (row) =>
+        `| ${row.metric} | ${row.median} | ${row.halfRange} | ${row.aaDifference} | ${row.floor} | ${row.suggestedFloor}${row.suggestedFloor > row.floor ? " ⚠" : ""} | ${row.gate ? "yes" : "no"} | ${row.suggestedGate ? "yes" : "no"} |`,
+    ),
+  ];
+  return { rows, table: lines.join("\n") };
+}
+
+export function compareMetrics(
+  before: ServerMetrics,
+  after: ServerMetrics,
+  threshold = 10,
+  rules: ReadonlyArray<NoiseRule> = NOISE_RULES,
+) {
   const a = collect(before);
   const b = collect(after);
   const lines = [
@@ -264,18 +415,9 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
   const regressed: string[] = [];
   const improved: string[] = [];
   let compared = 0;
+  const informational: string[] = [];
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
-    if (
-      metric === "soak.minutes" ||
-      metric.endsWith("loopSamples") ||
-      metric === "busy.projects" ||
-      metric === "busy.ballastMB" ||
-      metric === "clients.storm.clients" ||
-      metric === "busy.largeThread.messages" ||
-      metric.startsWith("scaling.points")
-    ) {
-      continue;
-    }
+    if (!isMetric(metric)) continue;
     const x = a.get(metric);
     const y = b.get(metric);
     if (!x || !y) {
@@ -299,12 +441,15 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
     const mx = median(x);
     const my = median(y);
     // A change counts only past both the relative threshold and the absolute noise floor.
-    const limit = Math.max(noiseFloor(metric), (Math.abs(mx) * threshold) / 100);
+    const rule = noiseRule(metric, rules);
+    const limit = Math.max(rule.floor, (Math.abs(mx) * threshold) / 100);
     const repeated = x.length > 1 && y.length > 1;
     const [low, high] = repeated ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
-    const verdict = low > limit ? "worse" : high < -limit ? "better" : "";
-    if (verdict === "worse") regressed.push(metric);
-    if (verdict === "better") improved.push(metric);
+    const moved = low > limit ? "worse" : high < -limit ? "better" : "";
+    if (moved && !rule.gate) informational.push(metric);
+    else if (moved === "worse") regressed.push(metric);
+    else if (moved === "better") improved.push(metric);
+    const verdict = rule.gate ? moved : moved ? `${moved} (noisy, not gated)` : "noisy";
     const percent = mx === 0 ? (my === 0 ? 0 : Infinity) : ((my - mx) / Math.abs(mx)) * 100;
     const shown = Number.isFinite(percent)
       ? `${percent > 0 ? "+" : ""}${Math.round(percent)}%`
@@ -314,7 +459,8 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       `| ${metric} | ${round(mx, 2)} | ${round(my, 2)} | ${shown} | ${interval} | ${verdict} |`,
     );
   }
-  return { table: lines.join("\n"), regressed, improved, compared };
+  const warnings = [...loadWarnings("before", before), ...loadWarnings("after", after)];
+  return { table: lines.join("\n"), regressed, improved, informational, compared, warnings };
 }
 
 const CallFrame = Schema.Struct({

@@ -58,6 +58,8 @@ import {
   HeapSnapshot,
   heapByConstructor,
   heapGrowth,
+  loadWarnings,
+  noiseReport,
   round,
   ServerMetrics,
   slope,
@@ -70,6 +72,7 @@ import {
   parseRunSelection,
   summarizeProfiles,
   type FirstWord,
+  type MachineState,
   type Measured,
   type ProfileSummary,
   type Window,
@@ -1333,6 +1336,7 @@ interface RunOptions {
 const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const machine = yield* watchMachine;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-metrics-" });
   const api = yield* serveFakeAnthropic();
   const environment: Environment = {
@@ -1619,6 +1623,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
       }),
     );
   }
+  measured.machine = yield* machine;
   return { measured: measured as Measured, profiles, soakHeapGrowth };
 }, Effect.scoped);
 
@@ -1640,6 +1645,87 @@ const machineLoad = Effect.gen(function* () {
     Option.getOrNull(Option.map(load, (text) => text.replace(/[{}]/g, "").trim())),
   ),
 );
+
+/** Comm names of the processes that compete with a measured server on a developer's machine. */
+const COMPETING = /^(node|node-MainThread|t3|claude|codex|vite|pnpm)/;
+
+/**
+ * CPU seconds by pid of every node, T3, claude or codex process outside this script's own tree.
+ * Linux only; elsewhere none, and the run records only the load average.
+ */
+const competingCpuSeconds = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "linux") return Option.none<ReadonlyMap<number, number>>();
+  const fs = yield* FileSystem.FileSystem;
+  const self = Number(yield* fs.readLink("/proc/self"));
+  const parents = new Map<number, number>();
+  const cpu = new Map<number, number>();
+  for (const entry of yield* fs.readDirectory("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const stat = yield* fs
+      .readFileString(`/proc/${entry}/stat`)
+      .pipe(Effect.orElseSucceed(() => ""));
+    const open = stat.indexOf(" (");
+    const close = stat.lastIndexOf(") ");
+    if (open < 0 || close < 0) continue;
+    const fields = stat.slice(close + 2).split(" ");
+    const pid = Number(entry);
+    parents.set(pid, Number(fields[1]));
+    if (COMPETING.test(stat.slice(open + 2, close))) {
+      cpu.set(pid, (Number(fields[11]) + Number(fields[12])) / 100);
+    }
+  }
+  const ours = (pid: number) => {
+    for (let at: number | undefined = pid; at !== undefined && at > 1; at = parents.get(at)) {
+      if (at === self) return true;
+    }
+    return false;
+  };
+  return Option.some(new Map([...cpu].filter(([pid]) => !ours(pid))));
+}).pipe(Effect.orElseSucceed(() => Option.none<ReadonlyMap<number, number>>()));
+
+/** CPU seconds the competing processes spent between two reads; a process that exited is lost. */
+const competingBetween = (
+  before: ReadonlyMap<number, number>,
+  after: ReadonlyMap<number, number>,
+) => [...after].reduce((total, [pid, seconds]) => total + seconds - (before.get(pid) ?? 0), 0);
+
+const load1 = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  if (platform === "win32") return Option.none<number>();
+  if (platform === "linux") {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString("/proc/loadavg").pipe(Effect.option);
+    return Option.map(text, (value) => Number(value.split(" ")[0]));
+  }
+  const text = yield* output("sysctl", ["-n", "vm.loadavg"]);
+  return Option.map(text, (value) => Number(value.replace(/[{}]/g, "").trim().split(/\s+/)[0]));
+}).pipe(Effect.map(Option.filter(Number.isFinite)));
+
+/**
+ * Starts watching the machine for one run; the returned effect reads what competed with it: the
+ * highest 1-minute load seen and the cores other T3, node and agent processes kept busy.
+ */
+const watchMachine = Effect.gen(function* () {
+  const startedAt = yield* nowMs;
+  const loadBefore = yield* load1;
+  const cpuBefore = yield* competingCpuSeconds;
+  return Effect.gen(function* () {
+    const elapsed = ((yield* nowMs) - startedAt) / 1_000;
+    const loadAfter = yield* load1;
+    const cpuAfter = yield* competingCpuSeconds;
+    const loads = [loadBefore, loadAfter].flatMap((load) => Option.toArray(load));
+    const machine: MachineState = {
+      load1: loads.length ? round(Math.max(...loads), 2) : null,
+      otherCpuCores:
+        Option.isSome(cpuBefore) && Option.isSome(cpuAfter) && elapsed > 0
+          ? round(competingBetween(cpuBefore.value, cpuAfter.value) / elapsed, 2)
+          : null,
+      minutes: round(elapsed / 60, 1),
+    };
+    return machine;
+  });
+});
 
 const metaFor = Effect.fn("serverMetrics.metaFor")(function* (options: RunOptions) {
   const platform = yield* HostProcess.Platform;
@@ -1694,12 +1780,20 @@ const report = Effect.fn("serverMetrics.report")(function* (
   after: ServerMetrics,
   threshold: number,
 ) {
-  const { table, regressed, improved, compared } = compareMetrics(before, after, threshold);
+  const { table, regressed, improved, informational, compared, warnings } = compareMetrics(
+    before,
+    after,
+    threshold,
+  );
   yield* Console.log(table);
+  for (const warning of warnings) yield* Console.error(`Warning: ${warning}`);
   if (compared === 0) {
     return yield* new MetricsError({
       message: "the two files share no metric, so nothing was compared",
     });
+  }
+  if (informational.length) {
+    yield* Console.error(`Moved, but too noisy to gate on: ${informational.join(", ")}`);
   }
   if (improved.length) yield* Console.error(`Better: ${improved.join(", ")}`);
   if (regressed.length === 0) return;
@@ -1937,7 +2031,41 @@ const compareCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Markdown table of two result files, lower is better. With 2+ runs a side, a metric counts only when the 95% bootstrap interval of the median difference clears the threshold and its noise floor (1 CPU point, 20 wakeups/s, 15 MB, 300 ms; per thread 2 MB or 0.2 CPU points). Exits 1 on a regression.",
+    "Markdown table of two result files, lower is better. With 2+ runs a side, a metric counts only when the 95% bootstrap interval of the median difference clears the threshold and its noise floor, measured from A/A runs (see `noise`). Metrics too noisy to gate on are shown but never counted. Warns when either side ran under heavy machine load. Exits 1 on a regression.",
+  ),
+);
+
+const noiseCommand = Command.make(
+  "noise",
+  {
+    dirs: Argument.String("dir").pipe(
+      Argument.withDescription("An `ab` out dir (a.json and b.json) of one commit against itself."),
+      Argument.atLeast(1),
+    ),
+  },
+  Effect.fn("serverMetrics.noise")(function* (input) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const read = (file: string) =>
+      fs.readFileString(file).pipe(Effect.flatMap(decodeJson(ServerMetrics)));
+    const pairs = yield* Effect.forEach(input.dirs, (dir) =>
+      Effect.all([read(path.join(dir, "a.json")), read(path.join(dir, "b.json"))] as const),
+    );
+    for (const [side, metrics] of pairs.flatMap(
+      ([a, b]) =>
+        [
+          ["a", a],
+          ["b", b],
+        ] as const,
+    )) {
+      for (const warning of loadWarnings(side, metrics))
+        yield* Console.error(`Warning: ${warning}`);
+    }
+    yield* Console.log(noiseReport(pairs).table);
+  }),
+).pipe(
+  Command.withDescription(
+    "Spread of every metric over A/A runs (`ab <same> <same>`), the floor each needs so the same commit never counts as a change, and which are too noisy to gate on. ⚠ marks a floor under what was seen.",
   ),
 );
 
@@ -1945,7 +2073,7 @@ const serverMetricsCommand = Command.make("server-metrics").pipe(
   Command.withDescription(
     "Measure the server process against a fake Anthropic API and the real claude CLI, on Linux, macOS and Windows.",
   ),
-  Command.withSubcommands([runCommand, abCommand, compareCommand]),
+  Command.withSubcommands([runCommand, abCommand, compareCommand, noiseCommand]),
 );
 
 if (import.meta.main) {

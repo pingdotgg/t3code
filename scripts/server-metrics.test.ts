@@ -5,7 +5,9 @@ import {
   compareMetrics,
   activityRenewalMissed,
   heapGrowth,
+  loadWarnings,
   nextActivityReport,
+  noiseReport,
   parsePsCpuTime,
   parseRunSelection,
   pathRewrites,
@@ -126,6 +128,90 @@ describe("compareMetrics", () => {
     const startupOnly: ServerMetrics = { meta, runs: [{ startup: { readyMs: 9_000 } }] };
     expect(compareMetrics(startupOnly, quietRuns(base)).compared).toBe(0);
     expect(compareMetrics(quietRuns(base), quietRuns(base)).compared).toBe(10);
+  });
+});
+
+describe("compareMetrics with noise rules", () => {
+  const rules = [
+    { pattern: /cpuPct$/, floor: 1, gate: true },
+    { pattern: /loopDelayMaxMs$/, floor: 20, gate: false },
+    { pattern: /./, floor: 1_000, gate: true },
+  ];
+  it.each([
+    ["a gated metric past its floor", { cpuPct: 5 }, ["quiet.cpuPct"], []],
+    ["an ungated metric far past its floor", { loopDelayMaxMs: 300 }, [], ["quiet.loopDelayMaxMs"]],
+    ["an ungated metric under its floor", { loopDelayMaxMs: 20 }, [], []],
+  ])("%s", (_name, change, regressed, informational) => {
+    const result = compareMetrics(quietRuns(base), quietRuns({ ...base, ...change }), 10, rules);
+    expect(result.regressed).toEqual(regressed);
+    expect(result.informational).toEqual(informational);
+  });
+
+  it("marks an ungated metric in the table either way", () => {
+    const result = compareMetrics(quietRuns(base), quietRuns(base), 10, rules);
+    expect(result.table).toContain("| quiet.loopDelayMaxMs | 8 | 8 | 0% |  | noisy |");
+  });
+});
+
+describe("loadWarnings", () => {
+  const loaded = (cpus: number | null, ...machines: Array<[number | null, number | null]>) =>
+    ({
+      meta: { ...meta, cpus },
+      runs: machines.map(([load1, otherCpuCores]) => ({
+        machine: { load1, otherCpuCores, minutes: 10 },
+      })),
+    }) satisfies ServerMetrics;
+  it.each([
+    ["a quiet machine", loaded(16, [4, 1], [5, 2]), 0],
+    ["load past 0.75 per CPU with other processes unknown", loaded(16, [4, null], [12.5, null]), 1],
+    ["high load from the run's own agents", loaded(16, [21, 1]), 0],
+    ["other processes on a quarter of the cores", loaded(16, [4, 4.1]), 1],
+    ["no CPU count", loaded(null, [40, 40]), 0],
+    ["no machine state, as in older files", { meta: { ...meta, cpus: 16 }, runs: [{}] }, 0],
+  ])("%s", (_name, metrics, count) => {
+    expect(loadWarnings("before", metrics)).toHaveLength(count);
+  });
+
+  it("names the worst run", () => {
+    expect(loadWarnings("after", loaded(16, [13, 4.5], [14.2, 5]))[0]).toContain(
+      "after ran under heavy load in 2 of 2 runs (load up to 14.2 on 16 CPUs, other node/T3/agent processes up to 5 cores)",
+    );
+  });
+
+  it("is reported by compareMetrics", () => {
+    expect(compareMetrics(quietRuns(base), loaded(16, [20, null])).warnings).toHaveLength(1);
+  });
+});
+
+describe("noiseReport", () => {
+  it("suggests a floor covering the pooled swing and the A/A difference, rounded up", () => {
+    const [row] = noiseReport([[cpuRuns(2, 2.2, 2.4), cpuRuns(2.1, 3.1, 2.3)]]).rows.filter(
+      ({ metric }) => metric === "quiet.cpuPct",
+    );
+    // Pooled 2 to 3.1: half range 0.55; medians 2.2 and 2.3.
+    expect(row).toMatchObject({ median: 2.25, halfRange: 0.55, aaDifference: 0.1 });
+    expect(row?.suggestedFloor).toBe(0.55);
+    expect(row?.suggestedGate).toBe(true);
+  });
+
+  it("takes the widest pair, and calls a metric noisy past half its median", () => {
+    const quiet = [cpuRuns(2, 2.1), cpuRuns(2, 2.1)] as const;
+    const wild = [cpuRuns(1, 4), cpuRuns(2, 2)] as const;
+    const [row] = noiseReport([quiet, wild]).rows.filter(({ metric }) => metric === "quiet.cpuPct");
+    expect(row?.halfRange).toBe(1.5);
+    expect(row?.suggestedGate).toBe(false);
+  });
+
+  it("leaves out fields that describe a run", () => {
+    const withMachine = (metrics: ServerMetrics): ServerMetrics => ({
+      ...metrics,
+      runs: metrics.runs.map((run) => ({
+        ...run,
+        machine: { load1: 3, otherCpuCores: 1, minutes: 9 },
+      })),
+    });
+    const rows = noiseReport([[withMachine(cpuRuns(1)), withMachine(cpuRuns(1))]]).rows;
+    expect(rows.some(({ metric }) => metric.startsWith("machine."))).toBe(false);
   });
 });
 
