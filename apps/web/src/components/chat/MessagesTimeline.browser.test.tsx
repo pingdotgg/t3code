@@ -1875,15 +1875,14 @@ describe("MessagesTimeline attachments", () => {
       expect(element).toBeTruthy();
       return element!;
     });
-    // A missing file has no dimensions, so the frame must draw its own square
-    // cap instead of letting `aspect-video w-full` fill the thread column.
     const size = await vi.waitFor(() => {
       const rect = frame.getBoundingClientRect();
       expect(rect.width).toBeGreaterThan(0);
       return rect;
     });
-    expect(size.width).toBeLessThanOrEqual(161);
-    expect(Math.abs(size.width - size.height)).toBeLessThanOrEqual(1);
+    expect(size.height).toBeLessThanOrEqual(161);
+    expect(size.width).toBeLessThanOrEqual(285);
+    expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
   });
 
   it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {

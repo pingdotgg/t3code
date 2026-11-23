@@ -85,13 +85,13 @@ export function authoredImageSizeStyle(
 }
 
 /**
- * A file whose bytes could not be read has no dimensions to size a box from,
- * so a capped strip would draw it at whatever width its frame asks for. Bound
- * it to the cap itself instead of leaving the frame free to fill the row.
+ * An unavailable file has no dimensions, so its `aspect-video w-full` frame
+ * would fill the row and `max-height` would squash it. Bound the width so the
+ * frame stays 16:9 at the height cap.
  */
 function unavailableImageSizeStyle(maxHeightRem: number): CSSProperties | undefined {
   if (maxHeightRem === 30) return undefined;
-  return { maxWidth: `min(100%, 30rem, ${maxHeightRem}rem)`, aspectRatio: "1 / 1" };
+  return { maxWidth: `min(100%, 30rem, ${(maxHeightRem * 16) / 9}rem)` };
 }
 
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
