@@ -1998,7 +1998,7 @@ it.effect("a parent stopped while the task's result is read still stops its thre
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a stop the box refuses because the parent was lowered ends instead of retrying", () =>
+it.effect("a parent lowered below its task there still stops it there", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
@@ -2024,8 +2024,7 @@ it.effect("a stop the box refuses because the parent was lowered ends instead of
         commandId: CommandId.make("command:stop:laptop-parent-lowered"),
       });
 
-      // The box refuses that stop; the follower records it as settled and
-      // stops, so nothing retries it, now or after a restart.
+      // Stopping only reduces activity, so the box takes it; nothing is left to retry.
       const settled = yield* a.orchestrator
         .streamStoredEventsFrom({
           threadId: parentThreadId,
@@ -2042,7 +2041,7 @@ it.effect("a stop the box refuses because the parent was lowered ends instead of
           Stream.runHead,
         );
       expect(Option.isSome(settled)).toBe(true);
-      expect(yield* Ref.get(thread.stops)).toEqual([]);
+      expect(yield* Ref.get(thread.stops)).toEqual(["thread.stop", "delegated-tasks"]);
       expect(yield* a.projections.getOpenRemoteDelegatedTasks).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

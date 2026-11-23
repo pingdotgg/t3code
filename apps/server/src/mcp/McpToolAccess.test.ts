@@ -17,6 +17,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
+import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -129,6 +130,10 @@ const ProbeToolkit = Toolkit.make(
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   }),
+  Tool.make("stops_threads", {
+    ...probe,
+    parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  }),
   Tool.make("starts_threads", {
     ...probe,
     parameters: Schema.Struct({
@@ -148,6 +153,14 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   writes_threads: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     () => ran,
+  ),
+  // A dispatch mode limit here would let the orchestrator refuse the stop.
+  stops_threads: McpToolAccess.stopsThreads(
+    (input) => [input.threadId],
+    () =>
+      Effect.gen(function* () {
+        return { ran: (yield* DispatchModeLimit) === undefined ? "ran" : "limited" };
+      }),
   ),
   starts_threads: McpToolAccess.startsThreads(
     (input) => input,
@@ -192,6 +205,7 @@ export const refusedAtCompileTime = () => {
       writes: unchecked,
       writes_with_capability: unchecked,
       writes_threads: unchecked,
+      stops_threads: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
     }),
@@ -305,6 +319,12 @@ it.effect.each([
     "runtime_mode_escalation_denied",
   ],
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
+
+  ["stops_threads", readOnlyClient, { threadId: supervisedThreadId }, "capability_denied"],
+  ["stops_threads", supervised, { threadId: fullAccessThreadId }, "ran"],
+  ["stops_threads", plan, { threadId: supervisedThreadId }, "ran"],
+  ["stops_threads", supervisedClient, { threadId: fullAccessThreadId }, "ran"],
+  ["stops_threads", ended, { threadId: supervisedThreadId }, "parent_not_active"],
 
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
