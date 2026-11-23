@@ -261,9 +261,10 @@ export const layer: Layer.Layer<
           ) {
             return;
           }
-          // A Stop accepted once the provider's turn had ended stored only its request: the
-          // terminal already wrote `waiting`. That Stop still wins, and gets its result here.
-          const stopSignals = stoppedNow
+          // A Stop accepted before the turn ended can lose the race to it: the terminal wrote
+          // `completed` (or legacy `waiting`) with only the request stored. That Stop still wins here.
+          const stopped = currentRun.status === "interrupted" || currentRun.status === "cancelled";
+          const stopSignals = stopped
             ? []
             : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
                 turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
@@ -274,6 +275,9 @@ export const layer: Layer.Layer<
             : stopSignals.find((item) => item.type === "run_interrupt_request");
           const settledStatus =
             stopRequest === undefined ? ("completed" as const) : ("interrupted" as const);
+          const settles = legacyWaiting || stopRequest !== undefined;
+          // Keep the turn-end time on a settled run; only legacy `waiting` rows settle at capture.
+          const settledAt = legacyWaiting ? capturedAt : (currentRun.completedAt ?? capturedAt);
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
             currentRun;
@@ -372,16 +376,16 @@ export const layer: Layer.Layer<
                 nodeId: rootNode.id,
                 providerInstanceId: run.providerInstanceId,
                 occurredAt: capturedAt,
-                payload: legacyWaiting
+                payload: settles
                   ? {
                       ...runWithoutDelegatedCompletion,
                       status: settledStatus,
-                      completedAt: capturedAt,
+                      completedAt: settledAt,
                       checkpointId: checkpoint.id,
                     }
                   : { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id },
               },
-              ...(!legacyWaiting
+              ...(!settles
                 ? []
                 : [
                     {
@@ -395,7 +399,7 @@ export const layer: Layer.Layer<
                       payload: {
                         ...rootNode,
                         status: settledStatus,
-                        completedAt: capturedAt,
+                        completedAt: settledAt,
                         checkpointScopeId: scope.id,
                       },
                     },
