@@ -265,6 +265,7 @@ impl SettingsModal {
                 .default_value(operator_url)
         });
         let provider_connection = live_connection.clone();
+        let projects_connection = live_connection.clone();
         let provider_environment = connection
             .server_label
             .clone()
@@ -314,7 +315,9 @@ impl SettingsModal {
         });
 
         let projects_tokens = tokens.clone();
-        let projects = cx.new(|_| projects::ProjectsView::new(projects_tokens, geometry, projects));
+        let projects = cx.new(|_| {
+            projects::ProjectsView::new(projects_tokens, geometry, projects, projects_connection)
+        });
         Self {
             tokens,
             geometry,
@@ -348,8 +351,21 @@ impl SettingsModal {
         config: std::sync::Arc<conn_state::providers::ServerConfigState>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.projects.update(cx, |view, cx| {
+            view.set_server_config(std::sync::Arc::clone(&config), cx);
+        });
         self.providers
             .update(cx, |view, cx| view.set_server_config(config, cx));
+    }
+
+    /// The projects the server lists, for each one's actions and workspace default.
+    pub(crate) fn set_project_shells(
+        &mut self,
+        shells: Vec<conn_contract::OrchestrationProjectShell>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.projects
+            .update(cx, |view, cx| view.set_shells(shells, cx));
     }
 
     /// `Open provider setup`: the Providers page with `instance_id`'s Account row open.
@@ -376,6 +392,9 @@ impl SettingsModal {
                 .clone()
                 .unwrap_or_else(|| "this environment".to_owned());
             let provider_connection = live_connection.clone();
+            let projects_connection = provider_connection.clone();
+            self.projects
+                .update(cx, |view, cx| view.set_connection(projects_connection, cx));
             self.providers.update(cx, |view, cx| {
                 view.set_connection(provider_connection, environment, cx);
             });

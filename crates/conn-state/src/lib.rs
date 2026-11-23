@@ -20,6 +20,7 @@ mod layout;
 pub mod model_preferences;
 mod order_keys;
 pub mod provider_auth;
+pub mod project_settings;
 pub mod provider_settings;
 pub mod providers;
 mod scheduled;

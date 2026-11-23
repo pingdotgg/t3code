@@ -432,8 +432,7 @@ impl ProvidersView {
         let oax = format!("{ax}.option.{}", option.key);
         let key = option.key;
         let preset = edit.draft.preset_of(option);
-        let has_presets =
-            !conn_state::custom_model_editor::presets(&edit.draft.driver()).is_empty();
+        let has_presets = !conn_state::custom_model_editor::presets(edit.draft.driver()).is_empty();
         let mut head = div()
             .flex()
             .flex_row()
@@ -448,7 +447,7 @@ impl ProvidersView {
                 .child(format!("Option {number}")),
         );
         if has_presets {
-            for known in conn_state::custom_model_editor::presets(&edit.draft.driver()) {
+            for known in conn_state::custom_model_editor::presets(edit.draft.driver()) {
                 let id = known.id;
                 head = head.child(self.labelled_button(
                     format!("{oax}.id.{id}"),
@@ -1090,12 +1089,12 @@ impl ProvidersView {
                         .as_ref()
                         .is_some_and(|edit| edit.draft.slug == slug && edit.instance_id == id),
                     Some(cx.listener({
-                        let (id, slug) = (id.clone(), slug.clone());
+                        let (id, slug) = (id, slug.clone());
                         move |view, _, window, cx| view.toggle_custom_edit(&id, &slug, window, cx)
                     })),
                 ),
             );
-            let (id, slug) = (instance_id.to_owned(), slug.clone());
+            let (id, slug) = (instance_id.to_owned(), slug);
             actions = actions.child(self.icon_button(
                 format!("{rax}.remove"),
                 format!("Remove {}", model.slug),

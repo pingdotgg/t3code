@@ -1282,7 +1282,17 @@ impl ConnApp {
             panel.set_server_config(std::sync::Arc::clone(&config), cx)
         });
         if let Some(modal) = &self.settings_modal {
-            modal.update(cx, |modal, cx| modal.set_server_config(config, cx));
+            let shells = self
+                .shell
+                .projects
+                .iter()
+                .filter(|p| p.archived_at.is_none())
+                .cloned()
+                .collect();
+            modal.update(cx, |modal, cx| {
+                modal.set_project_shells(shells, cx);
+                modal.set_server_config(config, cx);
+            });
         }
         cx.notify();
     }
