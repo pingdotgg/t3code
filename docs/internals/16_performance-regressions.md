@@ -40,6 +40,8 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
 - Steer server work by `working`: many worktree threads editing files at once with one client
   subscribed to all of them. Turns per minute that stay flat as threads are added mean the
   server, not the agents, is the bottleneck.
+- Upper bounds no user hits daily, such as 20 clients reconnecting at once, run only with
+  `--stress`; the default reconnect is a user's 3 devices holding 10 threads each.
 - Test macOS, Windows, and Linux with `--no-agent-scope`: Linux systemd agent scopes mask
   per-process polling paths that other platforms run.
 

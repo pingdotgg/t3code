@@ -95,7 +95,10 @@ const EDIT_MARKER = "[[edit-files]]";
 const PIPELINE_TURNS = 50;
 /** Threads working at once in each window of the working scenario. */
 const WORKING_THREADS = [5, 10, 20];
-/** Clients that drop and reconnect at once in the clients scenario. */
+/** A user's devices: clients that drop and reconnect at once, each holding this many threads. */
+const RECONNECT_CLIENTS = 3;
+const RECONNECT_THREADS = 10;
+/** Clients that drop and reconnect at once in the opt-in storm, each holding one thread. */
 const STORM_CLIENTS = 20;
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
 const LOOP_RESOLUTION_MS = 10;
@@ -1347,6 +1350,48 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
 });
 
 /**
+ * Attaches one client per entry, each holding the shell, VCS status and its threads, lets them
+ * settle, then drops all of them at once and reconnects them: the time until every subscription
+ * delivered its snapshot again, and the loop delay across it.
+ */
+const reconnectAll = Effect.fn("serverMetrics.reconnectAll")(function* (
+  server: Server,
+  token: string,
+  clientThreads: ReadonlyArray<ReadonlyArray<string>>,
+) {
+  // Each client gets its own scope so they can be dropped on cue; the server's scope still closes
+  // any left open when a step fails or is interrupted.
+  const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
+    Scope.close(scope, exit),
+  );
+  const attachAll = (scopes: ReadonlyArray<Scope.Closeable>) =>
+    Effect.forEach(
+      scopes,
+      (scope, index) =>
+        attachClient(server, token, clientThreads[index] ?? []).pipe(Scope.provide(scope)),
+      { concurrency: "unbounded" },
+    );
+  const clients = yield* Effect.forEach(clientThreads, () => clientScope);
+  const first = yield* attachAll(clients);
+  yield* Effect.sleep(Duration.seconds(10));
+  yield* Effect.forEach(first, (client) => client.healthy, { discard: true });
+  yield* server.loopStart;
+  const dropped = yield* nowMs;
+  yield* Effect.forEach(clients, (scope) => Scope.close(scope, Exit.void), {
+    concurrency: "unbounded",
+    discard: true,
+  });
+  const reopened = yield* Effect.forEach(clientThreads, () => clientScope);
+  const second = yield* attachAll(reopened);
+  const resubscribedMs = Math.round((yield* nowMs) - dropped);
+  const loop = yield* server.loopRead;
+  // The first cohort again: a loss between its check and the drop happened in the reconnect.
+  yield* Effect.forEach([...first, ...second], (client) => client.healthy, { discard: true });
+  yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), { discard: true });
+  return { resubscribedMs, loopDelayP99Ms: round(loop.p99), loopDelayMaxMs: round(loop.max) };
+});
+
+/**
  * Short turns back to back on one thread: how long a send takes to reach the API, how long the
  * end of the reply takes to become a finished run the CLI sees (turn end and checkpoint), the time
  * per turn, and the event-loop delay across all of them.
@@ -1537,6 +1582,8 @@ interface RunOptions {
   /** A seeded base dir for the busy scenario. */
   readonly seed: string | undefined;
   readonly ballastMB: number;
+  /** Also runs the upper-bound stress cases, such as the 20-client reconnect storm. */
+  readonly stress: boolean;
   /** Where full CPU and allocation profiles go; none are written without it. */
   readonly profileDir: string | undefined;
 }
@@ -1640,7 +1687,11 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     yield* withServer("clients", (server) =>
       Effect.gen(function* () {
         const token = yield* server.issueToken;
-        const most = Math.max(STORM_CLIENTS, ...options.threads);
+        const most = Math.max(
+          RECONNECT_THREADS,
+          options.stress ? STORM_CLIENTS : 0,
+          ...options.threads,
+        );
         const threads = yield* openThreads(server, 0, most);
         const attached: Record<string, Window> = {};
         for (const count of options.threads) {
@@ -1653,49 +1704,27 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             }),
           );
         }
-        // Each client gets its own scope so the storm can drop them on cue; the server's scope
-        // still closes any left open when a step fails or is interrupted.
-        const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
-          Scope.close(scope, exit),
+        const reconnect = yield* reconnectAll(
+          server,
+          token,
+          Array.from({ length: RECONNECT_CLIENTS }, () => threads.slice(0, RECONNECT_THREADS)),
         );
         // Every client holds the shell, VCS status and one thread, then all drop and come back.
-        const clients = yield* Effect.forEach(threads.slice(0, STORM_CLIENTS), () => clientScope);
-        const first = yield* Effect.forEach(
-          clients,
-          (scope, index) =>
-            attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
-          { concurrency: "unbounded" },
-        );
-        yield* Effect.sleep(Duration.seconds(10));
-        yield* Effect.forEach(first, (client) => client.healthy, { discard: true });
-        yield* server.loopStart;
-        const dropped = yield* nowMs;
-        yield* Effect.forEach(clients, (scope) => Scope.close(scope, Exit.void), {
-          concurrency: "unbounded",
-          discard: true,
-        });
-        const reopened = yield* Effect.forEach(clients, () => clientScope);
-        const second = yield* Effect.forEach(
-          reopened,
-          (scope, index) =>
-            attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
-          { concurrency: "unbounded" },
-        );
-        const resubscribedMs = Math.round((yield* nowMs) - dropped);
-        const loop = yield* server.loopRead;
-        // The first cohort again: a loss between its check and the drop happened in the storm.
-        yield* Effect.forEach([...first, ...second], (client) => client.healthy, { discard: true });
-        yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), {
-          discard: true,
-        });
+        const storm = options.stress
+          ? yield* reconnectAll(
+              server,
+              token,
+              threads.slice(0, STORM_CLIENTS).map((thread) => [thread]),
+            )
+          : undefined;
         measured.clients = {
           attached,
-          storm: {
-            clients: STORM_CLIENTS,
-            resubscribedMs,
-            loopDelayP99Ms: round(loop.p99),
-            loopDelayMaxMs: round(loop.max),
+          reconnect: {
+            clients: RECONNECT_CLIENTS,
+            threadsPerClient: RECONNECT_THREADS,
+            ...reconnect,
           },
+          ...(storm ? { storm: { clients: STORM_CLIENTS, ...storm } } : {}),
         };
       }),
     );
@@ -2112,6 +2141,12 @@ const runFlags = {
     ),
     Flag.withDefault(768),
   ),
+  stress: Flag.Boolean("stress").pipe(
+    Flag.withDefault(false),
+    Flag.withDescription(
+      "Also run upper bounds no user hits daily: clients drops 20 clients at once and reconnects them. Compare stress numbers only with stress numbers.",
+    ),
+  ),
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
@@ -2130,6 +2165,7 @@ interface RunFlags {
   readonly busyProjects: number;
   readonly busyThreads: number;
   readonly busyBallast: number;
+  readonly stress: boolean;
 }
 
 const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
@@ -2156,6 +2192,7 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
     profileDir,
     seed: undefined,
     ballastMB: flags.busyBallast,
+    stress: flags.stress,
   };
   return options;
 });
