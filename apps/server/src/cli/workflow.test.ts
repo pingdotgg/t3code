@@ -166,8 +166,10 @@ it.effect("reports what the server refused instead of calling it unreachable", (
   }),
 );
 
-it.effect("signal sends only one complete address to the server", () =>
+it.effect("signal sends only one complete address and a non-blank id to the server", () =>
   Effect.gen(function* () {
+    const deliver: McpBridge.McpToolSession["call"] = () =>
+      Effect.succeed({ structuredContent: { delivery: "delivered" } });
     const byRun = ["--run", "run-1", "--wait", "approve"];
     const byChannel = ["--workflow", "review", "--channel", "pr-1"];
     for (const [address, sent] of [
@@ -180,11 +182,28 @@ it.effect("signal sends only one complete address to the server", () =>
       [["--workflow", "review"], false],
       [["--channel", "pr-1"], false],
     ] as const) {
-      const { error, calls } = yield* runCli(["signal", "{}", ...address], () =>
-        Effect.succeed({ structuredContent: { delivery: "delivered" } }),
-      );
+      const { error, calls } = yield* runCli(["signal", "{}", ...address], deliver);
       assert.strictEqual(error?._tag, sent ? undefined : "ThreadUsageError");
       assert.lengthOf(calls, sent ? 1 : 0);
     }
+
+    for (const blankId of ["", "   "]) {
+      const { error, calls } = yield* runCli(
+        ["signal", "{}", "--run", "r", "--wait", "w", "--id", blankId],
+        deliver,
+      );
+      assert.strictEqual(error?._tag, "ThreadUsageError");
+      assert.strictEqual(error?.message, "--id cannot be blank.");
+      assert.lengthOf(calls, 0);
+    }
+
+    const withId = yield* runCli(
+      ["signal", "{}", "--run", "r", "--wait", "w", "--id", "s1"],
+      deliver,
+    );
+    assert.isUndefined(withId.error);
+    assert.deepStrictEqual(withId.calls, [
+      { action: "signal", value: {}, runId: "r", wait: "w", signalId: "s1" },
+    ]);
   }),
 );

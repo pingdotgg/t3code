@@ -251,6 +251,9 @@ const signalCommand = Command.make("signal", {
           detail: "Address a signal with --run and --wait, or with --workflow and --channel.",
         });
       }
+      if (Option.isSome(flags.id) && flags.id.value.trim() === "") {
+        return yield* new ThreadUsageError({ detail: "--id cannot be blank." });
+      }
       yield* withThreadTools(
         { ...flags, json: false },
         Effect.fn("cli.workflow.signal")(function* (tools) {
