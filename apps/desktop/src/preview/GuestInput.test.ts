@@ -2,7 +2,7 @@ import * as NodeVM from "node:vm";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
+import { routeMouseToFrame, sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
 
 const makeGuest = ({
   focused,
@@ -263,6 +263,98 @@ describe("preview guest input", () => {
       expect(events).toEqual([press, release]);
     },
   );
+
+  describe("mouse input over a cross-site frame of a guest the window does not show", () => {
+    // The page holds a cross-site frame at (10, 99) and a same-site one at (700, 0); the
+    // cross-site frame holds another at (100, 100).
+    const frames: Record<
+      string,
+      ReadonlyArray<{
+        readonly box: readonly [number, number, number, number];
+        readonly frameId: string;
+      }>
+    > = {
+      page: [
+        { box: [10, 99, 610, 399], frameId: "CROSS" },
+        { box: [700, 0, 900, 200], frameId: "SAME" },
+      ],
+      "session-cross": [{ box: [100, 100, 300, 300], frameId: "NESTED" }],
+    };
+    const frameSessions = new Map([
+      ["CROSS", "session-cross"],
+      ["NESTED", "session-nested"],
+    ]);
+    const makeFramedGuest = () => {
+      const input: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
+      const lookups: Array<{ x: unknown; y: unknown }> = [];
+      const sendCommand = vi.fn(
+        async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+          const inFrame = frames[sessionId ?? "page"] ?? [];
+          if (method === "DOM.getNodeForLocation") {
+            lookups.push({ x: params["x"], y: params["y"] });
+            const { x, y } = params as { x: number; y: number };
+            const index = inFrame.findIndex(
+              ({ box: [left, top, right, bottom] }) =>
+                x >= left && x < right && y >= top && y < bottom,
+            );
+            return { backendNodeId: index + 1, frameId: "OWNER" };
+          }
+          const owner = inFrame[(params["backendNodeId"] as number) - 1];
+          if (method === "DOM.describeNode") return { node: { frameId: owner?.frameId } };
+          if (method === "DOM.getBoxModel") {
+            const [left, top, right, bottom] = owner!.box;
+            return { model: { content: [left, top, right, top, right, bottom, left, bottom] } };
+          }
+          input.push({ sessionId, x: params["x"], y: params["y"] });
+          return {};
+        },
+      );
+      const debuggee = { sendCommand } as unknown as Electron.Debugger;
+      const click = async (x: number, y: number, routed = true) => {
+        for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+          await sendPageCommand(
+            {} as Electron.WebContents,
+            debuggee,
+            "Input.dispatchMouseEvent",
+            { type, x, y },
+            undefined,
+            routed ? routeMouseToFrame(debuggee, frameSessions) : undefined,
+          );
+        }
+      };
+      return { click, input, lookups };
+    };
+
+    it("sends it to the frame under the point, at the frame's own coordinates", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(75.4, 116.5);
+      expect(guest.input).toEqual(
+        Array.from({ length: 3 }, () => ({ sessionId: "session-cross", x: 65.4, y: 17.5 })),
+      );
+      // Chromium takes whole pixels for the lookup only.
+      expect(guest.lookups[0]).toEqual({ x: 75, y: 117 });
+    });
+
+    it("follows a cross-site frame inside another", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(160, 250);
+      expect(guest.input[0]).toEqual({ sessionId: "session-nested", x: 50, y: 51 });
+    });
+
+    it("keeps input over the page or a same-site frame on the page", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(5, 5);
+      await guest.click(750, 50);
+      expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(6).fill(undefined));
+    });
+
+    it("leaves a shown guest's input to Chromium", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(75, 116, false);
+      expect(guest.lookups).toEqual([]);
+      expect(guest.input[0]).toEqual({ sessionId: undefined, x: 75, y: 116 });
+    });
+  });
 
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });

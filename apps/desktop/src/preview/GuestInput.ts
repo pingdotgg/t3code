@@ -141,6 +141,56 @@ const sendPointerPress = async (
   }
 };
 
+/** Moves a page point into the cross-site frame under it, if one has a session; null when none does. */
+export type PointerRoute = (
+  params: Record<string, unknown>,
+) => Promise<{ readonly params: Record<string, unknown>; readonly sessionId: string } | null>;
+
+const MAX_FRAME_DEPTH = 8;
+
+/**
+ * Chromium picks a pointer event's frame by hit-testing what the window composites, so on a
+ * guest the window does not show, input over a cross-site frame lands on the page instead.
+ * That frame's own session takes the event at frame-local coordinates.
+ */
+export const routeMouseToFrame =
+  (debuggee: Electron.Debugger, frameSessions: ReadonlyMap<string, string>): PointerRoute =>
+  async (params) => {
+    let { x, y } = params;
+    if (typeof x !== "number" || typeof y !== "number") return null;
+    let sessionId: string | undefined;
+    for (let depth = 0; depth < MAX_FRAME_DEPTH; depth++) {
+      try {
+        const { backendNodeId } = (await debuggee.sendCommand(
+          "DOM.getNodeForLocation",
+          // Takes whole pixels only; the event keeps its exact point.
+          { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: true },
+          sessionId,
+        )) as { readonly backendNodeId: number };
+        const { node } = (await debuggee.sendCommand(
+          "DOM.describeNode",
+          { backendNodeId },
+          sessionId,
+        )) as { readonly node: { readonly frameId?: string } };
+        // A cross-site frame's target id is its frame id; a same-site frame has no session.
+        const frameSession =
+          node.frameId === undefined ? undefined : frameSessions.get(node.frameId);
+        if (frameSession === undefined) break;
+        const { model } = (await debuggee.sendCommand(
+          "DOM.getBoxModel",
+          { backendNodeId },
+          sessionId,
+        )) as { readonly model: { readonly content: ReadonlyArray<number> } };
+        x -= model.content[0] ?? 0;
+        y -= model.content[1] ?? 0;
+        sessionId = frameSession;
+      } catch {
+        break;
+      }
+    }
+    return sessionId === undefined ? null : { params: { ...params, x, y }, sessionId };
+  };
+
 const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
 
 /** Focus capture crosses processes; later pointer events must not overtake the press. */
@@ -150,15 +200,18 @@ const sendPointerCommand = async (
   method: string,
   params: Record<string, unknown>,
   sessionId: string | undefined,
+  route: PointerRoute | undefined,
 ) => {
   const previous = pointerCommands.get(webContents) ?? Promise.resolve();
   const current = previous
     .catch(() => {})
-    .then(() =>
-      params["type"] === "mousePressed" || params["type"] === "touchStart"
-        ? sendPointerPress(webContents, debuggee, method, params, sessionId)
-        : debuggee.sendCommand(method, params, sessionId),
-    );
+    .then(async () => {
+      const routed = route && sessionId === undefined ? await route(params) : null;
+      const target = routed ?? { params, sessionId };
+      return params["type"] === "mousePressed" || params["type"] === "touchStart"
+        ? sendPointerPress(webContents, debuggee, method, target.params, target.sessionId)
+        : debuggee.sendCommand(method, target.params, target.sessionId);
+    });
   pointerCommands.set(webContents, current);
   try {
     return await current;
@@ -174,9 +227,13 @@ export const sendPageCommand = async (
   method: string,
   params: Record<string, unknown>,
   sessionId?: string,
+  routeMouse?: PointerRoute,
 ): Promise<unknown> => {
-  if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchTouchEvent") {
-    return sendPointerCommand(webContents, debuggee, method, params, sessionId);
+  if (method === "Input.dispatchMouseEvent") {
+    return sendPointerCommand(webContents, debuggee, method, params, sessionId, routeMouse);
+  }
+  if (method === "Input.dispatchTouchEvent") {
+    return sendPointerCommand(webContents, debuggee, method, params, sessionId, undefined);
   }
   if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
   // Electron's debugger routes Page.reload on a webview to its embedder window.

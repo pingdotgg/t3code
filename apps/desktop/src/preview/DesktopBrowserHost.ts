@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
-import { sendPageCommand } from "./GuestInput.ts";
+import { routeMouseToFrame, sendPageCommand } from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -56,6 +56,27 @@ export interface DesktopBrowserTabDebugger {
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
+const trackFrameSession = (
+  tab: { readonly frameSessions: Map<string, string> },
+  method: string,
+  params: unknown,
+) => {
+  if (method === "Target.attachedToTarget") {
+    const { sessionId, targetInfo } = params as {
+      readonly sessionId?: string;
+      readonly targetInfo?: { readonly targetId?: string; readonly type?: string };
+    };
+    if (targetInfo?.type === "iframe" && targetInfo.targetId && sessionId) {
+      tab.frameSessions.set(targetInfo.targetId, sessionId);
+    }
+  } else if (method === "Target.detachedFromTarget") {
+    const { sessionId } = params as { readonly sessionId?: string };
+    for (const [frameId, frameSession] of tab.frameSessions) {
+      if (frameSession === sessionId) tab.frameSessions.delete(frameId);
+    }
+  }
+};
+
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
@@ -81,6 +102,8 @@ interface AttachedTab {
   readonly capturing: Set<object>;
   /** Each wait on the guest's next frame, as whether it still waits; the guest is prodded until none do. */
   readonly frameWaits: Set<() => boolean>;
+  /** Sessions of the guest's cross-site frames that Chromium attached, by frame id. */
+  readonly frameSessions: Map<string, string>;
   nudging: Fiber.Fiber<void> | null;
   /** A wait outlasted its first nudge, so the guest is painted and unthrottled like a capture. */
   frameStalled: boolean;
@@ -437,8 +460,18 @@ export const make = Effect.gen(function* () {
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const routeMouse = routeMouseToFrame(debuggee, tab.frameSessions);
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-      const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
+      // A guest the window shows routes its own pointer input.
+      const shown = shownTabs.get(keyOf(tab.key)) === true;
+      const result = await sendPageCommand(
+        webContents,
+        debuggee,
+        method,
+        params,
+        sessionId,
+        shown ? undefined : routeMouse,
+      );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
     };
@@ -619,6 +652,7 @@ export const make = Effect.gen(function* () {
       focusPending: new Map(),
       capturing: new Set(),
       frameWaits: new Set(),
+      frameSessions: new Map(),
       nudging: null,
       frameStalled: false,
       painting: false,
@@ -630,6 +664,7 @@ export const make = Effect.gen(function* () {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
         }
+        trackFrameSession(tab, method, params);
         tab.relay?.event(method, params, sessionId);
       },
       // A screenshot pending when the page loads a new document, a reload included, can

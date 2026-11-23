@@ -1094,6 +1094,44 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("finds the frame under the mouse only on a guest the window does not show", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const move = (id: number) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id,
+              method: "Input.dispatchMouseEvent",
+              params: { id, type: "mouseMoved", x: 5, y: 5 },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+
+      yield* move(1);
+      yield* settle;
+      expect(debuggee.methods).toEqual(["DOM.getNodeForLocation"]);
+      // A lookup that finds no cross-site frame leaves the event on the page.
+      for (const method of ["DOM.describeNode", "Input.dispatchMouseEvent"]) {
+        debuggee.releaseFirst();
+        yield* settle;
+        expect(debuggee.methods.at(-1)).toBe(method);
+      }
+      debuggee.release();
+
+      host.setShown(key, true);
+      yield* move(2);
+      yield* settle;
+      expect(debuggee.methods.at(-1)).toBe("Input.dispatchMouseEvent");
+      expect(debuggee.methods.filter((method) => method.startsWith("DOM."))).toHaveLength(2);
+    }),
+  );
+
   it.effect("paints a hidden guest only while the screenshot it is taking is pending", () =>
     Effect.gen(function* () {
       const host = yield* makeDrawnHost;
