@@ -8,7 +8,8 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
  * It takes the button's text colour and turns to the error colour past 90%.
  */
 export function ComposerContextRing(props: { usage: ContextWindowSnapshot }) {
-  const used = Math.max(0, Math.min(100, props.usage.usedPercentage ?? 0));
+  if (props.usage.usedPercentage === null) return null;
+  const used = Math.max(0, Math.min(100, props.usage.usedPercentage));
   return (
     <svg
       viewBox="0 0 32 32"

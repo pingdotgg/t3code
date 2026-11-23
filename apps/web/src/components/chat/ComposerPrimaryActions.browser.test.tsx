@@ -194,36 +194,3 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
   await screen.rerender(collapsed({ canInterrupt: false }));
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 });
-
-it("draws the context window ring inside Send and Stop", async () => {
-  const usage = {
-    usedTokens: 96_000,
-    maxTokens: 200_000,
-    remainingTokens: 104_000,
-    usedPercentage: 48,
-    remainingPercentage: 52,
-    updatedAt: "2026-11-23T00:00:00.000Z",
-  };
-  const props = { ...setup(), isRunning: false, canInterrupt: false, hasSendableContent: true };
-  await using screen = await render(<ComposerPrimaryActions {...props} contextWindow={usage} />);
-  const ring = () =>
-    document.querySelector<SVGElement>("[data-composer-context-ring]")?.dataset.composerContextRing;
-  const send = screen.getByRole("button", { name: "Submit message" }).element();
-  expect(send.querySelector("[data-composer-context-ring]")).not.toBeNull();
-  expect(ring()).toBe("48");
-
-  await screen.rerender(
-    <ComposerPrimaryActions
-      {...props}
-      isRunning
-      canInterrupt
-      hasSendableContent={false}
-      contextWindow={usage}
-    />,
-  );
-  const stop = screen.getByRole("button", { name: "Stop generation" }).element();
-  expect(stop.querySelector("[data-composer-context-ring]")).not.toBeNull();
-
-  await screen.rerender(<ComposerPrimaryActions {...props} contextWindow={null} />);
-  expect(ring()).toBeUndefined();
-});

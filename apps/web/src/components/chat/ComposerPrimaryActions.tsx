@@ -207,6 +207,7 @@ export function CollapsedComposerStopAction({
   hasSendableContent,
   isEditingQueuedMessage,
   onInterrupt,
+  contextWindow = null,
 }: {
   children: ReactNode;
   canOperateThread: boolean;
@@ -215,6 +216,7 @@ export function CollapsedComposerStopAction({
   hasSendableContent: boolean;
   isEditingQueuedMessage: boolean;
   onInterrupt: () => void;
+  contextWindow?: ContextWindowSnapshot | null;
 }) {
   const [stopPhase, setStopPhase] = useStopPhase({ runId, canInterrupt, canOperateThread });
   if (
@@ -237,6 +239,7 @@ export function CollapsedComposerStopAction({
         preserveComposerFocusOnPointerDown
         onStopRequested={() => setStopPhase("pending")}
         onInterrupt={onInterrupt}
+        contextWindow={contextWindow}
       />
     </span>
   );
