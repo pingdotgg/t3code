@@ -156,7 +156,6 @@ describe("DesktopBackgroundService", () => {
             "http://127.0.0.1:3773/",
           );
           assert.strictEqual(Option.getOrThrow(attached).label, "Windows");
-          assert.isFalse(Option.getOrThrow(attached).managedByDesktop);
           assert.deepStrictEqual(yield* service.status, {
             supported: true,
             enabled: true,
@@ -172,70 +171,29 @@ describe("DesktopBackgroundService", () => {
     ),
   );
 
-  it.effect(
-    "attaches as desktop-managed when a desktopBackgroundManaged server holds the ownership lock",
-    () =>
-      withServiceTest({ backgroundServiceEnabled: true }, ({ userdata, service }) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          yield* fs.writeFileString(
-            `${userdata}/server-runtime.json`,
-            JSON.stringify({
-              version: 1,
-              pid: process.pid,
-              port: 3773,
-              origin: "http://127.0.0.1:3773",
-              startedAt: "2026-11-23T00:00:00.000Z",
-              desktopBackgroundManaged: true,
-              serverVersion: "0.1.11",
-            }),
-          );
-          const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
-          lock.exec("BEGIN EXCLUSIVE;");
-          try {
-            const attached = yield* service.tryAttach;
-            assert.isTrue(Option.isSome(attached));
-            assert.isTrue(Option.getOrThrow(attached).managedByDesktop);
-            assert.deepStrictEqual(yield* service.status, {
-              supported: true,
-              enabled: true,
-              running: true,
-              attached: true,
-              externalService: false,
-              version: "0.1.11",
-            });
-          } finally {
-            lock.close();
-          }
-        }),
-      ),
-  );
-
-  it.effect(
-    "does not attach when the owner is neither serviceManaged nor desktopBackgroundManaged",
-    () =>
-      withServiceTest({}, ({ userdata, service }) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          yield* fs.writeFileString(
-            `${userdata}/server-runtime.json`,
-            JSON.stringify({
-              version: 1,
-              pid: process.pid,
-              port: 3773,
-              origin: "http://127.0.0.1:3773",
-              startedAt: "2026-11-23T00:00:00.000Z",
-            }),
-          );
-          const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
-          lock.exec("BEGIN EXCLUSIVE;");
-          try {
-            assert.isTrue(Option.isNone(yield* service.tryAttach));
-          } finally {
-            lock.close();
-          }
-        }),
-      ),
+  it.effect("does not attach when the owner is not serviceManaged", () =>
+    withServiceTest({}, ({ userdata, service }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          `${userdata}/server-runtime.json`,
+          JSON.stringify({
+            version: 1,
+            pid: process.pid,
+            port: 3773,
+            origin: "http://127.0.0.1:3773",
+            startedAt: "2026-11-23T00:00:00.000Z",
+          }),
+        );
+        const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        lock.exec("BEGIN EXCLUSIVE;");
+        try {
+          assert.isTrue(Option.isNone(yield* service.tryAttach));
+        } finally {
+          lock.close();
+        }
+      }),
+    ),
   );
 
   it.effect("mints an administrative bearer token and reads instant settings status", () => {

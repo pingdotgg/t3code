@@ -51,6 +51,7 @@ import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
+import * as DesktopTray from "../window/DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
@@ -91,13 +92,11 @@ interface StubbedDesktop {
   readonly activationStarted?: Deferred.Deferred<void>;
   readonly attachedBackgroundService?: DesktopBackgroundService.AttachedBackgroundService;
   readonly backgroundServiceEnabled?: boolean;
-  readonly quitMode?: DesktopState.DesktopQuitMode;
 }
 
 const runStubbedDesktop = (stub: StubbedDesktop) =>
   Effect.gen(function* () {
     const quitting = yield* Ref.make(false);
-    const quitMode = yield* Ref.make<DesktopState.DesktopQuitMode>(stub.quitMode ?? "quit");
     const primaryBackendStartup = yield* SubscriptionRef.make<DesktopState.PrimaryBackendStartup>({
       _tag: "Starting",
     });
@@ -163,6 +162,10 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(DesktopApplicationMenu.DesktopApplicationMenu, {
           configure: stub.record("menu"),
         }),
+        Effect.provideService(DesktopTray.DesktopTray, {
+          sync: stub.record("tray-sync"),
+          destroy: stub.record("tray-destroy"),
+        }),
         Effect.provideService(DesktopUpdates.DesktopUpdates, {
           configure: Effect.void,
         } as unknown as DesktopUpdates.DesktopUpdates["Service"]),
@@ -182,7 +185,6 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         } as DesktopSnapShot.DesktopSnapShot["Service"]),
         Effect.provideService(DesktopState.DesktopState, {
           quitting,
-          quitMode,
           primaryBackendStartup,
         } as DesktopState.DesktopState["Service"]),
         Effect.provideService(DesktopWindow.DesktopWindow, {
@@ -206,27 +208,6 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           clearAttached: Ref.set(attachedRef, Option.none()),
           issueBearerToken: Effect.succeed("service-token"),
           status: Effect.die("unexpected status"),
-          startDetached: (options) =>
-            stub.record(options.attach ? "start-detached-attach" : "start-detached-handoff").pipe(
-              Effect.andThen(() => {
-                if (!options.attach) return Effect.succeedNone;
-                const attached: DesktopBackgroundService.AttachedBackgroundService = {
-                  pid: process.pid,
-                  port: options.port,
-                  httpBaseUrl: new URL(`http://127.0.0.1:${options.port}`),
-                  serverVersion: "0.1.11",
-                  label: "Windows",
-                  managedByDesktop: true,
-                };
-                return Ref.set(attachedRef, Option.some(attached)).pipe(
-                  Effect.as(Option.some(attached)),
-                );
-              }),
-            ),
-          stopDetached: (options) =>
-            stub
-              .record(options?.preserveRelay ? "stop-detached-preserve" : "stop-detached")
-              .pipe(Effect.andThen(Ref.set(attachedRef, Option.none()))),
         }),
         Effect.provideService(DesktopBackendPool.DesktopBackendPool, {
           primary: Effect.succeed({
@@ -366,7 +347,7 @@ it.effect.each([false, true])(
       // The backend spawns before menus, and its token is minted without waiting for the renderer.
       assert.deepEqual(
         events.filter((event) => event !== "token"),
-        ["identity", "ready", "identity", "backend", "menu", "window"],
+        ["identity", "ready", "identity", "backend", "menu", "tray-sync", "window"],
       );
       assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
@@ -469,7 +450,6 @@ it.effect(
           httpBaseUrl: new URL("http://127.0.0.1:3773"),
           serverVersion: "0.1.11",
           label: "Windows",
-          managedByDesktop: true,
         },
         backgroundServiceEnabled: true,
       });
@@ -477,68 +457,10 @@ it.effect(
       yield* Deferred.await(tokenRequested);
       assert.include(events, "attach-service");
       assert.include(events, "backend-ready");
+      assert.include(events, "tray-sync");
       assert.notInclude(events, "backend");
       yield* (yield* DesktopShutdown.DesktopShutdown).request;
       yield* Fiber.join(app);
-      assert.notInclude(events, "stop-detached");
+      assert.include(events, "tray-destroy");
     }).pipe(Effect.provide(DesktopShutdown.layer)),
-);
-
-it.effect(
-  "stops a desktop-managed background server on quit after background service is turned off",
-  () =>
-    Effect.gen(function* () {
-      const windowStarted = yield* Deferred.make<void>();
-      const events: string[] = [];
-      const app = yield* runStubbedDesktop({
-        localEnvironmentEnabled: true,
-        backgroundServiceEnabled: false,
-        environment: { isPackaged: false },
-        fileSystem: FileSystem.layerNoop({}),
-        record: (event) =>
-          Effect.sync(() => {
-            events.push(event);
-          }),
-        windowStarted,
-        registerLinuxUrlHandler: Effect.void,
-        attachedBackgroundService: {
-          pid: process.pid,
-          port: 3773,
-          httpBaseUrl: new URL("http://127.0.0.1:3773"),
-          serverVersion: "0.1.11",
-          label: "Windows",
-          managedByDesktop: true,
-        },
-      });
-      yield* Deferred.await(windowStarted);
-      yield* (yield* DesktopShutdown.DesktopShutdown).request;
-      yield* Fiber.join(app);
-      assert.include(events, "stop-detached");
-    }).pipe(Effect.provide(DesktopShutdown.layer)),
-);
-
-it.effect("starts a detached background server on startup when background service is enabled", () =>
-  Effect.gen(function* () {
-    const windowStarted = yield* Deferred.make<void>();
-    const events: string[] = [];
-    const app = yield* runStubbedDesktop({
-      localEnvironmentEnabled: true,
-      backgroundServiceEnabled: true,
-      environment: { isPackaged: false },
-      fileSystem: FileSystem.layerNoop({}),
-      record: (event) =>
-        Effect.sync(() => {
-          events.push(event);
-        }),
-      windowStarted,
-      registerLinuxUrlHandler: Effect.void,
-    });
-    yield* Deferred.await(windowStarted);
-    assert.include(events, "start-detached-attach");
-    assert.include(events, "backend-ready");
-    assert.notInclude(events, "backend");
-    yield* (yield* DesktopShutdown.DesktopShutdown).request;
-    yield* Fiber.join(app);
-    assert.notInclude(events, "stop-detached");
-  }).pipe(Effect.provide(DesktopShutdown.layer)),
 );

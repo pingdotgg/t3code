@@ -5,11 +5,10 @@ import type { DesktopBackgroundServiceState } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { act, render, stubGlobal } from "../../../test/render";
-import { desktopBackgroundServiceStateAtom } from "../../state/desktopBackgroundService";
+import { render, stubGlobal } from "../../../test/render";
 import { BackgroundServiceSetting } from "./BackgroundServiceSetting";
 
-it("toggles background service directly without a confirmation dialog", async () => {
+it("toggles background service immediately and stays checked without flicker", async () => {
   const baseState: DesktopBackgroundServiceState = {
     supported: true,
     enabled: false,
@@ -42,18 +41,12 @@ it("toggles background service directly without a confirmation dialog", async ()
   const toggle = screen.getByRole("switch", { name: "Background service" });
   await expect.element(toggle).not.toBeChecked();
 
-  getBackgroundServiceState.mockResolvedValue({
-    ...baseState,
-    enabled: true,
-  });
+  // Even before the background refresh resolves, the switch stays checked with zero snap-back.
   await toggle.click();
   expect(enableBackgroundService).toHaveBeenCalledOnce();
-  await act(() => registry.refresh(desktopBackgroundServiceStateAtom));
   await expect.element(toggle).toBeChecked();
 
-  getBackgroundServiceState.mockResolvedValue(baseState);
   await toggle.click();
   expect(disableBackgroundService).toHaveBeenCalledOnce();
-  await act(() => registry.refresh(desktopBackgroundServiceStateAtom));
   await expect.element(toggle).not.toBeChecked();
 });

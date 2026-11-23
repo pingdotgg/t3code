@@ -1,15 +1,12 @@
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -23,6 +20,7 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
+import * as DesktopTray from "../window/DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopBackgroundService from "../backend/DesktopBackgroundService.ts";
@@ -311,39 +309,6 @@ const startLocalBackend = Effect.gen(function* () {
   if (yield* Ref.get(state.quitting)) {
     return false;
   }
-  if (
-    settings.backgroundServiceEnabled &&
-    !(settings.wslOnly && settings.wslBackendEnabled) &&
-    !environment.isDevelopment
-  ) {
-    const startedDetached = yield* backgroundService
-      .startDetached({
-        port: backendConfig.port,
-        bindHost: backendConfig.bindHost,
-        tailscaleServeEnabled: backendConfig.tailscaleServeEnabled,
-        tailscaleServePort: backendConfig.tailscaleServePort,
-        attach: true,
-      })
-      .pipe(
-        Effect.catch((error) =>
-          logBootstrapWarning(
-            "failed to start detached background server; falling back to embedded backend",
-            { error: error.message },
-          ).pipe(Effect.as(Option.none<DesktopBackgroundService.AttachedBackgroundService>())),
-        ),
-      );
-    if (Option.isSome(startedDetached)) {
-      yield* DesktopCliShim.install;
-      yield* desktopWindow.handleBackendReady(startedDetached.value.httpBaseUrl);
-      yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
-      yield* Effect.forkScoped(
-        (yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth).getBearerToken.pipe(
-          Effect.ignore,
-        ),
-      );
-      return true;
-    }
-  }
   if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
     yield* desktopWindow.showConnectingSplash;
   }
@@ -495,6 +460,14 @@ const startup = Effect.gen(function* () {
   );
   yield* previewPasskeys.configure;
   yield* applicationMenu.configure;
+  yield* Effect.serviceOption(DesktopTray.DesktopTray).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (tray) => tray.sync,
+      }),
+    ),
+  );
   // Portal identity is prepared pre-ready; MIME helpers must not gate the backend or window.
   yield* linuxUrlHandler.register.pipe(Effect.forkScoped);
   yield* bootstrap(backendStarted).pipe(
@@ -510,74 +483,17 @@ const scopedProgram = Effect.scoped(
 
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
     const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
-    const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
-    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const state = yield* DesktopState.DesktopState;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-
-    const finalizeBackends = Effect.gen(function* () {
-      const [settings, attached, quitMode] = yield* Effect.all([
-        desktopSettings.get,
-        backgroundService.attached,
-        Ref.get(state.quitMode),
-      ]);
-      const shouldKeepRunningInBackground =
-        quitMode === "quit" &&
-        settings.backgroundServiceEnabled === true &&
-        settings.localEnvironmentEnabled === true &&
-        !(settings.wslOnly && settings.wslBackendEnabled) &&
-        !environment.isDevelopment;
-
-      if (Option.isSome(attached)) {
-        yield* stopAllPoolInstances();
-        if (attached.value.managedByDesktop && !shouldKeepRunningInBackground) {
-          yield* backgroundService.stopDetached({
-            preserveRelay: quitMode === "relaunch" || quitMode === "update",
-          });
-        }
-        return;
-      }
-
-      if (shouldKeepRunningInBackground) {
-        const backendConfig = yield* serverExposure.backendConfig;
-        if (backendConfig.port > 0) {
-          const runtimeDir = path.join(environment.baseDir, "runtime");
-          yield* fileSystem.makeDirectory(runtimeDir, { recursive: true }).pipe(Effect.ignore);
-          yield* fileSystem
-            .writeFileString(path.join(runtimeDir, DESKTOP_UPDATE_RESTART_MARKER_FILE), "", {
-              mode: 0o600,
-            })
-            .pipe(Effect.ignore);
-          yield* stopAllPoolInstances();
-          yield* DesktopHomeOwner.awaitHomeOwnershipRelease();
-          yield* backgroundService
-            .startDetached({
-              port: backendConfig.port,
-              bindHost: backendConfig.bindHost,
-              tailscaleServeEnabled: backendConfig.tailscaleServeEnabled,
-              tailscaleServePort: backendConfig.tailscaleServePort,
-              attach: false,
-            })
-            .pipe(
-              Effect.catch((error) =>
-                logBootstrapWarning("failed to hand off embedded backend to background server", {
-                  error: error.message,
-                }),
-              ),
-            );
-          return;
-        }
-      }
-
-      yield* stopAllPoolInstances();
-    });
+    const tray = yield* Effect.serviceOption(DesktopTray.DesktopTray);
 
     yield* Effect.addFinalizer(() =>
       // Quit can outrun layer finalizers; stop pooled backends here so they receive SIGTERM before OS teardown.
-      finalizeBackends.pipe(
+      stopAllPoolInstances().pipe(
+        Effect.ensuring(
+          Option.match(tray, {
+            onNone: () => Effect.void,
+            onSome: (service) => service.destroy,
+          }),
+        ),
         Effect.ensuring(rendererHistory.shutdown),
         Effect.ensuring(shutdown.markComplete),
         Effect.withSpan("desktop.app.shutdown"),

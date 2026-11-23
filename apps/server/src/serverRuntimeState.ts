@@ -21,7 +21,6 @@ export const PersistedServerRuntimeState = Schema.Struct({
   devUrl: Schema.optional(Schema.String),
   startedAt: Schema.String,
   serviceManaged: Schema.optional(Schema.Boolean),
-  desktopBackgroundManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
   // The managed policy this server loaded at startup, null for none; absent from older servers.
   managedPolicy: Schema.optional(
@@ -69,7 +68,6 @@ export const makePersistedServerRuntimeState = (input: {
   >;
   readonly port: number;
   readonly serviceManaged?: boolean;
-  readonly desktopBackgroundManaged?: boolean;
   readonly managedPolicy?: PersistedServerRuntimeState["managedPolicy"];
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
@@ -82,7 +80,6 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
     startedAt: DateTime.formatIso(now),
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
-    ...(input.desktopBackgroundManaged ? { desktopBackgroundManaged: true } : {}),
     serverVersion: packageJson.version,
     ...(input.managedPolicy === undefined ? {} : { managedPolicy: input.managedPolicy }),
   }));

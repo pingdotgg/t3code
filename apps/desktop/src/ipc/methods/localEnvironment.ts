@@ -1,12 +1,14 @@
 import { DesktopBackgroundServiceStateSchema } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopBackgroundService from "../../backend/DesktopBackgroundService.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopTray from "../../window/DesktopTray.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
 
@@ -58,6 +60,15 @@ export const getBackgroundServiceState = makeIpcMethod({
   }),
 });
 
+const syncTrayIfPresent = Effect.serviceOption(DesktopTray.DesktopTray).pipe(
+  Effect.flatMap(
+    Option.match({
+      onNone: () => Effect.void,
+      onSome: (tray) => tray.sync,
+    }),
+  ),
+);
+
 export const enableBackgroundService = makeIpcMethod({
   channel: IpcChannels.ENABLE_BACKGROUND_SERVICE_CHANNEL,
   payload: Schema.Void,
@@ -66,6 +77,7 @@ export const enableBackgroundService = makeIpcMethod({
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
     yield* appSettings.setBackgroundServiceEnabled(true);
+    yield* syncTrayIfPresent;
     return yield* backgroundService.status;
   }),
 });
@@ -78,6 +90,7 @@ export const disableBackgroundService = makeIpcMethod({
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
     yield* appSettings.setBackgroundServiceEnabled(false);
+    yield* syncTrayIfPresent;
     return yield* backgroundService.status;
   }),
 });

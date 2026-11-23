@@ -105,8 +105,6 @@ const makeBackgroundServiceLayer = (
     clearAttached: Effect.void,
     issueBearerToken: Effect.succeed("service-token"),
     status: Effect.die("unexpected status"),
-    startDetached: () => Effect.die("unexpected startDetached"),
-    stopDetached: () => Effect.die("unexpected stopDetached"),
   });
 
 const bootstrapsLayer = (
@@ -241,7 +239,6 @@ describe("getLocalEnvironmentBootstraps", () => {
             httpBaseUrl: new URL("http://127.0.0.1:3773"),
             serverVersion: "0.1.11",
             label: "Windows",
-            managedByDesktop: true,
           }),
         ),
       ),
@@ -309,7 +306,6 @@ describe("toLocalBackendPath", () => {
               httpBaseUrl: new URL("http://127.0.0.1:3773"),
               serverVersion: "0.1.11",
               label: "Windows",
-              managedByDesktop: true,
             }),
           ),
           DesktopBackendPool.layerTest([

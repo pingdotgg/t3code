@@ -13,6 +13,7 @@ import * as DesktopBackgroundService from "../../backend/DesktopBackgroundServic
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopTray from "../../window/DesktopTray.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import {
   disableBackgroundService,
@@ -90,11 +91,18 @@ describe("local environment IPC", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("toggles background service setting immediately without restarting", () =>
+  it.effect("toggles background service setting immediately and syncs the system tray", () =>
     Effect.gen(function* () {
+      let traySyncCount = 0;
       const settingsLayer = DesktopAppSettings.layerTest(
         DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
       );
+      const trayLayer = Layer.succeed(DesktopTray.DesktopTray, {
+        sync: Effect.sync(() => {
+          traySyncCount += 1;
+        }),
+        destroy: Effect.void,
+      });
       const backgroundServiceLayer = Layer.effect(
         DesktopBackgroundService.DesktopBackgroundService,
         Effect.gen(function* () {
@@ -114,11 +122,9 @@ describe("local environment IPC", () => {
                 version: null,
               })),
             ),
-            startDetached: () => Effect.die("unexpected startDetached"),
-            stopDetached: () => Effect.die("unexpected stopDetached"),
           });
         }),
-      ).pipe(Layer.provideMerge(settingsLayer));
+      ).pipe(Layer.provideMerge(settingsLayer), Layer.provideMerge(trayLayer));
 
       const initial = yield* getBackgroundServiceState
         .handler(undefined)
@@ -143,6 +149,7 @@ describe("local environment IPC", () => {
         externalService: false,
         version: null,
       });
+      assert.strictEqual(traySyncCount, 1);
 
       const disabled = yield* disableBackgroundService
         .handler(undefined)
@@ -155,6 +162,7 @@ describe("local environment IPC", () => {
         externalService: false,
         version: null,
       });
+      assert.strictEqual(traySyncCount, 2);
     }),
   );
 });

@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -404,6 +405,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSyncExit = Effect.runSyncExitWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
@@ -860,8 +862,18 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    window.on("close", (event) => {
       runFork(flushBoundsPersist);
+      const shouldHideToTray = runSyncExit(
+        Effect.gen(function* () {
+          if (yield* Ref.get(desktopState.quitting)) return false;
+          return (yield* desktopSettings.get).backgroundServiceEnabled;
+        }),
+      );
+      if (Exit.isSuccess(shouldHideToTray) && shouldHideToTray.value) {
+        event.preventDefault();
+        window.hide();
+      }
     });
 
     if (environment.platform === "darwin") {

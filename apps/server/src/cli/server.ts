@@ -1,10 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Config from "effect/Config";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
@@ -18,32 +15,6 @@ import * as AutomaticPort from "./automaticPort.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
-const DESKTOP_BACKGROUND_STOP_FILE = "desktop-background-stop";
-const DESKTOP_BACKGROUND_STOP_POLL_INTERVAL = Duration.millis(250);
-
-const awaitDesktopBackgroundStop = Effect.fn("server.awaitDesktopBackgroundStop")(function* (
-  baseDir: string,
-) {
-  const managed = yield* Config.Boolean("T3CODE_DESKTOP_BACKGROUND_SERVER").pipe(
-    Config.withDefault(false),
-  );
-  if (!managed) return yield* Effect.never;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const stopFilePath = path.join(baseDir, "runtime", DESKTOP_BACKGROUND_STOP_FILE);
-  const pidText = String(process.pid);
-  while (true) {
-    const requestedPid = yield* fs.readFileString(stopFilePath).pipe(
-      Effect.map((contents) => contents.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
-    if (requestedPid === pidText) {
-      yield* fs.remove(stopFilePath, { force: true }).pipe(Effect.ignore);
-      return;
-    }
-    yield* Effect.sleep(DESKTOP_BACKGROUND_STOP_POLL_INTERVAL);
-  }
-});
 
 const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   flags: CliServerFlags,
@@ -58,13 +29,9 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   const logLevel = yield* GlobalFlag.LogLevel;
   const selectAutomaticPort = yield* AutomaticPort.make.pipe(Effect.provide(ProcessRunner.layer));
   const config = yield* resolveServerConfig(flags, logLevel, { ...options, selectAutomaticPort });
-  const stopSignal = Effect.raceFirst(
-    awaitServiceLauncherStop(),
-    awaitDesktopBackgroundStop(config.baseDir),
-  ).pipe(Effect.andThen(Effect.interrupt));
   const run = Effect.raceFirst(
     runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config)),
-    stopSignal,
+    awaitServiceLauncherStop().pipe(Effect.andThen(Effect.interrupt)),
   ).pipe(
     // Settings' Reclaim stops the server; repair once the database is closed, before the restart.
     Effect.ensuring(

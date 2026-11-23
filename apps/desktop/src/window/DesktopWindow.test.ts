@@ -1761,4 +1761,42 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect(
+    "hides the main window on close when background service is enabled and not quitting",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const hide = vi.fn();
+        (fakeWindow.window as unknown as { hide: () => void }).hide = hide;
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            backgroundServiceEnabled: true,
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const desktopState = yield* DesktopState.DesktopState;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const closeEvent = { preventDefault: vi.fn() };
+          fakeWindow.windowListeners.get("close")?.(closeEvent);
+          assert.equal(closeEvent.preventDefault.mock.calls.length, 1);
+          assert.equal(hide.mock.calls.length, 1);
+
+          yield* Ref.set(desktopState.quitting, true);
+          const quitCloseEvent = { preventDefault: vi.fn() };
+          fakeWindow.windowListeners.get("close")?.(quitCloseEvent);
+          assert.equal(quitCloseEvent.preventDefault.mock.calls.length, 0);
+          assert.equal(hide.mock.calls.length, 1);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 });

@@ -225,7 +225,6 @@ export const make = DesktopLifecycle.of({
     yield* logLifecycleInfo("desktop relaunch requested", { reason });
     yield* Effect.gen(function* () {
       yield* Effect.yieldNow;
-      yield* Ref.set(state.quitMode, "relaunch");
       yield* Ref.set(state.quitting, true);
       yield* requestDesktopShutdownAndWait();
       if (environment.isDevelopment) {
@@ -273,12 +272,8 @@ export const make = DesktopLifecycle.of({
       // and windows could still be open when the process exits (visible on
       // macOS). Destroy them inline.
       Effect.runSyncWith(context)(
-        Effect.gen(function* () {
-          const state = yield* DesktopState.DesktopState;
-          yield* Ref.set(state.quitMode, "update");
-          yield* electronWindow.destroyAll;
-          yield* logLifecycleInfo("allowing updater-controlled quit");
-        }).pipe(
+        electronWindow.destroyAll.pipe(
+          Effect.andThen(logLifecycleInfo("allowing updater-controlled quit")),
           Effect.catchCause((cause) =>
             logLifecycleError("failed to destroy windows before updater quit", { cause }),
           ),

@@ -29,7 +29,6 @@ import * as Stream from "effect/Stream";
 
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
-import * as DesktopBackgroundService from "../backend/DesktopBackgroundService.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -943,9 +942,6 @@ export const make = Effect.gen(function* () {
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
-          const backgroundService = yield* Effect.serviceOption(
-            DesktopBackgroundService.DesktopBackgroundService,
-          );
           yield* Effect.all(
             [
               Effect.forEach(
@@ -955,10 +951,6 @@ export const make = Effect.gen(function* () {
                 { concurrency: "unbounded" },
               ),
               sshEnvironment.closeAllTunnels,
-              Option.match(backgroundService, {
-                onNone: () => Effect.void,
-                onSome: (service) => service.stopDetached({ preserveRelay: false }),
-              }),
             ],
             { concurrency: "unbounded" },
           );
