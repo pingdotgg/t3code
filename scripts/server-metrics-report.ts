@@ -48,6 +48,20 @@ export const Measured = Schema.Struct({
   scaling: Schema.optional(Scaling),
   streaming: Schema.optional(Window),
   soak: Schema.optional(Soak),
+  /** One web-like client attached over the WebSocket RPC, with N threads subscribed. */
+  clients: Schema.optional(
+    Schema.Struct({
+      /** The quiet window by subscribed thread count. */
+      attached: Schema.Record(Schema.String, Window),
+      /** Every client drops and reconnects at once. */
+      storm: Schema.Struct({
+        clients: Schema.Number,
+        resubscribedMs: Schema.Number,
+        loopDelayP99Ms: Schema.Number,
+        loopDelayMaxMs: Schema.Number,
+      }),
+    }),
+  ),
   /** A server on a copy of the developer's real database, its projects backed by clones. */
   busy: Schema.optional(
     Schema.Struct({
@@ -232,6 +246,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       metric.endsWith("loopSamples") ||
       metric === "busy.projects" ||
       metric === "busy.ballastMB" ||
+      metric === "clients.storm.clients" ||
       metric.startsWith("scaling.points")
     ) {
       continue;
@@ -410,4 +425,33 @@ export function pathSpellings(path: string) {
 export function pathRewrites(from: string, to: string) {
   const pairs = new Map(spellings.map((spell) => [spell(from), spell(to)] as const));
   return [...pairs];
+}
+
+/**
+ * When the next activity report goes out, `intervalMs` after the previous send, and whether it
+ * starts too late to renew the lease that send took: past `latestMs`, a renewal can land after it
+ * lapsed.
+ */
+export function nextActivityReport(
+  lastSentAt: number,
+  now: number,
+  intervalMs = 25_000,
+  latestMs = 40_000,
+) {
+  const due = lastSentAt + intervalMs;
+  return { waitMs: Math.max(0, due - now), late: Math.max(due, now) - lastSentAt > latestMs };
+}
+
+/**
+ * Whether a renewal let the previous send's lease lapse: it went out past `latestMs` after that
+ * send (a stalled loop wakes late), or its answer came after the lease (`leaseMs`) ran out.
+ */
+export function activityRenewalMissed(
+  previousSentAt: number,
+  sentAt: number,
+  repliedAt: number,
+  latestMs = 40_000,
+  leaseMs = 45_000,
+) {
+  return sentAt - previousSentAt > latestMs || repliedAt - previousSentAt > leaseMs;
 }
