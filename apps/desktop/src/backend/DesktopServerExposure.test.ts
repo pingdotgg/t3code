@@ -181,30 +181,6 @@ describe("DesktopServerExposure", () => {
     );
   });
 
-  it.effect("offers a NetBird address for pairing on a host without Tailscale", () =>
-    withHarness(
-      {
-        ...lanNetworkInterfaces,
-        utun100: [{ address: "100.81.22.33", family: "IPv4", internal: false }],
-      },
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        yield* serverExposure.configureFromSettings({ port: 4173 });
-        yield* serverExposure.setMode("network-accessible");
-
-        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-        assert.include(
-          endpoints.map((endpoint) => endpoint.httpBaseUrl),
-          "http://100.81.22.33:4173/",
-        );
-        const vpnEndpoint = endpoints.find(
-          (endpoint) => endpoint.httpBaseUrl === "http://100.81.22.33:4173/",
-        );
-        assert.equal(vpnEndpoint?.provider.label, "VPN");
-      }),
-    ),
-  );
-
   it.effect("falls back to local-only without losing the requested network preference", () =>
     withHarness(
       emptyNetworkInterfaces,

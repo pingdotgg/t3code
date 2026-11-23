@@ -86,29 +86,25 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
 
       const httpBaseUrl = `http://${address.address}:${input.port}`;
       endpoints.push(
-        createAdvertisedEndpoint(
-          isTailscaleAddress
+        createAdvertisedEndpoint({
+          source: "desktop-addon",
+          httpBaseUrl,
+          reachability: "private-network",
+          status: "available",
+          ...(isTailscaleAddress
             ? {
                 provider: TAILSCALE_ENDPOINT_PROVIDER,
-                source: "desktop-addon",
                 id: `tailscale-ip:${httpBaseUrl}`,
                 label: "Tailscale IP",
-                httpBaseUrl,
-                reachability: "private-network",
-                status: "available",
                 description: "Reachable from devices on the same Tailnet.",
               }
             : {
                 provider: VPN_ENDPOINT_PROVIDER,
-                source: "desktop-addon",
                 id: `vpn-ip:${httpBaseUrl}`,
                 label: "VPN IP",
-                httpBaseUrl,
-                reachability: "private-network",
-                status: "available",
                 description: "Reachable from devices on the same VPN.",
-              },
-        ),
+              }),
+        }),
       );
     }
   }
