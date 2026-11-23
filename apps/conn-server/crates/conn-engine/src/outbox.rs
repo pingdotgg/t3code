@@ -494,7 +494,6 @@ impl Store {
     /// one overtook gets [`NOT_OWNER`] and must not go on, or it would cancel the newer
     /// engine's rows.
     pub(crate) fn reconcile_after_process_loss(&self, replay: bool) -> StoreResult<(usize, usize)> {
-        self.migrate_pending_rollbacks()?;
         let now = self.now_iso();
         let bound = if replay {
             format!(
@@ -516,6 +515,8 @@ impl Store {
         if !owns(&tx, self.owner())? {
             return Err(NOT_OWNER.into());
         }
+        // Only the owner migrates, inside its own write: a stale opener leaves the journal.
+        self.migrate_pending_rollbacks(&tx)?;
         let cancelled = tx
             .execute(
                 &format!(
@@ -541,15 +542,15 @@ impl Store {
     }
 
     /// Moves the rollbacks an older build kept in `pending_rollbacks` into the outbox, then
-    /// drops that table, in one transaction. That build may have left rows of its own, so each
+    /// drops that table, in `tx`: the start's write, after it checked ownership. That build may
+    /// have left rows of its own, so each
     /// journal entry is reconciled with them, matched on the payload's command id:
     /// - an unsettled row takes the entry's phase, and no second row is written;
     /// - an entry with no unsettled row becomes a row the previous process was running;
     /// - an unsettled row with no entry committed its result already (the result cleared the
     ///   entry), so it settles and never runs again.
-    fn migrate_pending_rollbacks(&self) -> StoreResult<()> {
-        let conn = self.raw();
-        let exists: bool = conn
+    fn migrate_pending_rollbacks(&self, tx: &Connection) -> StoreResult<()> {
+        let exists: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_rollbacks')",
                 [],
@@ -560,7 +561,6 @@ impl Store {
             return Ok(());
         }
         let now = self.now_iso();
-        let tx = conn.unchecked_transaction().map_err(err)?;
         tx.execute_batch(
             "CREATE TEMP VIEW legacy_rollback_rows AS
                SELECT id, json_extract(payload, '$.commandId') AS rollback_id FROM effect_outbox
@@ -609,8 +609,7 @@ impl Store {
         )
         .map_err(err)?;
         tx.execute_batch("DROP VIEW legacy_rollback_rows; DROP TABLE pending_rollbacks;")
-            .map_err(err)?;
-        tx.commit().map_err(err)
+            .map_err(err)
     }
 
     /// Moves a rollback's row from phase `from` to `to` (`provider` once the provider rollback

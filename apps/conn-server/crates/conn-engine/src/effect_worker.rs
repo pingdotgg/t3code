@@ -240,7 +240,7 @@ impl Inner {
 
     /// Whether this engine still owns the store, read from the durable epoch after a failed
     /// write. A read that fails too counts as owned: the next try asks again.
-    async fn still_owns(&self) -> bool {
+    pub(crate) async fn still_owns(&self) -> bool {
         !self.engine_dropped.load(Ordering::SeqCst)
             && self.db(|store| store.owns_store()).await.unwrap_or(true)
     }

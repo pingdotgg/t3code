@@ -565,8 +565,8 @@ impl Inner {
 
     /// Records the failure and settles the row in one write. That write owns the row's
     /// settlement (the worker leaves rollback rows alone), so it is tried again, with the
-    /// rollback's backoff, until it lands or the engine is dropped; a restart then goes on by
-    /// the row's phase.
+    /// rollback's backoff, until it lands or another engine owns the store; that engine goes
+    /// on by the row's phase.
     async fn record_rollback_failure(&self, request: &RollbackRequest, message: &str) {
         let mut attempt = 1;
         loop {
@@ -584,10 +584,9 @@ impl Inner {
             };
             let Err(e) = written else { return };
             eprintln!("conn-engine: could not record a rollback failure (attempt {attempt}): {e}");
-            if self
-                .engine_dropped
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
+            // Another engine took the store (`NOT_OWNER`, or the durable epoch moved): it owns
+            // the rollback's row now.
+            if e == crate::store::NOT_OWNER || !self.still_owns().await {
                 return;
             }
             tokio::time::sleep(retry_delay(attempt)).await;

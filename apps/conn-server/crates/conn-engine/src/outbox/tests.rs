@@ -394,11 +394,31 @@ fn a_stale_open_cancels_nothing() {
     let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
     newer.take_ownership(None).unwrap();
     enqueue(&mut newer, &[start("t1", "r1")]);
+    // The #269 gate's probe: a store from an older build, with a rollback journal.
+    legacy_journal(&newer, &[("rb", "t2", "admitted", None)]);
     assert_eq!(
         t.1.reconcile_after_process_loss(true).unwrap_err(),
         crate::store::NOT_OWNER
     );
     assert_eq!(newer.effect_status(1).unwrap().as_deref(), Some("pending"));
+    // The stale opener migrated nothing; the current one moves the journal.
+    let journal = |store: &Store| -> bool {
+        store
+            .raw()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'pending_rollbacks')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert!(journal(&newer));
+    newer.reconcile_after_process_loss(true).unwrap();
+    assert!(!journal(&newer));
+    assert_eq!(
+        rollback_rows(&newer),
+        [("rb".to_owned(), "pending".to_owned())]
+    );
 }
 
 /// A store from before the outbox kept admitted rollbacks in `pending_rollbacks`: the next
