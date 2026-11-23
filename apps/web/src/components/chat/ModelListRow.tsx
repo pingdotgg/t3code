@@ -29,6 +29,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   isSelected: boolean;
   /** Marks this instance apart from another of the same provider. */
   showInstanceBadge: boolean;
+  /** Shows the backing provider channel (e.g. Antigravity vs Claude) inside vendor-grouped tabs. */
+  channelLabel?: string | undefined;
   showNewBadge?: boolean;
   unavailable?: boolean;
   jumpLabel?: string | null;
@@ -86,6 +88,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
           <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
             {props.subProvider}
           </span>
+        ) : null}
+        {props.channelLabel ? (
+          <Badge variant="outline" size="sm" className="shrink-0">
+            {props.channelLabel}
+          </Badge>
         ) : null}
         {props.showNewBadge ? (
           <span

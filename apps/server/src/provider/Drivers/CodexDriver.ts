@@ -19,6 +19,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   createCodexAdapterV2,
@@ -215,10 +216,65 @@ export const CodexDriver: ProviderDriver<
           }),
       ),
     );
+    const resolveCodexBinaryPath = Effect.fn("CodexDriver.resolveCodexBinaryPath")(
+      function* (input: {
+        readonly configuredBinaryPath: string;
+        readonly homeDirectory: string;
+        readonly env: NodeJS.ProcessEnv;
+      }) {
+        const expanded = expandHomePath(input.configuredBinaryPath, input.homeDirectory);
+        if (expanded.trim() !== "" && expanded.trim() !== "codex") {
+          return expanded;
+        }
+        const onPath = yield* resolveCommandPath("codex", { env: input.env });
+        if (onPath !== null) return expanded || "codex";
+
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
+        const arch = yield* HostProcess.Architecture;
+        const exeName = platform === "win32" ? "codex.exe" : "codex";
+        const binDir =
+          platform === "win32"
+            ? arch === "arm64"
+              ? "windows-aarch64"
+              : "windows-x86_64"
+            : platform === "darwin"
+              ? arch === "arm64"
+                ? "macos-aarch64"
+                : "macos-x86_64"
+              : arch === "arm64"
+                ? "linux-aarch64"
+                : "linux-x86_64";
+
+        for (const editorDir of [".vscode", ".cursor", ".antigravity"]) {
+          const extRoot = path.join(input.homeDirectory, editorDir, "extensions");
+          const entries = yield* fs.readDirectory(extRoot).pipe(Effect.orElseSucceed(() => []));
+          const matching = entries
+            .filter((name) => name.startsWith("openai.chatgpt-"))
+            .toSorted()
+            .toReversed();
+          for (const entry of matching) {
+            const candidate = path.join(extRoot, entry, "bin", binDir, exeName);
+            if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+              return candidate;
+            }
+          }
+        }
+        return expanded || "codex";
+      },
+    );
+
+    const homeDirectory = yield* HostProcess.HomeDirectory;
+    const resolvedBinaryPath = yield* resolveCodexBinaryPath({
+      configuredBinaryPath: config.binaryPath,
+      homeDirectory,
+      env: processEnv,
+    });
     const effectiveConfig = {
       ...config,
       enabled,
-      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      binaryPath: resolvedBinaryPath,
       homePath: homeLayout.effectiveHomePath ?? "",
       launchArgs: codexHomeLaunchArgs(pathService, homeLayout, config.launchArgs),
     } satisfies CodexSettings;

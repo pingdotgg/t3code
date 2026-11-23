@@ -65,6 +65,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   showFavorites?: boolean;
   showVendorTabs?: boolean;
+  visibleVendorIds?: ReadonlyArray<ModelVendorId>;
   vendorQuotas?: Readonly<Record<ModelVendorId, VendorQuotaSummary>>;
   disabledVendorTabs?: ReadonlySet<ModelVendorTabId>;
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
@@ -77,7 +78,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     props.onSelectInstance(instanceId);
   };
   const showFavorites = props.showFavorites ?? true;
-  const showVendorTabs = props.showVendorTabs ?? true;
+  const visibleVendorIds = props.visibleVendorIds ?? MODEL_VENDOR_IDS;
+  const showVendorTabs = (props.showVendorTabs ?? true) && visibleVendorIds.length > 0;
   const [hoveredInstanceId, setHoveredInstanceId] = useState<ProviderInstanceId | null>(null);
   const sidebarContentRef = useRef<HTMLDivElement>(null);
   const [selectedIndicatorTop, setSelectedIndicatorTop] = useState<number | null>(null);
@@ -160,7 +162,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
 
           {showVendorTabs ? (
             <>
-              {MODEL_VENDOR_IDS.map((vendor) => {
+              {visibleVendorIds.map((vendor) => {
                 const tabId = modelVendorTabId(vendor);
                 const isDisabled = props.disabledVendorTabs?.has(tabId) ?? false;
                 const isSelected = props.selectedInstanceId === tabId;

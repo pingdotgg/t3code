@@ -13,10 +13,11 @@ import {
   classifyModelVendor,
   collectVendorQuotas,
   isModelVendorTabId,
-  MODEL_VENDOR_TAB_IDS,
+  MODEL_VENDOR_IDS,
   modelVendorDisplayName,
   modelVendorTabId,
   parseModelVendorTabId,
+  type ModelVendorId,
   type ModelVendorTabId,
 } from "@t3tools/shared/modelVendorQuota";
 import { useAtomValue } from "@effect/atom-react";
@@ -156,8 +157,11 @@ function shouldOfferModelPickerSetup(
   );
 }
 
+const VENDOR_COVERED_DRIVERS = new Set<string>(["claudeAgent", "codex", "antigravity"]);
+
 function adjacentModelPickerProvider(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
+  visibleVendorIds: ReadonlyArray<ModelVendorId>;
   selectedInstanceId: ModelPickerSidebarSelection;
   direction: 1 | -1;
   disabledVendorTabs: ReadonlySet<ModelVendorTabId> | undefined;
@@ -166,7 +170,9 @@ function adjacentModelPickerProvider(input: {
 }) {
   const providers: Array<ModelPickerSidebarSelection> = [
     "favorites",
-    ...MODEL_VENDOR_TAB_IDS.filter((tabId) => !input.disabledVendorTabs?.has(tabId)),
+    ...input.visibleVendorIds
+      .map(modelVendorTabId)
+      .filter((tabId) => !input.disabledVendorTabs?.has(tabId)),
     ...input.entries
       .filter(
         (entry) =>
@@ -450,12 +456,28 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       modelOptionsByInstance.get(props.activeInstanceId) ?? [],
     );
   const [selectedInstanceId, setSelectedInstanceId] = useState<ModelPickerSidebarSelection>(() => {
+    const initialActiveVendor = activeEntry
+      ? classifyModelVendor({
+          slug: activeModelSlug || props.model,
+          name: activeModel?.name,
+          driverKind: activeEntry.driverKind,
+          subProvider: activeModel?.subProvider,
+        })
+      : null;
+    const activeFoldedIntoVendor =
+      activeEntry !== undefined &&
+      VENDOR_COVERED_DRIVERS.has(activeEntry.driverKind) &&
+      initialActiveVendor !== null &&
+      instanceEntries.filter((e) => e.driverKind === activeEntry.driverKind).length === 1;
+    const defaultActiveTab: ModelPickerSidebarSelection = activeFoldedIntoVendor
+      ? modelVendorTabId(initialActiveVendor)
+      : props.activeInstanceId;
     if (
       props.lockedProvider !== null ||
       activeInstanceHasSelectableUnavailableModel ||
       activeInstanceNeedsSetup
     ) {
-      return props.activeInstanceId;
+      return defaultActiveTab;
     }
     const hasPickableFavorite = favorites.some((favorite) => {
       const entry = instanceEntries.find((entry) => entry.instanceId === favorite.provider);
@@ -473,7 +495,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       );
     });
-    return hasPickableFavorite ? "favorites" : props.activeInstanceId;
+    return hasPickableFavorite ? "favorites" : defaultActiveTab;
   });
   const selectedVendor = parseModelVendorTabId(selectedInstanceId);
   const selectedProviderInstanceId: ProviderInstanceId | undefined =
@@ -703,6 +725,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return Math.max(0, ...unitsByTab.values());
   })();
+  const visibleVendorIds = (() => {
+    const present = new Set<ModelVendorId>();
+    for (const model of flatModels) {
+      const vendor = classifyModelVendor({
+        slug: model.slug,
+        name: model.name,
+        driverKind: model.driverKind,
+        subProvider: model.subProvider,
+      });
+      if (vendor) present.add(vendor);
+    }
+    for (const vendor of MODEL_VENDOR_IDS) {
+      if (vendorQuotas[vendor].windows.length > 0) present.add(vendor);
+    }
+    return MODEL_VENDOR_IDS.filter((vendor) => present.has(vendor));
+  })();
   const lockedDisabledVendorTabs = (() => {
     if (!isLocked) {
       return undefined;
@@ -719,7 +757,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (vendor) availableVendors.add(modelVendorTabId(vendor));
     }
     const disabled = new Set<ModelVendorTabId>();
-    for (const tabId of MODEL_VENDOR_TAB_IDS) {
+    for (const vendor of visibleVendorIds) {
+      const tabId = modelVendorTabId(vendor);
       if (!availableVendors.has(tabId)) disabled.add(tabId);
     }
     return disabled;
@@ -738,12 +777,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   })();
   const sidebarInstanceEntries = (() => {
     const enabledEntries = instanceEntries.filter(isProviderInstancePickerVisible);
+    const driverCounts = new Map<string, number>();
+    for (const entry of enabledEntries) {
+      driverCounts.set(entry.driverKind, (driverCounts.get(entry.driverKind) ?? 0) + 1);
+    }
+    // Single instances of Claude, Codex, and Antigravity are represented by the vendor tabs above
+    // so the rail never shows duplicate brand icons. Keep them only if they need setup or have
+    // multiple accounts of the same driver.
+    const deduplicated = enabledEntries.filter((entry) => {
+      if (!VENDOR_COVERED_DRIVERS.has(entry.driverKind)) return true;
+      if ((driverCounts.get(entry.driverKind) ?? 0) > 1) return true;
+      return !isProviderInstancePickerReady(entry);
+    });
     if (!isLocked) {
-      return enabledEntries;
+      return deduplicated;
     }
     const available: ProviderInstanceEntry[] = [];
     const disabled: ProviderInstanceEntry[] = [];
-    for (const entry of enabledEntries) {
+    for (const entry of deduplicated) {
       if (matchesLockedProvider(entry)) {
         available.push(entry);
       } else {
@@ -752,7 +803,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   })();
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showSidebar =
+    !isSearching && (visibleVendorIds.length > 0 || sidebarInstanceEntries.length > 0);
+  // Inside vendor tabs, prefer authenticated providers with active quota so an authenticated
+  // Antigravity Opus channel appears ahead of an unauthenticated/unused Claude entry.
+  const vendorInstanceOrder = [...instanceEntries]
+    .toSorted((a, b) => {
+      const score = (entry: ProviderInstanceEntry) => {
+        const authed = entry.snapshot.auth.status === "authenticated" ? 2 : 0;
+        const hasQuota =
+          entry.snapshot.usageLimits &&
+          !entry.snapshot.usageLimits.unavailable &&
+          entry.snapshot.usageLimits.windows.length > 0
+            ? 1
+            : 0;
+        return authed + hasQuota;
+      };
+      return score(b) - score(a);
+    })
+    .map((entry) => entry.instanceId);
   const instanceOrder = instanceEntries.map((entry) => entry.instanceId);
 
   const filteredModels = (() => {
@@ -808,7 +877,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
       instanceOrder:
-        selectedInstanceId === "favorites" || selectedVendor !== null ? instanceOrder : [],
+        selectedVendor !== null
+          ? vendorInstanceOrder
+          : selectedInstanceId === "favorites"
+            ? instanceOrder
+            : [],
     });
   })();
 
@@ -997,6 +1070,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       event.stopPropagation();
       const next = adjacentModelPickerProvider({
         entries: sidebarInstanceEntries,
+        visibleVendorIds,
         selectedInstanceId,
         direction: command === "modelPicker.nextProvider" ? 1 : -1,
         disabledVendorTabs: lockedDisabledVendorTabs,
@@ -1067,6 +1141,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             instanceEntries={sidebarInstanceEntries}
             showFavorites
             showVendorTabs
+            visibleVendorIds={visibleVendorIds}
             vendorQuotas={vendorQuotas}
             {...(lockedDisabledVendorTabs ? { disabledVendorTabs: lockedDisabledVendorTabs } : {})}
             {...(selectableUnavailableInstanceIds ? { selectableUnavailableInstanceIds } : {})}
@@ -1317,6 +1392,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     }
                     favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
                     showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
+                    channelLabel={
+                      selectedVendor !== null &&
+                      (model.driverKind === "antigravity" ||
+                        new Set(visibleModels.map((item) => item.instanceId)).size > 1)
+                        ? model.instanceDisplayName
+                        : undefined
+                    }
                     showNewBadge={model.badge === "new"}
                     unavailable={model.isUnavailable === true}
                     jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
