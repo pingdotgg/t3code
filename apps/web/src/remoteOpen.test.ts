@@ -86,7 +86,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: environmentId,
@@ -98,7 +98,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: EnvironmentId.make("environment-host"),
@@ -221,6 +221,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
       ],
+      hostEnvironmentId: null,
     });
     expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol-alias" } });
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
