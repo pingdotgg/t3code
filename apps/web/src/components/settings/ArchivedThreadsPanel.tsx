@@ -284,8 +284,7 @@ export function ArchivedThreadsPanel() {
             <Tooltip>
               <TooltipTrigger render={<span tabIndex={0} />}>
                 <T>
-                  Archived{" "}
-                  <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
+                  Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
                 </T>
               </TooltipTrigger>
               <TooltipPopup side="top">
