@@ -76,15 +76,12 @@ export const layer: Layer.Layer<
       const context = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
         context;
-      // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
-      const stopped = run?.status === "interrupted" || run?.status === "cancelled";
+      // Runs settle before capture; `waiting` is a run persisted before captures ran after settling.
+      const settled =
+        run?.status === "completed" || run?.status === "interrupted" || run?.status === "cancelled";
 
       // A checkpoint on a settled run proves this at-least-once effect already committed.
-      if (
-        run !== undefined &&
-        run.checkpointId !== null &&
-        (run.status === "completed" || stopped)
-      ) {
+      if (run !== undefined && run.checkpointId !== null && settled) {
         return;
       }
       // Rollback uses the same lane and can precede a capture retry; preserve the restored workspace and discarded run.
@@ -94,7 +91,7 @@ export const layer: Layer.Layer<
 
       if (
         run === undefined ||
-        (run.status !== "waiting" && !stopped) ||
+        (run.status !== "waiting" && !settled) ||
         rootNode === undefined ||
         scope === undefined ||
         rootNode.checkpointScopeId !== scope.id ||
@@ -104,7 +101,7 @@ export const layer: Layer.Layer<
           threadId: input.threadId,
           runId: input.runId,
           scopeId: input.scopeId,
-          cause: "The persisted checkpoint capture target is incomplete or no longer waiting.",
+          cause: "The persisted checkpoint capture target is incomplete or was discarded.",
         });
       }
 
@@ -254,9 +251,13 @@ export const layer: Layer.Layer<
           if (currentRun === undefined || currentRun.activeAttemptId !== run.activeAttemptId) {
             return;
           }
-          const stoppedNow =
-            currentRun.status === "interrupted" || currentRun.status === "cancelled";
-          if (currentRun.status !== "waiting" && !stoppedNow) {
+          const legacyWaiting = currentRun.status === "waiting";
+          if (
+            !legacyWaiting &&
+            currentRun.status !== "completed" &&
+            currentRun.status !== "interrupted" &&
+            currentRun.status !== "cancelled"
+          ) {
             return;
           }
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
@@ -336,16 +337,16 @@ export const layer: Layer.Layer<
                 nodeId: rootNode.id,
                 providerInstanceId: run.providerInstanceId,
                 occurredAt: capturedAt,
-                payload: stoppedNow
-                  ? { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id }
-                  : {
+                payload: legacyWaiting
+                  ? {
                       ...runWithoutDelegatedCompletion,
                       status: "completed",
                       completedAt: capturedAt,
                       checkpointId: checkpoint.id,
-                    },
+                    }
+                  : { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id },
               },
-              ...(stoppedNow
+              ...(!legacyWaiting
                 ? []
                 : [
                     {

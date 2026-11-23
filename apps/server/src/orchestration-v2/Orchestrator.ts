@@ -1873,8 +1873,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           visibleTurnItems: [],
           updatedAt: records.thread.updatedAt,
         })),
+        Effect.flatMap(holdRunAwaitingCapture),
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
+
+  // Commands decide as if the latest run were still `waiting` until its turn-end capture commits:
+  // the capture keeps the thread's effect lane, and steers and queued turns must line up behind it.
+  const holdRunAwaitingCapture = Effect.fn("Orchestrator.holdRunAwaitingCapture")(function* (
+    projection: OrchestrationV2ThreadProjection,
+  ) {
+    const latest = projection.runs
+      .filter((run) => run.status !== "queued")
+      .reduce<OrchestrationV2Run | undefined>(
+        (current, run) => (current === undefined || run.ordinal > current.ordinal ? run : current),
+        undefined,
+      );
+    if (latest === undefined || !(yield* awaitsCheckpointCapture(latest))) return projection;
+    return {
+      ...projection,
+      runs: projection.runs.map((run) =>
+        run.id === latest.id ? { ...run, status: "waiting" as const, completedAt: null } : run,
+      ),
+    };
+  });
 
   // Command reads omit settled tasks, but a completion notice counts its whole cohort.
   const notificationTasks = (
@@ -3511,6 +3532,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // A steer still pending after its run ended was never read: the provider marks one it read
   // completed, and one Stop dropped cancelled. It runs next, in its place among waiting messages.
+  // A run completes before its turn-end checkpoint capture. Steers and queued turns advance when
+  // the capture commits and repeats the update, after the deliveries ahead of it on the lane.
+  const awaitsCheckpointCapture = (run: OrchestrationV2Run) =>
+    run.status !== "completed" || run.checkpointId !== null
+      ? Effect.succeed(false)
+      : effectOutbox.get(`effect:checkpoint.capture:${run.id}`).pipe(
+          Effect.map(
+            Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+
   const requeueUnreadSteers = Effect.fn("Orchestrator.requeueUnreadSteers")(function* (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
@@ -3538,7 +3571,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.id === item.messageId &&
           candidate.runId === item.runId,
       );
-      if (run === undefined || message === undefined || isActiveRun(run)) continue;
+      if (
+        run === undefined ||
+        message === undefined ||
+        isActiveRun(run) ||
+        (yield* awaitsCheckpointCapture(run))
+      ) {
+        continue;
+      }
       // Stop drops a steer it reached; say so, as the adapter does for steers it still held.
       if (yield* projectionStore.hasRunInterruptRequest(threadId, run.id)) {
         const now = yield* DateTime.now;
@@ -16758,7 +16798,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Take parent and child locks sequentially, never nested: delegation holds the parent
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.
-      if (delegatedTaskTerminalStatus(run.status) !== null) {
+      if (
+        delegatedTaskTerminalStatus(run.status) !== null &&
+        !(yield* awaitsCheckpointCapture(run))
+      ) {
         // Before the parent hears of the failure: a pending continuation keeps the task open.
         if (run.status === "failed" && run.restartContinuationOfRunId !== undefined) {
           yield* threadDispatch.withLock(threadId, retryContinuationStart(threadId, run.id)).pipe(
