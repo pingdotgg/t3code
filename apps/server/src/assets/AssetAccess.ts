@@ -45,6 +45,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -281,6 +282,48 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
   return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
     ? null
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
+});
+
+// An image the agent viewed and later deleted is served from the copy its turn item stored.
+const viewedImageCopyAsset = Effect.fn("AssetAccess.viewedImageCopyAsset")(function* (input: {
+  readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
+  readonly requestedPath: string;
+  readonly expiresAt: number;
+}) {
+  const path = yield* Path.Path;
+  const absolutePath = path.resolve(input.requestedPath);
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const item = yield* orchestrator
+    .getLatestViewedImageItem({
+      threadId: input.resource.threadId,
+      paths: [...new Set([input.resource.path, absolutePath])],
+    })
+    .pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to look up a stored viewed image.", { cause }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+  if (item?.type !== "dynamic_tool") return null;
+  const images = toolOutputImages(item.output);
+  const index = images.findIndex(
+    (image) => image.data !== undefined && image.data.length <= MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
+  );
+  const data = images[index]?.data;
+  if (data === undefined) return null;
+  return {
+    claims: {
+      version: 1 as const,
+      kind: "tool-output-image" as const,
+      threadId: item.threadId,
+      itemId: item.id,
+      index,
+      expiresAt: input.expiresAt,
+    },
+    fileName: path.basename(absolutePath),
+    fileRevision: undefined,
+    imageDimensions: readImageDimensions(Buffer.from(data, "base64")),
+  };
 });
 
 // Browsers cannot draw .icns; serve its embedded PNG.
@@ -639,12 +682,20 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           );
         requestedPath = path.resolve(workspaceRoot, requestedPath);
       }
+      const resource = input.resource;
       const finalized = yield* finalizeAbsoluteMediaFileAsset({
         requestedPath,
         workspaceRoot: input.workspaceRoot,
-        resource: input.resource,
+        resource,
         expiresAt,
-      });
+      }).pipe(
+        Effect.catchTags({
+          AssetWorkspaceAssetNotFoundError: (notFound) =>
+            viewedImageCopyAsset({ resource, requestedPath, expiresAt }).pipe(
+              Effect.filterOrFail(Predicate.isNotNull, () => notFound),
+            ),
+        }),
+      );
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;

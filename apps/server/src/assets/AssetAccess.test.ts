@@ -115,6 +115,8 @@ const layerTest = Layer.mergeAll(
             ? oversizedScreenshotItem
             : null,
       ),
+    getLatestViewedImageItem: ({ paths }) =>
+      Effect.succeed(paths.includes("/deleted/screen.png") ? screenshotItem : null),
   }),
   layerConfig,
   WorkspacePaths.layer,
@@ -189,7 +191,7 @@ describe("AssetAccess", () => {
     );
   });
 
-  it.effect("serves an image a tool returned inline from the stored item", () =>
+  it.effect("serves an image a tool returned inline, also for its deleted viewed path", () =>
     Effect.gen(function* () {
       const resource = {
         _tag: "tool-output-image" as const,
@@ -214,6 +216,27 @@ describe("AssetAccess", () => {
         resource: { ...resource, itemId: oversizedScreenshotItem.id },
       }).pipe(Effect.flip);
       expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+
+      const viewed = yield* issueAssetUrl({
+        resource: {
+          _tag: "media-file",
+          threadId: screenshotItem.threadId,
+          path: "/deleted/screen.png",
+        },
+      });
+      expect(viewed.relativeUrl.endsWith("/screen.png")).toBe(true);
+      const viewedSuffix = viewed.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      expect(
+        yield* resolveAsset(viewedSuffix.slice(0, viewedSuffix.indexOf("/")), "screen.png"),
+      ).toEqual({ kind: "bytes", mimeType: "image/png", bytes: Buffer.from(screenshotPng) });
+      const neverViewed = yield* issueAssetUrl({
+        resource: {
+          _tag: "media-file",
+          threadId: screenshotItem.threadId,
+          path: "/deleted/other.png",
+        },
+      }).pipe(Effect.flip);
+      expect(neverViewed._tag).toBe("AssetWorkspaceAssetNotFoundError");
     }).pipe(Effect.provide(layerTest)),
   );
 

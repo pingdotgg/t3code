@@ -2434,11 +2434,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("keeps native image views available to the clients", () =>
+  it.effect("keeps native image views available to the clients after the file is gone", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";
       const nativeTurnId = "image-view-turn";
-      const imagePath = "file:///workspace/reference.png";
+      const fs = yield* FileSystem.FileSystem;
+      const imagePath = `${yield* fs.makeTempDirectoryScoped({ prefix: "t3-image-view-" })}/shot.png`;
+      yield* fs.writeFileString(imagePath, "png bytes");
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: "image-view",
@@ -2489,6 +2491,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(images, 1);
       assert.equal(images[0]?.viewedImagePath, imagePath);
       assert.equal(images[0]?.status, "completed");
+      assert.deepEqual(images[0]?.output, [
+        { type: "image", mimeType: "image/png", data: Buffer.from("png bytes").toString("base64") },
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

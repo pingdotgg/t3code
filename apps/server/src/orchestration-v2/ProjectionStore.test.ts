@@ -4928,6 +4928,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           input: {},
           ...inline,
         });
+        const viewed = yield* projectionStore.getLatestViewedImageItem({
+          threadId,
+          paths: ["/repo/screenshot.png"],
+        });
+        assert.strictEqual(viewed?.id, "viewedImagePath" in inline ? secondItemId : undefined);
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
           userTurnLimit: 10,

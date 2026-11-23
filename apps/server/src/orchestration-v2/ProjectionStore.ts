@@ -592,6 +592,11 @@ export interface ProjectionStoreV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
+  /** The thread's latest item that viewed an image at any of `paths`. */
+  readonly getLatestViewedImageItem: (input: {
+    readonly threadId: ThreadId;
+    readonly paths: ReadonlyArray<string>;
+  }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
   readonly getMessagesById: (
     threadId: ThreadId,
     messageIds: ReadonlyArray<MessageId>,
@@ -6826,6 +6831,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const getLatestViewedImageItem: ProjectionStoreV2Shape["getLatestViewedImageItem"] = ({
+      threadId,
+      paths,
+    }) =>
+      paths.length === 0
+        ? Effect.succeed(null)
+        : sql<{ payload_json: string }>`SELECT payload_json
+            FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${threadId} AND inline_work_output = 1 AND type = 'dynamic_tool'
+              AND json_extract(payload_json, '$.viewedImagePath') IN ${sql.in(paths)}
+            ORDER BY ordinal DESC LIMIT 1`.pipe(
+            Effect.flatMap((rows) =>
+              rows[0] === undefined
+                ? Effect.succeed(null)
+                : decodeTurnItemPayload(rows[0].payload_json),
+            ),
+            Effect.mapError(controlReadError(threadId)),
+          );
+
     // A run fork shows its source's history through the fork run without copying it, and every
     // run fork below it shows that history too. Returns the last source run live forks show, with
     // and without `leavingForkId`.
@@ -9931,6 +9955,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
+      getLatestViewedImageItem: readOnReader(getLatestViewedImageItem),
       getMessagesById: readOnReader(getMessagesById),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),

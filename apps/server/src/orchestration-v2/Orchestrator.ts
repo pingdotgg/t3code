@@ -471,6 +471,10 @@ export interface OrchestratorV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
+  readonly getLatestViewedImageItem: (input: {
+    readonly threadId: ThreadId;
+    readonly paths: ReadonlyArray<string>;
+  }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -17324,6 +17328,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
     }),
+    getLatestViewedImageItem: Effect.fn("OrchestratorV2.getLatestViewedImageItem")(
+      function (input) {
+        return projectionStore
+          .getLatestViewedImageItem(input)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+            ),
+          );
+      },
+    ),
     getThreadRecords: Effect.fn("OrchestratorV2.getThreadRecords")(
       function (threadId, fields, filter) {
         return projectionStore

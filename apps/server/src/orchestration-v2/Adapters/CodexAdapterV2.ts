@@ -45,6 +45,8 @@ import {
   type ServerProviderCompatibilityAdvisory,
   type ServerProviderModel,
   isDelegatedAppThread,
+  isProviderSendTurnSupportedImageMimeType,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -60,6 +62,8 @@ import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3too
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
+import { mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { oauthCallbackUrl } from "@t3tools/shared/oauthCallback";
 import type {
   ChatAttachment,
@@ -4473,6 +4477,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // A copy keeps the preview after the agent deletes a temporary image it viewed.
+        const readViewedImageCopy = Effect.fn("CodexAdapterV2.readViewedImageCopy")(
+          function* (filePath: string) {
+            const mimeType = mediaMimeTypeFromExtension(/\.[^./\\]*$/.exec(filePath)?.[0] ?? "");
+            if (
+              !isAbsolutePath(filePath) ||
+              mimeType === null ||
+              !isProviderSendTurnSupportedImageMimeType(mimeType)
+            ) {
+              return undefined;
+            }
+            const info = yield* fileSystem.stat(filePath);
+            if (info.type !== "File" || Number(info.size) > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+              return undefined;
+            }
+            const bytes = yield* fileSystem.readFile(filePath);
+            return bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+              ? undefined
+              : [{ type: "image", mimeType, data: Buffer.from(bytes).toString("base64") }];
+          },
+          Effect.orElseSucceed(() => undefined),
+        );
+
         const emitImageGenerationItem = Effect.fn("CodexAdapterV2.emitImageGenerationItem")(
           function* (
             context: ActiveCodexTurnContext,
@@ -5966,6 +5993,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "imageView") {
+              const output = yield* readViewedImageCopy(payload.item.path);
               const artifacts = yield* buildDynamicToolArtifacts(context, {
                 type: "dynamicToolCall",
                 id: payload.item.id,
@@ -5981,7 +6009,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CODEX_PROVIDER,
-                turnItem: { ...artifacts.turnItem, viewedImagePath: payload.item.path },
+                turnItem: {
+                  ...artifacts.turnItem,
+                  viewedImagePath: payload.item.path,
+                  ...(output === undefined ? {} : { output }),
+                },
               });
               return;
             }
