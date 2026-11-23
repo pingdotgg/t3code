@@ -859,14 +859,12 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
 it.live("linking an address with nothing listening says so, unlike one that is not T3 Code", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      // Listen first: the OS can hand a just-closed port to the next listener.
+      // A closed ephemeral port can be reused by any test worker; unprivileged code cannot bind port 2.
+      const closed = "http://127.0.0.1:2";
       const notT3 = yield* serveRaw(() =>
         Effect.succeed(
           HttpServerResponse.text("<h1>Not Found</h1>", { status: 404, contentType: "text/html" }),
         ),
-      );
-      const closed = yield* Effect.scoped(
-        serveRaw(() => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
       );
       const a = yield* makeA(laptop);
       const linking = (url: string) =>
