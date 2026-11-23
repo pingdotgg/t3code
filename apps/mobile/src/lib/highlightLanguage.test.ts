@@ -7,6 +7,8 @@ describe("resolveHighlightLanguage", () => {
     ["src/init.luau", "lua"],
     ["styles/page.xsl", "xml"],
     ["styles/page.xslt", "xml"],
+    [".env.local", "dotenv"],
+    ["apps/web/.env.production", "dotenv"],
   ])("%s highlights as %s", (path, language) => {
     expect(resolveHighlightLanguage({ path })).toBe(language);
   });
