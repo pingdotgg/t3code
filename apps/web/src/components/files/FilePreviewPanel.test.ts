@@ -158,6 +158,11 @@ describe("document preview contents", () => {
       "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
     ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+    [
+      "visible text around hidden character formatting",
+      String.raw`{\rtf1 A{\v hidden{\v0 B}hidden}C\v hidden\v0 D\v hidden\plain E}`,
+      "ABCDE",
+    ],
     ["a tracked replacement", String.raw`{\rtf1 aaa{\deleted bbb}{\revised BBB}ccc}`, "aaaBBBccc"],
     [
       "text after a deletion reset",
@@ -232,6 +237,9 @@ Third}`;
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
     const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
     expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(html(String.raw`{\rtf1\ansi{\v\line\line\line}First line\line Second line}`)).toEqual(
+      lineBreak,
+    );
     expect(html(String.raw`{\rtf1\ansi First line\uc0\u8232 Second line}`)).toEqual(lineBreak);
     expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
       lineBreak,
@@ -287,6 +295,26 @@ Third}`;
       const mac = openRtf(bytes(String.raw`{\rtf1` + header + String.raw` Caf\'8e Cr\'8fme}`));
       if (mac.type !== "document") throw new Error("Expected document");
       expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
+    }
+    for (const [rtf, expected] of [
+      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
+      [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+      [
+        String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
+        "<p>€5 café</p>",
+      ],
+      [
+        String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
+        "<p>pridržana</p>",
+      ],
+      [
+        String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
+        "<p>Привет</p>",
+      ],
+    ] as const) {
+      const decoded = openRtf(bytes(rtf));
+      if (decoded.type !== "document") throw new Error("Expected document");
+      expect(decoded.pages[0]!.html).toBe(expected);
     }
     expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
       expect.objectContaining({ code: "rtf-code-page" }),
@@ -410,6 +438,23 @@ Third}`;
                     "final entry",
                   ],
                 },
+                {
+                  output_type: "error",
+                  ename: "ZeroDivisionError",
+                  evalue: "division by zero",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  evalue: "\u001b[31mbad input\u001b[0m",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  ename: "RuntimeError",
+                  evalue: "kernel reset",
+                  traceback: ["\u001b[31m\u001b[0m", "  \n"],
+                },
               ],
             },
           ],
@@ -430,6 +475,9 @@ Third}`;
         kind: "text",
         text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
       },
+      { kind: "text", text: "ZeroDivisionError: division by zero" },
+      { kind: "text", text: "bad input" },
+      { kind: "text", text: "RuntimeError: kernel reset" },
     ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow(
       expect.objectContaining({ code: "notebook-unsupported" }),
@@ -561,6 +609,26 @@ Third}`;
     }
   });
 
+  it("keeps OpenDocument image descriptions in image alt text", async () => {
+    const archive = new JSZip()
+      .file(
+        "content.xml",
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:l="http://www.w3.org/1999/xlink" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0">' +
+          '<office:body><office:text><text:p><draw:frame><draw:image l:href="picture.png"/><s:title>Logo</s:title><s:desc>Research &amp; &quot;Design&quot;</s:desc></draw:frame>Visible caption</text:p></office:text></office:body></office:document-content>',
+      )
+      .file(
+        "picture.png",
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+        { base64: true },
+      );
+
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toMatch(
+      /^<p><img src="data:image\/png;base64,[^"]+" alt="Logo Research &amp; &quot;Design&quot;">Visible caption<\/p>$/,
+    );
+  });
+
   it("reads EPUB chapters in spine order and removes active and remote content", async () => {
     const archive = new JSZip()
       .file(
@@ -599,4 +667,30 @@ Third}`;
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });
+
+  it.each([
+    ["percent-encoded", "My%20Book/book%201.opf", "My Book/book 1.opf", "My Book/one.xhtml"],
+    ["literal percent", "My%20Book/book.opf", "My%20Book/book.opf", "My%20Book/one.xhtml"],
+    ["malformed percent", "Book%ZZ/book.opf", "Book%ZZ/book.opf", "Book%ZZ/one.xhtml"],
+  ])(
+    "reads EPUB packages with %s rootfile paths",
+    async (_label, fullPath, packagePath, chapterPath) => {
+      const archive = new JSZip()
+        .file(
+          "META-INF/container.xml",
+          `<container><rootfiles><rootfile full-path="${fullPath}"/></rootfiles></container>`,
+        )
+        .file(
+          packagePath,
+          '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+        )
+        .file(
+          chapterPath,
+          "<html><head><title>First</title></head><body><p>Hello</p></body></html>",
+        );
+      const result = await openEpub(archive);
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
+    },
+  );
 });

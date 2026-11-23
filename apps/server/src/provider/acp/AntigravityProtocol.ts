@@ -55,6 +55,12 @@ const ANTIGRAVITY_SCHEDULE_TITLES = new Set(["Run schedule", "Running schedule"]
  */
 export function antigravityToolOutlivesPrompt(toolCall: AcpToolCallState): boolean {
   if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return true;
+  return antigravityCommandOutlivesPrompt(toolCall);
+}
+
+/** A non-daemon command the agent awaits; unlike a schedule, it reports progress while it runs. */
+export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return false;
   const input = toolCall.data.rawInput;
   return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
 }
@@ -119,11 +125,14 @@ function copyBoundedText(text: string): string {
   return Buffer.from(text, "utf16le").toString("utf16le");
 }
 
+function boundQuestionText(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const prefix = text.slice(0, limit - 3).replace(/[\uD800-\uDBFF]$/u, "");
+  return copyBoundedText(`${prefix}...`);
+}
+
 function questionLabel(option: EffectAcpSchema.PermissionOption): string {
-  const label = option.name.trim() || option.optionId;
-  return label.length > QUESTION_LABEL_LIMIT
-    ? copyBoundedText(`${label.slice(0, QUESTION_LABEL_LIMIT - 3)}...`)
-    : label;
+  return boundQuestionText(option.name.trim() || option.optionId, QUESTION_LABEL_LIMIT);
 }
 
 export function extractAntigravityUserInputQuestion(
@@ -143,10 +152,7 @@ export function extractAntigravityUserInputQuestion(
   return {
     id: request.toolCall.toolCallId,
     header: "Question",
-    question:
-      question.length > TOOL_TEXT_LIMIT
-        ? copyBoundedText(`${question.slice(0, TOOL_TEXT_LIMIT - 3)}...`)
-        : question,
+    question: boundQuestionText(question, TOOL_TEXT_LIMIT),
     multiSelect: false,
     allowCustomAnswer: false,
     options: request.options.map((option) => ({

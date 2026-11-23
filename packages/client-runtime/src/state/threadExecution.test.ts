@@ -415,6 +415,22 @@ describe("thread execution presentation", () => {
     const starting = { ...v2Projection, runs: [openRun], providerSessions: [session] };
 
     expect(deriveThreadActivityRun(starting)?.providerStartingLabel).toBe("Starting Claude");
+    expect(deriveThreadActivityRun(starting)?.providerStarting).toEqual({
+      instanceId: openRun.providerInstanceId,
+      driver: session.driver,
+    });
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, startupPhase: "plugins" }],
+      })?.providerStartingLabel,
+    ).toBe("Loading Claude plugins");
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, startupPhase: "a-later-server's-phase" }],
+      })?.providerStartingLabel,
+    ).toBe("Starting Claude");
     expect(
       deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
     ).toBe("Starting");

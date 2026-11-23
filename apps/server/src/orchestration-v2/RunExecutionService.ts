@@ -460,6 +460,8 @@ export function routeProviderEvent(
         },
       ];
     }
+    case "thread_model_selection.updated":
+      return [event.threadId === input.threadId, state];
     case "provider_thread.updated": {
       const belongs =
         state.ownedProviderThreadIds.has(event.providerThread.id) ||
@@ -587,9 +589,10 @@ export function routeProviderEvent(
       ];
     case "background_work.updated":
       return [state.ownedProviderTurns.has(event.providerTurnId), state];
+    case "background_work.lost":
     case "command_output.delta":
     case "prompt_suggestion.updated":
-      // The session manager serves these to clients directly; runs never see them.
+      // The session manager handles these itself; runs never see them.
       return [false, state];
     case "turn.terminal":
       return event.providerTurnId === state.rootProviderTurnId
@@ -990,6 +993,9 @@ export const layer: Layer.Layer<
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
                     payload: makeProviderFailureTurnItem({
+                      ...(input.terminal.failureItemId === undefined
+                        ? {}
+                        : { id: input.terminal.failureItemId }),
                       driver: input.terminal.driver,
                       threadId: input.run.threadId,
                       runId: input.run.id,
@@ -2135,13 +2141,13 @@ export const layer: Layer.Layer<
                           })
                           .pipe(
                             Effect.as(true),
-                            Effect.catchCauseIf(
-                              (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                              (interruptCause) =>
-                                Effect.logWarning(
-                                  "orchestration V2 failed to interrupt turn after ingestion failure",
-                                  { runId: input.run.id, cause: interruptCause },
-                                ).pipe(Effect.as(false)),
+                            // An adapter whose session scope is closing exits interrupted. That is
+                            // its fiber, not this one: Effect never hands a fiber its own interrupt.
+                            Effect.catchCause((interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
                             ),
                             // A failed interrupt leaves the stored turn running so the next start
                             // retries it. The snapshot is cached before it is published, so it may
