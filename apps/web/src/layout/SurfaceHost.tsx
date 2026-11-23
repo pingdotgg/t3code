@@ -985,6 +985,63 @@ export function LayoutSurfaceHost({
     });
   }, [backgroundRef, scrollingWorkspaces, stageGapRef, stagedRef, stripShownRef]);
 
+  const navigationFeedbackRef = useRef<HTMLSpanElement | null>(null);
+  // A double-click on the bare chrome beside the panes, or in a gutter between them, moves focus
+  // one column toward that side of the focused pane; the reveal below brings it on screen.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens on the document: the window's inset margin is chrome outside this host
+  useEffect(() => {
+    if (!active || !scrollingWorkspaces) return;
+    let feedback: Animation | null = null;
+    const navigationAt = (event: MouseEvent) => {
+      const root = rootRef.current;
+      const scroller = scrollerRef.current;
+      const target = event.target;
+      if (!root || !scroller || !(target instanceof Element)) return null;
+      if (!stripShownRef.current) return null;
+      const gutter =
+        target.contains(root) ||
+        target === scroller ||
+        target === stageRef.current ||
+        (root.contains(target) && target.closest("[data-layout-gutter]") !== null);
+      if (!gutter) return null;
+      const view = scroller.getBoundingClientRect();
+      if (event.clientY < view.top || event.clientY > view.bottom) return null;
+      const focused = scroller.querySelector('[data-layout-pane-focused="true"]');
+      const rect = focused?.getBoundingClientRect() ?? view;
+      const direction = event.clientX >= rect.left + rect.width / 2 ? "right" : "left";
+      const current = selectFocusedWorkspace(useLayoutStore.getState().layout);
+      const index = current.columns.findIndex((column) =>
+        column.panes.some((pane) => pane.id === current.focusedPaneId),
+      );
+      if (!current.columns[index + (direction === "right" ? 1 : -1)]) return null;
+      return { direction, view } as const;
+    };
+    const onDoubleClick = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      const destination = navigationAt(event);
+      if (!destination) return;
+      const indicator = navigationFeedbackRef.current;
+      if (indicator) {
+        feedback?.cancel();
+        indicator.style.left = `${event.clientX - 2}px`;
+        indicator.style.top = `${Math.max(destination.view.top, Math.min(destination.view.bottom - 64, event.clientY - 32))}px`;
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        feedback = indicator.animate([{ opacity: 0.3 }, { opacity: 0 }], {
+          duration: 150,
+          easing: reduced
+            ? "steps(1, end)"
+            : getComputedStyle(indicator).getPropertyValue("--ease-out").trim() || "ease-out",
+        });
+      }
+      useLayoutStore.getState().focusDirection(destination.direction);
+    };
+    document.addEventListener("dblclick", onDoubleClick);
+    return () => {
+      feedback?.cancel();
+      document.removeEventListener("dblclick", onDoubleClick);
+    };
+  }, [active, scrollingWorkspaces]);
+
   // Before the reveal below: leaving the overview hands the strip its scroll
   // back first, so the reveal finds the focused pane in place, not a strip
   // still at 0 that it would spring sideways.
@@ -1845,6 +1902,12 @@ export function LayoutSurfaceHost({
         </>
       ) : null}
       {active && !split && !staged ? <LonePaneCorners /> : null}
+      <span
+        ref={navigationFeedbackRef}
+        aria-hidden="true"
+        data-layout-navigation-feedback=""
+        className="pointer-events-none fixed z-50 h-16 w-1 rounded-full bg-strong-foreground opacity-0"
+      />
     </SidebarInset>
   );
 }
