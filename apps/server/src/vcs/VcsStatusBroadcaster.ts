@@ -528,7 +528,7 @@ export const make = Effect.gen(function* () {
       if (initialRefs === undefined) return confirm(yield* loadLocalStatus(cwd));
       // Only a fresh git read follows the snapshot; the workflow's short cache may predate it.
       yield* workflow.invalidateLocalStatus(cwd);
-      initialRefs.refs = yield* workflow.readRefSnapshot(cwd);
+      initialRefs.refs = yield* workflow.readLocalStatusRefSnapshot(cwd);
       return confirm(yield* loadLocalStatus(cwd));
     },
   );
@@ -825,7 +825,7 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     const localDone = yield* Deferred.make<void>();
     // Owned by the broadcaster so a client disconnecting mid-switch still leaves status correct.
-    yield* workflow.readRefSnapshot(cwd).pipe(
+    yield* workflow.readLocalStatusRefSnapshot(cwd).pipe(
       Effect.tap(() => refreshLocalStatusCore(cwd)),
       Effect.ensuring(Deferred.succeed(localDone, undefined)),
       Effect.flatMap((refs) => refreshRemoteAndLocalTotals(cwd, rawCwd, refs)),
