@@ -41,3 +41,32 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   applyThemeCss(undefined);
   expect(getComputedStyle(probe).color).not.toBe("rgb(1, 2, 3)");
 });
+
+it("plays theme animations a finite number of times so an idle app stops repainting", () => {
+  const probes = ["loop", "variable", "listed", "counted"].map((name) => {
+    const probe = document.createElement("div");
+    probe.dataset.themeCssProbe = name;
+    document.body.append(probe);
+    return probe;
+  });
+  using _probes = { [Symbol.dispose]: () => probes.forEach((probe) => probe.remove()) };
+  using _css = { [Symbol.dispose]: () => applyThemeCss(undefined) };
+
+  applyThemeCss(`
+    @keyframes dot-pulse { to { background-position: 24px 24px; } }
+    :root { --forever: infinite; }
+    [data-theme-css-probe="loop"] { animation: dot-pulse 26s linear infinite; }
+    [data-theme-css-probe="variable"] { animation: dot-pulse 26s linear var(--forever) !important; }
+    [data-theme-css-probe="listed"] { animation: dot-pulse 1s, dot-pulse 2s infinite; }
+    [data-theme-css-probe="counted"] { animation: dot-pulse 1s 3; }
+  `);
+
+  const [loop, variable, listed, counted] = probes.map((probe) => getComputedStyle(probe));
+  expect(loop?.animationName).toBe("dot-pulse");
+  expect(loop?.animationIterationCount).toBe("1");
+  expect(variable?.animationName).toBe("dot-pulse");
+  expect(variable?.animationDuration).toBe("26s");
+  expect(variable?.animationIterationCount).toBe("1");
+  expect(listed?.animationIterationCount).toBe("1");
+  expect(counted?.animationIterationCount).toBe("3");
+});

@@ -14,12 +14,20 @@ type RuleParent = Pick<CSSStyleSheet, "cssRules" | "deleteRule">;
 const isRuleParent = (rule: CSSRule): rule is CSSRule & RuleParent =>
   "cssRules" in rule && "deleteRule" in rule && !(rule instanceof CSSKeyframesRule);
 
+// A looping animation repaints every frame while the app sits idle. An empty value is a shorthand
+// whose var() resolves later.
+const LOOPS = /infinite|var\(|^$/i;
+
 function stripDeclarations(rule: CSSRule): boolean {
   if (!("style" in rule) || !(rule.style instanceof CSSStyleDeclaration)) return false;
-  for (let item = rule.style.length - 1; item >= 0; item--) {
-    const property = rule.style.item(item);
-    if (themeCssValueFetches(rule.style.getPropertyValue(property))) {
-      rule.style.removeProperty(property);
+  const style = rule.style;
+  for (let item = style.length - 1; item >= 0; item--) {
+    const property = style.item(item);
+    const value = style.getPropertyValue(property);
+    if (themeCssValueFetches(value)) {
+      style.removeProperty(property);
+    } else if (property === "animation-iteration-count" && LOOPS.test(value.trim())) {
+      style.setProperty(property, "1", style.getPropertyPriority(property));
     }
   }
   return true;
