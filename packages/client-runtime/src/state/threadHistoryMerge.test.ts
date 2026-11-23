@@ -232,6 +232,25 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
+  it("keeps a conversation page before a full page of later work that shares none of its rows", () => {
+    const window = [row(4), row(5)];
+    const projection = {
+      ...v2Projection,
+      turnItems: window.map((entry) => entry.item),
+      visibleTurnItems: window.map((entry, position) => ({ ...entry, position })),
+    };
+    const conversation = mergeOlderHistoryIntoProjection(projection, [row(0), row(1)]);
+    const full = mergeOlderHistoryIntoProjection(conversation, [row(2), row(3)]);
+    expect(full.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-0",
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+      "item-5",
+    ]);
+  });
+
   it("does not resurrect a local item hidden while an older page was in flight", () => {
     const stalePageRow = row(1);
     const currentItem = {
