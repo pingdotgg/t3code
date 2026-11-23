@@ -213,6 +213,19 @@ rules to connected environments that support shared settings. Offline environmen
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
 
+### Settle or archive
+
+Settle is for work that is done for now. A settled thread stays in the sidebar's Settled
+section and in search, and a message to it, from you, an agent, or a scheduled task, makes it
+active again. Archive is for work you want out of the way. An archived thread leaves the
+sidebar and search and shows only in **Settings → Archive**, where you can unarchive or
+delete it. It refuses new messages, including ones from agents and scheduled tasks, until you
+unarchive it. Removing a project deletes its threads either way.
+
+A scheduled task that posts into one thread keeps running after you archive that thread, and
+each run fails. Settle the thread instead, or move or pause the task in **Settings → Scheduled
+tasks**.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your
