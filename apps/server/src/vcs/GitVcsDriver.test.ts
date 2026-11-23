@@ -25,6 +25,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration, gitCommandsTotal } from "../observability/Metrics.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
@@ -152,6 +153,33 @@ it.effect.each([
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+// Forking the server for every git call stalls its event loop in proportion to its RSS.
+it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "runs git from the process launcher instead of forking the server",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const result = yield* driver.execute({
+        operation: "GitVcsDriver.test.parentPid",
+        cwd: process.cwd(),
+        args: ["-c", "alias.parent-pid=!awk '{print $4}' /proc/$PPID/stat", "parent-pid"],
+      });
+
+      assert.match(result.stdout.trim(), /^[1-9]\d*$/);
+      assert.notStrictEqual(Number(result.stdout.trim()), process.pid);
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(layerServerConfig),
+          Layer.provideMerge(VcsProcess.layer),
+          // The server's spawner stack, as server.ts builds it.
+          Layer.provide(ProcessLauncher.layerServer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );
 
 interface UntrackedBlobChange {
