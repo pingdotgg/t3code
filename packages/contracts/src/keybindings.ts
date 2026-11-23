@@ -80,6 +80,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "preview.zoomIn",
   "preview.zoomOut",
   "preview.resetZoom",
+  "preview.find",
   "commandPalette.toggle",
   "filePicker.toggle",
   "projectSearch.toggle",
@@ -153,11 +154,15 @@ export const KeybindingsConfig = Schema.Array(KeybindingRule).check(
 );
 export type KeybindingsConfig = typeof KeybindingsConfig.Type;
 
+// Untrimmed: the `space` token resolves to the key " ".
+const KeybindingShortcutKey = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
+  Schema.isPattern(/^(?: |\S(?:[\s\S]*\S)?)$/),
+);
+
 export const KeybindingShortcut = Schema.Struct({
-  key: Schema.NonEmptyString.check(
-    Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
-    Schema.isPattern(/^(?: |\S(?:[\s\S]*\S)?)$/),
-  ),
+  key: KeybindingShortcutKey,
   metaKey: Schema.Boolean,
   ctrlKey: Schema.Boolean,
   shiftKey: Schema.Boolean,

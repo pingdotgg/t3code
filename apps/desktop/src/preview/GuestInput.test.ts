@@ -2,7 +2,7 @@ import * as NodeVM from "node:vm";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
+import { routeMouseToFrame, sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
 
 const makeGuest = ({
   focused,
@@ -42,6 +42,30 @@ describe("preview guest input", () => {
     await guest.send("Input.insertText", { text: "pairing-code" });
     expect(guest.webContents.insertText).toHaveBeenCalledWith("pairing-code");
     expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
+  });
+
+  it("stops the guest navigation without stopping its embedder", async () => {
+    let guestLoading = true;
+    let hostLoading = true;
+    const guest = {
+      stop: () => {
+        guestLoading = false;
+      },
+    };
+    const debuggee = {
+      sendCommand: async () => {
+        hostLoading = false;
+        return {};
+      },
+    };
+    await sendPageCommand(
+      guest as unknown as Electron.WebContents,
+      debuggee as unknown as Electron.Debugger,
+      "Page.stopLoading",
+      {},
+    );
+    expect(guestLoading).toBe(false);
+    expect(hostLoading).toBe(true);
   });
 
   it.each([
@@ -239,6 +263,149 @@ describe("preview guest input", () => {
       expect(events).toEqual([press, release]);
     },
   );
+
+  describe("mouse input over a cross-site frame of a guest the window does not show", () => {
+    type Box = readonly [left: number, top: number, right: number, bottom: number];
+    // Boxes are in each frame's viewport. The page is scrolled 1000px and holds a cross-site
+    // frame with a 10px border and a same-site frame; the cross-site frame, scrolled 300px,
+    // holds another cross-site frame.
+    const documents: Record<
+      string,
+      {
+        readonly ownFrameId: string;
+        readonly scroll: { readonly pageX: number; readonly pageY: number };
+        readonly owners: ReadonlyArray<{ border: Box; content: Box; frameId: string }>;
+      }
+    > = {
+      page: {
+        ownFrameId: "MAIN",
+        scroll: { pageX: 0, pageY: 1000 },
+        owners: [
+          { border: [0, 89, 620, 409], content: [10, 99, 610, 399], frameId: "CROSS" },
+          { border: [700, 0, 900, 200], content: [700, 0, 900, 200], frameId: "SAME" },
+        ],
+      },
+      "session-cross": {
+        ownFrameId: "CROSS",
+        scroll: { pageX: 0, pageY: 300 },
+        owners: [
+          { border: [100, 100, 300, 300], content: [100, 100, 300, 300], frameId: "NESTED" },
+        ],
+      },
+      "session-nested": { ownFrameId: "NESTED", scroll: { pageX: 0, pageY: 0 }, owners: [] },
+    };
+    const inside = ([left, top, right, bottom]: Box, x: number, y: number) =>
+      x >= left && x < right && y >= top && y < bottom;
+    const makeFramedGuest = (
+      frameSessions: ReadonlyMap<string, string> = new Map([
+        ["CROSS", "session-cross"],
+        ["NESTED", "session-nested"],
+      ]),
+      unansweredLookup?: string,
+    ) => {
+      const input: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
+      const lookups: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
+      const sendCommand = vi.fn(
+        async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+          const document = documents[sessionId ?? "page"]!;
+          if (method === "Page.getLayoutMetrics") {
+            if (sessionId !== undefined && sessionId === unansweredLookup) {
+              return new Promise(() => {});
+            }
+            return { cssLayoutViewport: document.scroll };
+          }
+          if (method === "DOM.getNodeForLocation") {
+            lookups.push({ sessionId, x: params["x"], y: params["y"] });
+            // Chromium hit-tests in document coordinates.
+            const x = (params["x"] as number) - document.scroll.pageX;
+            const y = (params["y"] as number) - document.scroll.pageY;
+            const index = document.owners.findIndex(({ border }) => inside(border, x, y));
+            return { backendNodeId: index + 1, frameId: document.ownFrameId };
+          }
+          const owner = document.owners[(params["backendNodeId"] as number) - 1];
+          // A miss lands on the document's root element, which names the document's own frame.
+          if (method === "DOM.describeNode") {
+            return { node: { frameId: owner?.frameId ?? document.ownFrameId } };
+          }
+          if (method === "DOM.getBoxModel") {
+            const [left, top, right, bottom] = owner!.content;
+            return { model: { content: [left, top, right, top, right, bottom, left, bottom] } };
+          }
+          input.push({ sessionId, x: params["x"], y: params["y"] });
+          return {};
+        },
+      );
+      const debuggee = { sendCommand } as unknown as Electron.Debugger;
+      const send = (params: Record<string, unknown>, routed: boolean) =>
+        sendPageCommand(
+          {} as Electron.WebContents,
+          debuggee,
+          "Input.dispatchMouseEvent",
+          params,
+          undefined,
+          routed ? routeMouseToFrame(debuggee, frameSessions, () => () => {}) : undefined,
+        );
+      const click = async (x: number, y: number, routed = true) => {
+        for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+          await send({ type, x, y }, routed);
+        }
+      };
+      return { click, send, input, lookups };
+    };
+
+    it("sends it to the frame under the point, at the frame's own coordinates", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(75.4, 116.5);
+      expect(guest.input).toEqual(
+        Array.from({ length: 3 }, () => ({ sessionId: "session-cross", x: 65.4, y: 17.5 })),
+      );
+      // The lookup takes whole document pixels, so it adds each frame's scroll.
+      expect(guest.lookups.slice(0, 2)).toEqual([
+        { sessionId: undefined, x: 75, y: 1117 },
+        { sessionId: "session-cross", x: 65, y: 318 },
+      ]);
+    });
+
+    it("follows a cross-site frame inside another", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(160, 250);
+      expect(guest.input[0]).toEqual({ sessionId: "session-nested", x: 50, y: 51 });
+    });
+
+    it("keeps input over the page, a same-site frame or a frame's border on the page", async () => {
+      const guest = makeFramedGuest();
+      await guest.click(650, 50);
+      await guest.click(750, 50);
+      await guest.click(5, 95);
+      expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(9).fill(undefined));
+    });
+
+    it("gives the page an event whose frame never answers its lookup", async () => {
+      vi.useFakeTimers();
+      try {
+        const guest = makeFramedGuest(undefined, "session-cross");
+        const stalled = guest.click(75, 116);
+        await vi.advanceTimersByTimeAsync(3_000);
+        await stalled;
+        await guest.click(650, 50);
+        expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(6).fill(undefined));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves wheels, pages without cross-site frames, and shown guests to Chromium", async () => {
+      const guest = makeFramedGuest();
+      await guest.send({ type: "mouseWheel", x: 75, y: 116, deltaY: 100 }, true);
+      await guest.click(75, 116, false);
+      const bare = makeFramedGuest(new Map());
+      await bare.click(75, 116);
+      expect([...guest.lookups, ...bare.lookups]).toEqual([]);
+      expect([...guest.input, ...bare.input].map(({ sessionId }) => sessionId)).toEqual(
+        Array(7).fill(undefined),
+      );
+    });
+  });
 
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });
