@@ -125,7 +125,7 @@ export const renderCliShim = (input: {
     "stop=",
     `trap 'if [ -n "$cli" ]; then kill -TERM "$cli" 2>/dev/null; else stop=TERM; fi' TERM`,
     `trap 'if [ -n "$cli" ]; then kill -HUP "$cli" 2>/dev/null; else stop=HUP; fi' HUP`,
-    // A no-op, not '': the CLI would inherit an ignored SIGINT.
+    // Ctrl-C goes to the CLI directly; the launcher stays to unmount after it exits.
     "trap ':' INT",
     `${run("$mount")} <&9 9<&- &`,
     "cli=$!",
