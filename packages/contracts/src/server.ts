@@ -281,6 +281,8 @@ export const ServerProvider = Schema.Struct({
   subProviders: Schema.optional(Schema.Array(ServerProviderSubProvider)),
   // Set for the one failed check that follows a ready one: pickers keep offering `models`.
   modelsRetained: Schema.optionalKey(Schema.Boolean),
+  // Discovery failed, so `models` is not the full inventory and explicit slugs stay allowed.
+  modelsIncomplete: Schema.optionalKey(Schema.Boolean),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(

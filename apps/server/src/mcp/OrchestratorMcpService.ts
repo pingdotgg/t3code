@@ -436,17 +436,11 @@ export const withWorkspaceModels = (
 
 const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
 
-/** Empty inventories and Pi's undiscovered placeholder inventory accept any slug. */
+/** Empty or incomplete inventories accept any slug. */
 export const requireAdvertisedModel = (provider: ServerProvider, model: string) => {
-  const piUndiscovered =
-    provider.driver === "pi" &&
-    provider.auth.status === "unknown" &&
-    !provider.models.some(
-      (candidate) => !candidate.isCustom && candidate.subProvider !== undefined,
-    );
   if (
     provider.models.length === 0 ||
-    piUndiscovered ||
+    provider.modelsIncomplete === true ||
     advertisedModel(provider, model) !== undefined
   ) {
     return Effect.void;
