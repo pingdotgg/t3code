@@ -443,11 +443,11 @@ to one of the team's issues, in any project. It changes threads, never issues. L
 supported tracker.
 
 The server checks linked issues about once a minute while it runs, with or without a client
-open. Only a status change counts: saving a rule records the current statuses first, and a thread
-you organize by hand stays that way until one of its issues moves again. A thread with several
-linked issues wakes when any of them maps to **Wake**, settles only when all of them map to
-**Settle**, and otherwise snoozes. A status in no bucket, or one that could not be read, leaves
-the thread as it is. A snooze from a rule has no wake time; the thread shows **∞** in the
+open. Only a status change counts: the first check after you save a rule records the current
+statuses, and a thread you organize by hand stays that way until one of its issues moves again. A
+thread wakes when any linked issue maps to **Wake**. Short of that, it stays as it is while any
+linked issue has a status in no bucket, could not be read, or belongs to a team without a rule;
+it settles only when all of them map to **Settle**, and otherwise snoozes. A snooze from a rule has no wake time; the thread shows **∞** in the
 Snoozed list until a status change, **Wake thread**, or a message wakes it. A thread with work
 still running waits until it is idle before it snoozes or settles. A rule never settles a pinned
 thread. Rules leave a thread whose **Auto-settle behavior** is **Never** alone: they do not wake,

@@ -342,10 +342,17 @@ const make = Effect.gen(function* () {
           yield* SubscriptionRef.update(refreshes, (current) => new Map(current).set(id, next));
         }
       }
-      const actions = eligible.map(({ rule, link }) => {
-        const stateId = batchOf(rule)?.get(link.key.toUpperCase());
-        return stateId === undefined ? null : (rule.mappings[stateId] ?? "unchanged");
-      });
+      const covered = new Set(eligible.map(({ link }) => link));
+      const actions = [
+        ...eligible.map(({ rule, link }) => {
+          const stateId = batchOf(rule)?.get(link.key.toUpperCase());
+          return stateId === undefined ? null : (rule.mappings[stateId] ?? "unchanged");
+        }),
+        // A linked issue no rule reads is in no bucket.
+        ...(thread.issues ?? [])
+          .filter((link) => !covered.has(link))
+          .map(() => "unchanged" as const),
+      ];
       const action = aggregateIssueActions(actions);
       const unknown = actions.includes(null);
       let pending = baseline?.pending ?? null;
@@ -380,8 +387,9 @@ const make = Effect.gen(function* () {
       const waiting = yield* saveLock.withPermit(
         Effect.gen(function* () {
           const current = yield* settings.getSettings;
+          // The next sweep decides again, from a new baseline if this thread's rules changed.
           if (automationFingerprint(current.issueThreadAutomationRules) !== rulesFingerprint)
-            return false;
+            return true;
           return yield* orchestrator.dispatch(command).pipe(
             Effect.as(false),
             // Only a stale decision is dropped; a busy thread or a failed attempt tries again.

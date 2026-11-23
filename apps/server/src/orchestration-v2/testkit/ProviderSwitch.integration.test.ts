@@ -68,7 +68,10 @@ import {
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { automationFingerprint } from "../../issue/issueAutomation.ts";
+import {
+  automationFingerprint,
+  ISSUE_AUTOMATION_WAITS_FOR_IDLE,
+} from "../../issue/issueAutomation.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -4680,20 +4683,28 @@ describe("orchestration v2 provider switching", () => {
           })
           .pipe(
             Effect.flatMap(({ storedEvents }) =>
-              orchestrator.dispatch({
-                type: "thread.issue-automation.apply",
-                commandId,
-                threadId,
-                action: "settle",
-                expectedRevision: storedEvents.at(-1)?.sequence ?? 0,
-                rulesFingerprint: automationFingerprint([]),
-              }),
+              orchestrator
+                .dispatch({
+                  type: "thread.issue-automation.apply",
+                  commandId,
+                  threadId,
+                  action: "settle",
+                  expectedRevision: storedEvents.at(-1)?.sequence ?? 0,
+                  rulesFingerprint: automationFingerprint([]),
+                })
+                .pipe(Effect.flip),
+            ),
+            Effect.map((error) =>
+              assert.equal(
+                error._tag === "OrchestratorDispatchError" && error.cause,
+                ISSUE_AUTOMATION_WAITS_FOR_IDLE,
+              ),
             ),
           );
-        yield* (
-          change === "issue-settle"
-            ? settleByRule
-            : orchestrator.dispatch(
+        yield* change === "issue-settle"
+          ? settleByRule
+          : orchestrator
+              .dispatch(
                 change === "runtime-mode"
                   ? {
                       type: "thread.runtime-mode.set",
@@ -4710,7 +4721,7 @@ describe("orchestration v2 provider switching", () => {
                         modelSelection: secondSelection,
                       },
               )
-        ).pipe(Effect.ignore);
+              .pipe(Effect.ignore);
         yield* worker.drain();
 
         const projection = yield* orchestrator.getThreadProjection(threadId);

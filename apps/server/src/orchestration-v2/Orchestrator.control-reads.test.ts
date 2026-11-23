@@ -247,7 +247,7 @@ it.effect.each([
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("issue automation waits for queued work, then applies under a new command id", () =>
+it.effect("issue automation waits for a preparing run, then applies under a new command id", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
