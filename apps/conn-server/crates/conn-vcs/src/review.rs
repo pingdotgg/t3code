@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::{VcsError, VcsResult},
-    process::{GitCommand, OnLimit, ProcessError},
+    process::{GitCommand, GitOutput, OnLimit, ProcessError},
     repo::{self, PROBE_TIMEOUT, git},
 };
 
@@ -208,8 +208,9 @@ impl Untracked {
 pub const UNTRACKED_TOTALS_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Whether a nested repository's HEAD names a commit. Only "no such commit" (exit 1) says no,
-/// as in T3: a probe that fails otherwise leaves the folder to Git.
-async fn nested_repository_has_head(dir: &Path) -> bool {
+/// as in T3: another exit leaves the folder to Git, and a probe that cannot run (a timeout)
+/// fails the review.
+async fn nested_repository_has_head(dir: &Path) -> VcsResult<bool> {
     let probe = git(
         "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
         dir,
@@ -218,7 +219,15 @@ async fn nested_repository_has_head(dir: &Path) -> bool {
     .allow_exit(&[1])
     .run()
     .await;
-    !matches!(probe, Ok(out) if out.code == 1)
+    head_probe_has_commit(probe)
+}
+
+fn head_probe_has_commit(probe: Result<GitOutput, ProcessError>) -> VcsResult<bool> {
+    match probe {
+        Ok(out) => Ok(out.code != 1),
+        Err(ProcessError::Exit { .. }) => Ok(true),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(crate) async fn prepare_untracked(
@@ -284,7 +293,7 @@ pub(crate) async fn prepare_untracked(
     // Git before 2.53 fails the add, and later versions take it and fail every diff.
     let mut indexable = Vec::with_capacity(untracked.len());
     for path in untracked {
-        if path.ends_with('/') && !nested_repository_has_head(&cwd.join(&path)).await {
+        if path.ends_with('/') && !nested_repository_has_head(&cwd.join(&path)).await? {
             continue;
         }
         indexable.push(path);
@@ -1125,6 +1134,39 @@ pub async fn branch_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
+        let exited = |code| {
+            Ok(GitOutput {
+                code,
+                ..GitOutput::default()
+            })
+        };
+        assert_eq!(head_probe_has_commit(exited(0)), Ok(true));
+        assert_eq!(head_probe_has_commit(exited(1)), Ok(false));
+        let context = crate::process::ProcessContext {
+            operation: "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+            command: "git rev-parse".into(),
+            cwd: "/repo/nested".into(),
+            argument_count: 4,
+        };
+        let exit = ProcessError::Exit {
+            context: context.clone(),
+            code: 128,
+            stderr: String::new(),
+            stderr_truncated: false,
+        };
+        assert_eq!(head_probe_has_commit(Err(exit)), Ok(true));
+        let timeout = ProcessError::Timeout {
+            context,
+            timeout_ms: 30_000,
+        };
+        assert_eq!(
+            head_probe_has_commit(Err(timeout.clone())),
+            Err(VcsError::Process(timeout))
+        );
+    }
 
     #[test]
     fn numstat_parses_renames_and_binaries() {
