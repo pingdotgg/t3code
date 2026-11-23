@@ -3,6 +3,7 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import { useNowMinute } from "../hooks/useNowMinute";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import type { MessageResolver } from "../i18n/messages";
 import {
   localSnoozeDate,
@@ -13,7 +14,8 @@ import {
 import { Button } from "./ui/button";
 import { AlarmClockIcon, CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
-import { weekStartsOn } from "../timestampFormat";
+import { formatShortTimestamp, weekStartsOn } from "../timestampFormat";
+import { useClientSettings } from "../hooks/useSettings";
 import { useFormattingLocale } from "../i18n/I18nProvider";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
@@ -98,8 +100,9 @@ function formatReturnTime(
   now: Date,
   resolve: MessageResolver,
   locale: string | undefined,
+  timestampFormat: TimestampFormat,
 ): string {
-  const time = wake.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  const time = formatShortTimestamp(wake.toISOString(), timestampFormat, locale);
   const dayOffset = Math.round(
     (new Date(wake).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 86_400_000,
   );
@@ -124,6 +127,7 @@ function CustomSnoozeDialog() {
   const gt = useGT();
   const messages = useMessages();
   const locale = useFormattingLocale();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -296,7 +300,7 @@ function CustomSnoozeDialog() {
                         className="size-3.5 shrink-0 text-muted-foreground"
                       />
                       {wakeAt
-                        ? formatReturnTime(new Date(wakeAt), now, messages, locale)
+                        ? formatReturnTime(new Date(wakeAt), now, messages, locale, timestampFormat)
                         : gt("Set a duration longer than zero.")}
                     </p>
                   </div>
