@@ -209,7 +209,7 @@ function noiseFloor(metric: string) {
   if (metric.endsWith("wakeupsPerSec")) return 20;
   if (metric.endsWith("MB")) return 15;
   if (metric.endsWith("KB")) return 20;
-  if (metric.includes(".shellMs.")) return 50;
+  if (metric.includes(".shellMs.") || metric.includes(".openMs.")) return 50;
   if (metric.endsWith("loopDelayP50Ms")) return 2;
   if (metric.endsWith("loopDelayP99Ms")) return 5;
   if (metric.endsWith("loopDelayMaxMs")) return 20;
