@@ -295,8 +295,11 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       Effect.map(({ result }) => result.value),
     ),
     // One histogram and GC observer live in the server; a window resets them and reads them back.
+    // Node delivers GC entries to observers from a later setImmediate, which takeRecords() cannot
+    // reach, so each boundary first lets two turns pass and the pending entries land on its side.
     loopStart: send("Runtime.evaluate", {
-      expression: `(() => {
+      awaitPromise: true,
+      expression: `(async () => {
         const bench = (globalThis.__t3ServerMetrics ??= (() => {
           const { monitorEventLoopDelay, PerformanceObserver } = process.getBuiltinModule("node:perf_hooks");
           const state = { delay: monitorEventLoopDelay({ resolution: ${LOOP_RESOLUTION_MS} }), gcCount: 0, gcMs: 0 };
@@ -307,6 +310,8 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
           state.gc.observe({ entryTypes: ["gc"] });
           return state;
         })());
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
         bench.gc.takeRecords();
         bench.delay.reset();
         bench.delay.enable();
@@ -315,10 +320,12 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       })()`,
     }).pipe(Effect.asVoid),
     loopRead: send("Runtime.evaluate", {
-      expression: `(() => {
+      awaitPromise: true,
+      expression: `(async () => {
         const bench = globalThis.__t3ServerMetrics;
         bench.delay.disable();
-        // GC entries reach the observer asynchronously; take the ones still queued.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
         bench.count(bench.gc.takeRecords());
         const ms = (ns) => Math.max(0, ns / 1e6 - ${LOOP_RESOLUTION_MS});
         return JSON.stringify({
