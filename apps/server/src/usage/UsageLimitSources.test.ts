@@ -56,6 +56,9 @@ function fixture(overrides: Partial<UsageLimitSourceConfig> = {}, resetStatus = 
           }),
         );
       }
+      if (path === "/v0/management/auth-files/models") {
+        return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
+      }
       if (path === "/v0/management/reset-quota") {
         return HttpClientResponse.fromWeb(
           request,
