@@ -25,7 +25,7 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
       const tag = view.getUint16(entry, littleEndian);
       const type = view.getUint16(entry + 2, littleEndian);
       const values = view.getUint32(entry + 4, littleEndian);
-      const width = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8][type];
+      const width = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 4][type];
       if (!width) throw new PreviewError({ code: "tiff-metadata-type" });
       const length = values * width;
       const start = length > 4 ? view.getUint32(entry + 8, littleEndian) : entry + 8;
