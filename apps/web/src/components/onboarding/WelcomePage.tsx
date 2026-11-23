@@ -416,6 +416,7 @@ interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
   readonly driver: OnboardingAgentDriver;
   readonly providerInstanceId: ServerProvider["instanceId"];
+  readonly step: "install" | "signIn";
   readonly cwd: string;
   readonly command: string;
   readonly keybindings: ServerConfig["keybindings"];
@@ -467,6 +468,9 @@ function AgentsSection({
   const [addingProvider, setAddingProvider] = useState(false);
   const [codexSetupId, setCodexSetupId] = useState<ProviderInstanceId | null>(null);
   const [cliTerminalFor, setCliTerminalFor] = useState<ProviderInstanceId | null>(null);
+  // Another check can see a new binary before its installer exits; Sign in must not cut it off.
+  const setupCommandRunning =
+    useThreadRunningTerminalIds({ environmentId, threadId: AGENT_ONBOARDING_THREAD_ID }).length > 0;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment to refresh its provider list when the environment changes
   useEffect(() => {
@@ -516,6 +520,7 @@ function AgentsSection({
       environmentId,
       driver: provider.driver,
       providerInstanceId: provider.instanceId,
+      step: provider.installed ? "signIn" : "install",
       cwd: serverConfig.cwd,
       command: provider.installed
         ? resolveOnboardingProviderLoginCommand(
@@ -623,7 +628,8 @@ function AgentsSection({
           name={name}
           signIn={state === "signIn"}
           disabled={
-            terminalSession?.providerInstanceId === provider.instanceId ||
+            (terminalSession?.providerInstanceId === provider.instanceId &&
+              (terminalSession.step === state || setupCommandRunning)) ||
             serverConfig === null ||
             !canOperateTerminal
           }
@@ -739,7 +745,8 @@ function AgentsSection({
       {isPrimary ? <CliPathSetup /> : null}
       {terminalSession !== null ? (
         <AgentInstallTerminal
-          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
+          // A new step gets a new terminal: an attached viewport reads its PTY closing as an exit.
+          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}:${terminalSession.step}`}
           session={terminalSession}
           onCommandFinished={() =>
             void refreshProviders({
