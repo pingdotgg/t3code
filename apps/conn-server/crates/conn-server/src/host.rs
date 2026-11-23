@@ -200,6 +200,10 @@ impl EngineHost for Host {
                     start_from_origin: request.start_from_origin,
                     setup_script: None,
                     worktrees_dir: self.worktrees_dir(),
+                    submodules: crate::settings::worktree_submodules(
+                        &self.environment.settings.raw(),
+                        request.project_id.as_deref(),
+                    ),
                 },
             )
             .await

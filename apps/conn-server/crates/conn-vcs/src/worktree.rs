@@ -135,6 +135,8 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
     } else {
         input.ref_name.clone()
     };
+    // Read before the branch exists, so a missing pattern file leaves nothing behind.
+    let sparse = sparse_patterns(cwd, &start, &input.ref_name).await?;
 
     if let Some(new) = &input.new_ref_name {
         git(
@@ -167,30 +169,43 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
         .await
         .unwrap_or(None)
         .unwrap_or_else(|| "0".into());
-    let added = git(
-        OPERATION,
-        cwd,
-        [
-            "-c".to_owned(),
-            format!("checkout.workers={workers}"),
-            "worktree".into(),
-            "add".into(),
-            "--".into(),
-            path.to_string_lossy().into_owned(),
-            target.clone(),
-        ],
-    )
-    .timeout(Duration::from_secs(3600))
-    .max_stdout(1_000_000, OnLimit::Truncate)
-    .run()
-    .await;
+    let mut add = vec![
+        "-c".to_owned(),
+        format!("checkout.workers={workers}"),
+        "worktree".into(),
+        "add".into(),
+    ];
+    if sparse.is_some() {
+        add.push("--no-checkout".into());
+    }
+    add.extend([
+        "--".into(),
+        path.to_string_lossy().into_owned(),
+        target.clone(),
+    ]);
+    let mut added = git(OPERATION, cwd, add)
+        .timeout(Duration::from_secs(3600))
+        .max_stdout(1_000_000, OnLimit::Truncate)
+        .run()
+        .await
+        .map(drop)
+        .map_err(VcsError::from);
+    if added.is_ok()
+        && let Some(patterns) = sparse
+    {
+        added = sparse_checkout(&path, &workers, patterns).await;
+        if added.is_err() {
+            // A worktree without its files is no use.
+            let _ = remove_worktree(cwd, &path, Removal::Force).await;
+        }
+    }
     if let Err(error) = added {
         if let Some(new) = &input.new_ref_name {
             let _ = git(OPERATION, cwd, ["branch", "-D", "--", new.as_str()])
                 .run()
                 .await;
         }
-        return Err(error.into());
+        return Err(error);
     }
 
     if let (Some(new), Some(base)) = (&input.new_ref_name, &input.base_ref_name)
@@ -225,6 +240,240 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
         path,
         ref_name: Some(target),
     })
+}
+
+/// `t3.json` at `rev`, or `None` when it is missing or not a JSON object (T3 then checks out
+/// every file and initializes submodules recursively).
+async fn project_file(cwd: &Path, rev: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let spec = format!("{rev}:t3.json");
+    let text = repo::optional_text(git(OPERATION, cwd, ["show", spec.as_str()]))
+        .await
+        .ok()??;
+    match serde_json::from_str(&text) {
+        Ok(serde_json::Value::Object(file)) => Some(file),
+        _ => None,
+    }
+}
+
+/// `readWorktreeSparsePatterns`: the non-cone patterns named by `t3.json`'s
+/// `worktreeSparsePatternsPath` at `rev`, or `None` for a full checkout. A named file that
+/// is not in `rev` fails the worktree, so it never checks out everything by mistake.
+async fn sparse_patterns(cwd: &Path, rev: &str, ref_name: &str) -> VcsResult<Option<Vec<u8>>> {
+    let Some(named) = project_file(cwd, rev).await.and_then(|file| {
+        file.get("worktreeSparsePatternsPath")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+    }) else {
+        return Ok(None);
+    };
+    // Git reads `<rev>:./path` from the working folder, so keep it repository-relative.
+    let relative = named.trim_start_matches("./");
+    let read = if relative.split('/').any(|part| part == "..") {
+        None
+    } else {
+        let spec = format!("{rev}:{relative}");
+        match git(OPERATION, cwd, ["cat-file", "blob", spec.as_str()])
+            .run()
+            .await
+        {
+            Ok(out) => Some(out.stdout),
+            Err(ProcessError::Exit { .. }) => None,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    read.map(Some).ok_or_else(|| {
+        invalid(
+            cwd,
+            format!(
+                "t3.json names the sparse-checkout pattern file \"{named}\", which is not a file in {ref_name}."
+            ),
+        )
+    })
+}
+
+/// Limits a `--no-checkout` worktree to `patterns`, then checks it out.
+async fn sparse_checkout(path: &Path, workers: &str, patterns: Vec<u8>) -> VcsResult<()> {
+    git(
+        OPERATION,
+        path,
+        ["sparse-checkout", "set", "--no-cone", "--stdin"],
+    )
+    .stdin(patterns)
+    .run()
+    .await?;
+    git(
+        OPERATION,
+        path,
+        [
+            "-c".to_owned(),
+            format!("checkout.workers={workers}"),
+            "checkout".into(),
+        ],
+    )
+    .timeout(Duration::from_secs(3600))
+    .max_stdout(1_000_000, OnLimit::Truncate)
+    .run()
+    .await?;
+    Ok(())
+}
+
+/// `worktreeSubmodules`: how a new worktree fills its submodules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Submodules {
+    None,
+    TopLevel,
+    Recursive,
+}
+
+/// Where a [`Submodules`] value came from, as setup reports a disabled one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// The settings, or the default when neither names one.
+    Settings,
+    ProjectFile,
+}
+
+impl Origin {
+    pub fn label(self) -> &'static str {
+        match self {
+            Origin::Settings => "settings",
+            Origin::ProjectFile => "t3.json",
+        }
+    }
+}
+
+impl Submodules {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(Self::None),
+            "top-level" => Some(Self::TopLevel),
+            "recursive" => Some(Self::Recursive),
+            _ => None,
+        }
+    }
+}
+
+/// `resolveProjectFileBackedSetting("worktreeSubmodules", …)` for a new worktree: the setting
+/// (`None` inherits), else `t3.json` at `HEAD`, else recursive. `None` when `HEAD` has no
+/// `.gitmodules`. Both files are read from `HEAD`: sparse patterns can leave them out.
+pub async fn submodule_mode(
+    worktree: &Path,
+    setting: Option<&str>,
+) -> Option<(Submodules, Origin)> {
+    let listed = repo::succeeds(git(
+        "GitVcsDriver.createWorktree.findSubmodules",
+        worktree,
+        ["cat-file", "-e", "HEAD:.gitmodules"],
+    ))
+    .await
+    .unwrap_or(false);
+    if !listed {
+        return None;
+    }
+    if let Some(mode) = setting.and_then(Submodules::parse) {
+        return Some((mode, Origin::Settings));
+    }
+    let from_file = project_file(worktree, "HEAD").await.and_then(|file| {
+        file.get("worktreeSubmodules")
+            .and_then(serde_json::Value::as_str)
+            .and_then(Submodules::parse)
+    });
+    Some(match from_file {
+        Some(mode) => (mode, Origin::ProjectFile),
+        None => (Submodules::Recursive, Origin::Settings),
+    })
+}
+
+/// [`submodule_mode`], then [`update_submodules`]: what a new worktree outside thread setup
+/// does with its submodules. A failure is logged and the worktree kept, as in T3.
+pub async fn populate_submodules(worktree: &Path, setting: Option<&str>) {
+    if let Some((mode, _)) = submodule_mode(worktree, setting).await
+        && let Err(error) = update_submodules(worktree, mode).await
+    {
+        eprintln!(
+            "conn-vcs: worktree submodule checkout failed; submodules may be incomplete: {error}"
+        );
+    }
+}
+
+/// Initializes and checks out a new worktree's submodules. A failure leaves the worktree, as
+/// T3 does: the caller reports it, and the submodules that did clone are checked out anyway.
+pub async fn update_submodules(worktree: &Path, mode: Submodules) -> VcsResult<()> {
+    let update = |paths: Vec<String>| async move {
+        let mut args = vec!["submodule".to_owned(), "update".into(), "--init".into()];
+        if mode == Submodules::Recursive {
+            args.push("--recursive".into());
+        }
+        if !paths.is_empty() {
+            args.extend(["--force".into(), "--".into()]);
+            args.extend(paths);
+        }
+        git(
+            "GitVcsDriver.createWorktree.updateSubmodules",
+            worktree,
+            args,
+        )
+        .timeout(Duration::from_secs(3600))
+        .max_stdout(1_000_000, OnLimit::Truncate)
+        .run()
+        .await
+        .map(drop)
+        .map_err(VcsError::from)
+    };
+    if mode == Submodules::None {
+        return Ok(());
+    }
+    let result = match git(
+        "GitVcsDriver.createWorktree.initSubmodules",
+        worktree,
+        ["submodule", "init"],
+    )
+    .run()
+    .await
+    {
+        Ok(_) => update(Vec::new()).await,
+        Err(e) => Err(e.into()),
+    };
+    if result.is_err() {
+        // One failed clone stops git before any checkout: check out the ones that cloned.
+        let listed = repo::optional_text(git(
+            "GitVcsDriver.createWorktree.listSubmodules",
+            worktree,
+            [
+                "config",
+                "-z",
+                "--blob",
+                "HEAD:.gitmodules",
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ],
+        ))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+        // Records are `submodule.<name>.path\n<path>`.
+        let paths: Vec<PathBuf> = listed
+            .split('\0')
+            .filter_map(|record| record.split_once('\n').map(|(_, path)| PathBuf::from(path)))
+            .collect();
+        let root = worktree.to_owned();
+        let cloned: Vec<String> = tokio::task::spawn_blocking(move || {
+            paths
+                .into_iter()
+                .filter(|path| root.join(path).join(".git").exists())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect()
+        })
+        .await
+        .unwrap_or_default();
+        if !cloned.is_empty() {
+            let _ = update(cloned).await;
+        }
+    }
+    result
 }
 
 /// `(branch name, full ref)` of a base given as a local or remote branch.

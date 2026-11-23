@@ -833,6 +833,24 @@ pub fn response_streaming_mode(
     conn_engine::ResponseStreamingMode::from_setting(value)
 }
 
+/// `worktreeSubmodules` as `resolveProjectSettings` gives it: the project's override, else the
+/// environment's; `None` (or `null`) leaves it to `t3.json`.
+pub fn worktree_submodules(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+) -> Option<String> {
+    let project = project_id.and_then(|project| {
+        settings
+            .get("projectSettingsOverrides")?
+            .get(project)?
+            .get("worktreeSubmodules")?
+            .as_str()
+    });
+    project
+        .or_else(|| settings.get("worktreeSubmodules")?.as_str())
+        .map(str::to_owned)
+}
+
 /// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
 /// override when set, else the machine-wide `resolveProviderInstanceEnabled` of the instance's
 /// entry (an explicit `false` on the envelope or in its `config` wins; then the envelope, the

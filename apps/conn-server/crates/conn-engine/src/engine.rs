@@ -638,32 +638,34 @@ impl Inner {
             .to_owned();
         let id = command_id.clone();
         let (seen, root) = self
-            .db(move |store| -> Result<(bool, Option<String>), String> {
-                let seen = store.receipt(&id)?.is_some();
-                let tx = store.tx()?;
-                let root = match tx.thread(&parent_id) {
-                    Ok(Some(parent)) => parent["projectId"]
-                        .as_str()
-                        .map(|project| tx.project(project))
-                        .transpose()
-                        .map(|project| {
-                            project
-                                .flatten()
-                                .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned))
-                        }),
-                    Ok(None) => Ok(None),
-                    Err(e) => Err(e),
-                };
-                tx.rollback();
-                Ok((seen, root?))
-            })
+            .db(
+                move |store| -> Result<(bool, Option<(String, String)>), String> {
+                    let seen = store.receipt(&id)?.is_some();
+                    let tx = store.tx()?;
+                    let root = match tx.thread(&parent_id) {
+                        Ok(Some(parent)) => parent["projectId"]
+                            .as_str()
+                            .map(|project| tx.project(project).map(|p| (project.to_owned(), p)))
+                            .transpose()
+                            .map(|found| {
+                                let (project_id, project) = found?;
+                                let root = project?["workspaceRoot"].as_str()?.to_owned();
+                                Some((project_id, root))
+                            }),
+                        Ok(None) => Ok(None),
+                        Err(e) => Err(e),
+                    };
+                    tx.rollback();
+                    Ok((seen, root?))
+                },
+            )
             .await
             .map_err(DispatchError::Internal)?;
         if seen {
             return Ok((command, None));
         }
         // No parent or project: the handler refuses the command.
-        let Some(root) = root else {
+        let Some((project_id, root)) = root else {
             return Ok((command, None));
         };
         let Some(host) = &self.host else {
@@ -676,6 +678,7 @@ impl Inner {
         let made = host
             .provision_worktree(crate::WorktreeRequest {
                 thread_id: thread_id.clone(),
+                project_id: Some(project_id),
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1127,6 +1130,7 @@ impl Inner {
         let strategy = &input["workspaceStrategy"];
         host.provision_worktree(crate::WorktreeRequest {
             thread_id: thread_id.to_owned(),
+            project_id: Some(input["projectId"].as_str().unwrap_or_default().to_owned()),
             project_root: root,
             base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
             branch: strategy["branch"].as_str().map(str::to_owned),

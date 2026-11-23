@@ -579,6 +579,7 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
             command: command.into(),
         }),
         worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
     };
     let done = setup::provision(
         &setups,
@@ -720,6 +721,7 @@ async fn setup_scripts_leave_no_processes_behind() {
             command: command.into(),
         }),
         worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
     };
     let pids_dir = fx.root.path().join("pids");
     std::fs::create_dir_all(&pids_dir).unwrap();
@@ -976,4 +978,96 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
+}
+
+/// T3 `GitVcsDriverCore.createWorktree` with `worktreeSparsePatternsPath`: the patterns file
+/// named by `t3.json` at the ref limits the checkout; a missing one fails with nothing left.
+#[tokio::test]
+async fn a_sparse_worktree_leaves_out_what_t3_json_excludes() {
+    let fx = Fixture::new("sparse");
+    let dir = fx.root.path().join("worktrees");
+    write(&fx.work, "patterns", "/*\n!/excluded/\n");
+    write(&fx.work, "excluded/asset", "omitted by design\n");
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"./patterns"}"#,
+    );
+    commit_all(&fx.work, "sparse checkout");
+    let create = |branch: &str| {
+        let input = CreateWorktree {
+            cwd: fx.work.clone(),
+            ref_name: "HEAD".into(),
+            new_ref_name: Some(branch.into()),
+            base_ref_name: None,
+            worktrees_dir: dir.clone(),
+        };
+        async move { worktree::create_worktree(&input).await }
+    };
+    let sparse = create("probe-sparse").await.unwrap().path;
+    assert!(!sparse.join("excluded/asset").exists());
+    assert!(sparse.join("README.md").exists() && sparse.join("src/lib.rs").exists());
+
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"missing"}"#,
+    );
+    commit_all(&fx.work, "missing patterns");
+    let error = create("probe-missing").await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("\"missing\", which is not a file in HEAD"),
+        "{error}"
+    );
+    assert!(
+        git(&fx.work, &["branch", "--list", "probe-missing"])
+            .trim()
+            .is_empty()
+    );
+}
+
+/// `resolveProjectFileBackedSetting("worktreeSubmodules", …)`: the setting, else `t3.json` at
+/// `HEAD` (even when sparse patterns leave it out), else recursive; nothing without
+/// `.gitmodules`. `none` leaves the module empty.
+#[tokio::test]
+async fn submodule_mode_follows_the_setting_then_t3_json() {
+    let fx = Fixture::new("submodule-mode");
+    let mode = |setting: Option<&'static str>| {
+        let work = fx.work.clone();
+        async move { worktree::submodule_mode(&work, setting).await }
+    };
+    assert_eq!(mode(None).await, None, "no .gitmodules");
+    write(
+        &fx.work,
+        ".gitmodules",
+        "[submodule \"module\"]\n\tpath = module\n\turl = ../child\n",
+    );
+    commit_all(&fx.work, "gitmodules");
+    use worktree::{Origin, Submodules};
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    write(&fx.work, "t3.json", r#"{"worktreeSubmodules":"top-level"}"#);
+    commit_all(&fx.work, "t3.json");
+    // Read from HEAD: the working copy may lack it.
+    std::fs::remove_file(fx.work.join("t3.json")).unwrap();
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::TopLevel, Origin::ProjectFile))
+    );
+    assert_eq!(
+        mode(Some("none")).await,
+        Some((Submodules::None, Origin::Settings))
+    );
+    assert_eq!(
+        mode(Some("recursive")).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    worktree::update_submodules(&fx.work, Submodules::None)
+        .await
+        .unwrap();
+    assert!(!fx.work.join("module").exists());
 }

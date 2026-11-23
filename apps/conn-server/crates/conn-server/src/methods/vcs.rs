@@ -282,11 +282,16 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     });
 
     // Worktrees, always at the managed path (`path` is null in the contract).
-    let hub = shared.hub.clone();
+    let (hub, engine, environment) = (
+        shared.hub.clone(),
+        deps.engine.clone(),
+        deps.environment.clone(),
+    );
     table.unary(
         "vcs.createWorktree",
         move |_, input: VcsCreateWorktreePayload| {
             let (hub, dir) = (hub.clone(), worktrees_dir());
+            let (engine, environment) = (engine.clone(), environment.clone());
             async move {
                 let created = worktree::create_worktree(&worktree::CreateWorktree {
                     cwd: PathBuf::from(&input.cwd),
@@ -297,6 +302,25 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                 })
                 .await
                 .map_err(|e| git_failure(&e))?;
+                // `projectSettingsFor`: the project whose workspace root is `cwd`.
+                let project_id = match &engine {
+                    Some(engine) => engine.projects_snapshot().await.ok().and_then(|projects| {
+                        let wanted = conn_vcs::hub::normalize(&input.cwd);
+                        projects.into_iter().find_map(|p| {
+                            (p["deletedAt"].is_null()
+                                && p["workspaceRoot"]
+                                    .as_str()
+                                    .is_some_and(|r| conn_vcs::hub::normalize(r) == wanted))
+                            .then(|| p["id"].as_str().map(str::to_owned))
+                            .flatten()
+                        })
+                    }),
+                    None => None,
+                };
+                let setting = environment.as_deref().and_then(|e| {
+                    crate::settings::worktree_submodules(&e.settings.raw(), project_id.as_deref())
+                });
+                worktree::populate_submodules(&created.path, setting.as_deref()).await;
                 let _ = hub.refresh_local(&input.cwd).await;
                 Ok(VcsCreateWorktreeResult {
                     worktree: VcsCreateWorktreeResultWorktree {
