@@ -272,7 +272,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       teams: ReadonlyArray<{ readonly id: string }>,
     ) {
       const [only, ...more] = teams;
-      if (only !== undefined && more.length === 0) return only.id;
+      if (only === undefined) return undefined;
+      if (more.length === 0) return only.id;
       const { space } = yield* getList(operation, listId);
       const known = workspaceOfSpace.get(space.id);
       if (known !== undefined) return known;

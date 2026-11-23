@@ -876,12 +876,53 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
+  it.effect("passes over an opening account whose token fails", () =>
+    Effect.gen(function* () {
+      const working = IssueTrackerAccountId.make("working");
+      const tracker = fakeStandaloneTracker({
+        issueScope: () =>
+          Effect.flatMap(IssueTrackerAccount, (account) =>
+            account === working
+              ? Effect.succeed("901")
+              : Effect.fail(
+                  new IssueTrackerError({
+                    tracker: LINEAR,
+                    operation: "issueScope",
+                    reason: "unauthenticated",
+                    detail: "expired",
+                  }),
+                ),
+          ),
+      });
+      const service = yield* makeService({
+        projects: [project({ id: "web" }), project({ id: "api" })],
+        trackers: [tracker],
+        bindings: {
+          web: { tracker: LINEAR, scope: "900" },
+          api: { tracker: LINEAR, accountId: working, scope: "901" },
+        },
+      });
+      const ref = { projectId: "web" as ProjectId, tracker: LINEAR, host: "linear.app" };
+      expect(yield* service.detail({ ...ref, scope: "task", key: "xyz" })).toMatchObject({
+        projectId: "api",
+        scope: "901",
+      });
+      expect(yield* service.projectScope("web" as ProjectId, { key: "xyz" })).toMatchObject({
+        scope: "901",
+      });
+    }),
+  );
+
   it.effect("names a key-only reference by the scope the tracker places it in", () =>
     Effect.gen(function* () {
+      // The task's list is bound only by another project.
       const service = yield* makeService({
-        projects: [project({ id: "web" })],
+        projects: [project({ id: "web" }), project({ id: "api" })],
         trackers: [fakeStandaloneTracker({ issueScope: () => Effect.succeed("901") })],
-        bindings: { web: { tracker: LINEAR, scope: "900", additionalScopes: ["901"] } },
+        bindings: {
+          web: { tracker: LINEAR, scope: "900" },
+          api: { tracker: LINEAR, scope: "901" },
+        },
       });
       expect(yield* service.projectScope("web" as ProjectId, { key: "xyz" })).toMatchObject({
         scope: "901",

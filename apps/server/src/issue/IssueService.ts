@@ -368,8 +368,6 @@ const make = Effect.gen(function* () {
     if (first._tag === "Success") {
       const here = place(first.success) ?? placed;
       if (here.writable) return here;
-    } else if (!isNotFound(first.failure)) {
-      return yield* first.failure;
     }
     // This project's account may not see the task, or does not bind its scope: another account
     // or project on the same tracker may, and the one that binds the scope serves it.
