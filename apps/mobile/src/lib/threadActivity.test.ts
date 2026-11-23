@@ -1742,6 +1742,18 @@ describe("subagent continued by a later turn", () => {
     expect(live.filter((entry) => entry.type === "run-fold")).toHaveLength(2);
   });
 
+  it("keeps the later turn's fold beside its answer when the loaded page starts at the card", () => {
+    const page = items.slice(items.findIndex((entry) => entry.type === "subagent"));
+    const ids = deriveThreadFeedPresentation(
+      buildThreadFeed(page.map((entry, index) => projected(entry, index))),
+      { runId: run2, status: "completed", startedAt: at(30), completedAt: at(41) },
+      new Set(),
+    ).map((entry) => entry.id);
+    const foldIndex = ids.indexOf(`run-fold:${run2}`);
+    expect(foldIndex).toBeGreaterThan(ids.indexOf("prompt-2"));
+    expect(foldIndex).toBeLessThan(ids.indexOf("closing-2"));
+  });
+
   it("puts the live fold after a plan the settled fold leaves in view", () => {
     const planned = buildThreadFeed(
       [

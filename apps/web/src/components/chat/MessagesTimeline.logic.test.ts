@@ -5168,6 +5168,38 @@ describe("subagent continued by a later turn", () => {
     assistant("closing-2", run2, 2_000_005, 41),
   ];
 
+  const deriveRows = (windowItems: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: windowItems.map((item) => ({
+          position: item.ordinal,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
+        optimisticMessages: [],
+      }),
+      latestRun: {
+        runId: run2,
+        status: "completed",
+        startedAt: DateTime.formatIso(at(30)),
+        completedAt: DateTime.formatIso(at(41)),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+  it("keeps the later turn's fold beside its answer when loaded history starts at the card", () => {
+    const ids = deriveRows(items.slice(items.findIndex((item) => item.type === "subagent"))).map(
+      (row) => row.id,
+    );
+    const foldIndex = ids.indexOf(`turn-fold:${run2}`);
+    expect(foldIndex).toBeGreaterThan(ids.indexOf("prompt-2"));
+    expect(foldIndex).toBeLessThan(ids.indexOf("closing-2"));
+  });
+
   it("keeps each turn's fold between its own prompt and answer", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
