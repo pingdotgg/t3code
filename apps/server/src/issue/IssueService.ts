@@ -377,6 +377,9 @@ const make = Effect.gen(function* () {
     const sameTracker = everywhere.filter((candidate) => candidate.tracker === ref.tracker);
     let found: { readonly lender: SupportedProject; readonly scope: string } | undefined =
       first._tag === "Success" ? { lender: placed, scope: first.success } : undefined;
+    // An account that cannot be used is passed over like one that cannot see the issue; its
+    // error is the answer only when no account can read it.
+    let failure: IssueError | null = first._tag === "Failure" ? first.failure : null;
     const tried = new Set([placed.accountId]);
     for (const candidate of sameTracker) {
       if (found !== undefined) break;
@@ -384,12 +387,10 @@ const make = Effect.gen(function* () {
       tried.add(candidate.accountId);
       const read = yield* scopeOf(candidate);
       if (read._tag === "Success") found = { lender: candidate, scope: read.success };
-      else if (!isNotFound(read.failure)) return yield* read.failure;
+      else if (failure === null || isNotFound(failure)) failure = read.failure;
     }
     if (found === undefined) {
-      return yield* first._tag === "Failure"
-        ? first.failure
-        : new IssueUnavailableError({ reason: "tracker-unsupported" });
+      return yield* failure ?? new IssueUnavailableError({ reason: "tracker-unsupported" });
     }
     const { lender, scope } = found;
     const matches = (candidate: SupportedProject) =>
@@ -807,20 +808,22 @@ const make = Effect.gen(function* () {
         detail: `This project does not track ${select?.scope?.trim()}. Use one of: ${[...new Set(supported.map((candidate) => candidate.scope))].join(", ")}.`,
       });
     }
-    // A key-only reference to a tracker that places its own issues takes the issue's scope, so
-    // a thread link names the same scope as one made from a URL or the issue list, even when
-    // another project binds it; reads and writes are placed again on the way in.
+    // A key-only reference to a tracker that places its own issues takes the scope the issue is
+    // in, through whichever account reads it, so a thread link names the same scope as one made
+    // from a URL or the issue list.
     const placedScope =
       named === undefined && select?.key !== undefined && own.api.issueScope !== undefined
-        ? yield* own.api
-            .issueScope({
-              cwd: own.project.workspaceRoot,
-              host: own.host,
-              scope: own.scope,
-              key: select.key,
-            })
+        ? yield* requireProject({
+            projectId,
+            tracker: own.tracker,
+            host: own.host,
+            scope: own.scope,
+            key: select.key,
+          }).pipe(
+            Effect.map((placed) => placed.scope),
             // Only a hint: the read or write that follows reports a missing issue itself.
-            .pipe(Effect.orElseSucceed(() => undefined))
+            Effect.orElseSucceed(() => undefined),
+          )
         : undefined;
     return { projectId, tracker: own.tracker, host: own.host, scope: placedScope ?? own.scope };
   });

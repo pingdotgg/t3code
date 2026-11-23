@@ -832,31 +832,35 @@ describe("IssueService with a standalone tracker", () => {
 
   it.effect("asks another account when the opening project's account cannot see the issue", () =>
     Effect.gen(function* () {
-      const second = IssueTrackerAccountId.make("second");
+      const expired = IssueTrackerAccountId.make("expired");
+      const third = IssueTrackerAccountId.make("third");
+      const refuse = (reason: "not-found" | "unauthenticated") =>
+        Effect.fail(
+          new IssueTrackerError({
+            tracker: LINEAR,
+            operation: "issueScope",
+            reason,
+            detail: reason,
+          }),
+        );
       const tracker: StandaloneIssueTrackerApi = {
         ...fakeStandaloneTracker({
-          // Only the second account's workspace has the task.
+          // Only the third account's workspace has the task; the second's token has expired.
           issueScope: () =>
             Effect.flatMap(IssueTrackerAccount, (account) =>
-              account === second
+              account === third
                 ? Effect.succeed("901")
-                : Effect.fail(
-                    new IssueTrackerError({
-                      tracker: LINEAR,
-                      operation: "issueScope",
-                      reason: "not-found",
-                      detail: "No such task.",
-                    }),
-                  ),
+                : refuse(account === expired ? "unauthenticated" : "not-found"),
             ),
         }),
       };
       const service = yield* makeService({
-        projects: [project({ id: "web" }), project({ id: "api" })],
+        projects: [project({ id: "web" }), project({ id: "docs" }), project({ id: "api" })],
         trackers: [tracker],
         bindings: {
           web: { tracker: LINEAR, scope: "900" },
-          api: { tracker: LINEAR, accountId: second, scope: "901" },
+          docs: { tracker: LINEAR, accountId: expired, scope: "905" },
+          api: { tracker: LINEAR, accountId: third, scope: "901" },
         },
       });
       const ref = { projectId: "web" as ProjectId, tracker: LINEAR, host: "linear.app" };
@@ -864,6 +868,10 @@ describe("IssueService with a standalone tracker", () => {
         projectId: "api",
         scope: "901",
         writable: true,
+      });
+      // A thread link made from the key names the scope a URL link would.
+      expect(yield* service.projectScope("web" as ProjectId, { key: "xyz" })).toMatchObject({
+        scope: "901",
       });
     }),
   );
