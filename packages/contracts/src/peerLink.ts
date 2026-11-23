@@ -262,6 +262,7 @@ const PEER_LINK_REQUEST_FAILURE_MESSAGES = {
   not_found: "This link request no longer exists.",
   already_answered: "This link request was already answered.",
   link_gone: "That link was removed or expired. Link the machine again.",
+  link_too_weak: "That link allows less than this request asks for. Link the machine again.",
   record_failed: "Could not update the link request.",
 } as const;
 

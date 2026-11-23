@@ -5,6 +5,7 @@
  * (provider CLIs abandon a long tool call): the answer reaches the agent as a notification.
  */
 import {
+  type AuthMcpClientAccess,
   CommandId,
   type EnvironmentId,
   mcpClientAccessCovers,
@@ -305,19 +306,24 @@ const make = Effect.gen(function* () {
   /** Links the machine the user picked, or finds the link they chose to keep. */
   const answerOutcome = (
     answer: PeerLinkRequestAnswerInput["answer"],
+    requestedAccess: AuthMcpClientAccess | undefined,
   ): Effect.Effect<LinkRequestOutcome, PeerLinkRequestError> => {
     switch (answer.type) {
       case "decline":
         return Effect.succeed({ linkStatus: "declined" });
       case "use-existing":
-        // A client's list of links can lag one removed meanwhile, by an agent say.
-        // The card stays open so the user can link the machine again.
+        // A client's list of links can lag one removed or replaced meanwhile, by an
+        // agent say. The card stays open so the user can link the machine again.
         return usableLink(answer.environmentId).pipe(
           Effect.mapError((cause) => new PeerLinkRequestError({ reason: "load_failed", cause })),
           Effect.flatMap(
             Option.match({
               onNone: () => Effect.fail(new PeerLinkRequestError({ reason: "link_gone" })),
-              onSome: (linked) => Effect.succeed(linkedOutcome(linked)),
+              onSome: (linked) =>
+                requestedAccess === undefined ||
+                mcpClientAccessCovers(linked.access, requestedAccess)
+                  ? Effect.succeed(linkedOutcome(linked))
+                  : Effect.fail(new PeerLinkRequestError({ reason: "link_too_weak" })),
             }),
           ),
         );
@@ -378,7 +384,7 @@ const make = Effect.gen(function* () {
               linkStatus: "failed",
               failure: "This request is from before an update. Ask for the link again.",
             }
-          : yield* answerOutcome(input.answer);
+          : yield* answerOutcome(input.answer, card.requestedAccess);
       // If Stop closed the card while linking, the card keeps that; the link
       // itself stands and Settings lists it.
       yield* lifecycleLocks.withLock(

@@ -1112,6 +1112,21 @@ it.live("a machine linked with less access than asked goes through the card, whi
       }
       expect((yield* linkCards(a)).filter((item) => item.linkStatus === "pending")).toEqual([card]);
 
+      // Keeping a link with less access than asked is no answer, from a client whose list
+      // still shows it covering the request say; the card stays open to link again.
+      const kept = yield* a.requests
+        .answer({
+          threadId,
+          turnItemId: card.id,
+          answer: { type: "use-existing", environmentId: box.environmentId },
+        })
+        .pipe(Effect.flip);
+      expect(kept.reason).toBe("link_too_weak");
+      expect((yield* linkCards(a)).find((item) => item.id === card.id)).toMatchObject({
+        linkStatus: "pending",
+      });
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(0);
+
       // Linking again over the old link replaces it; nothing is unlinked first.
       const pairing = yield* b.auth.issuePairingCredential();
       yield* a.requests.answer({

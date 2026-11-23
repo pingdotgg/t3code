@@ -119,6 +119,7 @@
   "21be308917bd450e": "Não foi possível vincular: {failure}",
   "acd01e781e2355cc": "Solicitação encerrada",
   "8855350e81d45c45": "Esse vínculo foi removido ou expirou. Vincule a máquina novamente.",
+  "c3e4bd0213cdc043": "Esse vínculo permite menos do que esta solicitação pede. Vincule a máquina novamente.",
   "97e4c50a99272f63": "Não foi possível responder à solicitação. Tente novamente.",
   "605a491783d18b3f": "Não foi possível ler esta thread por {via}",
   "50f19209548b70d9": "Talvez {via} precise de uma atualização para ler threads vinculadas.",

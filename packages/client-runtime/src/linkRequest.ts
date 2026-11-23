@@ -448,15 +448,21 @@ export function linkRequestFailureMessage(
   failure: unknown,
   resolve: MFunctionType = mFallback,
 ): string {
-  if (
+  const reason =
     typeof failure === "object" &&
     failure !== null &&
     "_tag" in failure &&
     failure._tag === "PeerLinkRequestError" &&
-    "reason" in failure &&
-    failure.reason === "link_gone"
-  ) {
+    "reason" in failure
+      ? failure.reason
+      : undefined;
+  if (reason === "link_gone") {
     return resolve(msg("That link was removed or expired. Link the machine again."));
+  }
+  if (reason === "link_too_weak") {
+    return resolve(
+      msg("That link allows less than this request asks for. Link the machine again."),
+    );
   }
   if (
     typeof failure === "object" &&
