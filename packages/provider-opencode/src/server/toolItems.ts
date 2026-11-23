@@ -5,6 +5,8 @@ import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/tool
 import {
   MAX_TOOL_OUTPUT_IMAGES,
   readToolOutputImage,
+  SEND_TO_USER_TOOL_NAME,
+  sentMessageFromToolItem,
   type ToolOutputImage,
 } from "@t3tools/shared/toolOutput";
 
@@ -123,10 +125,10 @@ export function openCodeCommandFailed(toolName: string, completedMetadata: unkno
   );
 }
 
-/** Code Mode reports nested calls with their input but no result, so pages are found by input. */
-export function openCodeCodeModeHtmlRenders(
+function openCodeCodeModeToolCalls(
   completedMetadata: unknown,
   mcpServerName: string,
+  toolName: string,
 ): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
   if (typeof completedMetadata !== "object" || completedMetadata === null) return [];
   const toolCalls = (completedMetadata as Record<string, unknown>)["toolCalls"];
@@ -134,13 +136,133 @@ export function openCodeCodeModeHtmlRenders(
   return toolCalls.flatMap((call: unknown, index) => {
     if (typeof call !== "object" || call === null) return [];
     const { tool, status, input } = call as Record<string, unknown>;
-    return tool === `${mcpServerName}.${HTML_RENDER_TOOL_NAME}` &&
+    return tool === `${mcpServerName}.${toolName}` &&
       status === "completed" &&
       typeof input === "object" &&
       input !== null
       ? [{ index, input: input as Record<string, unknown> }]
       : [];
   });
+}
+
+/** Code Mode reports nested calls with their input but no result, so pages are found by input. */
+export function openCodeCodeModeHtmlRenders(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  return openCodeCodeModeToolCalls(completedMetadata, mcpServerName, HTML_RENDER_TOOL_NAME);
+}
+
+/** Code Mode reports nested calls with their input but no result, so sent messages are found by input. */
+export function openCodeCodeModeSentMessages(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  return openCodeCodeModeToolCalls(completedMetadata, mcpServerName, SEND_TO_USER_TOOL_NAME);
+}
+
+const MAX_JSON_STRING_UNWRAP_DEPTH = 4;
+
+function stripSentMessageFromJsonText(
+  text: string,
+  seen: ReadonlySet<string>,
+  depth = 0,
+): { readonly changed: false } | { readonly changed: true; readonly text: string | undefined } {
+  if (depth >= MAX_JSON_STRING_UNWRAP_DEPTH) return { changed: false };
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[") && !trimmed.startsWith('"')) {
+    return { changed: false };
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      const inner = stripSentMessageFromJsonText(parsed, seen, depth + 1);
+      if (!inner.changed) return { changed: false };
+      return {
+        changed: true,
+        text: inner.text === undefined ? undefined : JSON.stringify(inner.text),
+      };
+    }
+    const stripped = stripSentMessageFromValue(parsed, seen, depth + 1);
+    if (stripped === parsed) return { changed: false };
+    return {
+      changed: true,
+      text: stripped === undefined ? undefined : JSON.stringify(stripped),
+    };
+  } catch {
+    return { changed: false };
+  }
+}
+
+function stripSentMessageFromValue(value: unknown, seen: ReadonlySet<string>, depth = 0): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) {
+    const next = value
+      .map((entry) => stripSentMessageFromValue(entry, seen, depth))
+      .filter((entry) => entry !== undefined);
+    if (next.length === value.length && next.every((entry, index) => entry === value[index])) {
+      return value;
+    }
+    return next.length === 0 ? undefined : next;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type === "text" && typeof record.text === "string") {
+    const strippedText = stripSentMessageFromJsonText(record.text, seen, depth);
+    if (strippedText.changed) {
+      if (strippedText.text !== undefined) {
+        return Object.fromEntries(
+          Object.entries(record).map(([key, entry]) => [
+            key,
+            key === "text" ? strippedText.text : entry,
+          ]),
+        );
+      }
+      const hasSiblings = Object.keys(record).some((key) => key !== "type" && key !== "text");
+      if (!hasSiblings) return undefined;
+      return Object.fromEntries(
+        Object.entries(record).map(([key, entry]) => [key, key === "text" ? "" : entry]),
+      );
+    }
+    return value;
+  }
+  let changed = false;
+  const entries: Array<readonly [string, unknown]> = [];
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "sentMessage" && typeof entry === "string" && seen.has(entry)) {
+      changed = true;
+      continue;
+    }
+    const isEnvelopeKey = key === "structuredContent" || key === "result" || key === "content";
+    // compactDynamicToolOutput decodes JSON strings under these keys, so suppression must too.
+    const strippedText =
+      isEnvelopeKey && typeof entry === "string"
+        ? stripSentMessageFromJsonText(entry, seen, depth + 1)
+        : undefined;
+    const stripped = strippedText?.changed
+      ? strippedText.text
+      : isEnvelopeKey
+        ? stripSentMessageFromValue(entry, seen, depth)
+        : entry;
+    if (stripped !== entry) changed = true;
+    if (stripped !== undefined) {
+      entries.push([key, stripped]);
+    }
+  }
+  if (!changed) return value;
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+/** Remove a duplicate returned sentMessage from Code Mode text output while preserving other fields/images. */
+export function stripOpenCodeReturnedSentMessage(
+  toolName: string,
+  output: string | undefined,
+  seenSentMessages: ReadonlySet<string>,
+): string | undefined {
+  if (output === undefined || seenSentMessages.size === 0) return output;
+  const returned = sentMessageFromToolItem({ toolName, output });
+  if (returned === undefined || !seenSentMessages.has(returned)) return output;
+  const stripped = stripSentMessageFromJsonText(output, seenSentMessages);
+  return stripped.changed ? stripped.text : output;
 }
 
 export function openCodeToolTurnItem(

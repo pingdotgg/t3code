@@ -830,6 +830,61 @@ it.layer(
       isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
     },
   };
+  for (const fixture of [
+    { name: "a launcher outside the prefix's bin", npm: false, alias: true, owner: "claude-code" },
+    { name: "an unreadable registry", npm: true, alias: false, owner: null },
+    { name: "files MacPorts does not own", npm: true, alias: false, owner: "" },
+  ]) {
+    it.effect.skipIf(windowsHost)(`checks MacPorts ownership for ${fixture.name}`, () =>
+      Effect.gen(function* () {
+        const prefix = yield* makeTempDir("t3-macports-owner");
+        const port = NodePath.join(prefix, "bin", "port");
+        writeExecutable(port);
+        const real = fixture.npm
+          ? NodePath.join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+          : NodePath.join(prefix, "share", "claude-code", "claude");
+        const resolved = fixture.alias
+          ? NodePath.join(prefix, ".local", "bin", "claude")
+          : NodePath.join(prefix, "bin", "claude");
+        writeExecutable(real);
+        writeExecutable(resolved);
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+          binaryPath: resolved,
+          resolvedCommandPath: resolved,
+          realCommandPath: real,
+          env: { PATH: "" },
+          platform: "darwin",
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                expect(command).toBe(port);
+                expect(args).toEqual(["provides", resolved, real]);
+                return [resolved, real]
+                  .map((file) =>
+                    fixture.owner
+                      ? `${file} is provided by: ${fixture.owner}\n`
+                      : `${file} is not provided by a MacPorts port.\n`,
+                  )
+                  .join("");
+              },
+              () => (fixture.owner === null ? 1 : 0),
+            ),
+          ),
+        );
+        if (fixture.owner === "") {
+          expect(capabilities.update?.lockKey).toBe(`npm-global:${normalizeCommandPath(prefix)}`);
+        } else {
+          expect(capabilities.update).toBeNull();
+          expect(capabilities.manualCommand).toBe(
+            fixture.owner ? `sudo port upgrade ${fixture.owner}` : undefined,
+          );
+        }
+      }),
+    );
+  }
   const resolveInstall = (input: {
     readonly definition: PackageManagedProviderMaintenanceDefinition;
     readonly resolved: string;
