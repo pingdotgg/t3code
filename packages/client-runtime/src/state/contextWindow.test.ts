@@ -317,4 +317,40 @@ describe("deriveSessionCacheHitPercent", () => {
       ),
     ).toBe(75);
   });
+
+  it("counts a running turn's latest request before the turn reports its usage", () => {
+    const active = ProviderThreadId.make("provider-thread-active");
+    expect(
+      deriveSessionCacheHitPercent(
+        [
+          {
+            providerThreadId: active,
+            tokenUsage: {
+              usedTokens: 1000,
+              inputTokens: 1000,
+              cachedInputTokens: 900,
+              updatedAt: "2026-11-23T18:46:26.271Z",
+            },
+          },
+        ],
+        { id: active },
+      ),
+    ).toBe(90);
+    expect(
+      deriveSessionCacheHitPercent(
+        [
+          {
+            providerThreadId: active,
+            tokenUsage: { usedTokens: 1000, updatedAt: "2026-11-23T18:46:26.271Z" },
+            turnTokenUsage: {
+              usageScope: "main_agent",
+              usageStatus: "unavailable",
+              hasSubagents: false,
+            },
+          },
+        ],
+        { id: active },
+      ),
+    ).toBeNull();
+  });
 });

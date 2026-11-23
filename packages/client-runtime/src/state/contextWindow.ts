@@ -84,20 +84,26 @@ export function latestProviderTurnTokenUsage(
   );
 }
 
-/** Cache reads as a share of the active provider thread's prompt tokens; null before any turn reports them. */
+/**
+ * Cache reads as a share of the active provider thread's prompt tokens; null before any turn reports
+ * them. A turn still running counts its latest request until it reports its whole usage.
+ */
 export function deriveSessionCacheHitPercent(
-  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "turnTokenUsage">>,
+  turns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "turnTokenUsage" | "tokenUsage">
+  >,
   providerThread?: Pick<OrchestrationV2ProviderThread, "id"> | null,
 ): number | null {
   let inputTokens = 0;
   let cachedInputTokens = 0;
-  for (const { providerThreadId, turnTokenUsage } of turns) {
-    if (turnTokenUsage === undefined) continue;
+  for (const { providerThreadId, turnTokenUsage, tokenUsage } of turns) {
+    const usage = turnTokenUsage ?? tokenUsage;
+    if (usage === undefined) continue;
     if (providerThread != null && providerThreadId !== providerThread.id) continue;
-    if (turnTokenUsage.inputTokens === undefined || turnTokenUsage.inputTokens <= 0) continue;
-    if (turnTokenUsage.cachedInputTokens === undefined) continue;
-    inputTokens += turnTokenUsage.inputTokens;
-    cachedInputTokens += Math.min(turnTokenUsage.cachedInputTokens, turnTokenUsage.inputTokens);
+    if (usage.inputTokens === undefined || usage.inputTokens <= 0) continue;
+    if (usage.cachedInputTokens === undefined) continue;
+    inputTokens += usage.inputTokens;
+    cachedInputTokens += Math.min(usage.cachedInputTokens, usage.inputTokens);
   }
   return inputTokens > 0 ? (cachedInputTokens / inputTokens) * 100 : null;
 }
