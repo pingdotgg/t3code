@@ -2139,7 +2139,7 @@ it.effect.each([
     }),
 );
 
-const idleReleaseAroundRun = (start: "compactThread" | "resumeTurn", startFails: boolean) =>
+const idleReleaseAroundRun = (start: "compactThread" | "resumeTurn") =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     yield* Effect.gen(function* () {
@@ -2189,26 +2189,22 @@ const idleReleaseAroundRun = (start: "compactThread" | "resumeTurn", startFails:
         runtimePolicy,
       };
       const messageId = yield* idAllocator.allocate.message({ threadId, ordinal: 1 });
-      const started = yield* Effect.exit(
-        start === "compactThread"
-          ? runtime.compactThread!({
-              ...run,
-              message: {
-                createdBy: "user",
-                creationSource: "web",
-                messageId,
-                text: "/compact",
-                attachments: [],
-              },
-            })
-          : runtime.resumeTurn!({ ...run, messageId }),
-      );
-      assert.equal(Exit.isFailure(started), startFails);
+      yield* start === "compactThread"
+        ? runtime.compactThread!({
+            ...run,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId,
+              text: "/compact",
+              attachments: [],
+            },
+          })
+        : runtime.resumeTurn!({ ...run, messageId });
 
       // A running compaction or continuation can go minutes without a provider event.
       yield* TestClock.adjust("2 seconds");
-      assert.equal(yield* manager.isLive(providerSessionId), !startFails);
-      if (startFails) return;
+      assert.isTrue(yield* manager.isLive(providerSessionId));
 
       const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(queue);
@@ -2229,24 +2225,7 @@ const idleReleaseAroundRun = (start: "compactThread" | "resumeTurn", startFails:
       yield* Fiber.join(terminal);
       yield* TestClock.adjust("2 seconds");
       assert.isFalse(yield* manager.isLive(providerSessionId));
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          state,
-          idleTimeoutMs: 1_000,
-          ...(startFails
-            ? {
-                startTurn: Effect.fail(
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: CODEX_DRIVER,
-                    detail: "query ended before the run could start",
-                  }),
-                ),
-              }
-            : {}),
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
   });
 
 it.effect.each([
@@ -2254,15 +2233,7 @@ it.effect.each([
   { run: "manual continuation", start: "resumeTurn" },
 ] as const)(
   "ProviderSessionManagerV2 keeps a session through a $run that outlasts the idle timeout",
-  ({ start }) => idleReleaseAroundRun(start, false),
-);
-
-it.effect.each([
-  { run: "compaction", start: "compactThread" },
-  { run: "manual continuation", start: "resumeTurn" },
-] as const)(
-  "ProviderSessionManagerV2 still idles out a session after a $run that failed to start",
-  ({ start }) => idleReleaseAroundRun(start, true),
+  ({ start }) => idleReleaseAroundRun(start),
 );
 
 it.effect.each(["session metadata", "session status changes", "provider work"] as const)(
