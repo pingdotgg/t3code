@@ -20,6 +20,7 @@ jobs:
   deploy_preview:
     name: Deploy relay preview
     if: >-
+      github.repository == 'pingdotgg/t3code' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'relay:preview')
     runs-on: blacksmith-8vcpu-ubuntu-2404

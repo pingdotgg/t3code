@@ -24,6 +24,7 @@ jobs:
   cleanup_pr:
     name: Tear down relay preview
     if: >-
+      github.repository == 'pingdotgg/t3code' &&
       github.ref == 'refs/heads/main' &&
       github.event_name == 'pull_request_target' &&
       (
@@ -100,7 +101,7 @@ jobs:
 
   list_closed_previews:
     name: List closed relay previews
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
+    if: github.repository == 'pingdotgg/t3code' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
