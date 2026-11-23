@@ -939,12 +939,25 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
+    idleCompaction: InstanceIdleCompaction.pipe(
+      Schema.withDecodingDefault(Effect.succeed("default" as const)),
+      Schema.annotateKey({
+        title: "Compact idle threads",
+        description:
+          "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+        providerSettingsForm: {
+          control: "select",
+          options: INSTANCE_IDLE_COMPACTION_MODES,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath", "idleCompaction"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 
@@ -1710,7 +1723,18 @@ export const resolveTextGenerationSelectionEnabled = (
   textGeneratorForSelection(settings, instanceId)?.enabled ??
   resolveProjectProviderInstanceEnabled(settings, projectId, instanceId);
 
-const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const IDLE_COMPACTION_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "antigravity"]);
+
+export const supportsIdleCompactionDriver = (driver: string | null | undefined): boolean =>
+  driver !== null && driver !== undefined && IDLE_COMPACTION_DRIVERS.has(driver);
+
+const decodeInstanceIdleCompaction = Schema.decodeUnknownOption(
+  Schema.Struct({
+    idleCompaction: InstanceIdleCompaction.pipe(
+      Schema.withDecodingDefault(Effect.succeed("default" as const)),
+    ),
+  }),
+);
 
 type IdleCompactionSettings = Pick<ServerSettings, "compactIdleThreads" | "idleCompaction">;
 
@@ -1752,10 +1776,13 @@ export const resolveIdleCompaction = (
   const instance = Object.hasOwn(settings.providerInstances, instanceId)
     ? settings.providerInstances[instanceId]
     : undefined;
-  const override = decodeClaudeSettings(instance?.config ?? {}).pipe(
-    Option.map((config) => config.idleCompaction),
-    Option.getOrElse(() => "default" as const),
-  );
+  const override =
+    instance !== undefined && supportsIdleCompactionDriver(instance.driver)
+      ? decodeInstanceIdleCompaction(instance.config ?? {}).pipe(
+          Option.map((config) => config.idleCompaction),
+          Option.getOrElse(() => "default" as const),
+        )
+      : ("default" as const);
   return override === "default" ? globalIdleCompaction(settings) : override;
 };
 

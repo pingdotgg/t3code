@@ -2,10 +2,16 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  EventId,
+  MessageId,
+  NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -15,16 +21,21 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  latestNativeContextUsage,
+  mergeHandoffContextUsage,
   handoffCoverage,
   historyCost,
   historyResponseItems,
   selectHistory,
   historicalMessage,
 } from "@t3tools/provider-core/server/handoffBudget";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 
@@ -339,10 +350,50 @@ describe("handoff budget", () => {
         sameNativeThread: true,
         sameSelection: false,
         reuseTelemetry: false,
-        previousUsage: { usedTokens: 30_000, maxTokens: 32_000, autoCompactThreshold: 31_000 },
+        previousUsage: {
+          usedTokens: 30_000,
+          maxTokens: 32_000,
+          autoCompactThreshold: 31_000,
+          updatedAt: "2026-11-23T12:00:00.000Z",
+        },
         knownModelWindow: 1_000_000,
       }),
-      { usedTokens: 30_000, maxTokens: 1_000_000 },
+      { usedTokens: 30_000, maxTokens: 1_000_000, updatedAt: "2026-11-23T12:00:00.000Z" },
+    );
+
+    // A newer post-terminal thread usage correction supersedes older finalized turn usage
+    // without mixing counts and timestamps from different measurements.
+    assert.deepEqual(
+      mergeHandoffContextUsage(
+        { usedTokens: 80_000, maxTokens: 1_048_576, updatedAt: "2026-11-23T12:00:05.000Z" },
+        {
+          usage: { usedTokens: 245_000, maxTokens: 1_048_576 },
+          reportedAt: "2026-11-23T12:00:00.000Z",
+        },
+      ),
+      { usedTokens: 80_000, maxTokens: 1_048_576, updatedAt: "2026-11-23T12:00:05.000Z" },
+    );
+    // An older dated thread snapshot yields both its count and timestamp to a newer turn sample.
+    assert.deepEqual(
+      mergeHandoffContextUsage(
+        { usedTokens: 190_000, maxTokens: 1_048_576, updatedAt: "2026-11-23T11:59:00.000Z" },
+        {
+          usage: { usedTokens: 245_000, maxTokens: 1_048_576 },
+          reportedAt: "2026-11-23T12:00:00.000Z",
+        },
+      ),
+      { usedTokens: 245_000, maxTokens: 1_048_576, updatedAt: "2026-11-23T12:00:00.000Z" },
+    );
+    // An undated thread snapshot (for example Claude) keeps the turn's count without adding updatedAt.
+    assert.deepEqual(
+      mergeHandoffContextUsage(
+        { usedTokens: 190_000, maxTokens: 1_000_000 },
+        {
+          usage: { usedTokens: 210_000, maxTokens: 1_000_000 },
+          reportedAt: "2026-11-23T12:00:00.000Z",
+        },
+      ),
+      { usedTokens: 210_000, maxTokens: 1_000_000 },
     );
 
     const preserved = contextUsageForHandoff({
@@ -685,5 +736,293 @@ describe("handoff delivery", () => {
       assert.equal(result._tag, "Failure");
       assert.equal(calls, 0);
     }),
+  );
+
+  it.effect(
+    "does not revive pre-compaction usage through ProjectionStore.getTurnStartContext on the next turn",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const compactThreadId = ThreadId.make("thread:post-compact-handoff");
+        const agInstanceId = ProviderInstanceId.make("antigravity");
+        const agDriver = ProviderDriverKind.make("antigravity");
+        const agModel = { instanceId: agInstanceId, model: "gemini-4-neon" };
+        const agProviderThreadId = ProviderThreadId.make("provider-thread:ag-compact");
+        const agNativeId = "ag-native-compact-1";
+        const t1 = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+        const t2 = DateTime.makeUnsafe("2026-11-23T12:05:00.000Z");
+        const t3 = DateTime.makeUnsafe("2026-11-23T12:10:00.000Z");
+        const t4 = DateTime.makeUnsafe("2026-11-23T12:15:00.000Z");
+        const agProviderThread: OrchestrationV2ProviderThread = {
+          id: agProviderThreadId,
+          driver: agDriver,
+          providerInstanceId: agInstanceId,
+          providerSessionId: null,
+          appThreadId: compactThreadId,
+          ownerNodeId: null,
+          nativeThreadRef: { driver: agDriver, nativeId: agNativeId, strength: "strong" },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 2,
+          handoffIds: [],
+          forkedFrom: null,
+          contextUsage: null,
+          createdAt: t1,
+          updatedAt: t2,
+        };
+        const run1Id = RunId.make("run:ag:1");
+        const run2Id = RunId.make("run:ag:2");
+        const run3Id = RunId.make("run:ag:3");
+        const run4Id = RunId.make("run:ag:4");
+        const node1Id = NodeId.make("node:ag:1");
+        const node2Id = NodeId.make("node:ag:2");
+        const node3Id = NodeId.make("node:ag:3");
+        const node4Id = NodeId.make("node:ag:4");
+        const attempt1Id = RunAttemptId.make("attempt:ag:1");
+        const attempt2Id = RunAttemptId.make("attempt:ag:2");
+        const attempt3Id = RunAttemptId.make("attempt:ag:3");
+        let eventOrdinal = 0;
+        const nextEventId = () => EventId.make(`event:ag-compact:${++eventOrdinal}`);
+        const putRun = (
+          runId: RunId,
+          ordinal: number,
+          nodeId: NodeId,
+          status: "completed" | "queued",
+          at: DateTime.Utc,
+        ) =>
+          projectionStore.apply({
+            id: nextEventId(),
+            type: "run.updated",
+            threadId: compactThreadId,
+            runId,
+            occurredAt: at,
+            payload: {
+              id: runId,
+              threadId: compactThreadId,
+              ordinal,
+              providerInstanceId: agInstanceId,
+              modelSelection: agModel,
+              providerThreadId: agProviderThreadId,
+              userMessageId: MessageId.make(`msg:ag:${ordinal}`),
+              rootNodeId: nodeId,
+              activeAttemptId: null,
+              status,
+              requestedAt: at,
+              startedAt: status === "completed" ? at : null,
+              completedAt: status === "completed" ? at : null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+        const putAttempt = (
+          attemptId: RunAttemptId,
+          runId: RunId,
+          nodeId: NodeId,
+          providerTurnId: ProviderTurnId,
+          at: DateTime.Utc,
+        ) =>
+          projectionStore.apply({
+            id: nextEventId(),
+            type: "run-attempt.updated",
+            threadId: compactThreadId,
+            runId,
+            occurredAt: at,
+            payload: {
+              id: attemptId,
+              runId,
+              providerInstanceId: agInstanceId,
+              providerThreadId: agProviderThreadId,
+              providerTurnId,
+              rootNodeId: nodeId,
+              nativeThreadId: agNativeId,
+              attemptOrdinal: 1,
+              reason: "initial",
+              status: "completed",
+              startedAt: at,
+              completedAt: at,
+            },
+          });
+
+        yield* projectionStore.apply({
+          id: nextEventId(),
+          type: "thread.created",
+          threadId: compactThreadId,
+          occurredAt: t1,
+          payload: {
+            id: compactThreadId,
+            projectId: ProjectId.make("project:ag-compact"),
+            title: "Post-compact handoff",
+            createdBy: "user",
+            creationSource: "web",
+            providerInstanceId: agInstanceId,
+            modelSelection: agModel,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: agProviderThreadId,
+            lineage: {
+              rootThreadId: compactThreadId,
+              parentThreadId: null,
+              relationshipToParent: null,
+            },
+            forkedFrom: null,
+            createdAt: t1,
+            updatedAt: t2,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: t2,
+            deletedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: nextEventId(),
+          type: "provider-thread.updated",
+          threadId: compactThreadId,
+          runId: run2Id,
+          occurredAt: t2,
+          payload: agProviderThread,
+        });
+        yield* putRun(run1Id, 1, node1Id, "completed", t1);
+        yield* putAttempt(attempt1Id, run1Id, node1Id, ProviderTurnId.make("turn:ag:1"), t1);
+        yield* projectionStore.apply({
+          id: nextEventId(),
+          type: "provider-turn.updated",
+          threadId: compactThreadId,
+          runId: run1Id,
+          occurredAt: t1,
+          payload: {
+            id: ProviderTurnId.make("turn:ag:1"),
+            providerThreadId: agProviderThreadId,
+            nodeId: node1Id,
+            runAttemptId: attempt1Id,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt: t1,
+            completedAt: t1,
+            tokenUsage: {
+              usedTokens: 245_000,
+              maxTokens: 256_000,
+              updatedAt: DateTime.formatIso(t1),
+            },
+          },
+        });
+        // Run 2: completed /compact emits compaction item + synthetic compaction-clear tokenUsage.
+        yield* putRun(run2Id, 2, node2Id, "completed", t2);
+        yield* putAttempt(attempt2Id, run2Id, node2Id, ProviderTurnId.make("turn:ag:2"), t2);
+        yield* projectionStore.apply({
+          id: nextEventId(),
+          type: "provider-turn.updated",
+          threadId: compactThreadId,
+          runId: run2Id,
+          occurredAt: t2,
+          payload: {
+            id: ProviderTurnId.make("turn:ag:2"),
+            providerThreadId: agProviderThreadId,
+            nodeId: node2Id,
+            runAttemptId: attempt2Id,
+            nativeTurnRef: null,
+            ordinal: 2,
+            status: "completed",
+            startedAt: t2,
+            completedAt: t2,
+            tokenUsage: {
+              usedTokens: 0,
+              updatedAt: DateTime.formatIso(t2),
+            },
+          },
+        });
+        yield* projectionStore.apply({
+          id: nextEventId(),
+          type: "turn-item.updated",
+          threadId: compactThreadId,
+          runId: run2Id,
+          occurredAt: t2,
+          payload: {
+            id: TurnItemId.make("item:ag:compact"),
+            threadId: compactThreadId,
+            runId: run2Id,
+            nodeId: node2Id,
+            providerThreadId: agProviderThreadId,
+            providerTurnId: ProviderTurnId.make("turn:ag:2"),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "compaction",
+            driver: agDriver,
+            status: "completed",
+            title: "Context compacted",
+            startedAt: t2,
+            completedAt: t2,
+            updatedAt: t2,
+          },
+        });
+        // Run 3: next user turn after /compact.
+        yield* putRun(run3Id, 3, node3Id, "queued", t3);
+        const turn3Start = yield* projectionStore.getTurnStartContext(compactThreadId, run3Id);
+        // Production getTurnStartContext scopes turnItems to run3Id, excluding run2's compaction item.
+        assert.deepEqual(turn3Start.turnItems, []);
+        const measuredAfterCompact = latestNativeContextUsage(turn3Start, agProviderThread);
+        assert.isUndefined(measuredAfterCompact);
+        const nextTurnUsage = contextUsageForHandoff({
+          sameNativeThread: true,
+          sameSelection: true,
+          reuseTelemetry: true,
+          previousUsage: mergeHandoffContextUsage(
+            agProviderThread.contextUsage,
+            measuredAfterCompact,
+          ),
+        });
+        assert.isNull(nextTurnUsage);
+        assert.isAbove(
+          handoffBudget({
+            tokenCap: 16_000,
+            userText: "Continue",
+            attachments: [],
+            providerThread: { ...agProviderThread, contextUsage: nextTurnUsage },
+            nativeContextEstimate: 20_000,
+            modelContextWindow: 256_000,
+          }),
+          0,
+        );
+
+        // Once Run 3 reports fresh post-compaction usage, Run 4 picks it up cleanly.
+        yield* putRun(run3Id, 3, node3Id, "completed", t3);
+        yield* putAttempt(attempt3Id, run3Id, node3Id, ProviderTurnId.make("turn:ag:3"), t3);
+        yield* projectionStore.apply({
+          id: nextEventId(),
+          type: "provider-turn.updated",
+          threadId: compactThreadId,
+          runId: run3Id,
+          occurredAt: t3,
+          payload: {
+            id: ProviderTurnId.make("turn:ag:3"),
+            providerThreadId: agProviderThreadId,
+            nodeId: node3Id,
+            runAttemptId: attempt3Id,
+            nativeTurnRef: null,
+            ordinal: 3,
+            status: "completed",
+            startedAt: t3,
+            completedAt: t3,
+            tokenUsage: {
+              usedTokens: 60_000,
+              maxTokens: 256_000,
+              updatedAt: DateTime.formatIso(t3),
+            },
+          },
+        });
+        yield* putRun(run4Id, 4, node4Id, "queued", t4);
+        const turn4Start = yield* projectionStore.getTurnStartContext(compactThreadId, run4Id);
+        assert.deepEqual(latestNativeContextUsage(turn4Start, agProviderThread)?.usage, {
+          usedTokens: 60_000,
+          maxTokens: 256_000,
+        });
+      }).pipe(
+        Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      ),
   );
 });

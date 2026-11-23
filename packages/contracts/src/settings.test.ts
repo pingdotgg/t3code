@@ -273,12 +273,18 @@ describe("custom model settings", () => {
 });
 
 describe("resolveIdleCompaction", () => {
-  it("lets a Claude instance override the global default", () => {
+  it("lets a Claude or Antigravity instance override the global default", () => {
     const settings = decodeServerSettings({
       idleCompaction: "off",
       providerInstances: {
         claude_work: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
         claude_personal: { driver: "claudeAgent" },
+        antigravity_work: {
+          driver: "antigravity",
+          config: { idleCompaction: "beforeCacheExpires" },
+        },
+        antigravity_personal: { driver: "antigravity" },
+        codex_work: { driver: "codex", config: { idleCompaction: "beforeCacheExpires" } },
       },
     });
     expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_work"))).toBe(
@@ -286,6 +292,14 @@ describe("resolveIdleCompaction", () => {
     );
     expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe("off");
     expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe("off");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("antigravity_work"))).toBe(
+      "beforeCacheExpires",
+    );
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("antigravity_personal"))).toBe(
+      "off",
+    );
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("antigravity"))).toBe("off");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("codex_work"))).toBe("off");
   });
 
   it("reads the mode from the legacy switch, in either form servers saved it", () => {

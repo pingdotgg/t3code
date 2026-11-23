@@ -64,6 +64,7 @@ import {
   contextUsageForHandoff,
   historicalMessage,
   latestNativeContextUsage,
+  mergeHandoffContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import {
   deliverContextHandoffs,
@@ -1169,9 +1170,7 @@ export const layer: Layer.Layer<
           loadedProviderThread.nativeThreadRef?.nativeId ===
           providerThread.nativeThreadRef?.nativeId;
         const threadUsage = loadedProviderThread.contextUsage ?? providerThread.contextUsage;
-        const previousUsage = measuredContext
-          ? { ...threadUsage, ...measuredContext.usage }
-          : threadUsage;
+        const previousUsage = mergeHandoffContextUsage(threadUsage, measuredContext);
         const reuseTelemetry =
           sameSelection ||
           (previousSelection !== undefined &&
@@ -1992,7 +1991,13 @@ export const layer: Layer.Layer<
       }
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
-        contextUsage: handoffUsage,
+        contextUsage:
+          session.driver === "antigravity" &&
+          sameNativeThread &&
+          handoffUsage != null &&
+          handoffUsage.updatedAt === undefined
+            ? { ...handoffUsage, updatedAt: DateTime.formatIso(providerThread.updatedAt) }
+            : handoffUsage,
         id: providerThread.id,
         driver: session.driver,
         providerInstanceId: run.providerInstanceId,

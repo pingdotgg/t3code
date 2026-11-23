@@ -1,15 +1,20 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   resolveIdleCompaction,
+  supportsIdleCompactionDriver,
   type ModelSelection,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ProviderTurnTokenUsage,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   type ServerProvider,
   type ServerSettings,
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import {
+  antigravityPromptCacheTtlMs,
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+  COMPACT_COMMAND_PATTERN,
   COMPACTION_SUGGESTION_MIN_TOKENS,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
@@ -23,7 +28,7 @@ const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
 // A typed `/compact`, with or without instructions, is already the compaction. Queueing a
 // bare one ahead of it would run an uninstructed compaction first and charge for two.
-export const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
+export { COMPACT_COMMAND_PATTERN };
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -137,16 +142,45 @@ export function deriveLatestContextWindowSnapshot(
       entry.item.status === "completed" &&
       !isRetiredProviderThreadItem(entry.item, providerThread),
   )?.item;
-  const usageUpdatedAt =
-    liveUsage?.updatedAt ??
-    (providerThread?.contextUsage != null ? DateTime.formatIso(providerThread.updatedAt) : null);
+  const providerUsage = providerThread?.contextUsage;
+  const providerUsageUpdatedAt = providerThread?.updatedAt;
+  const providerUsageUpdatedIso =
+    providerUsage == null
+      ? null
+      : (providerUsage.updatedAt ??
+        (providerUsageUpdatedAt !== undefined ? DateTime.formatIso(providerUsageUpdatedAt) : null));
+  // A newer provider-thread usage report with an explicit measurement timestamp (for example,
+  // a post-terminal ACP `usage_update` correction) supersedes an earlier finalized turn snapshot
+  // when the token counts actually changed. Undated `providerThread.contextUsage` copies carried
+  // across turn updates (such as Claude's) never override a dated turn snapshot.
+  const providerUsageNewer =
+    liveUsage != null &&
+    providerUsage?.updatedAt !== undefined &&
+    Date.parse(providerUsage.updatedAt) >= Date.parse(liveUsage.updatedAt) &&
+    (providerUsage.usedTokens !== liveUsage.usedTokens ||
+      (asFiniteNumber(providerUsage.maxTokens) ?? null) !== (liveUsage.maxTokens ?? null));
+  const usageUpdatedAt = providerUsageNewer
+    ? providerUsageUpdatedIso
+    : (liveUsage?.updatedAt ?? providerUsageUpdatedIso);
+  const isCompactionClearUsage =
+    liveUsage != null &&
+    !providerUsageNewer &&
+    liveUsage.usedTokens === 0 &&
+    liveUsage.maxTokens == null &&
+    liveUsage.promptCacheTtlMs == null &&
+    providerUsage == null;
   if (latestCompletedCompaction !== undefined) {
     const compactedAt = DateTime.formatIso(
       latestCompletedCompaction.completedAt ?? latestCompletedCompaction.updatedAt,
     );
     // Usage reported before the compaction describes the context it just discarded; usage at
-    // the same instant is the provider's own post-compaction report.
-    if (usageUpdatedAt === null || Date.parse(compactedAt) > Date.parse(usageUpdatedAt)) {
+    // the same instant is the provider's own post-compaction report. A synthetic 0-token clear
+    // emitted on turn finalization after a mid-turn compaction also yields to the compaction item.
+    if (
+      usageUpdatedAt === null ||
+      Date.parse(compactedAt) > Date.parse(usageUpdatedAt) ||
+      isCompactionClearUsage
+    ) {
       return compactionSnapshot(
         latestCompletedCompaction,
         liveUsage?.maxTokens ?? asFiniteNumber(providerThread?.contextUsage?.maxTokens),
@@ -154,8 +188,11 @@ export function deriveLatestContextWindowSnapshot(
       );
     }
   }
+  if (isCompactionClearUsage) {
+    return null;
+  }
 
-  if (liveUsage != null) {
+  if (liveUsage != null && !providerUsageNewer) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
     const maxTokens = liveUsage.maxTokens ?? null;
     const usedPercentage =
@@ -181,19 +218,14 @@ export function deriveLatestContextWindowSnapshot(
       lastReasoningOutputTokens: null,
       toolUses: null,
       durationMs: null,
-      compactsAutomatically: true,
+      compactsAutomatically:
+        providerUsage != null ? (providerUsage.compactsAutomatically ?? null) : true,
       autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
-      cost: null,
+      cost: providerUsage?.cost ?? null,
       updatedAt: liveUsage.updatedAt,
     };
   }
-  const providerUsage = providerThread?.contextUsage;
-  const providerUsageUpdatedAt = providerThread?.updatedAt;
-  if (
-    providerUsage !== null &&
-    providerUsage !== undefined &&
-    providerUsageUpdatedAt !== undefined
-  ) {
+  if (providerUsage !== null && providerUsage !== undefined && providerUsageUpdatedIso !== null) {
     const maxTokens = asFiniteNumber(providerUsage.maxTokens);
     const usedTokens = providerUsage.usedTokens;
     const usedPercentage =
@@ -219,7 +251,7 @@ export function deriveLatestContextWindowSnapshot(
       compactsAutomatically: providerUsage.compactsAutomatically ?? null,
       cost: providerUsage.cost ?? null,
       autoCompactThreshold: providerUsage.autoCompactThreshold ?? null,
-      updatedAt: DateTime.formatIso(providerUsageUpdatedAt),
+      updatedAt: providerUsageUpdatedIso,
     };
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -258,25 +290,114 @@ export function hasDismissedResumeCompaction(
 
 export function shouldOfferResumeCompaction(input: {
   readonly provider: string | null | undefined;
+  readonly model?: string | null | undefined;
   readonly usedTokens: number | null | undefined;
   readonly updatedAt: string | null | undefined;
   readonly promptCacheTtlMs?: number | undefined;
+  /** True when the turn itself reported live tokenUsage (even without a cache TTL). */
+  readonly hasLiveUsage?: boolean | undefined;
   readonly now: string;
 }): boolean {
   if (
-    input.provider !== "claudeAgent" ||
+    !supportsIdleCompactionDriver(input.provider) ||
     (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
   ) {
     return false;
   }
 
+  let ttlMs: number | undefined;
+  if (input.provider === "claudeAgent") {
+    ttlMs = input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS;
+  } else {
+    // Switching from Gemini to a non-Gemini model on the same Antigravity instance
+    // must not inherit the prior Gemini turn's cache TTL.
+    if (
+      input.model != null &&
+      input.model !== ANTIGRAVITY_DEFAULT_MODEL &&
+      antigravityPromptCacheTtlMs(input.model) === undefined
+    ) {
+      return false;
+    }
+    // Fall back to the model-based TTL only for legacy threads that have no live turn usage;
+    // a live non-Gemini turn intentionally omits `promptCacheTtlMs` and stays skipped even if
+    // the composer switches to a Gemini model before sending.
+    ttlMs =
+      input.promptCacheTtlMs ??
+      (input.hasLiveUsage === true ? undefined : antigravityPromptCacheTtlMs(input.model));
+  }
+  if (ttlMs === undefined) {
+    return false;
+  }
+
   const updatedAt = Date.parse(input.updatedAt ?? "");
   const now = Date.parse(input.now);
-  return (
-    Number.isFinite(updatedAt) &&
-    Number.isFinite(now) &&
-    now - updatedAt >= (input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS)
-  );
+  return Number.isFinite(updatedAt) && Number.isFinite(now) && now - updatedAt >= ttlMs;
+}
+
+/**
+ * True when a newer started run on the active provider thread has no token usage of its own,
+ * so the latest recorded usage belongs to an earlier run and cannot time "When you return".
+ */
+export function hasInterveningRunWithoutUsage(
+  runs: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadProjection["runs"][number],
+      "ordinal" | "status" | "startedAt" | "rootNodeId" | "providerThreadId"
+    >
+  >,
+  providerTurns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "nodeId" | "tokenUsage">
+  >,
+  providerThread: Pick<OrchestrationV2ProviderThread, "id"> | null | undefined,
+  usageUpdatedAt?: string | null | undefined,
+): boolean {
+  if (providerThread == null) return false;
+  let latestRun: (typeof runs)[number] | null = null;
+  for (const run of runs) {
+    if (run.status === "rolled_back" || run.startedAt === null) {
+      continue;
+    }
+    if (run.providerThreadId !== undefined && run.providerThreadId !== providerThread.id) {
+      continue;
+    }
+    if (latestRun === null || run.ordinal > latestRun.ordinal) {
+      latestRun = run;
+    }
+  }
+  if (latestRun === null) return false;
+  let latestUsageTurn: (typeof providerTurns)[number] | null = null;
+  for (const turn of providerTurns) {
+    if (turn.providerThreadId !== providerThread.id || turn.tokenUsage === undefined) continue;
+    if (
+      latestUsageTurn === null ||
+      Date.parse(turn.tokenUsage.updatedAt) >= Date.parse(latestUsageTurn.tokenUsage!.updatedAt)
+    ) {
+      latestUsageTurn = turn;
+    }
+  }
+  if (
+    latestUsageTurn !== null &&
+    latestUsageTurn.nodeId !== undefined &&
+    latestRun.rootNodeId !== undefined &&
+    latestUsageTurn.nodeId !== latestRun.rootNodeId
+  ) {
+    return true;
+  }
+  if (latestRun.startedAt != null && usageUpdatedAt != null) {
+    const startedMs =
+      typeof latestRun.startedAt === "string"
+        ? Date.parse(latestRun.startedAt)
+        : DateTime.toEpochMillis(latestRun.startedAt);
+    const usageMs = Date.parse(usageUpdatedAt);
+    if (
+      Number.isFinite(startedMs) &&
+      Number.isFinite(usageMs) &&
+      (latestUsageTurn === null ? startedMs >= usageMs : startedMs > usageMs)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -353,14 +474,27 @@ export function compactBeforeSendTokens(input: {
     liveUsage,
     providerThread,
   );
-  return contextWindow !== null &&
-    shouldOfferResumeCompaction({
-      provider: provider.driver,
-      usedTokens: contextWindow.usedTokens,
-      updatedAt: contextWindow.updatedAt,
-      promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
-      now: input.now,
-    })
+  if (
+    contextWindow === null ||
+    (provider.driver === "antigravity" &&
+      hasInterveningRunWithoutUsage(
+        projection.runs,
+        projection.providerTurns,
+        providerThread,
+        contextWindow.updatedAt,
+      ))
+  ) {
+    return null;
+  }
+  return shouldOfferResumeCompaction({
+    provider: provider.driver,
+    model: input.selection.model,
+    usedTokens: contextWindow.usedTokens,
+    updatedAt: contextWindow.updatedAt,
+    promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
+    hasLiveUsage: liveUsage !== null,
+    now: input.now,
+  })
     ? contextWindow.usedTokens
     : null;
 }

@@ -208,6 +208,148 @@ describe("latestProviderTurnTokenUsage", () => {
         now: "2026-10-19T12:06:00.000Z",
       }),
     ).toBe(true);
+    expect(
+      shouldOfferResumeCompaction({
+        provider: "antigravity",
+        model: "gemini-4-neon",
+        usedTokens: 250_000,
+        updatedAt: "2026-10-19T12:00:00.000Z",
+        now: "2026-10-19T12:15:00.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      shouldOfferResumeCompaction({
+        provider: "antigravity",
+        model: "gemini-4-neon",
+        usedTokens: 250_000,
+        updatedAt: "2026-10-19T12:00:00.000Z",
+        now: "2026-10-19T12:14:59.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOfferResumeCompaction({
+        provider: "antigravity",
+        model: "claude-opus-5-5",
+        usedTokens: 250_000,
+        updatedAt: "2026-10-19T12:00:00.000Z",
+        promptCacheTtlMs: 15 * 60_000,
+        now: "2026-10-19T15:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOfferResumeCompaction({
+        provider: "antigravity",
+        model: "antigravity-default",
+        usedTokens: 250_000,
+        updatedAt: "2026-10-19T12:00:00.000Z",
+        now: "2026-10-19T15:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOfferResumeCompaction({
+        provider: "antigravity",
+        model: "antigravity-default",
+        usedTokens: 250_000,
+        updatedAt: "2026-10-19T12:00:00.000Z",
+        promptCacheTtlMs: 15 * 60_000,
+        hasLiveUsage: true,
+        now: "2026-10-19T12:15:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves provider-thread cost and prefers newer post-terminal usage corrections", () => {
+    const liveUsage = decodeTokenUsage({
+      usedTokens: 245_000,
+      maxTokens: 1_048_576,
+      promptCacheTtlMs: 15 * 60_000,
+      updatedAt: "2026-10-19T12:00:00.000Z",
+    });
+    const sameUsageMetadataUpdate = deriveLatestContextWindowSnapshot([], liveUsage, {
+      id: ProviderThreadId.make("ag-thread"),
+      contextUsage: {
+        usedTokens: 245_000,
+        maxTokens: 1_048_576,
+        cost: { amount: 0.12, currency: "USD" },
+      },
+      updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
+    });
+    expect(sameUsageMetadataUpdate).toMatchObject({
+      usedTokens: 245_000,
+      cost: { amount: 0.12, currency: "USD" },
+      compactsAutomatically: null,
+      updatedAt: "2026-10-19T12:00:00.000Z",
+    });
+
+    const corrected = deriveLatestContextWindowSnapshot([], liveUsage, {
+      id: ProviderThreadId.make("ag-thread"),
+      contextUsage: {
+        usedTokens: 80_000,
+        maxTokens: 1_048_576,
+        cost: { amount: 0.05, currency: "USD" },
+        updatedAt: "2026-10-19T12:00:05.000Z",
+      },
+      // A later metadata-only update (for example session_info_update) must not advance updatedAt.
+      updatedAt: DateTime.makeUnsafe("2026-10-19T12:14:00.000Z"),
+    });
+    expect(corrected).toMatchObject({
+      usedTokens: 80_000,
+      cost: { amount: 0.05, currency: "USD" },
+      updatedAt: "2026-10-19T12:00:05.000Z",
+    });
+
+    // An undated providerThread.contextUsage carried across a turn update (for example Claude)
+    // must not override the dated turn tokenUsage snapshot.
+    const undatedStaleContextUsage = deriveLatestContextWindowSnapshot([], liveUsage, {
+      id: ProviderThreadId.make("claude-thread"),
+      contextUsage: { usedTokens: 190_000, maxTokens: 1_000_000 },
+      updatedAt: DateTime.makeUnsafe("2026-10-19T12:00:05.000Z"),
+    });
+    expect(undatedStaleContextUsage).toMatchObject({
+      usedTokens: 245_000,
+      updatedAt: "2026-10-19T12:00:00.000Z",
+    });
+
+    const compactionItem = {
+      item: {
+        type: "compaction" as const,
+        status: "completed" as const,
+        providerThreadId: ProviderThreadId.make("ag-thread"),
+        completedAt: DateTime.makeUnsafe("2026-10-19T12:01:00.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-10-19T12:01:00.000Z"),
+      },
+    };
+    const syntheticClear = decodeTokenUsage({
+      usedTokens: 0,
+      updatedAt: "2026-10-19T12:01:05.000Z",
+    });
+    expect(
+      deriveLatestContextWindowSnapshot([compactionItem as never], syntheticClear, {
+        id: ProviderThreadId.make("ag-thread"),
+        contextUsage: null,
+        updatedAt: DateTime.makeUnsafe("2026-10-19T12:01:05.000Z"),
+      }),
+    ).toBeNull();
+    // Even without a compaction item in the loaded window (for example after instructed /compact),
+    // the synthetic compaction-clear marker hides the meter instead of rendering 0.
+    expect(
+      deriveLatestContextWindowSnapshot([], syntheticClear, {
+        id: ProviderThreadId.make("ag-thread"),
+        contextUsage: null,
+        updatedAt: DateTime.makeUnsafe("2026-10-19T12:01:05.000Z"),
+      }),
+    ).toBeNull();
+    expect(
+      deriveLatestContextWindowSnapshot(
+        [{ item: { ...compactionItem.item, afterTokenCount: 45_000 } } as never],
+        syntheticClear,
+        {
+          id: ProviderThreadId.make("ag-thread"),
+          contextUsage: null,
+          updatedAt: DateTime.makeUnsafe("2026-10-19T12:01:05.000Z"),
+        },
+      ),
+    ).toMatchObject({ usedTokens: 45_000, updatedAt: "2026-10-19T12:01:00.000Z" });
   });
 
   it("replaces inherited usage with the fork's own report", () => {

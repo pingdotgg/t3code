@@ -8675,6 +8675,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }
           : {
               ...reusableProviderThread,
+              ...(reusableProviderThread.driver === "antigravity" &&
+              reusableProviderThread.contextUsage != null &&
+              reusableProviderThread.contextUsage.updatedAt === undefined
+                ? {
+                    contextUsage: {
+                      ...reusableProviderThread.contextUsage,
+                      updatedAt: DateTime.formatIso(reusableProviderThread.updatedAt),
+                    },
+                  }
+                : {}),
               providerSessionId,
               lastRunOrdinal: ordinal,
               handoffIds: appendContextHandoffId(

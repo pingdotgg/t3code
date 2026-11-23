@@ -158,12 +158,114 @@ describe("idleCompactionWindow", () => {
       { ...codex.providerThreads[0]!, driver: ProviderDriverKind.make("codex") },
     ];
     expect(idleCompactionWindow(codex, NOW_MS)).toBeNull();
+    const antigravity = records({ cacheExpiresInMs: 15 * MINUTE_MS });
+    const antigravityInstance = ProviderInstanceId.make("antigravity");
+    const antigravityModel = { instanceId: antigravityInstance, model: "gemini-4-neon" };
+    antigravity.thread = {
+      ...antigravity.thread,
+      providerInstanceId: antigravityInstance,
+      modelSelection: antigravityModel,
+    };
+    antigravity.runs = antigravity.runs.map((run) => ({
+      ...run,
+      providerInstanceId: antigravityInstance,
+      modelSelection: antigravityModel,
+    }));
+    antigravity.providerThreads = [
+      {
+        ...antigravity.providerThreads[0]!,
+        driver: ProviderDriverKind.make("antigravity"),
+        providerInstanceId: antigravityInstance,
+      },
+    ];
+    expect(idleCompactionWindow(antigravity, NOW_MS)).toEqual({
+      runId,
+      startMs: NOW_MS + 13 * MINUTE_MS,
+      endMs: NOW_MS + 15 * MINUTE_MS,
+    });
+    // Switching from Gemini to a non-Gemini model on the same Antigravity instance skips compaction.
+    const antigravitySwitchedModel = {
+      ...antigravity,
+      thread: {
+        ...antigravity.thread,
+        modelSelection: { instanceId: antigravityInstance, model: "claude-opus-5-5" },
+      },
+    };
+    expect(idleCompactionWindow(antigravitySwitchedModel, NOW_MS)).toBeNull();
+    // A subsequent Claude or usage-less run on the same Antigravity thread must not inherit
+    // an earlier Gemini turn's expiry.
+    const antigravityLaterNonGeminiRun = {
+      ...antigravity,
+      thread: {
+        ...antigravity.thread,
+        modelSelection: { instanceId: antigravityInstance, model: "claude-opus-5-5" },
+      },
+      runs: [
+        ...antigravity.runs,
+        {
+          ...antigravity.runs[0]!,
+          id: RunId.make("run-ag-2"),
+          ordinal: 2,
+          modelSelection: { instanceId: antigravityInstance, model: "claude-opus-5-5" },
+          rootNodeId: NodeId.make("root-node-2"),
+        },
+      ],
+    };
+    expect(idleCompactionWindow(antigravityLaterNonGeminiRun, NOW_MS)).toBeNull();
+    const antigravityLaterRunWithoutUsage = {
+      ...antigravity,
+      runs: [
+        ...antigravity.runs,
+        {
+          ...antigravity.runs[0]!,
+          id: RunId.make("run-ag-3"),
+          ordinal: 2,
+          rootNodeId: NodeId.make("root-node-3"),
+        },
+      ],
+    };
+    expect(idleCompactionWindow(antigravityLaterRunWithoutUsage, NOW_MS)).toBeNull();
+    // A post-terminal usage correction below 200K cancels compaction before dispatch.
+    const antigravityCorrectedLow = {
+      ...antigravity,
+      providerThreads: [
+        {
+          ...antigravity.providerThreads[0]!,
+          contextUsage: {
+            usedTokens: 40_000,
+            updatedAt: DateTime.formatIso(at(5_000)),
+          },
+          updatedAt: at(5_000),
+        },
+      ],
+    };
+    expect(idleCompactionWindow(antigravityCorrectedLow, NOW_MS)).toBeNull();
+    // An undated providerThread.contextUsage carried from an earlier turn (for example Claude)
+    // must never override a dated turn tokenUsage sample.
+    const claudeWithStaleUndatedContextUsage = records({
+      ...cache,
+      usedTokens: 210_000,
+    });
+    claudeWithStaleUndatedContextUsage.providerThreads = [
+      {
+        ...claudeWithStaleUndatedContextUsage.providerThreads[0]!,
+        contextUsage: { usedTokens: 190_000 },
+        updatedAt: at(5_000),
+      },
+    ];
+    expect(idleCompactionWindow(claudeWithStaleUndatedContextUsage, NOW_MS)).toEqual({
+      runId,
+      startMs: NOW_MS + 58 * MINUTE_MS,
+      endMs: NOW_MS + 60 * MINUTE_MS,
+    });
     const switched = records(cache);
     switched.thread = { ...switched.thread, providerInstanceId: ProviderInstanceId.make("codex") };
     expect(idleCompactionWindow(switched, NOW_MS)).toBeNull();
-    const compacted = records(cache);
-    compacted.messages = [{ ...compacted.messages[0]!, text: "/compact" }];
-    expect(idleCompactionWindow(compacted, NOW_MS)).toBeNull();
+    for (const compactText of ["/compact", "/COMPACT", "/compact keep API notes"]) {
+      const compacted = records(cache);
+      compacted.messages = [{ ...compacted.messages[0]!, text: compactText }];
+      expect(idleCompactionWindow(compacted, NOW_MS)).toBeNull();
+    }
     const steered = records(cache);
     steered.runs = [
       ...steered.runs,
@@ -236,6 +338,41 @@ describe("IdleCompactionService", () => {
     { mode: "beforeCacheExpires", driver: "codex", instance: "codex", reads: 0 },
     { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
     { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
+    { mode: "beforeCacheExpires", driver: "antigravity", instance: "antigravity", reads: 1 },
+    {
+      mode: "beforeCacheExpires",
+      driver: "antigravity",
+      instance: "custom-antigravity",
+      reads: 1,
+    },
+    {
+      mode: "beforeCacheExpires",
+      driver: "antigravity",
+      instance: "antigravity",
+      override: "off",
+      reads: 0,
+    },
+    {
+      mode: "onReturn",
+      driver: "antigravity",
+      instance: "antigravity",
+      override: "beforeCacheExpires",
+      reads: 1,
+    },
+    {
+      mode: "beforeCacheExpires",
+      driver: "antigravity",
+      instance: "antigravity",
+      enabled: false,
+      reads: 0,
+    },
+    {
+      mode: "beforeCacheExpires",
+      driver: "antigravity",
+      instance: "antigravity",
+      unconfigured: true,
+      reads: 0,
+    },
     { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
   ] as const)(
     "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
@@ -252,18 +389,19 @@ describe("IdleCompactionService", () => {
           "instance" in test ? test.instance : "claudeAgent",
         );
         const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
+        const model = driver === "antigravity" ? "gemini-4-neon" : "claude-opus-5-5";
         const base = records({ cacheExpiresInMs: 2 * MINUTE_MS });
         const data: OrchestrationV2ThreadProjection = {
           ...base,
           thread: {
             ...base.thread,
             providerInstanceId: selectedInstance,
-            modelSelection: { ...base.thread.modelSelection, instanceId: selectedInstance },
+            modelSelection: { ...base.thread.modelSelection, instanceId: selectedInstance, model },
           },
           runs: base.runs.map((run) => ({
             ...run,
             providerInstanceId: selectedInstance,
-            modelSelection: { ...run.modelSelection, instanceId: selectedInstance },
+            modelSelection: { ...run.modelSelection, instanceId: selectedInstance, model },
           })),
           providerThreads: base.providerThreads.map((thread) => ({
             ...thread,

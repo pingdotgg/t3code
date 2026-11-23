@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2ProviderTurnTokenUsage,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
@@ -35,6 +36,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { COMPACT_COMMAND_PATTERN } from "@t3tools/shared/claudeCompaction";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -727,6 +729,11 @@ export interface AcpAdapterV2Flavor {
   /** Antigravity 1.5+ usage: inputTokens leaves out cachedReadTokens, while outputTokens already includes thoughtTokens. */
   readonly geminiPromptUsage?: boolean;
   /**
+   * Prompt cache lifetime in milliseconds for the resolved model id, when known.
+   * Enables `providerTurn.tokenUsage` cache-expiry tracking for idle compaction.
+   */
+  readonly promptCacheTtlMs?: (model: string) => number | undefined;
+  /**
    * Fails a dispatched prompt after this long with no update for its session while no
    * agent request, tool or subagent is open, and replaces the agent before the next turn.
    */
@@ -1007,7 +1014,7 @@ function isCompactionMessage(message: ProviderAdapter.ProviderAdapterV2TurnMessa
 
 /** `/compact`, optionally followed by preservation instructions that some agents accept. */
 function isCompactCommand(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
-  return /^\/compact(?:\s|$)/.test(message.text.trim()) && message.attachments.length === 0;
+  return COMPACT_COMMAND_PATTERN.test(message.text.trim()) && message.attachments.length === 0;
 }
 
 function negotiatedCapabilities(
@@ -1725,6 +1732,28 @@ interface ActiveAcpTurn {
       }
     | undefined;
   contextUsage: ThreadTokenUsageSnapshot | null;
+  /** Resolved model id active for this turn, used to determine prompt cache lifetime. */
+  resolvedModel: string | undefined;
+  /** Latest `usage_update` captured during this turn, finalized into `tokenUsage` at turn end. */
+  lastUsageSnapshot: ThreadTokenUsageSnapshot | null;
+  /** Timestamp when `lastUsageSnapshot` arrived. */
+  lastUsageUpdatedAt: DateTime.Utc | null;
+  /** Model-request timestamp anchoring `lastUsageSnapshot`, or null when unknown (e.g. buffered replay). */
+  lastUsageRequestedAt: DateTime.Utc | null;
+  /** True when a mid-turn compaction completed after usage and no newer `usage_update` followed. */
+  compactedAfterUsage: boolean;
+  /** True once a new structured compaction completed during this turn. */
+  hadCompletedCompaction: boolean;
+  /** True while draining buffered post-settle wake updates whose original request time is unknown. */
+  replayingWakeBuffer: boolean;
+  /** Finalized per-turn context usage with cache expiry, emitted once on terminal `provider_turn.updated`. */
+  tokenUsage: OrchestrationV2ProviderTurnTokenUsage | undefined;
+  /** Timestamp of the latest model request in this turn, anchoring `promptCacheExpiresAt`. */
+  lastModelRequestAt: DateTime.Utc | null;
+  /** True after a `usage_update` closes a model reply, until the next model reply begins. */
+  usageObservedForLastModelRequest: boolean;
+  /** True once a tool completes after `usage_update`, so non-tool output keeps the tool's timestamp. */
+  toolCompletedSinceUsage: boolean;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
@@ -2334,6 +2363,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSessionId = yield* Ref.make<string | null>(null);
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
+        const preserveContextUsageTimestamp = (
+          usage: ThreadTokenUsageSnapshot | null | undefined,
+          fallbackUpdatedAt: DateTime.Utc,
+        ): ThreadTokenUsageSnapshot | null =>
+          usage == null
+            ? null
+            : flavor.promptCacheTtlMs !== undefined && usage.updatedAt === undefined
+              ? { ...usage, updatedAt: DateTime.formatIso(fallbackUpdatedAt) }
+              : usage;
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
         );
@@ -2372,6 +2410,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
+        const activeResolvedModel = yield* Ref.make<string | undefined>(undefined);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         // Mode values configureSession left the agent in; a later difference is the agent's own change.
         const configuredModes = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
@@ -2401,6 +2440,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         // ACP may patch a completed compaction again; each compaction id marks its session once.
         const completedCompactionIds = yield* Ref.make(new Set<string>());
+        const completedCompactionDetails = yield* Ref.make(
+          new Map<
+            string,
+            {
+              readonly runId: ActiveAcpTurn["input"]["runId"];
+              readonly completedAt: DateTime.Utc;
+              readonly beforeTokenCount: number | undefined;
+            }
+          >(),
+        );
         // The next prompt in a compacted session resends T3's instructions and runtime notes.
         // Only root sessions get prompts, so a marker on a child session is never read.
         const markSessionCompacted = Effect.fn("AcpAdapterV2.markSessionCompacted")(function* (
@@ -2820,6 +2869,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // Each runtime owns its unanswered agent requests, so a dead process's leftovers
         // and late callbacks never reach its replacement.
         let openAgentRequests = new Set<string>();
+        const isStaleCrossTurnCompactionUpdate = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+          context: ActiveAcpTurn | null,
+        ) {
+          if (
+            context === null ||
+            context.nativeThreadId !== notification.sessionId ||
+            (notification.update.sessionUpdate !== "compaction_update" &&
+              notification.update.sessionUpdate !== "compaction_summary_chunk")
+          ) {
+            return false;
+          }
+          const priorCompaction = (yield* Ref.get(completedCompactionDetails)).get(
+            `${context.nativeThreadId}\u0000${notification.update.compactionId}`,
+          );
+          return priorCompaction !== undefined && priorCompaction.runId !== context.input.runId;
+        });
         const notePromptProgress =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (notification?: EffectAcpSchema.SessionNotification) {
@@ -4510,6 +4576,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
         ) {
+          const compactionKey = incoming.toolCallId.startsWith("acp-compaction:")
+            ? `${context.nativeThreadId}\u0000${incoming.toolCallId.slice("acp-compaction:".length)}`
+            : undefined;
+          const completedCompaction =
+            compactionKey === undefined
+              ? undefined
+              : (yield* Ref.get(completedCompactionDetails)).get(compactionKey);
+          // Ignore delayed compaction updates from an earlier settled turn before mutating this turn.
+          if (
+            completedCompaction !== undefined &&
+            completedCompaction.runId !== context.input.runId
+          ) {
+            return;
+          }
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
           if (context.reasoning.current?.sourceMessageId == null)
@@ -4707,7 +4787,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
-          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const nodeId = providerNodeId(nativeItemId);
           const turnItemId = providerTurnItemId(nativeItemId);
           const nativeItemRef = {
@@ -4715,9 +4794,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeId: toolCall.toolCallId,
             strength: "strong" as const,
           };
+          const previousCompaction = status === "completed" ? completedCompaction : undefined;
+          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const startedAt = context.toolStartedAt.get(toolCall.toolCallId) ?? now;
           context.toolStartedAt.set(toolCall.toolCallId, startedAt);
-          const completedAt = completedAtForStatus(status, now);
+          const completedAt = previousCompaction?.completedAt ?? completedAtForStatus(status, now);
           const title = toolCall.title ?? null;
           yield* emitProviderEvent({
             type: "node.updated",
@@ -4791,6 +4872,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
+            const isRepeatedCompletion = previousCompaction !== undefined;
+            const beforeTokenCount = isRepeatedCompletion
+              ? previousCompaction.beforeTokenCount
+              : context.contextUsage?.usedTokens;
             const summary =
               (status === "failed" ? textFromUnknown(toolCall.data.compactionError) : undefined) ||
               textFromUnknown(rawOutput);
@@ -4799,12 +4884,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               type: "compaction",
               driver,
               ...(summary === undefined ? {} : { summary }),
-              ...(context.contextUsage?.usedTokens === undefined
-                ? {}
-                : { beforeTokenCount: context.contextUsage.usedTokens }),
+              ...(beforeTokenCount === undefined ? {} : { beforeTokenCount }),
             };
-            if (status === "completed") {
+            if (status === "completed" && !isRepeatedCompletion) {
+              if (projectedStatus === undefined && compactionKey !== undefined) {
+                yield* Ref.update(completedCompactionDetails, (current) =>
+                  new Map(current).set(compactionKey, {
+                    runId: context.input.runId,
+                    completedAt: completedAt ?? now,
+                    beforeTokenCount,
+                  }),
+                );
+              }
+              context.hadCompletedCompaction = true;
               context.contextUsage = null;
+              context.lastUsageSnapshot = null;
+              context.lastUsageUpdatedAt = null;
+              context.lastUsageRequestedAt = null;
+              context.compactedAfterUsage = true;
               yield* Ref.update(contextUsageBySessionId, (current) => {
                 const updated = new Map(current);
                 updated.delete(context.nativeThreadId);
@@ -5946,6 +6043,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
+          if (yield* isStaleCrossTurnCompactionUpdate(notification, context)) return;
           if (flavor.replyEndsWithUsageUpdate === true) {
             if (context === null) {
               // A reply can end before its continuation run starts; replay its end with its output.
@@ -5966,6 +6064,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           if (
+            flavor.promptCacheTtlMs !== undefined &&
+            context !== null &&
+            context.nativeThreadId === notification.sessionId &&
+            !context.finalized &&
+            !context.replayingWakeBuffer &&
+            context.usageObservedForLastModelRequest
+          ) {
+            if (update.sessionUpdate === "tool_call_update") {
+              if (update.status === "completed" || update.status === "failed") {
+                context.lastModelRequestAt = yield* DateTime.now;
+                context.toolCompletedSinceUsage = true;
+              }
+            } else if (
+              update.sessionUpdate !== "usage_update" &&
+              update.sessionUpdate !== "compaction_update" &&
+              update.sessionUpdate !== "compaction_summary_chunk" &&
+              acpRootSessionUpdateIngestsOutput(notification)
+            ) {
+              if (!context.toolCompletedSinceUsage) {
+                // Tool-less follow-up replies anchor at first output; server LEAD_MS covers TTFT.
+                context.lastModelRequestAt = yield* DateTime.now;
+              }
+              context.usageObservedForLastModelRequest = false;
+              context.toolCompletedSinceUsage = false;
+            }
+          }
+          if (
             update.sessionUpdate === "usage_update" ||
             update.sessionUpdate === "session_info_update"
           ) {
@@ -5973,12 +6098,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (event) => event._tag === "UsageUpdated" || event._tag === "SessionInfoUpdated",
             );
             if (stateEvent === undefined) return;
+            const now = yield* DateTime.now;
             if (stateEvent._tag === "UsageUpdated") {
+              const recordedUsage: ThreadTokenUsageSnapshot =
+                flavor.promptCacheTtlMs === undefined
+                  ? stateEvent.usage
+                  : {
+                      ...stateEvent.usage,
+                      usedTokens: Math.max(0, Math.round(stateEvent.usage.usedTokens)),
+                      ...(stateEvent.usage.maxTokens === undefined
+                        ? {}
+                        : { maxTokens: Math.max(0, Math.round(stateEvent.usage.maxTokens)) }),
+                      updatedAt: DateTime.formatIso(now),
+                    };
               yield* Ref.update(contextUsageBySessionId, (current) =>
-                new Map(current).set(notification.sessionId, stateEvent.usage),
+                new Map(current).set(notification.sessionId, recordedUsage),
               );
               if (context?.nativeThreadId === notification.sessionId) {
-                context.contextUsage = stateEvent.usage;
+                context.contextUsage = recordedUsage;
+                if (
+                  flavor.promptCacheTtlMs !== undefined &&
+                  !context.finalized &&
+                  (!isCompactCommand(context.input.message) || context.hadCompletedCompaction)
+                ) {
+                  context.lastUsageSnapshot = recordedUsage;
+                  context.lastUsageUpdatedAt = now;
+                  context.lastUsageRequestedAt = context.replayingWakeBuffer
+                    ? null
+                    : context.lastModelRequestAt;
+                  context.compactedAfterUsage = false;
+                  context.usageObservedForLastModelRequest = true;
+                  context.toolCompletedSinceUsage = false;
+                }
               }
             } else {
               const metadata = yield* Ref.modify(nativeMetadataBySessionId, (current) => {
@@ -5996,17 +6147,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               notification.sessionId,
             );
             if (knownProviderThread !== undefined) {
-              const now = yield* DateTime.now;
               const providerThread: OrchestrationV2ProviderThread = {
                 ...knownProviderThread,
                 // The settled turn's snapshot is still cached as active; no turn runs now.
                 ...(context === null && knownProviderThread.status === "active"
                   ? { status: "idle" as const }
                   : {}),
-                contextUsage:
+                contextUsage: preserveContextUsageTimestamp(
                   (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId) ??
-                  knownProviderThread.contextUsage ??
-                  null,
+                    knownProviderThread.contextUsage,
+                  knownProviderThread.updatedAt,
+                ),
                 nativeMetadata:
                   (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
                   knownProviderThread.nativeMetadata ??
@@ -7246,6 +7397,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
                 return;
               }
+              if (
+                yield* isStaleCrossTurnCompactionUpdate(rawNotification, yield* Ref.get(activeTurn))
+              ) {
+                return;
+              }
               yield* notePromptProgress(rawNotification);
               const nativePromptId = flavor.forkFromTurn?.nativeTurnId(rawNotification);
               if (nativePromptId !== undefined) {
@@ -8172,6 +8328,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(deliveredAppContext, new Map());
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(completedCompactionIds, new Set());
+            yield* Ref.set(completedCompactionDetails, new Map());
             yield* Ref.set(snapshot, emptySnapshotState());
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
@@ -8308,6 +8465,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           unsetOptionDefaults: NonNullable<ModelSelection["options"]> = [],
         ) {
           yield* Ref.set(activeSelection, null);
+          yield* Ref.set(activeResolvedModel, undefined);
           yield* validateModelSelection(modelSelection);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           // Invalid params is the agent refusing the value, and the runtime
@@ -8360,6 +8518,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (appliedModel !== undefined) {
             const applied = appliedModel;
+            yield* Ref.set(activeResolvedModel, applied);
             yield* Ref.update(activeSessionSetup, (setup) => {
               if (setup === null) {
                 return setup;
@@ -8673,6 +8832,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status,
           startedAt: context.startedAt,
           completedAt,
+          ...(context.tokenUsage === undefined ? {} : { tokenUsage: context.tokenUsage }),
           ...(status === "running" || status === "pending"
             ? {}
             : {
@@ -8900,6 +9060,64 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           yield* reportAgentModeChanges(context.input.threadId);
+          if (flavor.promptCacheTtlMs !== undefined) {
+            if (!isCompactCommand(context.input.message)) {
+              if (context.lastUsageSnapshot !== null) {
+                const ttlMs = flavor.promptCacheTtlMs(
+                  context.resolvedModel ?? context.input.modelSelection.model,
+                );
+                const canCompact =
+                  flavor.compactViaAdvertisedCommand !== true ||
+                  (yield* SubscriptionRef.get(advertisedCommandNames))
+                    .get(context.nativeThreadId)
+                    ?.has("compact") === true;
+                const promptCacheExpiresAt =
+                  ttlMs !== undefined && canCompact && context.lastUsageRequestedAt !== null
+                    ? DateTime.formatIso(
+                        DateTime.add(context.lastUsageRequestedAt, { milliseconds: ttlMs }),
+                      )
+                    : undefined;
+                context.tokenUsage = {
+                  usedTokens: Math.max(0, Math.round(context.lastUsageSnapshot.usedTokens)),
+                  ...(context.lastUsageSnapshot.maxTokens === undefined
+                    ? {}
+                    : { maxTokens: Math.max(0, Math.round(context.lastUsageSnapshot.maxTokens)) }),
+                  ...(ttlMs === undefined ? {} : { promptCacheTtlMs: ttlMs }),
+                  ...(promptCacheExpiresAt === undefined ? {} : { promptCacheExpiresAt }),
+                  updatedAt: DateTime.formatIso(context.lastUsageUpdatedAt ?? now),
+                };
+              } else if (context.compactedAfterUsage) {
+                // Explicitly overwrite any prior turn's 200K+ usage and expiry in ProjectionStore
+                // so mid-turn compaction cannot leave an already-compacted session eligible.
+                context.tokenUsage = {
+                  usedTokens: 0,
+                  updatedAt: DateTime.formatIso(now),
+                };
+              }
+            } else if (compactsContext && settledStatus === "completed") {
+              if (context.hadCompletedCompaction && context.lastUsageSnapshot !== null) {
+                context.tokenUsage = {
+                  usedTokens: Math.max(0, Math.round(context.lastUsageSnapshot.usedTokens)),
+                  ...(context.lastUsageSnapshot.maxTokens === undefined
+                    ? {}
+                    : { maxTokens: Math.max(0, Math.round(context.lastUsageSnapshot.maxTokens)) }),
+                  updatedAt: DateTime.formatIso(context.lastUsageUpdatedAt ?? now),
+                };
+              } else {
+                context.contextUsage = null;
+                yield* Ref.update(contextUsageBySessionId, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(context.nativeThreadId);
+                  return updated;
+                });
+                // Emit a compaction-clear marker so subsequent turns cannot revive pre-compaction usage.
+                context.tokenUsage = {
+                  usedTokens: 0,
+                  updatedAt: DateTime.formatIso(now),
+                };
+              }
+            }
+          }
           const turn = providerTurnPayload(context, settledStatus, now);
           yield* emitProviderEvent({
             type: "provider_turn.updated",
@@ -9352,6 +9570,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
+          yield* Ref.set(activeResolvedModel, undefined);
           yield* Ref.set(activeInteractionMode, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
           yield* Ref.set(promptInstructionStates, new Map());
@@ -9359,6 +9578,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(deliveredAppContext, new Map());
           yield* Ref.set(compactionMarkers, new Map());
           yield* Ref.set(completedCompactionIds, new Set());
+          yield* Ref.set(completedCompactionDetails, new Map());
+          yield* SubscriptionRef.set(advertisedCommandNames, new Map());
           yield* Ref.set(snapshot, emptySnapshotState());
           return true;
         });
@@ -9797,6 +10018,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
               requestedSessionId,
             );
+            const initialContextUsage = preserveContextUsageTimestamp(
+              rememberedContextUsage ?? turnInput.providerThread.contextUsage,
+              turnInput.providerThread.updatedAt,
+            );
             const rememberedNativeMetadata = (yield* Ref.get(nativeMetadataBySessionId)).get(
               requestedSessionId,
             );
@@ -9839,7 +10064,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               user: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               assistant: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               reasoning: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
-              contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
+              contextUsage: initialContextUsage,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               claimedToolResults: new Map(),
@@ -9873,6 +10098,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
+              resolvedModel:
+                (yield* Ref.get(activeResolvedModel)) ??
+                findModelConfigOption(yield* runtime.getConfigOptions)?.currentValue ??
+                turnInput.modelSelection.model,
+              lastUsageSnapshot: null,
+              lastUsageUpdatedAt: null,
+              lastUsageRequestedAt: null,
+              compactedAfterUsage: false,
+              hadCompletedCompaction: false,
+              replayingWakeBuffer: false,
+              tokenUsage: undefined,
+              lastModelRequestAt: null,
+              usageObservedForLastModelRequest: false,
+              toolCompletedSinceUsage: false,
               backgroundFinalizeGeneration: 0,
               replyOpen: false,
               nativePromptId: undefined,
@@ -9965,9 +10204,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* runtimeCallbackPermit.withPermit(
                   Effect.gen(function* () {
                     const liveWork = agentWork;
+                    context.replayingWakeBuffer = true;
                     yield* Effect.forEach(yield* takeWakeBuffer, handleSessionUpdate, {
                       discard: true,
-                    });
+                    }).pipe(
+                      Effect.ensuring(
+                        Effect.sync(() => {
+                          context.replayingWakeBuffer = false;
+                        }),
+                      ),
+                    );
                     agentWork = liveWork;
                     context.workAccepted = true;
                     yield* settleIdleWork(context);
@@ -9977,10 +10223,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const drainedWakeCount = yield* takeWakeBuffer.pipe(
                 Effect.tap((drained) =>
-                  Effect.forEach(drained, handleSessionUpdate, {
-                    concurrency: 1,
-                    discard: true,
-                  }),
+                  Effect.sync(() => {
+                    context.replayingWakeBuffer = true;
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.forEach(drained, handleSessionUpdate, {
+                        concurrency: 1,
+                        discard: true,
+                      }),
+                    ),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        context.replayingWakeBuffer = false;
+                      }),
+                    ),
+                  ),
                 ),
                 Effect.map((drained) => drained.length),
               );
@@ -10031,6 +10288,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               released: context.foregroundIdle,
             };
             context.promptSentAt = yield* Clock.currentTimeMillis;
+            context.lastModelRequestAt = yield* DateTime.now;
+            context.usageObservedForLastModelRequest = false;
+            context.toolCompletedSinceUsage = false;
             if (promptInactivityTimeoutMillis !== undefined) {
               context.inactivityWatchdog = yield* watchPromptInactivity(
                 context,
@@ -10058,7 +10318,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 compactSession === undefined
                   ? sendPromptWhenIdle(
                       context,
-                      () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                      () =>
+                        DateTime.now.pipe(
+                          Effect.flatMap((attemptNow) => {
+                            context.lastModelRequestAt = attemptNow;
+                            context.usageObservedForLastModelRequest = false;
+                            context.toolCompletedSinceUsage = false;
+                            return runtime.prompt({ prompt: promptParts!.prompt }, promptOptions);
+                          }),
+                        ),
                       superseded,
                     )
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
@@ -10186,6 +10454,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.backgroundFinalizeGeneration += 1;
                   context.promptSentAt = yield* Clock.currentTimeMillis;
                   context.lastProgressAt = context.promptSentAt;
+                  context.lastModelRequestAt = yield* DateTime.now;
+                  context.usageObservedForLastModelRequest = false;
+                  context.toolCompletedSinceUsage = false;
                   const watchdog = context.inactivityWatchdog;
                   context.inactivityWatchdog = undefined;
                   if (watchdog !== undefined) {
@@ -10206,9 +10477,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sendPromptWhenIdle(
                         context,
                         () =>
-                          runtime.prompt(
-                            { prompt: steerPrompt },
-                            { dispatched, released: releasedForSteer },
+                          DateTime.now.pipe(
+                            Effect.flatMap((attemptNow) => {
+                              context.lastModelRequestAt = attemptNow;
+                              context.usageObservedForLastModelRequest = false;
+                              context.toolCompletedSinceUsage = false;
+                              return runtime.prompt(
+                                { prompt: steerPrompt },
+                                { dispatched, released: releasedForSteer },
+                              );
+                            }),
                           ),
                         superseded,
                       ),
@@ -10474,9 +10752,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
                   }
+                  const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
+                    sessionId,
+                  );
+                  const resumedContextUsage = preserveContextUsageTimestamp(
+                    rememberedContextUsage ?? threadInput.providerThread.contextUsage,
+                    threadInput.providerThread.updatedAt,
+                  );
                   const now = yield* DateTime.now;
                   return {
                     ...threadInput.providerThread,
+                    contextUsage: resumedContextUsage,
                     providerSessionId: input.providerSessionId,
                     status: "idle" as const,
                     updatedAt: now,

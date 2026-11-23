@@ -362,6 +362,7 @@ import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
 import {
   deriveLatestContextWindowSnapshot,
   hasDismissedResumeCompaction,
+  hasInterveningRunWithoutUsage,
   latestProviderTurnTokenUsage,
   shouldOfferResumeCompaction,
 } from "@t3tools/client-runtime/state/context-window";
@@ -2685,11 +2686,23 @@ export default function ChatView(props: ChatViewProps) {
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
+    !(
+      selectedProvider === "antigravity" &&
+      serverProjection !== null &&
+      hasInterveningRunWithoutUsage(
+        serverProjection.runs,
+        serverProjection.providerTurns,
+        activeProviderThread,
+        activeContextWindow.updatedAt,
+      )
+    ) &&
     shouldOfferResumeCompaction({
       provider: selectedProvider,
+      model: activeUsageModel,
       usedTokens: activeContextWindow.usedTokens,
       updatedAt: activeContextWindow.updatedAt,
       promptCacheTtlMs: activeThreadLiveTokenUsage?.promptCacheTtlMs,
+      hasLiveUsage: activeThreadLiveTokenUsage !== null,
       now: `${nowMinute}:00.000Z`,
     })
       ? activeContextWindow.usedTokens
