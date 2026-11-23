@@ -741,6 +741,33 @@ describe("question answer paths", () => {
           ],
           absent: ["[Extracted text truncated"],
         },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml":
+              '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
+            "My Book/book 1.opf":
+              '<package><item id="ch1" href="ch1.xhtml"/><itemref idref="ch1"/></package>',
+            "My Book/ch1.xhtml": "<html><p>Percent-encoded rootfile chapter text.</p></html>",
+          },
+          expected: ["Percent-encoded rootfile chapter text."],
+          absent: ["[Skipped document part", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml":
+              '<container><rootfile full-path="OPS/book%201.opf"/></container>',
+            "OPS/book%201.opf":
+              '<package><item id="ch1" href="correct.xhtml"/><itemref idref="ch1"/></package>',
+            "ops/book 1.opf":
+              '<package><item id="ch1" href="other.xhtml"/><itemref idref="ch1"/></package>',
+            "OPS/correct.xhtml": "<html><p>Correct primary chapter</p></html>",
+            "ops/other.xhtml": "<html><p>Wrong alternate chapter</p></html>",
+          },
+          expected: ["Correct primary chapter"],
+          absent: ["Wrong alternate chapter", "[Skipped document part"],
+        },
         ...[false, true].flatMap((bom) =>
           [false, true].map((bigEndian) => {
             const encode = (source: string) => {
