@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -420,6 +422,47 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
       Effect.provide(runtime),
       Effect.scoped,
       Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("reads answer while a reload waits for the old engine to stop", () =>
+  Effect.gen(function* () {
+    // The old engine stops only once its step in flight finishes, which `release` stands for.
+    const closing = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let builds = 0;
+    const { runtime } = yield* setup(undefined, () =>
+      Layer.effect(
+        Workflows.Workflows,
+        Effect.gen(function* () {
+          if (builds++ === 0) {
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(closing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+            );
+          }
+          return Workflows.disabled;
+        }),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const workflows = yield* Workflows.Workflows;
+      const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+      const saving = yield* Effect.forkChild(definitions.save("greet.ts", greet("hi")));
+      yield* Deferred.await(closing);
+      const listed = yield* workflows
+        .list()
+        .pipe(
+          Effect.timeoutOption("1 minute"),
+          Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
+        );
+      assert.isTrue(Option.isSome(listed), "list waited for the old engine's step to finish");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(saving);
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(release, undefined)),
+      Effect.provide(runtime),
+      Effect.scoped,
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
