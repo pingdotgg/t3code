@@ -601,6 +601,24 @@ pub fn reorder_active_thread(
     }))
 }
 
+/// `thread.pin.reorder`: put a pinned thread in a manual place (`orderKey`).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn reorder_pinned_thread(
+    thread_id: &str,
+    order_key: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.pin.reorder",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "orderKey": order_key,
+    }))
+}
+
 /// `thread.snooze`: hide a thread until `snoozed_until` (an ISO-8601 time in the future).
 ///
 /// # Errors
@@ -897,6 +915,10 @@ mod tests {
         assert!(
             reorder_active_thread("t1", "m1").is_ok(),
             "thread.active.reorder decodes"
+        );
+        assert!(
+            reorder_pinned_thread("t1", "m1").is_ok(),
+            "thread.pin.reorder decodes"
         );
         assert!(
             snooze_thread("t1", "2026-01-03T00:00:00Z").is_ok(),
