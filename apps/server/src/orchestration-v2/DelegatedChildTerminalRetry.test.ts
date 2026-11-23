@@ -439,6 +439,7 @@ it.effect("stopping a delegated child with a queued message does not report the 
                 );
                 if (entry !== undefined) yield* terminal(entry, "interrupted");
               }),
+            respondToRuntimeRequest: () => Effect.die("unused"),
             readThreadSnapshot: () => Effect.die("unused"),
             rollbackThread: () => Effect.die("unused"),
             forkThread: () => Effect.die("unused"),
