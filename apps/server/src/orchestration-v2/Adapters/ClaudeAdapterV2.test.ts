@@ -19856,6 +19856,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* harness.awaitContinuation(1);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-card-turn-2"),
+          text: "Background task completed.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
       for (const frame of [
         claudeSdkFrame({
           type: "system",
@@ -19878,19 +19891,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ]) {
         yield* Queue.offer(harness.sdkMessages, frame);
       }
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now,
-          attemptId: RunAttemptId.make("attempt-claude-card-turn-2"),
-          text: "Background task completed.",
-          attachments: [],
-          providerTurnOrdinal: 2,
-          messageCreatedBy: "agent",
-          messageCreationSource: "provider",
-        }),
-      );
       yield* harness.awaitTerminal(2);
 
       const cards = harness.events.flatMap((event) =>
@@ -19902,10 +19902,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
       );
       assert.equal(new Set(turnIds).size, 2);
-      assert.deepEqual(
-        cards.filter((card) => card.status === "completed").map((card) => card.subagentId).length,
-        2,
-      );
+      assert.equal(new Set(cards.map((card) => card.subagentId)).size, 2);
+      assert.equal(cards.filter((card) => card.status === "completed").length, 2);
       assert.deepEqual(
         [...new Set(cards.map((card) => card.providerTurnId))],
         [cards[0]?.providerTurnId],
