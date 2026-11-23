@@ -253,10 +253,9 @@ const make = Effect.gen(function* () {
     enabled: boolean,
   ) {
     if (!enabled) return null;
-    const millis = yield* Clock.currentTimeMillis;
-    const from = DateTime.makeUnsafe(millis);
+    const from = yield* DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
     const next = nextScheduledRunAt(schedule, from);
-    return next === null ? null : decodeIsoDateTime(DateTime.formatIso(next));
+    return next === null ? null : decodeIsoDateTime(DateTime.formatIso(DateTime.toUtc(next)));
   });
 
   const syncTidyUpRoutine = Effect.fn("BotService.syncTidyUpRoutine")(function* (bot: Bot) {
