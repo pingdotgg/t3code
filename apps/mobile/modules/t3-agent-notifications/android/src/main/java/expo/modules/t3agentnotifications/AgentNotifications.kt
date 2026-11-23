@@ -98,6 +98,27 @@ object AgentNotifications {
   }
 
   @Synchronized
+  fun setThreadOnScreen(context: Context, path: String?) {
+    threadOnScreen = path
+    if (path == null) return
+    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    if (prefs.getBoolean("lastActive", false)) return
+    val lastTerminal = prefs.getString("lastTerminal", null) ?: return
+    if (lastTerminal.endsWith("\ntrue") && lastTerminal.substringBefore('\n') == path) {
+      prefs.edit().putString("coveredTerminal", lastTerminal).apply()
+      cancelActivity(context)
+    }
+  }
+
+  private fun isThreadOnScreen(path: String?): Boolean {
+    val resumed = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(
+      Lifecycle.State.RESUMED
+    )
+    val visibleThread = threadOnScreen
+    return resumed && visibleThread != null && path == visibleThread
+  }
+
+  @Synchronized
   fun dismiss(context: Context) {
     context.getSharedPreferences(
       STORE,
@@ -145,11 +166,7 @@ object AgentNotifications {
       ?: prefs.getStringSet("seenAlerts", emptySet()).orEmpty().toList()
     if (alertId != null && alertId !in seen) {
       // Consume suppressed alerts so retries cannot resurface them later.
-      val resumed = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(
-        Lifecycle.State.RESUMED
-      )
-      val visibleThread = threadOnScreen
-      val onScreen = resumed && visibleThread != null && data["alert_path"] == visibleThread
+      val onScreen = isThreadOnScreen(data["alert_path"])
       if (!onScreen) {
         postAlert(context, scheme, data, alertId)
       }
@@ -226,10 +243,18 @@ object AgentNotifications {
     updatedAt: Long,
     alerted: Boolean
   ) {
-    val terminal = singleTerminal(data)
-    // Only a one-row card on the alert's own thread is known to show nothing more
-    // than the alert. Grouped alerts and cards with other rows stay visible.
-    val covered = terminal?.takeIf { alerted && data["alert_path"] == data["activity_path"] }
+    val terminal = terminalKey(data)
+    val singleRow = data.containsKey("activity_line_0") && !data.containsKey("activity_line_1")
+    // Hide a finished card when its alert already covered the visible rows or the
+    // user is already looking at the finished thread on screen.
+    val covered = terminal?.takeIf {
+      if (singleRow) {
+        (alerted && data["alert_path"] == data["activity_path"]) ||
+          isThreadOnScreen(data["activity_path"])
+      } else {
+        alerted && data["alert_path"] == "/"
+      }
+    }
     if (covered != null) coverTerminal(prefs, covered, updatedAt)
     if (updatedAt < prefs.getLong("lastUpdate", 0)) {
       // A newer replay of this same finish may already show the card.
@@ -261,14 +286,16 @@ object AgentNotifications {
     }
   }
 
-  /** Identifies a finished one-thread card by its path, phase and absolute expiry. */
-  private fun singleTerminal(data: Map<String, String>): String? {
+  /** Identifies a finished card by its path, phase, scope and absolute expiry. */
+  private fun terminalKey(data: Map<String, String>): String? {
+    if (data["active"] == "true") return null
     val phase = data["activity_phase"]
     val finished = phase == "completed" || phase == "failed"
-    val single = data.containsKey("activity_line_0") && !data.containsKey("activity_line_1")
+    val hasRow = data.containsKey("activity_line_0")
+    val single = hasRow && !data.containsKey("activity_line_1")
     val expiresAt = data["activity_expires_at"]
-    return "${data["activity_path"]}\n$phase\n$expiresAt"
-      .takeIf { finished && single && expiresAt != null }
+    return "${data["activity_path"]}\n$phase\n$expiresAt\n$single"
+      .takeIf { finished && hasRow && expiresAt != null }
   }
 
   private fun isCovered(prefs: SharedPreferences, terminal: String?) =
