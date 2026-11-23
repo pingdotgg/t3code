@@ -6,7 +6,14 @@ import {
   type WorkflowBeat,
   type WorkflowRunNode,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId, WorkflowStep } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ScopedThreadRef,
+  type WorkflowStep,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,6 +28,8 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
+import { useLinkedEnvironments } from "../../state/peerLinks";
+import { useOpenLinkedThreadRead } from "../threads/useOpenLinkedThread";
 
 export function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -63,12 +72,36 @@ export function Facts(props: {
   );
 }
 
-/** Whether this device can open a thread: only one in an environment it is paired with. */
-export function useCanOpenThread(environmentId: EnvironmentId) {
-  const { environments } = useEnvironments();
-  return (thread: NonNullable<WorkflowBeat["thread"]>) => {
-    const target = thread.environmentId ?? environmentId;
-    return environments.some((environment) => environment.environmentId === target);
+/**
+ * How this device opens a step's thread from a run on `environmentId`: directly where it is paired,
+ * else read-only through the run's environment when that links to it. Null where it can do neither.
+ */
+export function useWorkflowThreadOpener(
+  environmentId: EnvironmentId,
+  openDirect: (thread: ScopedThreadRef) => void,
+  options?: { readonly replace?: boolean },
+) {
+  const { presentationById } = useEnvironments();
+  const linkedEnvironments = useLinkedEnvironments(environmentId);
+  const openLinkedRead = useOpenLinkedThreadRead();
+  return (thread: NonNullable<WorkflowBeat["thread"]>): (() => void) | null => {
+    const ref = scopeThreadRef(
+      thread.environmentId === null ? environmentId : EnvironmentId.make(thread.environmentId),
+      ThreadId.make(thread.threadId),
+    );
+    const own = presentationById.get(ref.environmentId);
+    const label = linkedEnvironments.get(ref.environmentId);
+    const open = resolveLinkedThreadOpen({
+      environmentId: ref.environmentId,
+      viaEnvironmentId: environmentId,
+      own: own && { connected: own.connection.phase === "connected" },
+      linked: label !== undefined,
+    });
+    if (open === "unavailable") return null;
+    if (open === "linked" && label !== undefined) {
+      return () => openLinkedRead(ref, { viaEnvironmentId: environmentId, label }, null, options);
+    }
+    return () => openDirect(ref);
   };
 }
 
