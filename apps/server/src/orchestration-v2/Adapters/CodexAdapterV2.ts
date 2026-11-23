@@ -4131,10 +4131,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 { id: update.itemId, text: update.text },
                 update.completed,
               );
+              // No item/completed: Codex abandoned the reply (e.g. after a steer) or the turn cut it off.
+              const abandoned = update.flushedAtTurnEnd;
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,
-                node: artifacts.node,
+                node: abandoned ? { ...artifacts.node, status: "interrupted" } : artifacts.node,
               });
               if (update.completed) {
                 yield* emitProviderEvent({
@@ -4146,9 +4148,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CODEX_PROVIDER,
-                turnItem: artifacts.turnItem,
+                turnItem: abandoned
+                  ? { ...artifacts.turnItem, status: "interrupted" }
+                  : artifacts.turnItem,
               });
-              if (finalAnswerItem && update.completed) {
+              if (finalAnswerItem && update.completed && !abandoned) {
                 imageTurn(update.turnId).answer = { id: update.itemId, text: update.text };
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
                   const updated = new Map(current);

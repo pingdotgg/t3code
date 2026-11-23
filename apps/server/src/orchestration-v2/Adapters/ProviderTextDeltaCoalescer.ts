@@ -9,6 +9,8 @@ export interface ProviderTextDeltaUpdate {
   readonly itemId: string;
   readonly text: string;
   readonly completed: boolean;
+  /** Emitted by `flushTurn`: the provider never completed this item itself. */
+  readonly flushedAtTurnEnd: boolean;
 }
 
 export interface ProviderTextDeltaCoalescer {
@@ -52,6 +54,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
       readonly completed: boolean;
       readonly onlyDirty: boolean;
       readonly releaseSchedule?: boolean;
+      readonly flushedAtTurnEnd?: boolean;
     }) =>
       flushLock.withPermit(
         Effect.gen(function* () {
@@ -66,6 +69,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
               itemId: message.itemId,
               text: message.text,
               completed: options.completed,
+              flushedAtTurnEnd: options.flushedAtTurnEnd === true,
             });
           }
           const emitUpdates = Effect.forEach(updates, input.emit, { discard: true });
@@ -135,7 +139,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
             const existing = (yield* Ref.get(buffered)).get(key);
             const text = finalText !== undefined ? finalText : (existing?.text ?? "");
             if (emitEmpty || text.length > 0) {
-              yield* input.emit({ turnId, itemId, text, completed: true });
+              yield* input.emit({ turnId, itemId, text, completed: true, flushedAtTurnEnd: false });
             }
             yield* Ref.update(buffered, (current) => {
               const next = new Map(current);
@@ -150,6 +154,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
           predicate: (message) => message.turnId === turnId,
           completed: true,
           onlyDirty: false,
+          flushedAtTurnEnd: true,
         }),
     };
   },
