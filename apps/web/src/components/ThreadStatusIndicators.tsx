@@ -495,9 +495,7 @@ function PullRequestBadge({
           )}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          <span className={appearance === "number" ? "text-secondary-label" : undefined}>
-            {presentation.text}
-          </span>
+          <span>{presentation.text}</span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
