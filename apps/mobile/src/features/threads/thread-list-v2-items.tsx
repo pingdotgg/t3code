@@ -56,6 +56,7 @@ import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
+import { m as resolveMessage } from "../../i18n/messages";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope, useEnvironmentScopeDenied } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -923,11 +924,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     });
     if (result._tag === "Failure") {
       Dialog.alert(
-        gt("Could not mark thread unread"),
-        gt("The thread could not be marked unread. Try again."),
+        resolveMessage(msg("Could not mark thread unread")),
+        resolveMessage(msg("The thread could not be marked unread. Try again.")),
       );
     }
-  }, [canMarkUnread, gt, markThreadUnread, thread.environmentId, thread.id]);
+  }, [canMarkUnread, markThreadUnread, thread.environmentId, thread.id]);
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
     void visitThread({
