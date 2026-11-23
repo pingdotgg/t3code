@@ -477,6 +477,8 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
         cwd: environment.serverDir,
         env,
         extendEnv: false,
+        // A server that ignores SIGTERM still stops, so cleanup always reaches the temp dir.
+        forceKillAfter: Duration.seconds(10),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
@@ -496,7 +498,10 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     Effect.gen(function* () {
       const spawned = yield* descendantsOf(pid).pipe(Effect.orElseSucceed(() => []));
       if (platform === "win32") yield* output("taskkill", ["/PID", `${pid}`, "/T", "/F"]);
-      else yield* child.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
+      else
+        yield* child
+          .kill({ killSignal: "SIGTERM", forceKillAfter: Duration.seconds(10) })
+          .pipe(Effect.timeout(Duration.seconds(15)), Effect.ignore);
       yield* child.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
       if (spawned.length > 0) yield* output("kill", ["-9", ...spawned.map(String)]);
       // Windows keeps a file locked for a moment after its process exits.
