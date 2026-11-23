@@ -279,7 +279,8 @@ export type ScheduledTaskListResult = typeof ScheduledTaskListResult.Type;
 export const ScheduledTaskUpsertInput = Schema.Struct({
   id: Schema.optional(ScheduledTaskId),
   requireExisting: Schema.optional(Schema.Boolean).annotate({
-    description: "Reject the save if the task no longer exists, for edits from a client form.",
+    description:
+      "Reject the save if the task no longer exists, for edits based on an earlier read.",
   }),
   commandId: Schema.optional(CommandId),
   title: TrimmedNonEmptyString,
