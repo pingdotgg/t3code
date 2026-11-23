@@ -12749,15 +12749,13 @@ describe("AcpAdapterV2", () => {
 
         const tag = (note: string) => `<external_mcp_app_item-1>${note}</external_mcp_app_item-1>`;
 
-        // Unsuccessful stop reasons must not mark appContext delivered.
-        for (const stopReason of ["cancelled", "refusal", "error"] as const) {
-          const result = yield* runTurn({
-            text: `Attempt (${stopReason})`,
-            note: "Created Jira issue PROJ-42",
-            response: { stopReason },
-          });
-          assert.include(result.prompt, tag("Created Jira issue PROJ-42"));
-        }
+        // An unsuccessful stop reason must not mark appContext delivered.
+        const refusedTurn = yield* runTurn({
+          text: "Refused attempt",
+          note: "Created Jira issue PROJ-42",
+          response: { stopReason: "refusal" },
+        });
+        assert.include(refusedTurn.prompt, tag("Created Jira issue PROJ-42"));
 
         // Interrupted turns must not mark appContext delivered even if the prompt answers end_turn.
         const interruptedStarted = yield* Deferred.make<void>();

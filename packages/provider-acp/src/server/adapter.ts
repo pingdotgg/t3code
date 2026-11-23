@@ -10118,7 +10118,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               openTurn.interrupted = true;
               yield* finalizeTurn(openTurn, "interrupted");
             }
-            yield* Ref.set(deliveredAppContext, new Map());
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,
