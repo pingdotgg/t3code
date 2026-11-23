@@ -3,11 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compareMetrics,
+  competingBetween,
   activityRenewalMissed,
   heapGrowth,
   loadWarnings,
   nextActivityReport,
   noiseReport,
+  noisePairProblem,
   parsePsCpuTime,
   parseRunSelection,
   pathRewrites,
@@ -153,6 +155,38 @@ describe("compareMetrics with noise rules", () => {
   });
 });
 
+describe("noisePairProblem", () => {
+  const at = (commit: string | null): ServerMetrics => ({ meta: { ...meta, commit }, runs: [] });
+  it.each([
+    ["one commit against itself", at("abc"), at("abc"), undefined],
+    [
+      "an A/B directory",
+      at("abc"),
+      at("def"),
+      "ab-out: a.json is abc and b.json def; noise floors need one commit against itself",
+    ],
+    [
+      "a file with no commit",
+      at(null),
+      at(null),
+      "ab-out: a.json or b.json records no commit, so it cannot be shown to be an A/A run",
+    ],
+  ])("%s", (_name, a, b, problem) => {
+    expect(noisePairProblem("ab-out", a, b)).toBe(problem);
+  });
+});
+
+describe("competingBetween", () => {
+  it.each([
+    ["a process that kept running", [["10:500", 900]], [["10:500", 960]], 60],
+    ["a new process, counted whole", [], [["11:700", 30]], 30],
+    ["a reused pid is a new process", [["10:500", 900]], [["10:800", 300]], 300],
+    ["a process that exited is lost", [["10:500", 900]], [], 0],
+  ] as const)("%s", (_name, before, after, seconds) => {
+    expect(competingBetween(new Map(before), new Map(after))).toBe(seconds);
+  });
+});
+
 describe("loadWarnings", () => {
   const loaded = (cpus: number | null, ...machines: Array<[number | null, number | null]>) =>
     ({
@@ -184,14 +218,26 @@ describe("loadWarnings", () => {
 });
 
 describe("noiseReport", () => {
-  it("suggests a floor covering the pooled swing and the A/A difference, rounded up", () => {
-    const [row] = noiseReport([[cpuRuns(2, 2.2, 2.4), cpuRuns(2.1, 3.1, 2.3)]]).rows.filter(
-      ({ metric }) => metric === "quiet.cpuPct",
-    );
+  it.each([
     // Pooled 2 to 3.1: half range 0.55; medians 2.2 and 2.3.
-    expect(row).toMatchObject({ median: 2.25, halfRange: 0.55, aaDifference: 0.1 });
-    expect(row?.suggestedFloor).toBe(0.55);
-    expect(row?.suggestedGate).toBe(true);
+    ["the pooled swing", cpuRuns(2, 2.2, 2.4), cpuRuns(2.1, 3.1, 2.3), 0.55, 0.1, 0.55],
+    // Pooled 2 to 3.25: half range 0.625; medians 2 and 3.25 differ by more.
+    ["the A/A median difference", cpuRuns(2, 2), cpuRuns(3.25, 3.25), 0.63, 1.25, 1.3],
+  ])("estimates a floor from %s, rounded up", (_name, a, b, halfRange, aaDifference, floor) => {
+    const [row] = noiseReport([[a, b]]).rows.filter(({ metric }) => metric === "quiet.cpuPct");
+    expect(row).toMatchObject({ halfRange, aaDifference, suggestedFloor: floor });
+  });
+
+  it("leaves out wakeups counted with the delay sampler on one side only", () => {
+    const sampled: ServerMetrics = {
+      meta,
+      runs: quietRuns({ ...base, wakeupsPerSec: 160 }).runs.map((run) => ({
+        quiet: { ...run.quiet, loopSamples: 2_900 },
+      })),
+    };
+    const metrics = noiseReport([[quietRuns(base), sampled]]).rows.map(({ metric }) => metric);
+    expect(metrics).not.toContain("quiet.wakeupsPerSec");
+    expect(metrics).toContain("quiet.cpuPct");
   });
 
   it("takes the widest pair, and calls a metric noisy past half its median", () => {

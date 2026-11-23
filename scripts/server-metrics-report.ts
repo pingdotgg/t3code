@@ -40,7 +40,7 @@ const Soak = Schema.Struct({
 });
 
 const MachineState = Schema.Struct({
-  /** The higher 1-minute load average of the run's start and end; none on Windows. */
+  /** The highest 1-minute load average read through the run; none on Windows. */
   load1: Schema.NullOr(Schema.Number),
   /** Cores other node, T3 and agent processes kept busy over the run; Linux only. */
   otherCpuCores: Schema.NullOr(Schema.Number),
@@ -312,6 +312,44 @@ export function bootstrapMedianDifference(a: ReadonlyArray<number>, b: ReadonlyA
   return [differences[49]!, differences[1_949]!] as const;
 }
 
+/**
+ * False for a wakeup count where only one side had the delay sampler: wakeups include the
+ * sampler's only when `loopSamples` sits beside them, so the two measured different things. The
+ * per-thread fit comes from the quiet windows, so it follows their method.
+ */
+function sameWakeupMethod(
+  metric: string,
+  a: ReadonlyMap<string, unknown>,
+  b: ReadonlyMap<string, unknown>,
+) {
+  const window =
+    metric === "scaling.wakeupsPerThread"
+      ? "quiet."
+      : metric.endsWith("wakeupsPerSec")
+        ? metric.slice(0, -"wakeupsPerSec".length)
+        : "";
+  return !window || a.has(`${window}loopSamples`) === b.has(`${window}loopSamples`);
+}
+
+/** CPU seconds spent between two reads keyed by pid and start time; a process that exited is lost. */
+export function competingBetween(
+  before: ReadonlyMap<string, number>,
+  after: ReadonlyMap<string, number>,
+) {
+  return [...after].reduce((total, [key, seconds]) => total + seconds - (before.get(key) ?? 0), 0);
+}
+
+/** Why a directory is not an A/A pair: its files must record one and the same commit. */
+export function noisePairProblem(dir: string, a: ServerMetrics, b: ServerMetrics) {
+  const commits = [a.meta.commit, b.meta.commit];
+  if (commits.some((commit) => typeof commit !== "string" || commit === "")) {
+    return `${dir}: a.json or b.json records no commit, so it cannot be shown to be an A/A run`;
+  }
+  return commits[0] === commits[1]
+    ? undefined
+    : `${dir}: a.json is ${commits[0]} and b.json ${commits[1]}; noise floors need one commit against itself`;
+}
+
 /** Every metric's values across a file's runs. */
 const collect = (metrics: ServerMetrics) => {
   const values = new Map<string, number[]>();
@@ -347,9 +385,9 @@ export interface NoiseRow {
 }
 
 /**
- * Run-to-run spread of every metric over A/A pairs (one commit against itself), and the floor
- * each needs so the same commit never counts as a change: at least half the pooled range of one
- * pair and the A/A median difference, over every pair.
+ * Run-to-run spread of every metric over A/A pairs (one commit against itself), and an estimated
+ * floor: the widest half range of a pair's pooled runs or A/A median difference these runs
+ * showed. A later A/A run can still land outside it; more pairs make it a better estimate.
  */
 export function noiseReport(
   pairs: ReadonlyArray<readonly [ServerMetrics, ServerMetrics]>,
@@ -361,7 +399,7 @@ export function noiseReport(
     const b = collect(after);
     for (const [metric, x] of a) {
       const y = b.get(metric);
-      if (!y || !isMetric(metric)) continue;
+      if (!y || !isMetric(metric) || !sameWakeupMethod(metric, a, b)) continue;
       const pooled = [...x, ...y];
       const entry = found.get(metric) ?? { medians: [], halfRange: 0, aaDifference: 0 };
       entry.medians.push(median(pooled));
@@ -386,7 +424,7 @@ export function noiseReport(
     };
   });
   const lines = [
-    "| metric | median | ± half range | A/A diff | floor | suggested | gated | suggested |",
+    "| metric | median | ± half range | A/A diff | floor | estimated floor | gated | suggest gating |",
     "| :-- | --: | --: | --: | --: | --: | :-: | :-: |",
     ...rows.map(
       (row) =>
@@ -427,13 +465,7 @@ export function compareMetrics(
     // Wakeups include the delay sampler's only when `loopSamples` sits beside them, so a file
     // from before the sampler and one from after measured different things. The per-thread fit
     // comes from the quiet windows.
-    const window =
-      metric === "scaling.wakeupsPerThread"
-        ? "quiet."
-        : metric.endsWith("wakeupsPerSec")
-          ? metric.slice(0, -"wakeupsPerSec".length)
-          : "";
-    if (window && a.has(`${window}loopSamples`) !== b.has(`${window}loopSamples`)) {
+    if (!sameWakeupMethod(metric, a, b)) {
       lines.push(`| ${metric} | ${median(x)} | ${median(y)} | not comparable | | |`);
       continue;
     }
