@@ -518,7 +518,9 @@ const make = Effect.gen(function* () {
               yield* Deferred.succeed(preview.first, {
                 viewers: {},
                 trackers: [tracker],
-                entries: entries.slice(0, 8),
+                entries: entries
+                  .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+                  .slice(0, 8),
                 errors: [],
                 nextCursors: {},
               });

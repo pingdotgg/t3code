@@ -210,7 +210,7 @@ function makeService(input: {
 }
 
 describe("IssueService", () => {
-  it.effect("emits one bounded preview when a scope is still pending", () =>
+  it.effect("emits a bounded, updated-first preview for a created-order search", () =>
     Effect.gen(function* () {
       const quick = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -225,11 +225,15 @@ describe("IssueService", () => {
         ],
         trackers: [
           fakeTracker({
-            listIssues: ({ scope }) =>
+            listIssues: ({ scope, sort }) =>
               scope === "acme/fast"
-                ? Deferred.succeed(quick, undefined).pipe(
+                ? Effect.sync(() => expect(sort).toBe("created")).pipe(
+                    Effect.andThen(Deferred.succeed(quick, undefined)),
                     Effect.as({
-                      items: Array.from({ length: 10 }, (_, i) => issue(String(i))),
+                      items: Array.from({ length: 10 }, (_, i) => ({
+                        ...issue(String(i), `2026-07-${i + 12}T00:00:00Z`),
+                        createdAt: `2026-07-${String(10 - i).padStart(2, "0")}T00:00:00Z`,
+                      })),
                       nextCursor: "next",
                     }),
                   )
@@ -239,7 +243,7 @@ describe("IssueService", () => {
           }),
         ],
       });
-      const running = yield* service.listProgress({ state: "open" }).pipe(
+      const running = yield* service.listProgress({ state: "open", sort: "created" }).pipe(
         Stream.runForEach((event) => Queue.offer(events, event)),
         Effect.forkChild,
       );
@@ -247,7 +251,16 @@ describe("IssueService", () => {
       yield* TestClock.adjust("40 millis");
       const preview = yield* Queue.take(events);
       expect(preview._tag).toBe("preview");
-      expect(preview.list.entries).toHaveLength(8);
+      expect(preview.list.entries.map((entry) => entry.key)).toEqual([
+        "9",
+        "8",
+        "7",
+        "6",
+        "5",
+        "4",
+        "3",
+        "2",
+      ]);
       expect(preview.list.nextCursors).toEqual({});
 
       yield* Deferred.succeed(release, undefined);
