@@ -63,16 +63,115 @@ wait_for_quit() {
   return 0
 }
 
+installed_app_version() {
+  plist="$1/Contents/Info.plist"
+  [ -f "$plist" ] || return 0
+  /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist" 2>/dev/null || true
+}
+
+# Returns 0 when candidate >= installed, 1 when candidate is older, and 2 when
+# either version cannot be parsed. Nightly identifiers compare numerically.
+version_at_least() {
+  node -e '
+    const parse = (value) => {
+      const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
+      if (match === null) return null;
+      return {
+        core: [Number(match[1]), Number(match[2]), Number(match[3])],
+        pre: match[4] === undefined ? [] : match[4].split("."),
+      };
+    };
+    const installed = parse(process.argv[1]);
+    const candidate = parse(process.argv[2]);
+    if (installed === null || candidate === null) process.exit(2);
+    for (let index = 0; index < 3; index += 1) {
+      if (candidate.core[index] !== installed.core[index]) {
+        process.exit(candidate.core[index] > installed.core[index] ? 0 : 1);
+      }
+    }
+    if (candidate.pre.length === 0 || installed.pre.length === 0) {
+      if (candidate.pre.length === installed.pre.length) process.exit(0);
+      process.exit(candidate.pre.length === 0 ? 0 : 1);
+    }
+    for (let index = 0; index < Math.max(candidate.pre.length, installed.pre.length); index += 1) {
+      const left = candidate.pre[index];
+      const right = installed.pre[index];
+      if (left === undefined) process.exit(1);
+      if (right === undefined) process.exit(0);
+      if (left === right) continue;
+      const leftIsNumber = /^\d+$/.test(left);
+      const rightIsNumber = /^\d+$/.test(right);
+      if (leftIsNumber && rightIsNumber) {
+        process.exit(Number(left) > Number(right) ? 0 : 1);
+      }
+      if (leftIsNumber !== rightIsNumber) process.exit(leftIsNumber ? 1 : 0);
+      process.exit(left > right ? 0 : 1);
+    }
+    process.exit(0);
+  ' "$1" "$2"
+}
+
+assert_not_downgrade() {
+  installed=$1
+  candidate=$2
+  target=$3
+  [ -n "$installed" ] || return 0
+  version_at_least "$installed" "$candidate" && return 0
+  status=$?
+  if [ "$status" -eq 1 ]; then
+    fail "refusing to replace $target with older version $candidate (installed: $installed)"
+  fi
+  say "Could not compare installed version '$installed' with '$candidate'; continuing"
+}
+
+acquire_install_lock() {
+  install_lock_dir="$1/.t3-nightly-install.lock"
+  install_lock_owned=false
+  waited=0
+  while ! mkdir "$install_lock_dir" 2>/dev/null; do
+    owner=
+    if [ -f "$install_lock_dir/pid" ]; then
+      owner=$(cat "$install_lock_dir/pid" 2>/dev/null || true)
+    fi
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      say "Removing stale install lock $install_lock_dir"
+      rm -rf "$install_lock_dir" 2>/dev/null || true
+      continue
+    fi
+    if [ "$waited" -ge 300 ]; then
+      fail "another Nightly install is still running (lock: $install_lock_dir)"
+    fi
+    [ "$waited" -eq 0 ] && say "Waiting for another Nightly install to finish"
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if ! printf '%s\n' "$$" > "$install_lock_dir/pid"; then
+    rm -rf "$install_lock_dir" 2>/dev/null || true
+    fail "could not record the install lock owner"
+  fi
+  install_lock_owned=true
+}
+
+release_install_lock() {
+  if [ "$install_lock_owned" = "true" ] && [ -n "$install_lock_dir" ]; then
+    rm -rf "$install_lock_dir" 2>/dev/null || true
+  fi
+  install_lock_dir=
+  install_lock_owned=false
+}
+
 install_app() {
   dmg=$1
   version=$2
   dir=$3
   target=$4
+  wait_for_quit_first=${5:-0}
 
   [ -f "$dmg" ] || fail "DMG not found: $dmg"
 
-  say "Mounting $dmg"
-  mount_point=$(mktemp -d "${TMPDIR:-/tmp}/t3-nightly-dmg.XXXXXX")
+  install_lock_dir=
+  install_lock_owned=false
+  mount_point=
   attached=false
   stage_dir=
   backup_dir=
@@ -87,11 +186,25 @@ install_app() {
     fi
     if [ -n "$stage_dir" ]; then rm -rf "$stage_dir"; fi
     if "$attached"; then hdiutil detach "$mount_point" -quiet >/dev/null 2>&1 || true; fi
-    rmdir "$mount_point" 2>/dev/null || true
+    if [ -n "$mount_point" ]; then rmdir "$mount_point" 2>/dev/null || true; fi
+    release_install_lock
     exit "$status"
   }
   trap cleanup EXIT INT TERM
 
+  if [ ! -d "$dir" ]; then
+    mkdir -p "$dir" || fail "could not create $dir"
+  fi
+  acquire_install_lock "$dir"
+  if [ "$wait_for_quit_first" = "1" ]; then
+    say "Waiting for T3 Code (Nightly) to quit"
+    wait_for_quit "$target" ||
+      fail "T3 Code (Nightly) did not quit; the update was not installed"
+  fi
+  assert_not_downgrade "$(installed_app_version "$target")" "$version" "$target"
+
+  say "Mounting $dmg"
+  mount_point=$(mktemp -d "${TMPDIR:-/tmp}/t3-nightly-dmg.XXXXXX")
   hdiutil attach -nobrowse -readonly -noverify -mountpoint "$mount_point" "$dmg" >/dev/null ||
     fail "could not mount $dmg"
   attached=true
@@ -110,10 +223,6 @@ install_app() {
     "$app_source/Contents/Info.plist" 2>/dev/null) || built_version=
   [ "$built_version" = "$version" ] ||
     fail "built app reports version '${built_version:-unknown}', expected $version"
-
-  if [ ! -d "$dir" ]; then
-    mkdir -p "$dir" || fail "could not create $dir"
-  fi
 
   say "Staging $(basename "$app_source")"
   stage_dir="$dir/.t3-nightly-stage.$$"
@@ -184,10 +293,7 @@ if [ "${1:-}" = "--finish-install" ]; then
 fi
 
 if "$finish_install"; then
-  say "Waiting for T3 Code (Nightly) to quit"
-  wait_for_quit "$target_app" ||
-    fail "T3 Code (Nightly) did not quit; the update was not installed"
-  install_app "$dmg_path" "$nightly_version" "$install_dir" "$target_app"
+  install_app "$dmg_path" "$nightly_version" "$install_dir" "$target_app" 1
   if [ "$launch" = 1 ] && ! is_true "${T3CODE_NIGHTLY_NO_LAUNCH:-}"; then
     say "Opening T3 Code (Nightly)"
     open "$target_app" || fail "installed, but could not open $target_app"
@@ -225,7 +331,10 @@ fi
 
 # The desktop package version is the floor. A newer installed Nightly wins so a
 # local build never downgrades the app.
-repo_version=$(node -p "require('./apps/desktop/package.json').version" 2>/dev/null) ||
+repo_version=$(
+  cd "$REPO_ROOT" &&
+    node -p "require('./apps/desktop/package.json').version" 2>/dev/null
+) ||
   fail "could not read apps/desktop/package.json"
 repo_base=$(printf '%s' "$repo_version" | sed -E 's/[-+].*$//')
 
@@ -248,11 +357,7 @@ resolve_install_dir() {
 install_dir=$(resolve_install_dir)
 target_app="$install_dir/$APP_NAME"
 
-installed_version=
-if [ -f "$target_app/Contents/Info.plist" ]; then
-  installed_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
-    "$target_app/Contents/Info.plist" 2>/dev/null) || installed_version=
-fi
+installed_version=$(installed_app_version "$target_app")
 
 installed_base=$(printf '%s' "$installed_version" | sed -E 's/[-+].*$//')
 
@@ -301,6 +406,7 @@ say "Installs:  $target_app"
 if [ -n "$installed_version" ]; then
   say "Replaces:  $installed_version"
 fi
+assert_not_downgrade "$installed_version" "$nightly_version" "$target_app"
 
 if is_true "${T3CODE_NIGHTLY_DRY_RUN:-}"; then
   say "Dry run; nothing was built or installed."
