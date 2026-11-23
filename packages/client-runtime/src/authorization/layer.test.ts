@@ -757,6 +757,48 @@ describe("RemoteEnvironmentAuthorization", () => {
   );
 
   it.effect.each([
+    { name: "reuses an unspent", advanceMillis: 15_000, expectedMints: 1 },
+    { name: "replaces an expired", advanceMillis: 120_000, expectedMints: 2 },
+    { name: "replaces a previous session's", expectedMints: 2, changeSession: true },
+    { name: "replaces a previous device key's", expectedMints: 2, changeThumbprint: true },
+  ])("$name T3 Connect pairing credential after a DNS failure", (test) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        bootstrap: { ...BOOTSTRAP, expiresAt: "1970-01-01T00:02:00.000Z" },
+        responses: [
+          () =>
+            Promise.reject(
+              new TypeError("Failed to fetch", {
+                cause: new Error("getaddrinfo ENOTFOUND environment.example.test"),
+              }),
+            ),
+          Response.json(DESCRIPTOR),
+          accessToken("fresh-access-token"),
+          websocketTicket("fresh-ticket"),
+        ],
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const input = { expectedEnvironmentId: ENVIRONMENT_ID };
+        const failed = yield* remote.authorizeDpop(input).pipe(Effect.flip);
+        expect(failed).toMatchObject({ _tag: "ConnectionTransientError", hop: "tunnel" });
+        expect(requestsTo(harness, "/oauth/token")).toBe(0);
+
+        if (test.advanceMillis !== undefined) yield* TestClock.adjust(test.advanceMillis);
+        if (test.changeSession)
+          yield* Ref.set(harness.session, Option.some({ accountId: "account-1" }));
+        if (test.changeThumbprint) yield* Ref.set(harness.thumbprint, "thumbprint-2");
+
+        const authorized = yield* remote.authorizeDpop(input);
+        expect(authorized.socketUrl).toContain("wsTicket=fresh-ticket");
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(test.expectedMints);
+        expect(requestsTo(harness, "/oauth/token")).toBe(1);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
+  );
+
+  it.effect.each([
     { name: "read-only", grantScopes: ["orchestration:read"] },
     { name: "default", grantScopes: AuthStandardClientScopes },
   ] as const)(
