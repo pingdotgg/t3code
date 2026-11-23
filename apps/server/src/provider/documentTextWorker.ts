@@ -694,14 +694,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       )
         ? "1904"
         : "1900";
-      let stylesPath = workbookPartPath("styles");
-      if (!files.has(stylesPath)) {
-        // OPC part names compare case-insensitively for ASCII letters.
-        const foldAscii = (name: string) =>
-          name.replaceAll(/[A-Z]/gu, (char) => char.toLowerCase());
-        const target = foldAscii(stylesPath);
-        stylesPath = files.keys().find((name) => foldAscii(name) === target) ?? stylesPath;
-      }
+      const stylesPath = workbookPartPath("styles");
       const styles = files.has(stylesPath) ? read(stylesPath) : undefined;
       const customFormats = new Map(
         styles
