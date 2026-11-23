@@ -406,7 +406,7 @@ function AgentFeedbackRow() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {AGENT_FEEDBACK_MODES.map((mode) => (
-              <SelectItem key={mode} hideIndicator value={mode}>
+              <SelectItem key={mode} value={mode}>
                 {m(AGENT_FEEDBACK_MODE_LABELS[mode])}
               </SelectItem>
             ))}
