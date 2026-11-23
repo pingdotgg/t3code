@@ -65,6 +65,23 @@ export type ServerMetrics = typeof ServerMetrics.Type;
 
 export const round = (value: number, digits = 1) => Math.round(value * 10 ** digits) / 10 ** digits;
 
+/**
+ * Switches between two samples: tasks new in the second count whole, tasks unreadable in either are
+ * left out, and a negative total is unknown.
+ */
+export const switchesBetween = (
+  first: ReadonlyMap<string, number> | null,
+  last: ReadonlyMap<string, number> | null,
+) => {
+  if (first === null || last === null) return null;
+  let delta = 0;
+  for (const [task, count] of last) {
+    const start = first.get(task) ?? 0;
+    if (!Number.isNaN(count) && !Number.isNaN(start)) delta += count - start;
+  }
+  return delta < 0 ? null : delta;
+};
+
 export function spread(values: ReadonlyArray<number>) {
   const sorted = values.toSorted((a, b) => a - b);
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];

@@ -45,6 +45,7 @@ import {
   slope,
   spread,
   summarizeProfiles,
+  switchesBetween,
   type FirstWord,
   type Measured,
   type ProfileSummary,
@@ -362,7 +363,11 @@ const contextSwitches = Effect.fn("serverMetrics.contextSwitches")(function* (pi
       const status = yield* fs
         .readFileString(`/proc/${pid}/task/${task}/status`)
         .pipe(Effect.option);
-      if (Option.isNone(status)) continue;
+      // A task listed but unreadable has no known count; NaN keeps it out of the delta.
+      if (Option.isNone(status)) {
+        switches.set(task, Number.NaN);
+        continue;
+      }
       let total = 0;
       for (const match of status.value.matchAll(/ctxt_switches:\s+(\d+)/g))
         total += Number(match[1]);
@@ -388,17 +393,6 @@ const contextSwitches = Effect.fn("serverMetrics.contextSwitches")(function* (pi
     .find(([first]) => first === `${pid}`);
   return total(numberOrNull(Option.fromNullishOr(row?.[1])));
 });
-
-/** Switches between two samples: tasks new in the second count whole; a negative total is unknown. */
-const switchesBetween = (
-  first: ReadonlyMap<string, number> | null,
-  last: ReadonlyMap<string, number> | null,
-) => {
-  if (first === null || last === null) return null;
-  let delta = 0;
-  for (const [task, count] of last) delta += count - (first.get(task) ?? 0);
-  return delta < 0 ? null : delta;
-};
 
 /** Every process below `pid`. Windows needs none: taskkill /T stops the tree. */
 const descendantsOf = Effect.fn("serverMetrics.descendantsOf")(function* (pid: number) {
