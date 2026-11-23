@@ -13,7 +13,6 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { getPairingTokenFromUrl } from "@t3tools/shared/remote";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -27,6 +26,7 @@ import {
   Cookies,
   FetchHttpClient,
   HttpClient,
+  HttpClientError,
   HttpClientRequest,
   HttpClientResponse,
 } from "effect/http";
@@ -235,12 +235,6 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   };
 }
 
-const readPairingPath = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  return yield* fs.readFileString(path.join(T3_HOME, "pairing-path"));
-});
-
 const sameSite = { lax: "Lax", strict: "Strict", none: "None" } as const;
 
 /**
@@ -248,15 +242,30 @@ const sameSite = { lax: "Lax", strict: "Strict", none: "None" } as const;
  * instead races its reload after sign-in against the test's next `app.open`.
  */
 const signIn = Effect.fn("scenario.signIn")(function* (baseUrl: string) {
-  const credential = getPairingTokenFromUrl(new URL(yield* readPairingPath, baseUrl));
-  if (credential === null) {
-    return yield* new ScenarioError({ message: "The pairing link holds no token." });
-  }
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const credential = yield* fs.readFileString(path.join(T3_HOME, "browser-dev-token"));
   const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl });
   // Only the cookies are read: a proof runs this against a base server whose body may differ.
   const response = yield* client.auth
     .browserSession({ payload: { credential }, responseMode: "response-only" })
-    .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.retry({
+        schedule: Schedule.spaced("500 millis"),
+        while: (error) => {
+          if (!HttpClientError.isHttpClientError(error)) return false;
+          const status = error.response?.status;
+          return (
+            error.reason._tag === "TransportError" ||
+            status === 502 ||
+            status === 503 ||
+            status === 504
+          );
+        },
+      }),
+      Effect.timeout("15 seconds"),
+    );
   // Drops the expired cookies that only clear an older session.
   const cookies = Cookies.mergeIntoArray(
     [],
