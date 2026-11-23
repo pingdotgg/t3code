@@ -1083,22 +1083,50 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     ),
   );
   const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+  // A subscription that fails or ends after its snapshot leaves the window measuring less than a
+  // client costs, so the first such loss is kept for `healthy` to report.
+  const lost = yield* Ref.make<string | undefined>(undefined);
   const ready = Effect.fn("serverMetrics.subscription")(function* <A, E, R>(
     stream: Stream.Stream<A, E, R>,
     isReady: (item: A) => boolean,
   ) {
     const synchronized = yield* Deferred.make<void, MetricsError>();
+    const lose = (message: string) =>
+      Ref.update(lost, (first) => first ?? message).pipe(
+        Effect.andThen(Deferred.fail(synchronized, new MetricsError({ message }))),
+      );
     yield* stream.pipe(
       Stream.runForEach((item) =>
         isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void,
       ),
-      Effect.catchCause(() =>
-        Deferred.fail(synchronized, new MetricsError({ message: "a subscription failed" })),
-      ),
+      Effect.andThen(lose("a subscription ended")),
+      Effect.catchCause(() => lose("a subscription failed")),
       Effect.forkScoped,
     );
     return Deferred.await(synchronized);
   });
+  // Reports presence the way the web client does, so work held for an active client runs.
+  const clientId = `bench-${yield* Random.nextIntBetween(0, 1_000_000_000)}`;
+  const report = Effect.gen(function* () {
+    yield* client["server.reportClientActivity"]({
+      clientId,
+      clientKind: "web",
+      visible: true,
+      focused: true,
+      recentlyInteracted: true,
+      appState: "active",
+      scopes: [{ type: "provider-status" }, { type: "vcs-status", cwd: server.project }],
+      ttlMs: 45_000,
+      observedAt: yield* DateTime.now,
+    });
+  });
+  yield* report;
+  yield* report.pipe(
+    Effect.delay(Duration.seconds(25)),
+    Effect.forever,
+    Effect.catchCause(() => Ref.update(lost, (first) => first ?? "an activity report failed")),
+    Effect.forkScoped,
+  );
   const synchronized = (item: { readonly kind: string }) => item.kind === "synchronized";
   const waits = [
     yield* ready(
@@ -1131,6 +1159,12 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       orElse: () => new MetricsError({ message: "a subscription never synchronized" }),
     }),
   );
+  return {
+    /** Fails if any of this client's subscriptions or reports was lost since it attached. */
+    healthy: Effect.flatMap(Ref.get(lost), (message) =>
+      message === undefined ? Effect.void : Effect.fail(new MetricsError({ message })),
+    ),
+  };
 });
 
 const SCENARIOS = [
@@ -1263,9 +1297,10 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         for (const count of options.threads) {
           yield* Effect.scoped(
             Effect.gen(function* () {
-              yield* attachClient(server, token, threads.slice(0, count));
+              const client = yield* attachClient(server, token, threads.slice(0, count));
               yield* Effect.sleep(Duration.seconds(10));
               attached[`${count}`] = yield* server.measure(30);
+              yield* client.healthy;
             }),
           );
         }
@@ -1276,14 +1311,14 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         );
         // Every client holds the shell, VCS status and one thread, then all drop and come back.
         const clients = yield* Effect.forEach(threads.slice(0, STORM_CLIENTS), () => clientScope);
-        const attachAll = Effect.forEach(
+        const first = yield* Effect.forEach(
           clients,
           (scope, index) =>
             attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
-          { concurrency: "unbounded", discard: true },
+          { concurrency: "unbounded" },
         );
-        yield* attachAll;
         yield* Effect.sleep(Duration.seconds(10));
+        yield* Effect.forEach(first, (client) => client.healthy, { discard: true });
         yield* server.loopStart;
         const dropped = yield* nowMs;
         yield* Effect.forEach(clients, (scope) => Scope.close(scope, Exit.void), {
@@ -1291,14 +1326,15 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           discard: true,
         });
         const reopened = yield* Effect.forEach(clients, () => clientScope);
-        yield* Effect.forEach(
+        const second = yield* Effect.forEach(
           reopened,
           (scope, index) =>
             attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
-          { concurrency: "unbounded", discard: true },
+          { concurrency: "unbounded" },
         );
         const resubscribedMs = Math.round((yield* nowMs) - dropped);
         const loop = yield* server.loopRead;
+        yield* Effect.forEach(second, (client) => client.healthy, { discard: true });
         yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), {
           discard: true,
         });
