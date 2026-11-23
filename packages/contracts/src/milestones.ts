@@ -37,13 +37,24 @@ const MilestoneEnvelope = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   parentThreadId: Schema.NullOr(ThreadId),
   actor: MilestoneActor,
-  /** A subagent's thread. Muted unless asked for. */
+  /** A subagent's thread, or a run another run invoked. Muted unless asked for. */
   isSubagentChild: Schema.Boolean,
+  /** The workflow run a workflow milestone is about, or whose agent step the thread is. */
+  workflowRunId: Schema.optional(TrimmedNonEmptyString),
 });
 
 /** `approval` covers command, file and permission prompts; `user_input` covers questions. */
 export const MilestoneInputKind = Schema.Literals(["user_input", "approval"]);
 export type MilestoneInputKind = typeof MilestoneInputKind.Type;
+
+/** Which workflow run a workflow milestone is about. Its envelope names no project or thread. */
+const WorkflowRunFields = {
+  workflowRunId: TrimmedNonEmptyString,
+  workflow: TrimmedNonEmptyString,
+  runTitle: Schema.String,
+  /** The run that invoked this one, when one did. */
+  parentWorkflowRunId: Schema.NullOr(TrimmedNonEmptyString),
+};
 
 export const MilestoneEvent = Schema.Union([
   Schema.Struct({
@@ -88,6 +99,45 @@ export const MilestoneEvent = Schema.Union([
     /** The watch ended with this wake, as a merge, a close or a read failure ends it. */
     watchEnded: Schema.Boolean,
   }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
+    type: Schema.Literal("workflow.run_started"),
+  }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
+    type: Schema.Literal("workflow.needs_input"),
+    /** The step that asks, which answering names. */
+    step: TrimmedNonEmptyString,
+    question: Schema.String,
+  }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
+    type: Schema.Literal("workflow.input_resolved"),
+    step: TrimmedNonEmptyString,
+    /** `cancelled` when the run ended with the question still open. */
+    resolution: Schema.Literals(["answered", "expired", "cancelled"]),
+  }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
+    type: Schema.Literal("workflow.run_paused"),
+    reason: Schema.String,
+  }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
+    type: Schema.Literal("workflow.run_resumed"),
+  }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
+    type: Schema.Literal("workflow.run_ended"),
+    outcome: Schema.Literals(["completed", "stopped", "skipped", "cancelled"]),
+    detail: Schema.NullOr(Schema.String),
+  }),
 ]);
 export type MilestoneEvent = typeof MilestoneEvent.Type;
 
@@ -98,6 +148,12 @@ export const MilestoneEventType = Schema.Literals([
   "thread.guest_request",
   "thread.guest_request_resolved",
   "pr.watch_wake",
+  "workflow.run_started",
+  "workflow.needs_input",
+  "workflow.input_resolved",
+  "workflow.run_paused",
+  "workflow.run_resumed",
+  "workflow.run_ended",
 ]);
 export type MilestoneEventType = typeof MilestoneEventType.Type;
 
@@ -105,7 +161,11 @@ export const MilestoneFilter = Schema.Struct({
   types: Schema.optional(Schema.Array(MilestoneEventType)),
   projectIds: Schema.optional(Schema.Array(ProjectId)),
   threadIds: Schema.optional(Schema.Array(ThreadId)),
-  /** Absent reads as false: subagent threads churn and are rarely news. */
+  /** Workflow names. Given, it matches only workflow milestones. */
+  workflows: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Workflow runs, with the threads that are their agent steps. */
+  workflowRunIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Absent reads as false: subagent threads and invoked runs churn and are rarely news. */
   includeSubagentChildren: Schema.optional(Schema.Boolean),
 });
 export type MilestoneFilter = typeof MilestoneFilter.Type;
@@ -117,4 +177,8 @@ export const milestoneMatches = (event: MilestoneEvent, filter: MilestoneFilter 
   (filter.projectIds === undefined ||
     (event.projectId !== null && filter.projectIds.includes(event.projectId))) &&
   (filter.threadIds === undefined ||
-    (event.threadId !== null && filter.threadIds.includes(event.threadId)));
+    (event.threadId !== null && filter.threadIds.includes(event.threadId))) &&
+  (filter.workflows === undefined ||
+    ("workflow" in event && filter.workflows.includes(event.workflow))) &&
+  (filter.workflowRunIds === undefined ||
+    (event.workflowRunId !== undefined && filter.workflowRunIds.includes(event.workflowRunId)));
