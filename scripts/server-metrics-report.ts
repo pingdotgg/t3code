@@ -239,6 +239,7 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   informational(/^(streaming|pipeline)\.gcPauseMs$/),
   informational(/^(pipeline\.loopDelayMaxMs|clients\.storm\.loopDelayP99Ms|quiet\.cpuPct)$/),
   informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
+  informational(/^clients\.attached\.\d+\.(cpuPct|wakeupsPerSec)$/),
   informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
   { pattern: /^scaling\.heapMBPerThread$/, floor: 0.06, gate: true },
   { pattern: /^scaling\.rssMBPerThread$/, floor: 0.2, gate: true },
