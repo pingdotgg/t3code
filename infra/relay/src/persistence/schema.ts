@@ -195,7 +195,8 @@ export const relayDpopProofs = pgTable(
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },
   (table) => [
+    // No index on expires_at: pruning a few minutes of proofs is cheaper as a scan than
+    // maintaining a second index on every request's insert.
     primaryKey({ columns: [table.thumbprint, table.jti] }),
-    index("idx_relay_dpop_proofs_expires_at").on(table.expiresAt),
   ],
 );

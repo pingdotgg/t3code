@@ -32,6 +32,11 @@ describe("semver helpers", () => {
   });
 
   it("compares prerelease versions before stable versions", () => {
+    expect(compareSemverVersions("1.0.0-Z", "1.0.0-a")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-alpha-1", "1.0.0-alpha1")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-9007199254740992", "1.0.0-9007199254740993")).toBeLessThan(
+      0,
+    );
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
@@ -89,6 +94,9 @@ describe("semver helpers", () => {
     expect(recreated("0.5.0", "^0")).toBe(true);
     expect(recreated("0.0.4", "^0.0")).toBe(true);
     expect(recreated("24.10.0", ">=24.10")).toBe(true);
+    expect(recreated("24.10.0+vendor.1", ">=24.10")).toBe(true);
+    expect(recreated("24.10.0+vendor..1", ">=24.10")).toBe(false);
+    expect(recreated("24.9.9+vendor.1", ">=24.10")).toBe(false);
     expect(recreated("24.9.9", ">=24.10")).toBe(false);
   });
 });
