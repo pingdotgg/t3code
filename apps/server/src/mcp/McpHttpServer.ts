@@ -87,6 +87,7 @@ import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
 import {
+  PreviewFillToolkit,
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
@@ -1400,6 +1401,13 @@ const layerPreviewStandardToolkitRegistration = toolkitRegistration(
   PreviewHandlers.layerStandard,
 );
 
+// preview_request_fill asks through the orchestrator's secret cards. Layers are memoized, so
+// this is the same OrchestratorMcpService instance the orchestrator toolkit uses.
+const layerPreviewFillToolkit = toolkitRegistration(
+  PreviewFillToolkit,
+  PreviewHandlers.layerFill,
+).pipe(Layer.provide(OrchestratorMcpService.layer));
+
 const layerPreviewSnapshotRegistration = imageToolRegistration(
   registerPreviewSnapshot(),
   PreviewHandlers.layerSnapshot,
@@ -1513,6 +1521,7 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
+  layerPreviewFillToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
   layerWorkflowToolkit,

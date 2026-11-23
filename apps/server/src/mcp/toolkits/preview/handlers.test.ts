@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   PreviewTabId,
   ProviderInstanceId,
+  PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   ThreadId,
   type PreviewAutomationRequest,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 
 import {
@@ -22,10 +24,11 @@ import {
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { claimPreviewRecording, layerStandard } from "./handlers.ts";
-import { PreviewStandardToolkit } from "./tools.ts";
+import { claimPreviewRecording, layerFill, layerStandard } from "./handlers.ts";
+import { PreviewFillToolkit, PreviewStandardToolkit } from "./tools.ts";
 
 it.effect("preview_open navigates the opened tab to a dev server in one tool call", () =>
   Effect.gen(function* () {
@@ -188,5 +191,154 @@ describe("claimPreviewRecording", () => {
           ),
         ),
       ),
+  );
+});
+
+describe("preview_request_fill", () => {
+  const LOGIN = "https://login.example.test";
+  const tabId = PreviewTabId.make("login-tab");
+  const scopeLayer = Layer.succeed(McpInvocationContext.McpInvocationContext, {
+    environmentId: EnvironmentId.make("environment-1"),
+    requestNamespace: "provider-session-1",
+    thread: {
+      threadId: ThreadId.make("thread-1"),
+      providerSessionId: "provider-session-1",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
+    capabilities: new Set(["preview"] as const),
+    issuedAt: 1,
+  });
+
+  /** Runs the tool against a fake browser host and a card the user answers with `answer`. */
+  const runFill = (
+    answer:
+      | { readonly status: "saved"; readonly value: Redacted.Redacted<string> }
+      | { readonly status: "declined"; readonly note: string },
+    options: { readonly fillFails?: boolean } = {},
+  ) => {
+    const asked: unknown[] = [];
+    return Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const requests: PreviewAutomationRequest[] = [];
+      const events = yield* broker.connect({
+        clientId: "client-1",
+        environmentId: scope.environmentId,
+        supportedOperations: PREVIEW_AUTOMATION_SERVER_OPERATIONS,
+      });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        requests.push(event.request);
+        const input = event.request.input as { readonly value?: string };
+        const failing = options.fillFails === true && input.value !== undefined;
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ...(failing
+            ? {
+                ok: false,
+                error: {
+                  _tag: "PreviewAutomationTargetNotEditableError",
+                  message: "The field is now on a different site than the one the user was shown.",
+                },
+              }
+            : {
+                ok: true,
+                result:
+                  event.request.operation === "fill"
+                    ? { tabId, origin: LOGIN }
+                    : { available: true, visible: true, tabId, url: `${LOGIN}/signin` },
+              }),
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      const toolkit = yield* PreviewFillToolkit.pipe(
+        Effect.provide(McpToolAccess.HandlersLayer.layer(layerFill)),
+      );
+      const results = yield* toolkit
+        .handle("preview_request_fill", {
+          locator: "aria-ref=t3-1-e5",
+          label: "Example password",
+          reason: "Sign in to check the order history.",
+        })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      return { result: results.at(-1)?.result, requests, asked };
+    }).pipe(
+      Effect.provideService(
+        OrchestratorMcpService.OrchestratorMcpService,
+        OrchestratorMcpService.OrchestratorMcpService.of({
+          requestBrowserValue: (_scope: unknown, input: unknown) =>
+            Effect.sync(() => {
+              asked.push(input);
+              return answer;
+            }),
+        } as unknown as OrchestratorMcpService.OrchestratorMcpService["Service"]),
+      ),
+      Effect.provide(
+        Layer.mergeAll(PreviewAutomationBroker.layer, liveThreadsLayer, scopeLayer).pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    );
+  };
+
+  const fills = (requests: ReadonlyArray<PreviewAutomationRequest>) =>
+    requests.filter((request) => request.operation === "fill");
+
+  it.effect("checks the field, asks with the page's site, then fills only the page", () =>
+    Effect.gen(function* () {
+      const { result, requests, asked } = yield* runFill({
+        status: "saved",
+        value: Redacted.make("correct horse"),
+      });
+      expect(result).toMatchObject({ status: "filled" });
+      expect(JSON.stringify(result)).not.toContain("correct horse");
+      expect(asked).toEqual([
+        {
+          label: "Example password",
+          reason: "Sign in to check the order history.",
+          url: LOGIN,
+          timeoutMs: undefined,
+          clientRequestId: undefined,
+        },
+      ]);
+      expect(fills(requests).map(({ input, tabId: target }) => ({ input, target }))).toEqual([
+        { input: { locator: "aria-ref=t3-1-e5", kind: "password" }, target: undefined },
+        {
+          input: {
+            locator: "aria-ref=t3-1-e5",
+            kind: "password",
+            value: "correct horse",
+            expectedOrigin: LOGIN,
+          },
+          target: tabId,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("drops the value and says the page changed when the fill is refused", () =>
+    Effect.gen(function* () {
+      const { result } = yield* runFill(
+        { status: "saved", value: Redacted.make("correct horse") },
+        { fillFails: true },
+      );
+      expect(result).toMatchObject({ status: "field_changed" });
+      expect(JSON.stringify(result)).not.toContain("correct horse");
+    }),
+  );
+
+  it.effect("a declined card fills nothing", () =>
+    Effect.gen(function* () {
+      const { result, requests } = yield* runFill({
+        status: "declined",
+        note: "The user declined.",
+      });
+      expect(result).toMatchObject({ status: "declined", note: "The user declined." });
+      expect(fills(requests)).toHaveLength(1);
+    }),
   );
 });

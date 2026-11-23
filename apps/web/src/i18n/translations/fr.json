@@ -3212,7 +3212,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
+      "c": [
+        " ",
+        "sur l’ordinateur qui a ouvert cette page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3224,7 +3227,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· quiconque l’exécute obtient cet accès"]
+      "c": [
+        " ",
+        "· quiconque l’exécute obtient cet accès"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -12975,5 +12981,59 @@
   "201490988858b511": "retirée par {by}",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "92e129bf413a1220": "retirée"
+  "92e129bf413a1220": "retirée",
+  "0bda0cac7f5acc20": "L’environnement connecté {actual} ne correspond pas à {expected}.",
+  "0ecde875b0dd2f93": "Filtrer les fils par projet : {projects}",
+  "1ef65b647231ff0b": "Filtrer les fils par projet",
+  "643c4b50feadc874": "Worktree : {path} ({branch})",
+  "fb7c44da0f0825ea": "Worktree : {path}",
+  "3b03fc47eba632b4": "{count, plural, one {{formattedCount} fichier modifié} other {{formattedCount} fichiers modifiés}}",
+  "afaf1bc8535e0adf": "Ouvrir le diff",
+  "d31b3c7be099ca82": "{count, plural, one {{formattedCount} autre fichier dans le diff complet} other {{formattedCount} autres fichiers dans le diff complet}}",
+  "452dc9eaa945693b": "Ouvrir le diff complet",
+  "eebe5b17e3c19a1c": "Retour, fermer l’aperçu vidéo",
+  "58fd0009a6eb7258": "Retour, fermer l’aperçu d’image",
+  "fe219642547fa0bf": "Exécuter dans le terminal",
+  "b4fe8a076e9fd2f8": "Équation en bloc",
+  "085d1407e8c92cce": "Équation en ligne",
+  "a2ef393fa7b48ae8": "Faire défiler l’équation en bloc",
+  "e94685ea5642e088": "Faire défiler l’équation en ligne",
+  "1a6f6154d1cb51a9": "Ouvrir la discussion annexe dans cette discussion",
+  "7fe7d5ae5fb4a655": "Ouvrir le sous-agent dans cette discussion",
+  "68060b380fe53942": "S’exécute sur {label}. Connectez-vous-y pour y ouvrir le fil.",
+  "b9b6bbd1e1ea189f": "Fichier complet",
+  "f6e9581cba3467fa": "Indexation…",
+  "2d1f293ac12463fc": "Chargement du reste du fichier…",
+  "d84d09b4818c50b7": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "/",
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        }
+      ]
+    },
+    " ",
+    "checks"
+  ],
+  "15ad0159a826b290": "Choisissez le {scope} {tracker} dont chaque projet liste les tickets à côté de ceux de son propre dépôt.",
+  "e63611bd62fad8d8": "Non lié",
+  "a8ff6d33b060736f": "Utilisation : ouvrir",
+  "7f8d6d1af69829d8": "Associer plusieurs environnements",
+  "ad5ed0ce61b966eb": "Oublier {label} ? Les agents d’ici cessent d’y travailler. Révoquez « T3 Code · … » dans Partage et accès sur {label} pour y fermer aussi la session.",
+  "f54364b854a07918": "Aucun hub configuré.",
+  "1d1e9cda847bd398": "La clé de gestion du hub est supprimée de ce serveur. Ses comptes quittent la vue Limites ; le hub lui-même n’est pas touché. Ajoutez-le à nouveau avec l’URL et la clé pour les récupérer.",
+  "c9bee4f93481b77a": "Supprimer le hub",
+  "5c8ebc36f84dee7a": "nécessite une version plus récente de l’app de bureau",
+  "46b14ee7b6dc0de3": "Saisi directement dans le champ de cette page, jamais enregistré. L'agent ne voit que ce que la page affiche, et les mots de passe apparaissent sous forme de points",
+  "8d9e208aef08827f": "Remplir le champ"
 }

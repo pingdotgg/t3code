@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as FileSystem from "effect/FileSystem";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
@@ -13,6 +14,7 @@ import {
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
+  type PreviewAutomationFillResult,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
@@ -33,8 +35,14 @@ import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
+import {
+  PreviewFillToolkit,
+  PreviewSnapshotToolkit,
+  PreviewStandardToolkit,
+  PreviewToolkit,
+} from "./tools.ts";
 
 /** Whether a preview the agent
  * said nothing about surfaces is the user's `browserAutoShowFloatingPreview`
@@ -283,4 +291,57 @@ export const layerStandard = McpToolAccess.toLayer(PreviewStandardToolkit, stand
 
 export const layerSnapshot = McpToolAccess.toLayer(PreviewSnapshotToolkit, {
   preview_snapshot,
+});
+
+export const layerFill = McpToolAccess.toLayer(PreviewFillToolkit, {
+  preview_request_fill: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const kind = input.kind ?? "password";
+      const target =
+        input.locator !== undefined ? { locator: input.locator } : { selector: input.selector };
+      // Check the field before asking, so the user is never asked for a value that cannot land.
+      const checked = yield* invoke<PreviewAutomationFillResult>(
+        "fill",
+        { ...target, kind },
+        undefined,
+        input.tabId,
+      );
+      const { tabId, origin } = checked.result;
+      if (!/^https?:\/\//.test(origin)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The field is not on a web page. Open the site's login page first.",
+        });
+      }
+      const answer = yield* service.requestBrowserValue(scope, {
+        label: input.label,
+        reason: input.reason,
+        url: origin,
+        timeoutMs: input.timeoutMs,
+        clientRequestId: input.clientRequestId,
+      });
+      const toolIcon = checked.toolIcon ? { toolIcon: checked.toolIcon } : {};
+      if (answer.status !== "saved")
+        return { status: answer.status, note: answer.note, ...toolIcon };
+      // The value leaves this call only into the page; a failed fill is reported without it.
+      const filled = yield* invoke<PreviewAutomationFillResult>(
+        "fill",
+        { ...target, kind, value: Redacted.value(answer.value), expectedOrigin: origin },
+        undefined,
+        tabId,
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      return filled
+        ? { status: "filled" as const, ...toolIcon }
+        : {
+            status: "field_changed" as const,
+            note: "The page changed before the value could be filled, and the value was dropped. Take a new snapshot and ask again with a new clientRequestId.",
+            ...toolIcon,
+          };
+    }),
+  ),
 });

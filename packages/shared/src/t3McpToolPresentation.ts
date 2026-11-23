@@ -318,6 +318,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  preview_request_fill: tool(
+    ["Ask to fill", "Asking to fill", "Asked to fill", "a browser field"],
+    "secret-request",
+    "browser",
+  ),
   preview_wait_for: tool(
     ["Wait", "Waiting", "Waited", "for the preview page"],
     "browser",

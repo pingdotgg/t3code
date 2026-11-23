@@ -181,7 +181,7 @@ function PendingSecretRequestForm(props: {
   );
   const saveButton = (
     <Button type="submit" disabled={submitting || !canSave}>
-      <T>Save securely</T>
+      {item.delivery === "browser" ? <T>Fill field</T> : <T>Save securely</T>}
     </Button>
   );
 

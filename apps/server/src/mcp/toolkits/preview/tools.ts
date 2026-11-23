@@ -20,12 +20,15 @@ import {
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationWaitForInput,
+  PreviewRequestFillInput,
+  PreviewRequestFillResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -179,6 +182,17 @@ const PreviewActTool = browserTool(
   }).annotate(Tool.Title, "Act in preview page"),
 );
 
+const PreviewRequestFillTool = browserTool(
+  Tool.make("preview_request_fill", {
+    description:
+      "Ask the user to type one field's value, such as a password, a username or a 2FA code, into a card; T3 types it straight into that field of the chosen tab. You never see the value and it is never stored. Use it instead of request_secret for any browser login field. Target the field with `locator='aria-ref=<ref>'` from `preview_snapshot`. `kind` 'password' (default) fills only a password input; use 'text' for a username, email or code. Returns `filled`, or why not: `field_changed` means the page moved on, so snapshot and ask again. Fill one field per call; submit the form yourself afterwards.",
+    parameters: PreviewRequestFillInput,
+    success: Schema.Struct({ ...PreviewRequestFillResult.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies: [...dependencies, OrchestratorMcpService.OrchestratorMcpService],
+  }).annotate(Tool.Title, "Ask the user to fill a browser field"),
+);
+
 /** Wrap non-objects: MCP requires object structuredContent, and Claude Code rejects invalid results entirely. */
 export const PreviewEvaluateResult = Schema.Struct({
   ...presentationFields,
@@ -260,3 +274,6 @@ export const PreviewStandardToolkit = Toolkit.make(
 );
 
 export const PreviewSnapshotToolkit = Toolkit.make(PreviewSnapshotTool);
+
+/** Apart from the other preview tools because it needs the orchestrator's secret cards. */
+export const PreviewFillToolkit = Toolkit.make(PreviewRequestFillTool);

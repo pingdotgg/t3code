@@ -5687,5 +5687,13 @@
   "1a1beecff68a6e61": "Verificar cuenta de Google",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "201490988858b511": "retirada por {by}"
+  "201490988858b511": "retirada por {by}",
+  "0bda0cac7f5acc20": "El entorno conectado {actual} no coincide con {expected}.",
+  "15ad0159a826b290": "Elige el {scope} de {tracker} cuyas issues lista cada proyecto junto a las de su propio repositorio.",
+  "3cdda4bfc05d6bf5": "Se ejecuta en {label}. Conéctate a él para abrir su hilo.",
+  "275b5fe6040f2c1c": "{files, plural, one {Revisar {files} archivo modificado, {additions} adiciones, {deletions} eliminaciones} other {Revisar {files} archivos modificados, {additions} adiciones, {deletions} eliminaciones}}",
+  "4314e052a3524c51": "Favoritos",
+  "0752b8ccc7dfba04": "Se ejecuta en {label}",
+  "46b14ee7b6dc0de3": "Se escribe directamente en el campo de esta página y nunca se guarda. El agente solo ve lo que muestra la página, y las contraseñas aparecen como puntos",
+  "506705376c24c857": "Rellenar campo"
 }

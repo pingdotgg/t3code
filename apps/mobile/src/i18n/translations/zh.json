@@ -5674,5 +5674,13 @@
   "1a1beecff68a6e61": "验证 Google 账户",
   "99451a5d2d40440f": "已由 {by} 撤回。",
   "3ee30a50b70fffab": "已由 {by} 撤回：{reason}",
-  "201490988858b511": "已由 {by} 撤回"
+  "201490988858b511": "已由 {by} 撤回",
+  "0bda0cac7f5acc20": "已连接的环境 {actual} 与 {expected} 不一致。",
+  "15ad0159a826b290": "选择 {tracker} {scope}，每个项目会在其仓库自身的 issue 旁列出它的 issue。",
+  "3cdda4bfc05d6bf5": "在 {label} 上运行。连接到它以打开其会话。",
+  "275b5fe6040f2c1c": "{files, plural, other {审查 {files} 个已更改的文件，新增 {additions} 行，删除 {deletions} 行}}",
+  "4314e052a3524c51": "收藏",
+  "0752b8ccc7dfba04": "在 {label} 上运行",
+  "46b14ee7b6dc0de3": "直接输入到此页面的字段中，绝不存储。代理只能看到页面显示的内容，密码显示为圆点",
+  "506705376c24c857": "填写字段"
 }
