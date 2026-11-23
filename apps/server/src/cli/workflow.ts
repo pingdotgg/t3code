@@ -244,6 +244,13 @@ const signalCommand = Command.make("signal", {
             "Address a signal with --run and --wait, or with --workflow and --channel, not both.",
         });
       }
+      const completeRun = Option.isSome(flags.run) && Option.isSome(flags.wait);
+      const completeChannel = Option.isSome(flags.workflow) && Option.isSome(flags.channel);
+      if (!completeRun && !completeChannel) {
+        return yield* new ThreadUsageError({
+          detail: "Address a signal with --run and --wait, or with --workflow and --channel.",
+        });
+      }
       yield* withThreadTools(
         { ...flags, json: false },
         Effect.fn("cli.workflow.signal")(function* (tools) {

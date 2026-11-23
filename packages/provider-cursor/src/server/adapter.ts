@@ -1153,6 +1153,23 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           ),
         });
 
+        let startupPhase: string | undefined;
+        const emitStartupPhase = Effect.fn("CursorAdapterV2.emitStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (phase === startupPhase) return;
+          startupPhase = phase;
+          yield* emitProviderEvent({
+            type: "provider_session.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            providerSession: {
+              ...session,
+              ...(phase === undefined ? {} : { startupPhase: phase }),
+              updatedAt: yield* DateTime.now,
+            },
+          });
+        });
+
         const emitProviderThread = Effect.fn("CursorAdapterV2.emitProviderThread")(function* (
           providerThread: OrchestrationV2ProviderThread,
           sessionScoped = false,
@@ -3016,6 +3033,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy.cwd)),
               ...mcpServers,
             };
+            let starting = true;
             const sdkRun = yield* agent.session
               .send({
                 message,
@@ -3041,8 +3059,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   return handleInteractionUpdate(context, update);
                 },
                 onBackgroundShell: (shell) => onBackgroundShell(turnInput, shell),
+                onStartupPhase: (phase) => (starting ? emitStartupPhase(phase) : Effect.void),
               })
-              .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
+              .pipe(
+                Effect.ensuring(
+                  Effect.suspend(() => {
+                    starting = false;
+                    return emitStartupPhase(undefined);
+                  }),
+                ),
+                Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)),
+              );
             // A resume sends no new instructions, and a native one still continues the stopped request.
             if (resume === undefined) {
               yield* Ref.set(told, {
@@ -3521,7 +3548,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   status: "idle" as const,
                   updatedAt: now,
                 },
-                providerTurns: [],
                 messages: projectedMessages,
                 runtimeRequests: [],
                 providerPayload: {
@@ -3602,7 +3628,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     status: "idle" as const,
                     updatedAt: now,
                   },
-                  providerTurns: [],
                   messages: [],
                   runtimeRequests: [],
                 };
@@ -3632,7 +3657,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   status: "idle" as const,
                   updatedAt: now,
                 },
-                providerTurns: [],
                 messages: [],
                 runtimeRequests: [],
               };

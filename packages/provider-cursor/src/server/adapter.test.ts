@@ -2581,6 +2581,8 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     report = input.onBackgroundShell!;
+                    yield* input.onStartupPhase!("plugins");
+                    yield* input.onStartupPhase!("plugins");
                     for (const id of ["6", "7", "8"]) {
                       yield* report({
                         ...shell(id),
@@ -2675,6 +2677,15 @@ describe("CursorAdapterV2", () => {
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
+        );
+        // The phase the SDK reported while starting is published once and cleared when the run starts.
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "provider_session.updated"
+              ? [event.providerSession.startupPhase ?? null]
+              : [],
+          ),
+          ["plugins", null],
         );
         const listed = (
           update: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,

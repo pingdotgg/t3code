@@ -1050,6 +1050,27 @@ export const layer = Layer.effect(
             }).pipe(Effect.ignoreCause({ log: true })),
           { concurrency: "unbounded", discard: true },
         );
+        // A rename keeps the instance live, so its new label only arrives from a fresh read.
+        const published = new Map(
+          (yield* Ref.get(providersRef)).map((provider) => [provider.instanceId, provider]),
+        );
+        yield* Effect.forEach(
+          carriedOver.values(),
+          (instance) =>
+            Effect.gen(function* () {
+              // Its first check publishes the new label anyway; the placeholder must not replace the cache.
+              if (yield* instance.snapshot.isAwaitingFirstCheck ?? Effect.succeed(false)) return;
+              const provider = yield* instance.snapshot.getSnapshot;
+              const previous = published.get(instance.instanceId);
+              if (
+                previous?.displayName !== provider.displayName ||
+                previous?.accentColor !== provider.accentColor
+              ) {
+                yield* syncProvider(provider);
+              }
+            }).pipe(Effect.ignoreCause({ log: true })),
+          { concurrency: "unbounded", discard: true },
+        );
         yield* upsertProviders(unavailableProviders, {
           persist: false,
           replace: true,
@@ -1246,6 +1267,7 @@ export const layer = Layer.effect(
                   return input.rescan &&
                     !(
                       Equal.equals(rescanned?.skills, held?.skills) &&
+                      Equal.equals(rescanned?.models, held?.models) &&
                       Equal.equals(rescanned?.slashCommands, held?.slashCommands)
                     )
                     ? { ...scanned, workspaceRescannedAt: scannedAt }

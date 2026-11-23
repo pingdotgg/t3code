@@ -20,6 +20,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -244,7 +245,11 @@ const makeWorkspaceRescanHarness = Effect.gen(function* () {
   const nextScan = Effect.fnUntraced(function* (cwd: string) {
     const scan = yield* Queue.take(scans);
     assert.equal(scan.cwd, cwd);
-    return (name: string) => Deferred.succeed(scan.result, snapshot(name));
+    return (name: string, workspaceModels?: ProviderWorkspaceSnapshot["workspaceModels"]) =>
+      Deferred.succeed(scan.result, {
+        ...snapshot(name),
+        ...(workspaceModels ? { workspaceModels } : {}),
+      });
   });
   const refresh = (cwd: string, fresh = false) =>
     registry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh });
@@ -2682,6 +2687,81 @@ it.layer(
       }),
     );
 
+    it.effect("publishes a new label for an instance the registry kept live", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("antigravity");
+        const instanceId = ProviderInstanceId.make("account-a");
+        let displayName = "Account A";
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "antigravity:account-a" },
+          get displayName() {
+            return displayName;
+          },
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.sync(() => ({
+              instanceId,
+              driver,
+              displayName,
+              status: "ready" as const,
+              enabled: true,
+              installed: true,
+              auth: { status: "authenticated" as const },
+              checkedAt: "1970-01-01T00:00:00.000Z",
+              version: "1.0.0",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            })),
+            refresh: Effect.die("unused"),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const changes = yield* PubSub.unbounded<void>();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const services = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(
+              Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                getInstance: () => Effect.succeed(instance),
+                listInstances: Effect.succeed([instance]),
+                listUnavailable: Effect.succeed([]),
+                streamChanges: Stream.fromPubSub(changes),
+                subscribeChanges: PubSub.subscribe(changes),
+              }),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-label-" }),
+            ),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ).pipe(Scope.provide(scope));
+        const registry = yield* ProviderRegistry.ProviderRegistry.pipe(Effect.provide(services));
+        const relabelled = yield* registry.streamChanges.pipe(
+          Stream.filter((providers) => providers[0]?.displayName === "Account B"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        displayName = "Account B";
+        yield* PubSub.publish(changes, undefined);
+        assert.isTrue(Option.isSome(yield* Fiber.join(relabelled)));
+      }),
+    );
+
     it.effect("rescans a requested cwd whose snapshot is still current", () =>
       Effect.gen(function* () {
         const h = yield* makeWorkspaceRescanHarness;
@@ -2717,6 +2797,21 @@ it.layer(
         yield* Fiber.join(ordinary);
         const completeRescan = yield* h.nextScan("/workspace");
         yield* completeRescan("hook");
+        yield* h.drainRescans;
+        assert.isString(yield* h.rescannedAtOf);
+      }),
+    );
+
+    it.effect("stamps a rescan that changed only the directory's models", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        const complete = yield* h.nextScan("/workspace");
+        yield* complete("initial", [
+          { slug: "vendor/live", name: "Live", isCustom: false, capabilities: null },
+        ]);
         yield* h.drainRescans;
         assert.isString(yield* h.rescannedAtOf);
       }),
