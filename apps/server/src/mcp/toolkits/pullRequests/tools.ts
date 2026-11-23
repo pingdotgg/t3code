@@ -70,7 +70,7 @@ export const PullRequestTargetInput = Schema.Struct({
   repository: Schema.optional(
     TrimmedNonEmptyString.pipe(
       Schema.annotateEncoded({
-        description: "With `number`, when no `url`. `owner/repo`, without the host.",
+        description: "`owner/repo`, without the host.",
       }),
     ),
   ),
