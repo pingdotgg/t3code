@@ -1,7 +1,12 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDiffFileTreeUpdates, diffFileTreeEntries } from "./diffFileTree.logic";
+import {
+  buildDiffFileTreeUpdates,
+  diffFileTreeEntries,
+  diffFileTreeModel,
+  diffFileTreeRow,
+} from "./diffFileTree.logic";
 
 function file(type: FileDiffMetadata["type"], name: string, prevName = name): FileDiffMetadata {
   return { type, name, prevName } as FileDiffMetadata;
@@ -38,5 +43,17 @@ describe("buildDiffFileTreeUpdates", () => {
       { type: "remove", path: "src/lib/a.ts" },
       { type: "remove", path: "src/lib/", recursive: true },
     ]);
+  });
+});
+
+describe("diffFileTreeRow", () => {
+  it("names a file that shares its path with a folder by its real path", () => {
+    const presented = diffFileTreeModel(["docs", "docs/guide.md"]);
+    const [aliasedFile] = presented.paths;
+    expect(aliasedFile).not.toBe("docs");
+    expect(diffFileTreeRow(aliasedFile!, presented.selectionPath)).toEqual({
+      path: "docs",
+      name: "docs",
+    });
   });
 });

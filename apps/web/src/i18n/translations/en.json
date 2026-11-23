@@ -5533,6 +5533,8 @@
   "1601d7e39a52c48f": "Retry loading diff",
   "b7b137472adb6989": "Partial diff preview",
   "f0d79aa56f06663f": "This file is too large to show in full. Counts include all changes.",
+  "1bafe6e935abb5f4": "Copy name",
+  "e4bdcc949413e1da": "Failed to copy name",
   "7fdde2b893ba1b9d": "Removed",
   "e58ce271d835b447": "Added",
   "07b9970b662ab70d": "Show Mermaid source",

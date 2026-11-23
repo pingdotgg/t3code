@@ -1798,6 +1798,7 @@ export default function DiffPanel({
                       selectedPath={selectedFilePath}
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
+                      workspaceRoot={activeCwd}
                     />
                   </FileExplorerPane>
                 ) : null}

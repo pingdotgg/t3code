@@ -72,6 +72,12 @@ export function diffFileTreeModel(paths: ReadonlyArray<string>) {
   };
 }
 
+/** A row's path as the diff names it (a folder without its trailing slash) and its last segment. */
+export function diffFileTreeRow(modelPath: string, selectionPath: (modelPath: string) => string) {
+  const path = selectionPath(modelPath).replace(/\/$/, "");
+  return { path, name: basenameOfPath(path) };
+}
+
 export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArray<string> {
   const directories = new Set<string>();
   for (const path of paths) {
