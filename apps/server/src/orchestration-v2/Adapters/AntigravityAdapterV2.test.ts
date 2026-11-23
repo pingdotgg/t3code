@@ -1721,6 +1721,24 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // The idle release closes `agy acp`, which kills the command and loses its wake.
+  it.effect("keeps the session pinned for a command still running after the hold settles", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 5000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* until((event) => event.type === "turn.terminal");
+
+      assert.isDefined(session.hasPendingBackgroundWork);
+      assert.isTrue(
+        yield* session.hasPendingBackgroundWork!,
+        "a command with no terminal update is still running and must keep agy acp alive",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
     Effect.gen(function* () {
       const { usage, offers, send, startTurn, until, throughPromptSettled } =
