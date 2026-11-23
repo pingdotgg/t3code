@@ -567,6 +567,17 @@ it.effect("stopping a delegated child with a queued message does not report the 
         ["completed", "failed", "cancelled", "interrupted"],
         parent.subagents.find((row) => row.id === task.id)?.status,
       );
+
+      // Discarding the held message leaves the stopped run as the task's result.
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make("child-discard"),
+        threadId: childThreadId,
+        runId: child.runs[1]!.id,
+      });
+      yield* settle;
+      const settled = yield* orchestrator.getThreadProjection(stopRaceParentId);
+      assert.equal(settled.subagents.find((row) => row.id === task.id)?.status, "interrupted");
     }).pipe(Effect.provide(layerTest));
   }),
 );
