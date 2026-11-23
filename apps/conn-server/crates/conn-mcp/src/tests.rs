@@ -978,6 +978,13 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
         agent.ok("task_cancel", json!({"taskId": task_id})).await["status"],
         "cancel_requested"
     );
+    // T3 refuses to archive a thread with running delegated tasks: the stop ends first.
+    agent
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": task["childThreadId"], "timeoutMs": 10_000}),
+        )
+        .await;
 
     // Archived: the credential still resolves, but the caller is no longer live.
     dispatch(

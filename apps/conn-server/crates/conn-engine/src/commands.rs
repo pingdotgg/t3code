@@ -1681,12 +1681,13 @@ fn patch_thread(
 }
 
 /// T3's `liveSideChatIds`: side chats live inside their parent, so deleting or archiving the
-/// parent takes them too. The command's one transaction stands in for T3's side-chat locks.
+/// parent takes them too. Found by lineage, not by fork run: a side chat opened during the
+/// parent's first turn has none. The command's one transaction stands in for T3's locks.
 fn live_side_chats(tx: &Tx<'_>, parent_id: &str) -> StoreResult<Vec<Value>> {
     Ok(tx
         .threads_where("lineage.parentThreadId", parent_id)?
         .into_iter()
-        .filter(|t| t["lineage"]["sideChat"] == true && t["forkedFrom"]["threadId"] == parent_id)
+        .filter(|t| t["lineage"]["sideChat"] == true)
         .collect())
 }
 
@@ -1702,20 +1703,58 @@ fn has_running_delegated_tasks(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool
     }))
 }
 
+/// T3's archive of one thread (`Orchestrator.ts` `thread.archive`): queued and preparing runs
+/// are cancelled, live provider sessions detach, pending link requests close, and the thread's
+/// terminals and devices go (`ThreadClosed`).
 fn archive_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
+    for run in tx.entities(thread_id, "runs")? {
+        if matches!(run["status"].as_str(), Some("queued" | "preparing")) {
+            let run_id = run["id"].as_str().unwrap_or_default();
+            finish_run(tx, thread_id, run_id, "cancelled", None)?;
+        }
+    }
+    let now = tx.now().to_owned();
+    let mut effects = vec![];
+    for session in tx.entities(thread_id, "providerSessions")? {
+        if matches!(session["status"].as_str(), Some("stopped" | "error")) {
+            continue;
+        }
+        tx.append(Draft::new(
+            thread_id,
+            "provider-session.detached",
+            json!({"providerSessionId": session["id"], "detachedAt": now,
+                "reason": "Thread archived."}),
+        ))?;
+        if effects.is_empty() {
+            effects.push(Effect::CloseSession {
+                thread_id: thread_id.to_owned(),
+            });
+        }
+    }
     crate::link_requests::close_pending(tx, thread_id)?;
     patch_thread(tx, thread_id, "thread.archived", true, |t, now| {
         t["archivedAt"] = json!(now);
         crate::pull_requests::end_watches(t);
     })?;
-    Ok(vec![Effect::ThreadClosed {
+    effects.push(Effect::ThreadClosed {
         thread_id: thread_id.to_owned(),
         reason: crate::ThreadClose::Archived,
-    }])
+    });
+    Ok(effects)
 }
 
 fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
+    // T3's guards, decided before either thread changes.
+    if !live_thread(tx, &c.thread_id)?["archivedAt"].is_null() {
+        return reject(format!("Thread {} is already archived.", c.thread_id));
+    }
+    if has_running_delegated_tasks(tx, &c.thread_id)? {
+        return reject(format!(
+            "Thread {} has running delegated tasks. Wait for them or cancel them before archiving.",
+            c.thread_id
+        ));
+    }
     let side_chats = live_side_chats(tx, &c.thread_id)?;
     let mut effects = archive_one(tx, &c.thread_id)?;
     // Orchestrator.ts `thread.archive`: an active side chat follows its parent, unless it
@@ -1732,6 +1771,9 @@ fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
 fn thread_unarchive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
     let parent_archived_at = live_thread(tx, &c.thread_id)?["archivedAt"].clone();
+    if parent_archived_at.is_null() {
+        return reject(format!("Thread {} is not archived.", c.thread_id));
+    }
     let side_chats = live_side_chats(tx, &c.thread_id)?;
     patch_thread(tx, &c.thread_id, "thread.unarchived", true, |t, _| {
         t["archivedAt"] = Value::Null;

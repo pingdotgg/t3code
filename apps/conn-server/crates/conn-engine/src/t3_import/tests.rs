@@ -443,3 +443,87 @@ async fn the_shell_at_the_boundary_is_a_snapshot() {
     drop(engine);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A T3 side chat opened during its parent's first turn has no fork run (`forkedFrom: null`);
+/// T3 finds it through its fork transfer (`liveSideChatIds`). Imported, it still follows its
+/// parent through archive and delete.
+#[tokio::test(flavor = "current_thread")]
+async fn an_imported_side_chat_without_a_fork_run_follows_its_parent() {
+    use crate::{Engine, EngineConfig, SqliteEngine};
+    use conn_contract::{from_json, to_json};
+
+    let dir = temp_dir("side-chat");
+    let conn = Connection::open(dir.join(T3_STATE_FILE)).unwrap();
+    conn.execute_batch(T3_SCHEMA).unwrap();
+    conn.execute(
+        "INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json,
+           created_at, updated_at, deleted_at, default_model_selection_json, auto_pull,
+           has_custom_title)
+         VALUES ('p1', 'Repo', '/work/repo', '[]', '2026-01-01T00:00:00.000Z',
+           '2026-01-02T00:00:00.000Z', NULL, '{\"instanceId\":\"codex\",\"model\":\"gpt\"}', 1, 1)",
+        [],
+    )
+    .unwrap();
+    for (id, lineage) in [
+        (
+            "parent",
+            json!({"parentThreadId": null, "relationshipToParent": null, "rootThreadId": "parent"}),
+        ),
+        (
+            "side",
+            json!({"parentThreadId": "parent", "relationshipToParent": "fork",
+                "rootThreadId": "parent", "sideChat": true}),
+        ),
+    ] {
+        let body = json!({
+            "id": id, "projectId": "p1", "title": format!("Thread {id}"),
+            "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-03T00:00:00.000Z",
+            "archivedAt": null, "deletedAt": null, "lineage": lineage, "forkedFrom": null,
+        });
+        conn.execute(
+            "INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title,
+               default_provider, runtime_mode, interaction_mode, created_at, updated_at,
+               deleted_at, payload_json)
+             VALUES (?1, 'p1', ?2, 'codex', 'full-access', 'default', '2026-01-01T00:00:00.000Z',
+               '2026-01-03T00:00:00.000Z', NULL, ?3)",
+            rusqlite::params![id, body["title"].as_str(), body.to_string()],
+        )
+        .unwrap();
+    }
+    let transfer = json!({"id": "x1", "type": "fork", "sourceThreadId": "parent",
+        "targetThreadId": "side", "sourcePoint": {"type": "latest_stable"}, "status": "consumed"});
+    conn.execute(
+        "INSERT INTO orchestration_v2_projection_context_transfers (context_transfer_id,
+           source_thread_id, target_thread_id, type, status, source_provider, updated_at,
+           payload_json)
+         VALUES ('x1', 'parent', 'side', 'fork', 'consumed', 'codex', '2026-01-01T00:00:06.000Z', ?1)",
+        [transfer.to_string()],
+    )
+    .unwrap();
+    drop(conn);
+    import_t3_state(&dir).unwrap().unwrap();
+    let engine = SqliteEngine::open(EngineConfig::new(dir.join(ENGINE_FILE))).unwrap();
+    let thread = |id: &'static str| {
+        let engine = &engine;
+        async move {
+            engine
+                .get_thread_projection(id.into())
+                .await
+                .map(|p| to_json(&p)["thread"].clone())
+        }
+    };
+    for (kind, id) in [("thread.archive", "a1"), ("thread.delete", "d1")] {
+        engine
+            .dispatch(
+                from_json(json!({"type": kind, "commandId": id, "threadId": "parent"})).unwrap(),
+            )
+            .await
+            .unwrap();
+        if kind == "thread.archive" {
+            assert!(thread("side").await.unwrap()["archivedAt"].is_string());
+        }
+    }
+    assert!(thread("side").await.is_err(), "deleted with its parent");
+    drop(engine);
+    let _ = fs::remove_dir_all(&dir);
+}
