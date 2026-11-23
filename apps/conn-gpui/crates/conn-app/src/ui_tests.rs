@@ -36,6 +36,14 @@ const TEST_WINDOW_HEIGHT: f32 = 900.0;
 /// Mounts a full `ConnApp` window in `TestAppContext` (`1440×900`, Dark Ocean) with keybindings,
 /// theme tokens, and assets initialized.
 fn mount_app(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    mount_app_with_server(cx, None)
+}
+
+/// [`mount_app`] that connects at launch to `server`, as the live app does to a saved server.
+fn mount_app_with_server(
+    cx: &mut TestAppContext,
+    server: Option<crate::live::StartupServer>,
+) -> (AnyWindowHandle, Entity<ConnApp>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         let Some(theme) = conn_theme::theme_by_id("dark-ocean") else {
@@ -55,7 +63,7 @@ fn mount_app(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
         };
         let Ok(opened) = gpui_kit::open_window(options, cx, move |window, cx| {
             window.activate_window();
-            cx.new(|cx| ConnApp::new(theme.id, tokens, None, window, cx))
+            cx.new(|cx| ConnApp::new(theme.id, tokens, server, window, cx))
         }) else {
             panic!("failed to open headless test window");
         };
@@ -670,6 +678,66 @@ fn composer_popups_model_picker_and_plan_mode_render_cleanly(cx: &mut TestAppCon
             "clicking active Plan badge must return to default mode and hide the chip"
         );
     });
+}
+
+/// The launch connection asks for the provider catalog, or the composer's picker stays empty
+/// until the user switches servers.
+#[gpui_kit::test]
+fn launch_connection_subscribes_to_server_config(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (tags_tx, tags_rx) = std::sync::mpsc::channel::<String>();
+    let addr = RT.block_on(async {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(l) => l,
+            Err(err) => panic!("failed to bind loopback listener: {err}"),
+        };
+        let addr = match listener.local_addr() {
+            Ok(a) => a,
+            Err(err) => panic!("failed to read listener addr: {err}"),
+        };
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let tags_tx = tags_tx.clone();
+                tokio::spawn(async move {
+                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                        return;
+                    };
+                    while let Some(Ok(Message::Text(text))) = ws.next().await {
+                        for frame in conn_wire::decode_client_message(&text).unwrap_or_default() {
+                            if let conn_wire::FromClient::Request(req) = frame {
+                                let _ = tags_tx.send(req.tag);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        addr
+    });
+    let http_base_url = match url::Url::parse(&format!("http://{addr}")) {
+        Ok(url) => url,
+        Err(err) => panic!("invalid loopback URL: {err}"),
+    };
+    let (_window, _app) = mount_app_with_server(
+        cx,
+        Some(crate::live::StartupServer {
+            config: ServerConfig {
+                http_base_url,
+                credential: Credential::Bearer("test-token".to_owned()),
+            },
+            label: None,
+            orbit_server_id: None,
+        }),
+    );
+
+    let mut tags = Vec::new();
+    while let Ok(tag) = tags_rx.recv_timeout(Duration::from_secs(5)) {
+        if tag == "subscribeServerConfig" {
+            return;
+        }
+        tags.push(tag);
+    }
+    panic!("launch connection never sent subscribeServerConfig; it sent {tags:?}");
 }
 
 #[gpui_kit::test]

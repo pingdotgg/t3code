@@ -315,9 +315,7 @@ impl ConnApp {
         let (shell, connection) = match server {
             Some(startup) => {
                 let (connection, events) =
-                    Connection::start(startup.config, crate::live::RT.handle());
-                connection.subscribe_shell();
-                connection.subscribe_panel_requests(Some(default_device_name()));
+                    Self::start_connection(startup.config, default_device_name());
                 Self::pump_events(1, startup.orbit_server_id, events, cx);
                 (ShellState::default(), Some(connection))
             }
@@ -5836,6 +5834,19 @@ impl ConnApp {
         .detach();
     }
 
+    /// Opens a connection with every app-wide stream: the shell, the server config (the provider
+    /// catalog) and panel requests. The launch and a server switch both connect through here.
+    fn start_connection(
+        config: ServerConfig,
+        device_name: String,
+    ) -> (Connection, tokio::sync::mpsc::Receiver<ClientEvent>) {
+        let (connection, events) = Connection::start(config, crate::live::RT.handle());
+        connection.subscribe_shell();
+        connection.subscribe_server_config();
+        connection.subscribe_panel_requests(Some(device_name));
+        (connection, events)
+    }
+
     /// Switches the active live `conn-server` connection to a new [`ServerConfig`] (e.g. an Orbit
     /// Node or Instance), cleanly resetting shell/thread state and updating chat & right panels.
     fn connect_to_server_config(
@@ -5868,10 +5879,7 @@ impl ConnApp {
         self.park_active_draft();
         self.drafts.clear_launching();
 
-        let (connection, events) = Connection::start(config, crate::live::RT.handle());
-        connection.subscribe_shell();
-        connection.subscribe_server_config();
-        connection.subscribe_panel_requests(Some(self.device_name()));
+        let (connection, events) = Self::start_connection(config, self.device_name());
         Self::pump_events(generation, orbit_server_id, events, cx);
 
         self.connection = Some(connection.clone());
