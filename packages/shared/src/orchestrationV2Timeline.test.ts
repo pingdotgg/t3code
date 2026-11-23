@@ -1,4 +1,5 @@
 import { NodeId, RunId } from "@t3tools/contracts";
+import { DateTime } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -91,7 +92,11 @@ describe.each([
     ).toBe(true);
   });
 
-  it.each([
+  it.each<{
+    status: VisibilityInput["runs"][number]["status"];
+    startedAt?: string;
+    hidden: string[];
+  }>([
     ...ordinaryStatuses.map((status) => ({ status, hidden: [] })),
     { status: "queued", hidden: ["queued"] },
     { status: "cancelled", hidden: ["queued"] },
@@ -100,11 +105,7 @@ describe.each([
       status: "rolled_back",
       hidden: ["queued", "start", "steer", "promoted", "legacy", "assistant", "request", "result"],
     },
-  ] satisfies ReadonlyArray<{
-    status: VisibilityInput["runs"][number]["status"];
-    startedAt?: string;
-    hidden: string[];
-  }>)(
+  ])(
     "keeps the correct transcript rows for $status runs (started $startedAt)",
     ({ status, startedAt, hidden }) => {
       const rows = [
@@ -132,7 +133,13 @@ describe.each([
         },
       ] satisfies ReadonlyArray<VisibilityInput["items"][number] & { id: string }>;
       const input = {
-        runs: [{ id: runId, status, ...(startedAt === undefined ? {} : { startedAt }) }],
+        runs: [
+          {
+            id: runId,
+            status,
+            ...(startedAt === undefined ? {} : { startedAt: DateTime.makeUnsafe(startedAt) }),
+          },
+        ],
         attempts: [],
         items: rows,
       } satisfies VisibilityInput;
