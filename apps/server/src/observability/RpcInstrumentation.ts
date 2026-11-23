@@ -1,4 +1,4 @@
-import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
+import { KOMPAS_RPC_AGGREGATES, ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -212,6 +212,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.attachmentsCreateUploadUrl]: "workspace",
   [WS_METHODS.attachmentsDelete]: "workspace",
   [WS_METHODS.providerUploadFeedback]: "provider",
+  ...KOMPAS_RPC_AGGREGATES,
   [WS_METHODS.mcpAppsCallTool]: "provider",
   [WS_METHODS.mcpAppsToolInfo]: "provider",
   [WS_METHODS.mcpAppsUpdateModelContext]: "provider",

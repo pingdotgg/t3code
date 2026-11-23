@@ -736,6 +736,14 @@ export type ClaudeAgentSdkQueryTools = ClaudeAgentSdkQueryToolList | ClaudeAgent
 
 export const CLAUDE_READ_ONLY_ALLOWED_TOOLS = ["Read", "Glob", "Grep"] as const;
 
+const CLAUDE_COORDINATOR_TOOLS = ["AskUserQuestion", "ToolSearch", "WebFetch", "WebSearch"] as const;
+/** Conversations keep notes and pages in their own folder, but run no commands. */
+const CLAUDE_PROFILE_TOOLS = {
+  chat: [...CLAUDE_COORDINATOR_TOOLS, "Read", "Glob", "Grep", "Edit", "Write"],
+  worker: [...CLAUDE_COORDINATOR_TOOLS, "Read", "Glob", "Grep", "Edit", "Write"],
+  coordinator: CLAUDE_COORDINATOR_TOOLS,
+} as const;
+
 function claudeAgentSdkQueryToolsForSdk(
   tools: ClaudeAgentSdkQueryTools,
 ): NonNullable<ClaudeQueryOptions["tools"]> {
@@ -2459,6 +2467,7 @@ export function makeClaudeQueryOptions(input: {
   readonly modelCatalog?: ClaudeModelCatalog;
   readonly nativeThreadId: string;
   readonly title?: string;
+  readonly profileInstructions?: string | undefined;
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
@@ -2624,7 +2633,17 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    ...(input.environment === undefined && input.profileInstructions === undefined
+      ? {}
+      : {
+          env: {
+            ...(input.environment ?? process.env),
+            // The app owns memory; Claude's own would drift from what other models see.
+            ...(input.profileInstructions === undefined
+              ? {}
+              : { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" }),
+          },
+        }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,
@@ -2633,9 +2652,13 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({
           harness: "Claude Code",
           agentFeedback,
-          runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
+          runtimePolicy: {
+            cwd: input.cwd,
+            workspace: input.workspace,
+            profileInstructions: input.profileInstructions,
+          },
         }) +
-          (input.mcpServers === undefined
+          (input.mcpServers === undefined || input.profileInstructions !== undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
@@ -2797,10 +2820,23 @@ export function claudeMcpQueryOverrides(input: {
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+    : [
+        CLAUDE_T3_MCP_TOOL_WILDCARD,
+        ...(session.sharedServers ?? []).map((server) => `mcp__${server.name}__*`),
+      ];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
+      ...Object.fromEntries(
+        (session.sharedServers ?? []).map((server) => [
+          server.name,
+          {
+            type: "http" as const,
+            url: server.url,
+            ...(Object.keys(server.headers).length === 0 ? {} : { headers: server.headers }),
+          },
+        ]),
+      ),
       "t3-code": {
         type: "http",
         url: session.endpoint,
@@ -3718,8 +3754,11 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   const readOnlyTools =
     sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy) === "readOnly"
       ? CLAUDE_READ_ONLY_ALLOWED_TOOLS
-      : undefined;
+      : runtimePolicy.profile === undefined
+        ? undefined
+        : CLAUDE_PROFILE_TOOLS[runtimePolicy.profile];
   const allowedTools =
+    runtimePolicy.profile === undefined &&
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
@@ -13593,6 +13632,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(turnInput.runtimePolicy.workspace === undefined
               ? {}
               : { workspace: turnInput.runtimePolicy.workspace }),
+            profileInstructions: turnInput.runtimePolicy.profileInstructions,
             attachmentsDir,
             settings: adapterOptions.settings,
             // Delegated threads have no one typing, so they never ask for suggestions.

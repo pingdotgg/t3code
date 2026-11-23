@@ -18,6 +18,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
+import * as ThreadProfiles from "../kompas/ThreadProfiles.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
@@ -141,6 +142,7 @@ export const layerFromProjectStore: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const threadProfiles = yield* Effect.serviceOption(ThreadProfiles.ThreadProfiles);
     // The same ceiling the orchestrator enforces, fixed for the server's life.
     const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
@@ -190,12 +192,18 @@ export const layerFromProjectStore: Layer.Layer<
               ),
             ),
           );
+        const profile = Option.isNone(threadProfiles)
+          ? undefined
+          : yield* threadProfiles.value.forSession(input.thread, input.modelSelection.instanceId);
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
           ...(workspace === undefined || workspace.folders.length === 0 ? {} : { workspace }),
+          ...(profile === undefined
+            ? {}
+            : { profile: profile.profile, profileInstructions: profile.instructions }),
         });
       }),
     });

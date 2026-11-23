@@ -54,9 +54,12 @@ import {
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as ThreadProfiles from "../kompas/ThreadProfiles.ts";
+import { attachesPlugins } from "../kompas/profileTools.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import {
@@ -478,6 +481,7 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const threadProfiles = yield* Effect.serviceOption(ThreadProfiles.ThreadProfiles);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -643,6 +647,21 @@ export const layerWithOptions = (
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
                 );
+                const profile = Option.isNone(threadProfiles)
+                  ? ("developer" as const)
+                  : yield* projectionStore.getThread(threadId).pipe(
+                      Effect.flatMap((thread) => threadProfiles.value.membership(thread)),
+                      Effect.map((membership) => membership.profile),
+                      Effect.orElseSucceed(() => "developer" as const),
+                    );
+                const pluginsAttached = yield* registry.get(providerInstanceId).pipe(
+                  Effect.map((adapter) => attachesPlugins(adapter.driver)),
+                  Effect.orElseSucceed(() => true),
+                );
+                // Read fresh on every prepare, so a plugin turned on reaches the next session.
+                const plugins = Option.isNone(threadProfiles)
+                  ? []
+                  : yield* threadProfiles.value.plugins(threadId);
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -668,8 +687,13 @@ export const layerWithOptions = (
                     (Option.isNone(backgroundWait) ||
                       resolved.capabilities.has("background-wait") === backgroundWait.value) &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    (resolved.thread.profile ?? "developer") === profile
                   ) {
+                    yield* mcpSessions.set({
+                      ...existing,
+                      sharedServers: McpProviderSession.sharedMcpSessionServers(plugins, existing),
+                    });
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -681,9 +705,15 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  profile,
+                  pluginsAttached,
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
+                  sharedServers: McpProviderSession.sharedMcpSessionServers(
+                    plugins,
+                    credential.config,
+                  ),
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(
@@ -696,6 +726,10 @@ export const layerWithOptions = (
               }),
             );
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
+        (Option.isNone(threadProfiles) ? Effect.void : threadProfiles.value.forget(threadId)).pipe(
+          Effect.andThen(revokeMcpSession(threadId, mcpCredentialId)),
+        );
+      const revokeMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
         mcpCredentialId === undefined
           ? mcpSessionRegistry
               .revokeThread(threadId)

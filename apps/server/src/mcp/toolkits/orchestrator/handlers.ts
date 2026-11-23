@@ -1,7 +1,9 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
+import * as WorkstreamService from "../../../kompas/WorkstreamService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
@@ -24,6 +26,14 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const workstreams = yield* Effect.serviceOption(WorkstreamService.WorkstreamService);
+      if (Option.isSome(workstreams) && scope.thread !== undefined) {
+        yield* workstreams.value.claimThreadStart(scope.thread.threadId).pipe(
+          Effect.mapError(
+            ({ message }) => new OrchestratorMcpFailure({ code: "capability_denied", message }),
+          ),
+        );
+      }
       return yield* service.delegateTask(scope, input);
     }),
   ),

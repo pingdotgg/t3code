@@ -52,6 +52,8 @@ interface CompactToolOutput {
   status?: "rolled_back";
   htmlRender?: HtmlRenderReference;
   [MCP_APP_OUTPUT_KEY]?: McpAppReference;
+  /** A widget one of T3's own tools drew, without the server it always has. */
+  widget?: Omit<McpAppReference, "server">;
   thread?: { threadId: string };
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
@@ -155,6 +157,13 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     }
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
+    const widget = Predicate.isObject(data.widget)
+      ? readMcpAppReference({ ...data.widget, server: T3_WIDGET_SERVER })
+      : undefined;
+    if (widget !== undefined) {
+      const { server: _server, ...reference } = widget;
+      output.widget = reference;
+    }
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
     if (mcpApp !== undefined) output[MCP_APP_OUTPUT_KEY] = mcpApp;
     const nestedThreadId = Predicate.isObject(data.thread)
@@ -205,6 +214,9 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   if (oversized()) delete output[MCP_APP_OUTPUT_KEY];
   return Object.keys(output).length === 0 ? undefined : output;
 }
+
+/** The server of the widgets T3's own tools draw. */
+export const T3_WIDGET_SERVER = "t3-code";
 
 // OpenCode 2 Code Mode reports a script's nested T3 tool calls as one item with the script's result.
 const OPENCODE_CODE_MODE_TOOL_NAME = "execute";
@@ -258,7 +270,16 @@ export function mcpAppFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): McpAppReference | undefined {
-  const app = compactDynamicToolOutput(item.output)?.[MCP_APP_OUTPUT_KEY];
+  const output = compactDynamicToolOutput(item.output);
+  const widget = output?.isError ? undefined : output?.widget;
+  if (
+    widget !== undefined &&
+    (item.toolName === OPENCODE_CODE_MODE_TOOL_NAME ||
+      resolveT3McpToolId(item.toolName) === widget.tool)
+  ) {
+    return { ...widget, server: T3_WIDGET_SERVER };
+  }
+  const app = output?.[MCP_APP_OUTPUT_KEY];
   return app !== undefined &&
     (item.toolName === `${app.server}.${app.tool}` ||
       item.toolName === claudeMcpToolName(app.server, app.tool))

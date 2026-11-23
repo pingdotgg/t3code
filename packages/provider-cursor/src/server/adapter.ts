@@ -220,6 +220,16 @@ export function cursorMcpServers(
     return undefined;
   }
   return {
+    ...Object.fromEntries(
+      (session.sharedServers ?? []).map((server) => [
+        server.name,
+        {
+          type: "http" as const,
+          url: server.url,
+          ...(Object.keys(server.headers).length === 0 ? {} : { headers: server.headers }),
+        },
+      ]),
+    ),
     "t3-code": {
       type: "http",
       url: session.endpoint,
@@ -2875,7 +2885,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
-            hasT3Mcp: mcpServers !== undefined,
+            hasT3Mcp:
+              mcpServers !== undefined && turnInput.runtimePolicy.profileInstructions === undefined,
             hasDeviceTools,
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,

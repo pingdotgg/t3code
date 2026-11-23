@@ -125,7 +125,8 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
-import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as KompasApps from "./kompas/KompasApps.ts";
+import * as KompasRpc from "./kompas/KompasRpc.ts";
 import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
@@ -1471,7 +1472,8 @@ export const layerWsRpc = (
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const mcpAppRequests = yield* KompasApps.KompasApps;
+      const kompasRpc = yield* KompasRpc.KompasRpc;
       const mcpSignIn = yield* McpSignIn.McpSignIn;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
@@ -2006,6 +2008,7 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        ...kompasRpc,
         [WS_METHODS.issuesList]: (input) => issues.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),

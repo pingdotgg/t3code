@@ -929,6 +929,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               model: input.modelSelection.model,
               reasoningEffort: effort ?? undefined,
               agentFeedback: input.agentFeedback ?? "off",
+              profileInstructions: input.runtimePolicy.profileInstructions,
             },
             {
               browser: input.browserToolsAvailable ?? true,
@@ -1687,6 +1688,21 @@ function codexThreadRuntimeParams(input: {
               ]),
             ),
           }),
+      ...Object.fromEntries(
+        (mcpSession?.sharedServers ?? []).map((server) => [
+          `mcp_servers.${server.name}`,
+          {
+            url: server.url,
+            http_headers: server.headers,
+            // The user enabled this plugin for the conversation; asking per search adds nothing.
+            default_tools_approval_mode: "approve",
+          },
+        ]),
+      ),
+      // The app owns memory; Codex's own would drift from what other models see.
+      ...(input.runtimePolicy?.profile === undefined
+        ? {}
+        : { "memories.use_memories": false, "memories.generate_memories": false }),
       ...(t3Server === undefined
         ? {}
         : {

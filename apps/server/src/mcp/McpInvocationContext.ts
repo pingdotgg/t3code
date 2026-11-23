@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import type { ThreadProfile } from "@t3tools/provider-core/server/mcpSession";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 const ALL_MCP_CAPABILITIES = [
@@ -34,6 +35,10 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  /** Unset is a developer thread. */
+  readonly profile?: ThreadProfile;
+  /** False when this provider's sessions cannot attach plugins themselves. */
+  readonly pluginsAttached?: boolean;
 }
 
 export interface McpClientCaller {

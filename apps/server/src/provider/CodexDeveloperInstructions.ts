@@ -37,6 +37,21 @@ export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
+  readonly profileInstructions?: string | undefined;
+}
+
+/** Cuts at line ends, so each part fits Codex's per-entry cap. */
+function profileSections(instructions: string): ReadonlyArray<string> {
+  const sections: Array<string> = [];
+  let current = "";
+  for (const line of instructions.split("\n")) {
+    const next = current === "" ? line : `${current}\n${line}`;
+    if (Buffer.byteLength(next) > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES && current !== "") {
+      sections.push(current);
+      current = line;
+    } else current = next;
+  }
+  return current === "" ? sections : [...sections, current];
 }
 
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */
@@ -44,6 +59,14 @@ export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
+  if (runtime.profileInstructions !== undefined) {
+    return Object.fromEntries(
+      profileSections(runtime.profileInstructions).map((section, index) => [
+        `kompas_${String(index + 1).padStart(2, "0")}`,
+        { kind: "application" as const, value: section },
+      ]),
+    );
+  }
   const tools = toolInstructions(toolsAvailable);
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {

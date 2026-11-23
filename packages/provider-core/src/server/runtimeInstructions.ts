@@ -25,8 +25,12 @@ export function buildRuntimeInstructions(runtime: {
   /** False when the session's system prompt already carries the linking instructions. */
   readonly pullRequestLinking?: boolean;
   /** Adds the folder list of a multi-folder thread. */
-  readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
+  readonly runtimePolicy?:
+    | Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace" | "profileInstructions">
+    | undefined;
 }): string {
+  const profileInstructions = runtime.runtimePolicy?.profileInstructions;
+  if (profileInstructions !== undefined) return profileInstructions;
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
   const modelName = toSingleLine(runtime.modelName ?? "");

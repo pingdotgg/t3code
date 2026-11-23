@@ -34,6 +34,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
+import { composeWidgetDocument } from "./kompas/WidgetDocument.ts";
 import { sourceControlMediaResponse } from "./assets/sourceControlMediaResponse.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -186,7 +187,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       return HttpServerResponse.text("MCP app is too large to preview.", { status: 413 });
     }
     const body = pipe(
-      new TextDecoder().decode(bytes),
+      yield* composeWidgetDocument(new TextDecoder().decode(bytes)),
       injectMcpAppThemeBootstrap,
       injectMcpAppCookieBootstrap,
       (html) => new TextEncoder().encode(html),

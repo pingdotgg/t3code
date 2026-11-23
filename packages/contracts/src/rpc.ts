@@ -16,6 +16,7 @@ import {
   McpAppToolInfoInput,
   McpAppUpdateModelContextInput,
 } from "./mcpApps.ts";
+import { KOMPAS_RPCS } from "./kompas.ts";
 import {
   PeerLink,
   PeerLinkClientPairingInput,
@@ -2716,4 +2717,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
+  ...KOMPAS_RPCS,
 ).middleware(RpcScopeAuthorization);

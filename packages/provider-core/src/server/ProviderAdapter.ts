@@ -74,6 +74,10 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
   workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
+  /** Absent in developer threads, which keep T3's own guidance and every tool. */
+  profile: Schema.optional(Schema.Literals(["chat", "coordinator", "worker"])),
+  /** What a profiled thread's agent is told instead of T3's coding guidance. */
+  profileInstructions: Schema.optional(Schema.String),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

@@ -87,6 +87,9 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import { openCodeCommandFailed, openCodeToolOutput, openCodeToolTurnItem } from "./toolItems.ts";
 
+/** How long session opening waits for each shared MCP server add. */
+const SHARED_MCP_ADD_TIMEOUT = "5 seconds";
+
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
@@ -1109,6 +1112,34 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 oauth: false,
               },
             }),
+          );
+        }
+        // Shared servers are T3's proxy endpoints, so they follow `t3-code`:
+        // an external server may not reach them. Each is an addition: one
+        // OpenCode cannot register must not fail the session, and a server
+        // that never answers can't hold it open.
+        for (const server of hasT3Mcp ? (mcpSession?.sharedServers ?? []) : []) {
+          yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", (signal) =>
+            client.mcp.add(
+              {
+                name: server.name,
+                config: {
+                  type: "remote",
+                  url: server.url,
+                  headers: { ...server.headers },
+                  oauth: false,
+                },
+              },
+              { signal },
+            ),
+          ).pipe(
+            Effect.timeout(SHARED_MCP_ADD_TIMEOUT),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not add a shared MCP server to OpenCode.", {
+                server: server.name,
+                cause,
+              }),
+            ),
           );
         }
 
@@ -3513,7 +3544,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...(agent === undefined ? {} : { agent }),
             ...(variant === undefined ? {} : { variant }),
             system: [
-              orchestrationSystemPrompt,
+              turn.runtimePolicy.profileInstructions === undefined
+                ? orchestrationSystemPrompt
+                : undefined,
               buildRuntimeInstructions({
                 harness: "OpenCode",
                 model: turn.modelSelection.model,

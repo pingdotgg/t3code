@@ -1090,8 +1090,20 @@ function acpMcpContext(
     return { servers: [], acpServers: [], httpServers: [] };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
+  // Shared servers are T3 endpoints too, so they ride the same transport as t3-code.
+  const sharedServers = (session.sharedServers ?? []).map((server) => ({
+    name: server.name,
+    command: self.command,
+    args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
+    env: [
+      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+      { name: "T3_ACP_MCP_ENDPOINT", value: server.url },
+      { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+    ],
+  }));
   return {
     servers: [
+      ...sharedServers,
       {
         name: "t3-code",
         command: self.command,
@@ -1103,10 +1115,17 @@ function acpMcpContext(
         ],
       },
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    // MCP-over-ACP carries only t3-code; shared servers stay on the stdio bridge.
+    acpServers: [...sharedServers, { type: "acp", name: "t3-code", serverId: "t3-code" }],
     httpServers:
       mcpOverHttp === true
         ? [
+            ...(session.sharedServers ?? []).map((server) => ({
+              type: "http" as const,
+              name: server.name,
+              url: server.url,
+              headers: [{ name: "Authorization", value: session.authorizationHeader }],
+            })),
             {
               type: "http",
               name: "t3-code",
@@ -9116,6 +9135,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
+            profiled: turnInput.runtimePolicy.profileInstructions !== undefined,
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
           } satisfies T3AcpInstructionState;
