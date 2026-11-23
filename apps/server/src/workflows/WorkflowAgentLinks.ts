@@ -78,6 +78,7 @@ export const make = Effect.gen(function* () {
     environment: string,
     path: string,
   ) {
+    const target = normalizeProjectPathForComparison(path);
     let cursor: number | null = 0;
     while (cursor !== null) {
       const page: Schema.Schema.Type<typeof ProjectToolkit.tools.t3_project_list.successSchema> =
@@ -88,9 +89,7 @@ export const make = Effect.gen(function* () {
           { cursor, limit: 100 },
         );
       const found = page.projects.find(
-        (project) =>
-          normalizeProjectPathForComparison(project.workspaceRoot) ===
-          normalizeProjectPathForComparison(path),
+        (project) => normalizeProjectPathForComparison(project.workspaceRoot) === target,
       );
       if (found !== undefined) return found.id;
       cursor = page.nextCursor;
