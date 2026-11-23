@@ -47,7 +47,7 @@ const CAPABILITIES: IssueCapabilities = {
   search: true,
 };
 
-const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/;
+const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9_-]*\/[A-Za-z0-9_.-]+$/;
 
 /** Quoted, so no character in it can start a qualifier of its own. */
 function quotedTerm(value: string): string {
