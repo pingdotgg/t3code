@@ -81,6 +81,14 @@ async fn dispatch(engine: &SqliteEngine, command: Value) -> u64 {
     }
 }
 
+async fn command_events(engine: &SqliteEngine, id: &'static str) -> Vec<Value> {
+    engine
+        .inner()
+        .db(move |store| store.command_events(id))
+        .await
+        .unwrap()
+}
+
 async fn next<T: serde::Serialize, E: serde::Serialize>(stream: &mut Subscription<T, E>) -> Value {
     let item = timeout(Duration::from_secs(5), stream.recv())
         .await
@@ -1810,15 +1818,48 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
     assert_eq!(r["settledOverride"], "active");
     assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.006Z");
     assert_ne!(r["unsettledAt"], anchor);
-    // Already active keeps its anchor.
-    dispatch(&engine, restore(73, json!("2021-01-01T00:00:00.000Z"))).await;
+    // The envelope names the thread's provider instance, as T3's does.
+    let restored = command_events(&engine, "l72").await;
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0]["type"], "thread.unsettled");
+    assert_eq!(restored[0]["providerInstanceId"], "claudeAgent");
+    assert_eq!(
+        restored[0]["providerInstanceId"],
+        restored[0]["payload"]["providerInstanceId"]
+    );
+    // Already active keeps its anchor and `updatedAt`. A fresh command still records one
+    // `thread.unsettled`; a retry of the same command records nothing more.
+    let updated_at = r["updatedAt"].clone();
+    for _ in 0..2 {
+        dispatch(&engine, restore(73, json!("2021-01-01T00:00:00.000Z"))).await;
+    }
+    let kept = command_events(&engine, "l73").await;
+    assert_eq!(kept.len(), 1, "one event per command id");
+    assert_eq!(kept[0]["type"], "thread.unsettled");
+    assert_eq!(
+        kept[0]["payload"]["unsettledAt"],
+        "2020-01-02T03:04:05.006Z"
+    );
+    assert_eq!(kept[0]["payload"]["updatedAt"], updated_at);
+    assert_eq!(kept[0]["providerInstanceId"], "claudeAgent");
     let r = row(&engine.shell_snapshot().await.unwrap());
     assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.006Z");
+    assert_eq!(r["updatedAt"], updated_at);
     dispatch(&engine, cmd(74, "thread.settle", json!({}))).await;
     dispatch(&engine, restore(75, Value::Null)).await;
     let r = row(&engine.shell_snapshot().await.unwrap());
     assert_eq!(r["settledOverride"], "active");
     assert_eq!(r["unsettledAt"], Value::Null);
+    // T3's `DateTime.make` reads a time without a zone as UTC.
+    dispatch(&engine, cmd(77, "thread.settle", json!({}))).await;
+    dispatch(&engine, restore(78, json!("2020-01-02T03:04:05"))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.000Z");
+    // A year past 9999 is written as `toISOString` writes it.
+    dispatch(&engine, cmd(79, "thread.settle", json!({}))).await;
+    dispatch(&engine, restore(80, json!("9999-12-31T23:30:00-01:00"))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["unsettledAt"], "+010000-01-01T00:30:00.000Z");
     let bad = engine
         .dispatch(from_json(restore(76, json!("not a time"))).unwrap())
         .await;
@@ -1832,6 +1873,43 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
         "{}",
         to_json(&e)
     );
+    // A delayed undo on a thread archived since is refused before its anchor is read, and
+    // changes neither the log nor the projection.
+    dispatch(&engine, cmd(81, "thread.settle", json!({}))).await;
+    dispatch(&engine, cmd(82, "thread.archive", json!({}))).await;
+    let before_shell = engine.shell_snapshot().await.unwrap();
+    let before_log = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 100_000))
+        .await
+        .unwrap();
+    for (n, at) in [
+        (83, json!("2020-01-02T03:04:05.006Z")),
+        (84, json!("not a time")),
+    ] {
+        let refused = engine.dispatch(from_json(restore(n, at)).unwrap()).await;
+        let Err(EngineError::Rejected(e)) = refused else {
+            panic!("an archived thread refuses an undo of its settle");
+        };
+        assert!(
+            to_json(&e).to_string().contains("Thread t1 is archived."),
+            "{}",
+            to_json(&e)
+        );
+    }
+    let after_log = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 100_000))
+        .await
+        .unwrap();
+    assert_eq!(after_log, before_log);
+    assert_eq!(engine.shell_snapshot().await.unwrap(), before_shell);
+    dispatch(&engine, cmd(85, "thread.unarchive", json!({}))).await;
+    dispatch(
+        &engine,
+        cmd(86, "thread.unsettle", json!({"reason": "user"})),
+    )
+    .await;
 
     dispatch(
         &engine,

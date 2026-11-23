@@ -843,6 +843,21 @@ impl Store {
         })
     }
 
+    /// Stored events recorded for one command, in order.
+    #[cfg(test)]
+    pub(crate) fn command_events(&self, command_id: &str) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT event FROM events WHERE command_id = ?1 ORDER BY seq")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([command_id], |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .map(|row| parse(row.map_err(err)?))
+            .collect::<StoreResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Stored events of one thread after `after`, at most `limit`, as `(sequence, event)`.
     pub(crate) fn thread_events_after(
         &self,
@@ -1143,6 +1158,7 @@ impl Tx<'_> {
             run_id,
             node_id,
             command_id,
+            provider_instance_id,
         } = draft;
         let collection = collection_of(event_type);
         let mut inserted = false;
@@ -1201,10 +1217,11 @@ impl Tx<'_> {
             let deleted = event_type == "thread.deleted";
             // A host sync (link snapshot, branch pull request, watch read) keeps the thread's
             // `updatedAt`, as T3's deciders do; the sidebar must not move the thread.
-            // An issue link that was already there changes nothing either.
+            // An issue link that was already there changes nothing either, nor does an unsettle
+            // of a thread already active (T3 writes the payload's `updatedAt`).
             keeps_activity = matches!(
                 event_type,
-                "thread.pull-request-synced" | "thread.issue-synced"
+                "thread.pull-request-synced" | "thread.issue-synced" | "thread.unsettled"
             ) && payload["updatedAt"].is_string()
                 && self
                     .thread(&thread_id)?
@@ -1248,6 +1265,9 @@ impl Tx<'_> {
         }
         if let Some(node_id) = node_id {
             event["nodeId"] = json!(node_id);
+        }
+        if let Some(id) = provider_instance_id {
+            event["providerInstanceId"] = json!(id);
         }
         let streaming = event["payload"]["streaming"] == json!(true);
         self.tx
@@ -1993,6 +2013,7 @@ pub(crate) struct Draft {
     pub run_id: Option<String>,
     pub node_id: Option<String>,
     pub command_id: Option<String>,
+    pub provider_instance_id: Option<String>,
 }
 
 impl Draft {
@@ -2004,7 +2025,14 @@ impl Draft {
             run_id: None,
             node_id: None,
             command_id: None,
+            provider_instance_id: None,
         }
+    }
+
+    /// The envelope's top-level `providerInstanceId`; T3 sets it from the updated thread.
+    pub(crate) fn provider_instance(mut self, id: Option<&str>) -> Self {
+        self.provider_instance_id = id.map(str::to_owned);
+        self
     }
 
     pub(crate) fn run(mut self, run_id: Option<&str>) -> Self {

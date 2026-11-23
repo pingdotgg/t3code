@@ -15,8 +15,13 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 
 **Undo of a settle (2026-11-23):** `thread.unsettle` reads `restoreUnsettledAt`, as T3's
 `Orchestrator.ts`: a time restores the Active anchor the settle cleared, `null` restores no
-anchor, and a time that does not parse refuses the command. A thread already active keeps its
-anchor. Proof: `thread_lifecycle_commands_reach_the_shell_row` in `conn-engine`.
+anchor, and a time that does not parse refuses the command. Times parse as T3's
+`DateTime.make`: no zone means UTC. An archived thread refuses the command first. A thread
+already active keeps its anchor and `updatedAt`, but a fresh command still records
+`thread.unsettled`. The event envelope carries `providerInstanceId`. Wire times outside years
+0000 to 9999 get `toISOString`'s signed six-digit year. Proof:
+`thread_lifecycle_commands_reach_the_shell_row` in `conn-engine`, the `conn-support` time
+tests, and `client-check.mjs` (a year-10000 anchor decodes with T3's shell schema).
 
 **Worktree delegates (2026-11-22):** `delegate_task` with `isolation: worktree` works, as in
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left

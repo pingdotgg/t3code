@@ -321,6 +321,17 @@ check("background: the shell roster matches T3's derivePendingBackgroundWork", (
   assert.deepEqual(row.pendingBackgroundTasks, expected);
 });
 
+// An undo of a settle with an anchor past year 9999: the row decodes with T3's shell schema,
+// and the anchor is the time T3 writes for the same input.
+check("unsettle: an anchor past year 9999 decodes as T3 writes it", () => {
+  const decodeRow = Schema.decodeUnknownSync(contracts.OrchestrationV2ThreadShellJson);
+  const row = decodeRow(exported.farAnchorShell);
+  const expected = new Date("9999-12-31T23:30:00-01:00");
+  assert.equal(exported.farAnchorShell.unsettledAt, expected.toISOString());
+  assert.equal(row.unsettledAt.epochMilliseconds, expected.getTime());
+  assert.equal(row.settledOverride, "active");
+});
+
 // 10. Projects added and removed at runtime reach the shell.
 check("projects: added and removed at runtime", () => {
   const kinds = exported.shellItems.map((item) => item.kind);

@@ -2233,7 +2233,12 @@ fn thread_patch(
     // A setter that changes nothing writes nothing, so a retry or a double click is quiet.
     if thread != before {
         let cid = command["commandId"].as_str().map(str::to_owned);
-        tx.append(Draft::new(&thread_id, event_type, thread).command(cid.as_deref()))?;
+        let instance = thread["providerInstanceId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&thread_id, event_type, thread)
+                .command(cid.as_deref())
+                .provider_instance(instance.as_deref()),
+        )?;
     }
     Ok(vec![])
 }
@@ -2300,31 +2305,45 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 /// `thread.unsettle` as `Orchestrator.ts`. An undo of a settle sends `restoreUnsettledAt`, the
-/// Active anchor the settle cleared, so the thread goes back to its place, not to the top.
+/// Active anchor the settle cleared, so the thread goes back to its place, not to the top. An
+/// archived thread refuses it before the anchor is read. A thread already active keeps its
+/// anchor and `updatedAt`, but a fresh command still records `thread.unsettled`, as T3 does.
 fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let mut thread = live_thread(tx, &thread_id)?;
+    if !is_null(&thread, "archivedAt") {
+        return reject(format!("Thread {thread_id} is archived."));
+    }
+    let now = tx.now().to_owned();
     let anchor = match command.get("restoreUnsettledAt") {
-        None => None,
-        Some(Value::Null) => Some(Value::Null),
+        None => json!(now),
+        Some(Value::Null) => Value::Null,
         Some(at) => {
             let text = at.as_str().unwrap_or_default();
-            let Some(millis) = crate::time::millis_from_iso(text) else {
-                let thread_id = command["threadId"].as_str().unwrap_or_default();
+            let Some(millis) = crate::time::millis_from_date_input(text) else {
                 return reject(format!(
                     "Thread {thread_id} unsettle anchor {text} is not a valid time."
                 ));
             };
-            Some(json!(crate::time::iso_from_millis(millis)))
+            json!(crate::time::iso_from_millis(millis))
         }
     };
-    thread_patch(tx, &command, "thread.unsettled", |t, now| {
-        if t["settledOverride"] != "active" {
-            t["settledOverride"] = json!("active");
-            t["settledAt"] = Value::Null;
-            t["unsettledAt"] = anchor.unwrap_or_else(|| json!(now));
-            t["updatedAt"] = json!(now);
-        }
-        Ok(())
-    })
+    if thread["settledOverride"] != "active" {
+        thread["settledOverride"] = json!("active");
+        thread["settledAt"] = Value::Null;
+        thread["unsettledAt"] = anchor;
+        thread["updatedAt"] = json!(now);
+    } else if thread.get("unsettledAt").is_none() {
+        thread["unsettledAt"] = Value::Null;
+    }
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    let instance = thread["providerInstanceId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, "thread.unsettled", thread)
+            .command(cid.as_deref())
+            .provider_instance(instance.as_deref()),
+    )?;
+    Ok(vec![])
 }
 
 /// `thread.snooze` as `Orchestrator.ts`: the wake time must parse and be in the future, a
