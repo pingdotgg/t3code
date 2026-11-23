@@ -1433,10 +1433,13 @@ impl Session for CodexSession {
                 }
                 inner.server.unroute(&native);
             }
-            let outs = inner.lock().mapper.on_exit(true, "The session closed.");
+            // Whether the process outlives this session decides whether its subagents ended,
+            // so it is known before the mapper ends anything.
+            let shared = inner.server.remove_session(&inner.id).await;
+            let outs = inner.lock().mapper.on_close(shared);
             inner.deliver(outs).await;
             inner.lock().events = None;
-            if inner.server.remove_session(&inner.id).await {
+            if shared {
                 Closed::RuntimeShared
             } else {
                 Closed::RuntimeStopped

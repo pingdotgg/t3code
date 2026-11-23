@@ -730,6 +730,16 @@ impl<E: Env> Mapper<E> {
 
     /// The app-server is gone: every open turn ends. `expected` (a close) ends them as
     /// interrupted, a crash as failed.
+    /// The session closed. `shared`: the app-server keeps running for other sessions, so
+    /// this session's subagents may still run there; their child turns are dropped without an
+    /// end, and only the root turns end. Otherwise the process ended with the session.
+    pub fn on_close(&mut self, shared: bool) -> Vec<Out> {
+        if shared {
+            self.turns.retain(|_, turn| turn.subagent.is_none());
+        }
+        self.on_exit(true, "The session closed.")
+    }
+
     pub fn on_exit(&mut self, expected: bool, detail: &str) -> Vec<Out> {
         let mut out = Vec::new();
         self.pending_turns.clear();

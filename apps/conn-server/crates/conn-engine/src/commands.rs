@@ -2098,11 +2098,27 @@ pub(crate) fn finish_run_as(
         let background = status == "completed"
             && crate::background::BACKGROUND_ITEM_TYPES
                 .contains(&item["type"].as_str().unwrap_or_default());
-        let open = !background
+        let mut open = !background
             && matches!(
                 item["status"].as_str(),
                 Some("idle" | "pending" | "running" | "waiting")
             );
+        // A provider-native subagent still running ends with its own row: from the provider,
+        // or from the orphan cleanup once its process is gone. A process that outlives the
+        // run (Codex's shared `app-server`) may still run it.
+        if open
+            && item["type"] == "subagent"
+            && let Some(id) = item["subagentId"].as_str()
+            && tx.entity(thread_id, "subagents", id)?.is_some_and(|row| {
+                row["origin"] == "provider_native"
+                    && matches!(
+                        row["status"].as_str(),
+                        Some("pending" | "running" | "waiting")
+                    )
+            })
+        {
+            open = false;
+        }
         if item["streaming"] == true || open {
             if item.get("streaming").is_some() {
                 item["streaming"] = json!(false);

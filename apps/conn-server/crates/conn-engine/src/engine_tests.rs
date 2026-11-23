@@ -825,8 +825,13 @@ async fn a_provider_exit_interrupts_its_native_subagents() {
 /// A newer session's subagents stay open: one on another provider thread, one started after
 /// the release.
 async fn assert_newer_session_untouched(engine: &SqliteEngine) {
-    // The run's own end may close their items (all seeded in one run); the rows are not ours.
+    // The run's own end leaves their items open too: a live native subagent ends itself.
     for id in ["node:other", "node:late"] {
+        assert_eq!(
+            row_status(engine, "t1", "turnItems", &format!("item:{id}")).await,
+            "running",
+            "{id}"
+        );
         assert_eq!(
             row_status(engine, "t1", "subagents", id).await,
             "running",
@@ -890,6 +895,7 @@ async fn a_shared_runtime_close_leaves_native_subagents_open() {
     for (thread, kind, id) in [
         ("t1", "subagents", "node:native"),
         ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
         ("child", "nodes", "node:child-root"),
     ] {
         assert_eq!(
