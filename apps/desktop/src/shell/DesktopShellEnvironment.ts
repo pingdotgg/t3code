@@ -658,6 +658,16 @@ const ShellEnvironmentCache = Schema.fromJsonString(
     environment: ShellEnvironmentPatch,
   }),
 );
+// Windows env names are case-insensitive, so a null for one spelling would delete the other.
+const WINDOWS_ALIASED_ENV_NAMES: ReadonlySet<string> = new Set([
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+]);
+const patchEnvNames = (platform: NodeJS.Platform) =>
+  Object.keys(ShellEnvironmentPatch.fields).filter(
+    (name) => platform !== "win32" || !WINDOWS_ALIASED_ENV_NAMES.has(name),
+  );
 const encodeCacheKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeCache = Schema.decodeUnknownEffect(ShellEnvironmentCache);
 const encodeCache = Schema.encodeEffect(ShellEnvironmentCache);
@@ -739,7 +749,7 @@ export const make = Effect.gen(function* () {
       const { prepared } = discovery;
       stripAppImagePaths(fresh);
       const patch = Object.fromEntries(
-        Object.keys(ShellEnvironmentPatch.fields).map((name) => [name, fresh[name] ?? null]),
+        patchEnvNames(environment.platform).map((name) => [name, fresh[name] ?? null]),
       );
       if (prepared || Option.isNone(yield* Ref.get(latest))) yield* publish(patch, prepared);
       if (prepared) {
@@ -811,7 +821,7 @@ export const make = Effect.gen(function* () {
         applyShellEnvironment(baseline, cached, environment.platform);
         yield* publish(
           Object.fromEntries(
-            Object.keys(ShellEnvironmentPatch.fields).map((name) => [name, baseline[name] ?? null]),
+            patchEnvNames(environment.platform).map((name) => [name, baseline[name] ?? null]),
           ),
         );
       }
