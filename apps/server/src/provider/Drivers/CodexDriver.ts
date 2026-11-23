@@ -303,7 +303,7 @@ export const CodexDriver: ProviderDriver<
         accentColor,
         environment,
         enabled,
-        config: homeConfig,
+        config: { ...homeConfig, binaryPath: resolvedBinaryPath },
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
