@@ -2630,6 +2630,7 @@ export default function ChatView(props: ChatViewProps) {
     isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
+    threadCatchingUp ||
     isPreparingWorktree ||
     activeEnvironmentUnavailable ||
     feedbackUploading ||
@@ -3086,6 +3087,7 @@ export default function ChatView(props: ChatViewProps) {
     isSendBusy,
     isRevertingCheckpoint,
     threadDetailLoading,
+    threadCatchingUp,
     activeEnvironmentUnavailable,
     runtimeMode,
     localCheckoutBranchMismatch,
@@ -3129,6 +3131,7 @@ export default function ChatView(props: ChatViewProps) {
     queuedRunEdit,
     isRevertingCheckpoint,
     threadDetailLoading,
+    threadCatchingUp,
     activeEnvironmentUnavailable,
     isSendBusy,
     sendQueuesBehindSetup,
