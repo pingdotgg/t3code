@@ -651,7 +651,11 @@ const cancelBackgroundOnlyTask = (
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
         assert.equal(childAfter.runs.length, cancelAt === "monitor" || cancelAt === "turn" ? 2 : 1);
-        assert.equal(childAfter.runs[0]!.status, "completed");
+        // A Stop accepted before the run's checkpoint settled it ends that run as interrupted.
+        assert.equal(
+          childAfter.runs.find((run) => run.id === child.turn.runId)?.status,
+          cancelAt === "checkpoint" || cancelAt === "turn" ? "interrupted" : "completed",
+        );
         assert.deepEqual(
           childAfter.runtimeRequests.map((request) => [request.id, request.status]),
           [
