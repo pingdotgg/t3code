@@ -420,6 +420,14 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
 pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let mut c: MessageDispatch = decode(command)?;
     let thread = live_thread(tx, &c.thread_id)?;
+    // `sendToThread`'s archive guard for a schedule's or an agent's send, checked again in the
+    // write that admits the message: an archive that landed after the caller read the thread
+    // still keeps it out. T3 checks only before dispatch; this closes that window.
+    if (c.scheduled_task_id.is_some() || (c.created_by == "agent" && c.creation_source == "mcp"))
+        && let Some(refusal) = crate::send_refusal(&thread)
+    {
+        return reject(refusal);
+    }
     let fresh = c.fresh_context == Some(true);
     if fresh {
         fresh_context_allowed(tx, &c, &thread)?;
