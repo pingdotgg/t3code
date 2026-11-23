@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,7 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
-import { WorkflowAgents } from "./WorkflowAgents.ts";
+import { type AgentResult, WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
 import { engineTag, type WorkflowDefinition } from "./workflow.ts";
@@ -39,6 +40,7 @@ workflow("greet", { version: 1, payload: Schema.Struct({}), returns: Schema.Stri
 const setup = Effect.fn("setup")(function* (
   wrap: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem = (fileSystem) => fileSystem,
   engine?: (definitions: ReadonlyArray<WorkflowDefinition>) => Layer.Layer<Workflows.Workflows>,
+  agents?: WorkflowAgents["Service"],
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -54,7 +56,11 @@ const setup = Effect.fn("setup")(function* (
       (definitions: ReadonlyArray<WorkflowDefinition>) =>
         engine?.(definitions) ??
         WorkflowEngine.layer(definitions).pipe(
-          Layer.provide(Layer.mock(WorkflowAgents)({})),
+          Layer.provide(
+            agents === undefined
+              ? Layer.mock(WorkflowAgents)({})
+              : Layer.succeed(WorkflowAgents, agents),
+          ),
           Layer.provide(database),
           Layer.provide(NodeCrypto.layer),
         ),
@@ -358,6 +364,7 @@ it.live("a file without imports or exports loads again after it changes", () =>
       import * as NodeFS from "node:fs";
       import * as NodeServices from "@effect/platform-node/NodeServices";
       import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
       import { loadDefinitions } from ${JSON.stringify(new URL("./WorkflowRuntime.ts", import.meta.url).href)};
       const file = process.argv.at(-1);
@@ -422,6 +429,60 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
       Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a reload does not wait for an agent that is still at work, and its step ends with the turn",
+  () =>
+    Effect.gen(function* () {
+      const ended = yield* Deferred.make<AgentResult>();
+      const started = yield* Deferred.make<void>();
+      const { fileSystem, at, runtime } = yield* setup(undefined, undefined, {
+        start: (input) =>
+          Effect.as(Deferred.succeed(started, undefined), {
+            threadId: "thread",
+            turnId: input.key,
+          }),
+        result: () => Deferred.await(ended),
+        interrupt: () => Effect.succeed("stopped" as const),
+      });
+      yield* fileSystem.writeFileString(
+        at("helper.ts"),
+        `T3.workflow("helper", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
+  Effect.map(T3.agent("work", { brief: "Do it.", project: "p" }), (done) => done.value),
+);
+`,
+      );
+      const ticking = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.raceFirst(effect, Effect.forever(TestClock.adjust("1 second")));
+      yield* Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+        const helped = yield* ticking(
+          Effect.gen(function* () {
+            const run = yield* workflows.start("helper", {}, { idempotencyKey: "a" });
+            yield* Deferred.await(started);
+            yield* workflows.waitFor(run.runId, (row) => row.status === "waiting");
+            return run;
+          }),
+        );
+
+        // The clock stands still, so an engine that waited for the agent's step to finish would
+        // never stop: the step is not given up on, and the turn does not end.
+        const saved = yield* definitions
+          .save("greet.ts", greet("hello"))
+          .pipe(Effect.timeoutOption("10 seconds"), TestClock.withLive);
+        assert.isTrue(Option.isSome(saved) && saved.value.changed);
+        assert.equal((yield* workflows.get(helped.runId)).run.status, "waiting");
+
+        // The turn ends after the reload, and the new engine carries its result into the run.
+        yield* Deferred.succeed(ended, { ending: "completed", detail: "", reply: "all done" });
+        const done = yield* ticking(
+          workflows.waitFor(helped.runId, (run) => run.status === "completed"),
+        );
+        assert.equal(done.result, "all done");
+      }).pipe(Effect.provide(runtime), Effect.scoped, ticking);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect(
