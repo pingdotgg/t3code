@@ -349,13 +349,22 @@ export const mergeProviderSnapshot = (
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
   const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  const retainMissingOpenCodeMetadata = shouldRetainMissingOpenCodeMetadata(nextProvider);
+  const slashCommands =
+    retainMissingOpenCodeMetadata && nextProvider.slashCommands.length === 0
+      ? previousProvider.slashCommands
+      : nextProvider.slashCommands;
+  const modelsChanged = !Equal.equals(models, previousProvider.models);
+  const slashCommandsChanged = !Equal.equals(slashCommands, previousProvider.slashCommands);
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
-  const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
-    ? previousProvider.workspaceSnapshots
-    : previousProvider.workspaceSnapshots?.map((snapshot) => ({
-        ...snapshot,
-        modelsPending: true,
-      }));
+  const previousWorkspaceSnapshots =
+    !modelsChanged && !slashCommandsChanged
+      ? previousProvider.workspaceSnapshots
+      : previousProvider.workspaceSnapshots?.map((snapshot) => ({
+          ...snapshot,
+          ...(modelsChanged ? { modelsPending: true } : {}),
+          ...(slashCommandsChanged ? { slashCommandsPending: true } : {}),
+        }));
   const nextWorkspaceSnapshots = nextProvider.workspaceSnapshots;
   // A provider reports only folders its own sessions saw, so registry scans of other folders stay.
   const workspaceSnapshots =
@@ -374,6 +383,7 @@ export const mergeProviderSnapshot = (
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models,
+    slashCommands,
     ...(retainsReadyCatalog(
       previousProvider,
       nextProvider,
@@ -387,12 +397,8 @@ export const mergeProviderSnapshot = (
     previousProvider.workspaceRescannedAt !== undefined
       ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
       : {}),
-    ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
+    ...(retainMissingOpenCodeMetadata
       ? {
-          slashCommands:
-            nextProvider.slashCommands.length === 0
-              ? previousProvider.slashCommands
-              : nextProvider.slashCommands,
           skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
         }
       : {}),
