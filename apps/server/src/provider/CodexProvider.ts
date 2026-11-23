@@ -1009,15 +1009,6 @@ function accountProbeStatus(
   return { status: "ready", auth };
 }
 
-const CODEX_PROBE_FAILED_PREFIX = "Codex app-server provider probe failed: ";
-
-/** The CLI spawned but neither the probe nor `codex --version` ran, e.g. its launcher lacks node. */
-export const isCodexLaunchFailure = (provider: ServerProvider): boolean =>
-  provider.installed &&
-  provider.status === "error" &&
-  provider.version === null &&
-  provider.message?.startsWith(CODEX_PROBE_FAILED_PREFIX) === true;
-
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
@@ -1104,7 +1095,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: installed
-          ? `${CODEX_PROBE_FAILED_PREFIX}${error.message}.`
+          ? `Codex app-server provider probe failed: ${error.message}.`
           : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
             (codexSettings.binaryPath === "codex"
               ? " Installing ChatGPT or Codex desktop may not add codex to PATH."

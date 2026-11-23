@@ -1809,17 +1809,12 @@ it.layer(
       "replay",
       "in-flight missing",
       "in-flight installed",
-      "launcher",
-      "codex timeout",
-      "other error",
+      "installed error",
     ] as const)("recovers a copied driver environment after late PATH (%s)", (mode) =>
       Effect.gen(function* () {
-        // "launcher": the Codex CLI is found on the early PATH, but its check fails until the
-        // late PATH brings the node its npm launcher runs. "other error" is the same failure on a
-        // driver whose errors may be auth or network, so it must not be rebuilt. "codex timeout" is a
-        // Codex error other than a launcher failure, which must not be rebuilt either.
-        const failsEarly =
-          mode === "launcher" || mode === "codex timeout" || mode === "other error";
+        // "installed error": the CLI is found on the early PATH but its check fails until the late
+        // PATH. Installed instances may hold live sessions, so it must not be rebuilt.
+        const failsEarly = mode === "installed error";
         const replay = mode === "replay" || failsEarly;
         const host = { PATH: "/early/bin", T3CODE_CODEX_LAUNCH_ARGS: "hidden" };
         const environment = providerHostEnvironment(
@@ -1835,9 +1830,7 @@ it.layer(
         const finished = yield* Deferred.make<void>();
         const paths: Array<string | undefined> = [];
         let first = true;
-        const driverKind = ProviderDriverKind.make(
-          mode === "launcher" || mode === "codex timeout" ? "codex" : "pi",
-        );
+        const driverKind = ProviderDriverKind.make("pi");
         const instanceId = ProviderInstanceId.make("late-path");
         const driver: AnyProviderDriver = {
           driverKind,
@@ -1893,10 +1886,7 @@ it.layer(
                       ...(ready
                         ? {}
                         : {
-                            message:
-                              mode === "codex timeout"
-                                ? "Timed out while checking Codex app-server provider status."
-                                : "Codex app-server provider probe failed: transport failed.",
+                            message: "Provider probe failed: transport failed.",
                           }),
                     };
                     yield* Ref.set(current, checked);
@@ -1956,7 +1946,7 @@ it.layer(
             (yield* registry.getProviders).find((row) => row.instanceId === instanceId)?.installed,
           ).toBe(true);
           expect(paths).toEqual(
-            mode === "in-flight installed" || mode === "codex timeout" || mode === "other error"
+            mode === "in-flight installed" || mode === "installed error"
               ? ["/early/bin"]
               : ["/early/bin", "/early/bin:/late/bin"],
           );

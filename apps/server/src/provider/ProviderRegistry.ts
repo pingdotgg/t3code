@@ -54,7 +54,6 @@ import {
   latestProviderVersionCacheKeys,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
-import { isCodexLaunchFailure } from "./CodexProvider.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -78,9 +77,8 @@ export class ProviderRegistry extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
-     * Rebuilds and re-checks enabled instances not yet found installed, plus Codex CLIs that cannot run,
-     * after the host environment changed. Drivers copy the environment when built, so only a rebuild
-     * sees a later PATH.
+     * Rebuilds and re-checks enabled instances not yet found installed after the host environment
+     * changed. Drivers copy the environment when built, so only a rebuild sees a later PATH.
      */
     readonly rebuildMissingAndRefresh: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
@@ -864,9 +862,7 @@ export const layer = Layer.effect(
       return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
     });
 
-    // Instances whose check passed keep running; restarting them could end live sessions. A Codex
-    // CLI that spawns but cannot run (its npm launcher lacks node) is rebuilt too. Auth, network,
-    // and timeout errors are not, since a rebuild would close their sessions.
+    // Only instances whose CLI was not found are rebuilt; installed ones may have live sessions.
     const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
       const instances = yield* instanceRegistry.listInstances;
       yield* refresh().pipe(Effect.catchCause(recoverRefreshFailure));
@@ -880,11 +876,7 @@ export const layer = Layer.effect(
           )
             return false;
           const snapshot = yield* instance.snapshot.getSnapshot;
-          return (
-            !snapshot.installed ||
-            (instance.driverKind === ProviderDriverKind.make("codex") &&
-              isCodexLaunchFailure(snapshot))
-          );
+          return !snapshot.installed;
         }),
       );
       if (missing.length === 0) return yield* Ref.get(providersRef);
