@@ -164,7 +164,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   const pending = new Set<Job>();
   let closed = false;
   let servings = 0;
-  // Writes in `barrier` that have not finished; they wait on the batch or the writer it holds.
+  // Writes in `barrier` past their own snapshots; only these wait on the writer a batch holds.
   let waitingWriters = 0;
   const shutdown = Effect.gen(function* () {
     closed = true;
@@ -393,17 +393,13 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   ) {
     if (closed) return yield* Effect.interrupt;
     if (!enabled || (yield* CurrentWorker) === (yield* Effect.fiberId)) return yield* effect;
+    for (const job of Array.from(pending)) {
+      if (threadIds === undefined || threadIds.includes(job.threadId)) yield* job.settled;
+    }
+    if (closed) return yield* Effect.interrupt;
     return yield* Effect.uninterruptibleMask((restore) => {
       waitingWriters++;
-      return restore(
-        Effect.gen(function* () {
-          for (const job of Array.from(pending)) {
-            if (threadIds === undefined || threadIds.includes(job.threadId)) yield* job.settled;
-          }
-          if (closed) return yield* Effect.interrupt;
-          return yield* effect;
-        }),
-      ).pipe(
+      return restore(effect).pipe(
         Effect.ensuring(
           Effect.sync(() => {
             waitingWriters--;
