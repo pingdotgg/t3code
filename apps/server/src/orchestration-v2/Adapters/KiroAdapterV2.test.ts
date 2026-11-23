@@ -512,6 +512,46 @@ describe("KiroAdapterV2", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("reports Kiro's context_usage percentage as the thread's context usage", () =>
+    runKiroScript({
+      scenario: "context-usage",
+      model: "claude-sonnet-4.5",
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, kiroModelOption("claude-sonnet-4.5"), autopilotOption("on")],
+        }),
+        turnPrompt,
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+        // Kiro CLI 3.5.0 reports context usage only as this info update.
+        update({
+          sessionUpdate: "session_info_update",
+          _meta: {
+            kiro: {
+              kind: "context_usage",
+              usagePercentage: 9.38,
+              contextUsage: { usagePercentage: 9.38 },
+            },
+          },
+        }),
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          const turn = yield* collectTurn(events);
+          assert.equal(terminalStatus(turn), "completed");
+          const usage = turn.flatMap((event) =>
+            "providerThread" in event && event.providerThread.contextUsage
+              ? [event.providerThread.contextUsage]
+              : [],
+          );
+          assert.isNotEmpty(usage, "Kiro's context_usage must reach providerThread.contextUsage");
+        }),
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("switches back to Kiro's default model after a named one", () =>
     runKiroScript({
       scenario: "default-after-named",
