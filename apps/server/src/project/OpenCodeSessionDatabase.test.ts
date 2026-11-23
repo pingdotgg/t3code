@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - fixture databases are created with the native sqlite driver on real temp files.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -52,16 +53,18 @@ describe("readOpenCodeSessions", () => {
     `);
     db.close();
 
-    expect(readOpenCodeSessions(file)).toMatchObject([{
-      providerSessionId: "ses_v2",
-      directory: "/workspace",
-      title: "V2 session",
-      model: "openai/gpt-6",
-      messages: [
-        { role: "user", text: "Hello" },
-        { role: "assistant", text: "Hi there" },
-      ],
-    }]);
+    expect(readOpenCodeSessions(file)).toMatchObject([
+      {
+        providerSessionId: "ses_v2",
+        directory: "/workspace",
+        title: "V2 session",
+        model: "openai/gpt-6",
+        messages: [
+          { role: "user", text: "Hello" },
+          { role: "assistant", text: "Hi there" },
+        ],
+      },
+    ]);
   });
 
   it("reads legacy V1 message and text-part rows", () => {
@@ -83,11 +86,13 @@ describe("readOpenCodeSessions", () => {
     `);
     db.close();
 
-    expect(readOpenCodeSessions(file)).toMatchObject([{
-      providerSessionId: "ses_v1",
-      directory: "/legacy",
-      messages: [{ role: "user", text: "Legacy hello" }],
-    }]);
+    expect(readOpenCodeSessions(file)).toMatchObject([
+      {
+        providerSessionId: "ses_v1",
+        directory: "/legacy",
+        messages: [{ role: "user", text: "Legacy hello" }],
+      },
+    ]);
   });
 
   it("prefers V2 and safely ignores an unrelated database", () => {

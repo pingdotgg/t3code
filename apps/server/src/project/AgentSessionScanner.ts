@@ -1714,35 +1714,41 @@ export const make = Effect.gen(function* () {
     return { transcripts, truncated, operationsUsed: operationBudget - operationsRemaining };
   });
 
-  const discoverOpenCodeTranscripts = Effect.fn("AgentSessionScanner.discoverOpenCodeTranscripts")(function* (
-    databasePath: string,
-    providerInstanceId: ProviderInstanceId,
-    operationBudget: number,
-  ) {
-    if (operationBudget <= 0) return { transcripts: [], truncated: true, operationsUsed: 0 };
-    const stats = yield* statOption(databasePath);
-    if (Option.isNone(stats) || stats.value.type !== "File" || Option.isNone(stats.value.mtime)) {
-      return { transcripts: [], truncated: false, operationsUsed: 1 };
-    }
-    const identity = transcriptIdentity(databasePath, stats.value);
-    const sessions = yield* Effect.try({
-      try: () => readOpenCodeSessions(databasePath),
-      catch: () => [],
-    }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<OpenCodeSession>));
-    const transcripts: Array<TranscriptCandidate> = sessions.flatMap((session) => {
-      const mtimeMs = Date.parse(session.updatedAt);
-      return Number.isFinite(mtimeMs) && session.messages.length > 0 ? [{
-        filePath: databasePath,
-        mtimeMs,
-        providerInstanceId,
-        homePath: databasePath,
-        identity,
-        providerSessionId: session.providerSessionId,
-        openCodeSession: session,
-      }] : [];
-    });
-    return { transcripts, truncated: false, operationsUsed: 1 };
-  });
+  const discoverOpenCodeTranscripts = Effect.fn("AgentSessionScanner.discoverOpenCodeTranscripts")(
+    function* (
+      databasePath: string,
+      providerInstanceId: ProviderInstanceId,
+      operationBudget: number,
+    ) {
+      if (operationBudget <= 0) return { transcripts: [], truncated: true, operationsUsed: 0 };
+      const stats = yield* statOption(databasePath);
+      if (Option.isNone(stats) || stats.value.type !== "File" || Option.isNone(stats.value.mtime)) {
+        return { transcripts: [], truncated: false, operationsUsed: 1 };
+      }
+      const identity = transcriptIdentity(databasePath, stats.value);
+      const sessions = yield* Effect.try({
+        try: () => readOpenCodeSessions(databasePath),
+        catch: () => [],
+      }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<OpenCodeSession>));
+      const transcripts: Array<TranscriptCandidate> = sessions.flatMap((session) => {
+        const mtimeMs = Date.parse(session.updatedAt);
+        return Number.isFinite(mtimeMs) && session.messages.length > 0
+          ? [
+              {
+                filePath: databasePath,
+                mtimeMs,
+                providerInstanceId,
+                homePath: databasePath,
+                identity,
+                providerSessionId: session.providerSessionId,
+                openCodeSession: session,
+              },
+            ]
+          : [];
+      });
+      return { transcripts, truncated: false, operationsUsed: 1 };
+    },
+  );
 
   const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
     source: AgentSessionSource,
@@ -1768,16 +1774,17 @@ export const make = Effect.gen(function* () {
       // Unchanged imported transcripts keep their import cwd, so they never spend the read budget.
       // Codex is excluded: its first record carries the cwd and the subagent marker, and
       // rollouts imported before subagents were skipped must still be excluded by it.
-      const rolloutCwd = source === "opencode"
-        ? transcript.openCodeSession?.directory ?? null
-        : (source === "codex"
-            ? undefined
-            : importedByFile.get(`${transcript.providerInstanceId}\0${transcript.filePath}`)
-          )?.find(
-            (imported) =>
-              imported.source.provider === source &&
-              sameTranscriptIdentity(imported.source, transcript.identity),
-          )?.cwd ?? (yield* readCwd(source, transcript, budget));
+      const rolloutCwd =
+        source === "opencode"
+          ? (transcript.openCodeSession?.directory ?? null)
+          : ((source === "codex"
+              ? undefined
+              : importedByFile.get(`${transcript.providerInstanceId}\0${transcript.filePath}`)
+            )?.find(
+              (imported) =>
+                imported.source.provider === source &&
+                sameTranscriptIdentity(imported.source, transcript.identity),
+            )?.cwd ?? (yield* readCwd(source, transcript, budget)));
       if (rolloutCwd === null || rolloutCwd === false) continue;
       const cwd = projectCwd(rolloutCwd, transcript.projectRoots);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
@@ -1888,25 +1895,27 @@ export const make = Effect.gen(function* () {
                     // keep their database in the XDG location under the user's home.
                     path.join(homeDir, ".local", "share", "opencode"),
                   ]
-                : [path.join(environment.XDG_DATA_HOME?.trim() || path.join(homeDir, ".local", "share"), "opencode")];
+                : [
+                    path.join(
+                      environment.XDG_DATA_HOME?.trim() || path.join(homeDir, ".local", "share"),
+                      "opencode",
+                    ),
+                  ];
           homePaths = dataDirectories.map((directory) => path.join(directory, "opencode.db"));
         } else if (source === "pi") {
           const environment = yield* mergeProviderInstanceEnvironment(
             instance.environment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
-          homePaths = [resolvePiSessionsDir(
-            environment,
-            piHome(environment, homeDir, platform),
-            path,
-          )];
+          homePaths = [
+            resolvePiSessionsDir(environment, piHome(environment, homeDir, platform), path),
+          ];
         } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
-          homePaths = [resolveClaudeConfigDir(
-            config.value.homePath,
-            environmentHome("CLAUDE_CONFIG_DIR"),
-          )];
+          homePaths = [
+            resolveClaudeConfigDir(config.value.homePath, environmentHome("CLAUDE_CONFIG_DIR")),
+          ];
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
@@ -2271,7 +2280,8 @@ export const make = Effect.gen(function* () {
             (source) =>
               source.provider === candidate.source &&
               sameTranscriptIdentity(source, identity) &&
-              (candidate.source !== "opencode" || source.providerSessionId === transcript.providerSessionId),
+              (candidate.source !== "opencode" ||
+                source.providerSessionId === transcript.providerSessionId),
           );
           if (completedSource !== undefined) {
             const sessionKey = `${completedSource.providerInstanceId}\0${completedSource.providerSessionId}`;
@@ -2282,9 +2292,11 @@ export const make = Effect.gen(function* () {
               source: completedSource,
             });
           }
-          const transcriptBytes = transcript.openCodeSession === undefined
-            ? identity.size
-            : Buffer.byteLength(JSON.stringify(transcript.openCodeSession.messages));
+          const transcriptBytes =
+            transcript.openCodeSession === undefined
+              ? identity.size
+              : // @effect-diagnostics-next-line globalJsonInEffect:off - messages hold validated plain strings; the encoding is a non-throwing budget heuristic.
+                Buffer.byteLength(JSON.stringify(transcript.openCodeSession.messages));
           if (
             transcriptsRemaining === 0 ||
             transcriptBytes > MAX_IMPORTED_TRANSCRIPT_BYTES ||
@@ -2294,15 +2306,16 @@ export const make = Effect.gen(function* () {
           }
           transcriptsRemaining -= 1;
           bytesRemaining -= transcriptBytes;
-          const snapshot = transcript.openCodeSession === undefined
-            ? yield* readTranscript(transcript.filePath, identity, candidate.source)
-            : {
-                records: [],
-                cwd: Option.some(transcript.openCodeSession.directory),
-                claudeFields: emptyClaudeFields,
-                droppedMessageCount: 0,
-                historyBytes: transcriptBytes,
-              };
+          const snapshot =
+            transcript.openCodeSession === undefined
+              ? yield* readTranscript(transcript.filePath, identity, candidate.source)
+              : {
+                  records: [],
+                  cwd: Option.some(transcript.openCodeSession.directory),
+                  claudeFields: emptyClaudeFields,
+                  droppedMessageCount: 0,
+                  historyBytes: transcriptBytes,
+                };
           if (snapshot === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
@@ -2327,36 +2340,40 @@ export const make = Effect.gen(function* () {
                   snapshot.historyBytes,
                 )
               : null;
-          const parsedThread = transcript.openCodeSession === undefined
-            ? parseAgentSessionRecords(
-                {
+          const parsedThread =
+            transcript.openCodeSession === undefined
+              ? parseAgentSessionRecords(
+                  {
+                    source: candidate.source,
+                    providerInstanceId: candidate.providerInstanceId,
+                    fallbackSessionId: path.basename(
+                      transcript.filePath,
+                      isCompressedTranscript(transcript.filePath)
+                        ? COMPRESSED_TRANSCRIPT_SUFFIX
+                        : ".jsonl",
+                    ),
+                    lastActiveAtMs: transcript.mtimeMs,
+                  },
+                  inheritedRecords === null
+                    ? snapshot.records
+                    : [...inheritedRecords, ...snapshot.records],
+                  snapshot.claudeFields,
+                  snapshot.droppedMessageCount,
+                )
+              : {
                   source: candidate.source,
                   providerInstanceId: candidate.providerInstanceId,
-                  fallbackSessionId: path.basename(
-                    transcript.filePath,
-                    isCompressedTranscript(transcript.filePath)
-                      ? COMPRESSED_TRANSCRIPT_SUFFIX
-                      : ".jsonl",
+                  providerSessionId: transcript.openCodeSession.providerSessionId,
+                  title: transcript.openCodeSession.title,
+                  model: transcript.openCodeSession.model,
+                  createdAt: transcript.openCodeSession.createdAt,
+                  updatedAt: transcript.openCodeSession.updatedAt,
+                  messages: transcript.openCodeSession.messages.slice(-MAX_IMPORTED_MESSAGES),
+                  omittedMessageCount: Math.max(
+                    0,
+                    transcript.openCodeSession.messages.length - MAX_IMPORTED_MESSAGES,
                   ),
-                  lastActiveAtMs: transcript.mtimeMs,
-                },
-                inheritedRecords === null
-                  ? snapshot.records
-                  : [...inheritedRecords, ...snapshot.records],
-                snapshot.claudeFields,
-                snapshot.droppedMessageCount,
-              )
-            : {
-                source: candidate.source,
-                providerInstanceId: candidate.providerInstanceId,
-                providerSessionId: transcript.openCodeSession.providerSessionId,
-                title: transcript.openCodeSession.title,
-                model: transcript.openCodeSession.model,
-                createdAt: transcript.openCodeSession.createdAt,
-                updatedAt: transcript.openCodeSession.updatedAt,
-                messages: transcript.openCodeSession.messages.slice(-MAX_IMPORTED_MESSAGES),
-                omittedMessageCount: Math.max(0, transcript.openCodeSession.messages.length - MAX_IMPORTED_MESSAGES),
-              };
+                };
           if (parsedThread === "empty") {
             // null means an unreadable history base, which may hold the conversation.
             if (candidate.source === "codex" && inheritedRecords === null) {
