@@ -811,6 +811,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly replyToReviewThread: (input: {
@@ -3119,6 +3120,7 @@ export const make = Effect.gen(function* () {
             verdict: input.verdict,
             body: input.body,
             comments: input.comments,
+            expectedHeadSha: input.expectedHeadSha,
           }),
         })
         .pipe(Effect.asVoid);

@@ -6849,6 +6849,8 @@
   "45674081908ac8aa": "已复制检出工作副本的命令",
   "d2970574ef7860d0": "复制 {term, select, mr {MR} cr {change request} other {PR}} 分支",
   "45c92416a82cf22c": "已复制分支名称",
+  "43a18c0bc37988f4": "有新的提交被推送。合并或评审仍针对 {sha}。",
+  "c930a7ffa49054f0": "加载新提交",
   "63e533a9db74e8dc": "检查",
   "4f7ca990d538a8bc": "评论不可用",
   "95601ce075194611": "{count, plural, other {{formatted} 条评论}}",

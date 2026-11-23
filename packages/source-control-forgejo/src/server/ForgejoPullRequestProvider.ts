@@ -622,7 +622,7 @@ export const make = Effect.gen(function* () {
                 ? "REQUEST_CHANGES"
                 : "COMMENT",
           body: input.body,
-          commit_id: pr.head.sha,
+          commit_id: input.expectedHeadSha ?? pr.head.sha,
           comments: input.comments.map((comment) => {
             const position = comment.position;
             const old =
