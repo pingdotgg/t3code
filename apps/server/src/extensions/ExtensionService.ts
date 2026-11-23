@@ -6,6 +6,7 @@ import {
   EXTENSION_DEVELOPMENT_SKILL,
   EXTENSION_DEVELOPMENT_REFERENCE,
 } from "@t3tools/provider-core/server/extensionDevelopmentSkill";
+import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 import { ExtensionError, type ExtensionInfo, type ExtensionInvokeInput } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -63,12 +64,13 @@ export const layer = (host: HostCallbacks) =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fs = yield* FileSystem.FileSystem;
-      const skillDirectory = `${config.stateDir}/skills/t3-extension-development`;
+      const path = yield* Path.Path;
+      const skillDirectory = path.join(config.stateDir, "skills", "t3-extension-development");
       yield* fs.makeDirectory(skillDirectory, { recursive: true });
-      const skillPath = `${skillDirectory}/SKILL.md`;
+      const skillPath = path.join(skillDirectory, "SKILL.md");
       yield* fs.writeFileString(skillPath, EXTENSION_DEVELOPMENT_SKILL);
-      yield* fs.makeDirectory(`${skillDirectory}/references`, { recursive: true });
-      const referencePath = `${skillDirectory}/references/api.md`;
+      yield* fs.makeDirectory(path.join(skillDirectory, "references"), { recursive: true });
+      const referencePath = path.join(skillDirectory, "references", "api.md");
       yield* fs.writeFileString(referencePath, EXTENSION_DEVELOPMENT_REFERENCE);
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const initialized = yield* Deferred.make<void, ExtensionError>();

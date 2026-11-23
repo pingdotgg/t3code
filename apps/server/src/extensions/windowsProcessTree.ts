@@ -30,7 +30,7 @@ export function ownWindowsProcessTree(pid: number): () => void {
       funcName: "SetInformationJobObject",
       retType: DataType.I32,
       paramsType: [DataType.BigInt, DataType.I32, DataType.U8Array, DataType.U32],
-      paramsValue: [job, 9, [...limits], limits.length],
+      paramsValue: [job, 9, limits, limits.length],
     });
     if (!configured) throw new Error("Could not configure extension process cleanup.");
     const child = load({

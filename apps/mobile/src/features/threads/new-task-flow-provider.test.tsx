@@ -271,7 +271,7 @@ function setup() {
         ),
       );
       // The draft screen applies a project whenever it shows without a draft.
-      if (active && current.draftKey === null) {
+      if (active && !options?.routeDraftId && current.draftKey === null) {
         await act(async () => current.setProject(projects[0]!));
       }
     },

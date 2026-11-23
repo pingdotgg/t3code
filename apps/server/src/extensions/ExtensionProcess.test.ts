@@ -102,7 +102,13 @@ it.live("cancels nested service calls and closes helper processes on stop and cr
           if (typeof pid !== "number") throw new Error("Missing spawned helper PID.");
           helperPids.push(pid);
           const [socket] = (await connected) as [NodeNet.Socket];
-          const closed = NodeEvents.EventEmitter.once(socket, "close");
+          // Windows can reset the socket when the job terminates its owner.
+          const closed = new Promise<void>((resolve, reject) => {
+            socket.once("close", () => resolve());
+            socket.on("error", (error: NodeJS.ErrnoException) => {
+              if (error.code !== "ECONNRESET") reject(error);
+            });
+          });
           socket.resume();
           if (ending === "stop") await host.stop();
           else

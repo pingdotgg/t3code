@@ -60,6 +60,7 @@ vi.mock("../../native/T3KeyboardCommands", () => ({ T3KeyboardCommands: Wrap }))
 vi.mock("../../state/entities", () => ({
   useProjects: () => [],
   useVisibleThreadShells: () => [],
+  useDelegatedUnderParent: () => new Set(),
   useThreadShell: () => null,
   useServerConfigs: () =>
     new Map(
@@ -73,6 +74,7 @@ vi.mock("../../state/queries", () => ({
   useThreadSearch: () => ({ matches: [], query: "", isPending: false }),
 }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: {} } }));
+vi.mock("../threads/useCanShareWithGuest", () => ({ useCanShareWithGuest: () => false }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { prepareTriage: { permissionAtom: () => ({}) } },
 }));
