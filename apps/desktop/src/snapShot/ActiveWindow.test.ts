@@ -114,6 +114,18 @@ it.each([
     },
   },
   {
+    name: "the window-sharing indicator shown during a ScreenCaptureKit window share",
+    helpers: [
+      { id: 90, title: "Window", bounds: { x: 1_400, y: 6, width: 66, height: 20 } },
+      { id: 91, title: "", bounds: { x: 0, y: 0, width: 1_512, height: 32 }, alpha: 0 },
+    ],
+    content: {
+      id: 92,
+      title: "T3 Code (Nightly)",
+      bounds: { x: 0, y: 33, width: 1_512, height: 949 },
+    },
+  },
+  {
     name: "a smaller front window's strips with a larger background window",
     helpers: [
       { id: 75, title: "", bounds: { x: 100, y: 139, width: 1_200, height: 41 } },
