@@ -28,7 +28,7 @@ export function SettingsDisclosureHeader({
           render={
             <button
               type="button"
-              className="absolute inset-0 rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="absolute inset-0 rounded-[inherit] outline-none focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:forced-colors:-outline-offset-2"
             />
           }
         />
