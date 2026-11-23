@@ -32,6 +32,16 @@ const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
 const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
+/** How long a screenshot of an undrawn guest waits for its finite animations to finish. */
+const CAPTURE_SETTLE_WAIT = "1 second";
+/** Two frames start pending animations; then the finite ones that run finish. */
+const SETTLE_ANIMATIONS = `new Promise((done) => {
+  setTimeout(done, 1000);
+  const frame = () => new Promise((next) => requestAnimationFrame(next));
+  frame().then(frame).then(() => Promise.all(document.getAnimations()
+    .filter((a) => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime))
+    .map((a) => a.finished.catch(() => {})))).then(frame).then(done, done);
+}).then(() => 0)`;
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
 const ERR_ABORTED = -3;
@@ -291,13 +301,38 @@ export const make = Effect.gen(function* () {
       runFork(Effect.sleep(CAPTURE_DRAW_WAIT).pipe(Effect.andThen(Effect.sync(done))));
     });
 
+  /**
+   * An undrawn guest defers its animations, so they only start once the capture makes it draw.
+   * The page settles before the capture; a page that cannot answer only delays it.
+   */
+  const settleAnimations = (tab: AttachedTab) =>
+    new Promise<void>((resolve) => {
+      runFork(Effect.sleep(CAPTURE_SETTLE_WAIT).pipe(Effect.andThen(Effect.sync(resolve))));
+      tab.debuggee.debugger
+        .sendCommand("Runtime.evaluate", {
+          expression: SETTLE_ANIMATIONS,
+          awaitPromise: true,
+          returnByValue: true,
+        })
+        .then(
+          () => resolve(),
+          () => resolve(),
+        );
+    });
+
   /** Chromium answers a capture, and frees its wake lock, only once the guest paints a frame. */
   const paintUntilAnswered = <A>(tab: AttachedTab, send: () => Promise<A>) => {
     const sent = {};
     tab.capturing.add(sent);
     syncPainting(tab);
     // Sent at once when already drawn, so it keeps its place among the commands after it.
-    return (drawnTabs.has(keyOf(tab.key)) ? send() : whenDrawn(tab).then(send)).finally(() => {
+    return (
+      drawnTabs.has(keyOf(tab.key))
+        ? send()
+        : whenDrawn(tab)
+            .then(() => settleAnimations(tab))
+            .then(send)
+    ).finally(() => {
       tab.capturing.delete(sent);
       syncPainting(tab);
     });
