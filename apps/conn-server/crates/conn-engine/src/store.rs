@@ -616,8 +616,9 @@ impl Store {
         };
         let mut projection = serde_json::Map::new();
         projection.insert("thread".into(), thread.clone());
+        // Nodes and provider turns grow with every turn; a window reads its cohort's only.
         for kind in COLLECTIONS {
-            if kind != "turnItems" && kind != "messages" {
+            if !matches!(kind, "turnItems" | "messages" | "nodes" | "providerTurns") {
                 projection.insert(
                     kind.into(),
                     Value::Array(entities(&self.conn, thread_id, kind)?),
@@ -688,6 +689,29 @@ impl Store {
             .collect();
         let window = history::select_window(&control, &index, &dependencies, sequence);
         drop(index);
+        let mut control = control;
+        let cohort = history::cohort_runs(&control, &window.rows);
+        history::keep_cohort(&mut control, &cohort);
+        let attempts: Vec<Value> = control["attempts"]
+            .as_array()
+            .map(|rows| rows.iter().map(|a| a["id"].clone()).collect())
+            .unwrap_or_default();
+        let nodes = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'nodes' AND (
+               json_extract(body, '$.runId') IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.status') IN ('pending', 'starting', 'running', 'waiting'))
+             ORDER BY first_seq",
+            params![thread_id, Value::from(cohort).to_string()],
+        )?;
+        let provider_turns = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'providerTurns' AND (
+               json_extract(body, '$.runAttemptId') IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.status') IN ('starting', 'running', 'waiting'))
+             ORDER BY first_seq",
+            params![thread_id, Value::from(attempts).to_string()],
+        )?;
+        control["nodes"] = Value::Array(nodes);
+        control["providerTurns"] = Value::Array(provider_turns);
         let rows = self.materialize_rows(window.rows)?;
         let turn_items = history::window_turn_items(&control["thread"]["id"], &rows, dependencies);
         let (message_ids, run_ids) = history::message_scope(&control, &turn_items);

@@ -523,6 +523,56 @@ pub(crate) fn select_window(
     })
 }
 
+/// The runs a window keeps (T3's cohort): those of its rows, the live ones and the latest.
+pub(crate) fn cohort_runs(control: &Value, rows: &[Value]) -> Vec<String> {
+    let runs = array(&control["runs"]);
+    let latest = runs
+        .iter()
+        .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
+        .and_then(|run| run["id"].as_str());
+    let live = runs.iter().filter(|run| {
+        matches!(
+            run["status"].as_str(),
+            Some("queued" | "preparing" | "starting" | "running" | "waiting")
+        )
+    });
+    let mut seen = HashSet::new();
+    rows.iter()
+        .filter_map(|row| row["item"]["runId"].as_str())
+        .chain(latest)
+        .chain(live.filter_map(|run| run["id"].as_str()))
+        .filter(|id| seen.insert(*id))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Narrows the run records to the cohort, as T3's windowed reads do: the runs, attempts and
+/// checkpoints of cohort runs, and any attempt still at work.
+pub(crate) fn keep_cohort(control: &mut Value, cohort: &[String]) {
+    let keep = |run: &Value| {
+        run.as_str()
+            .is_some_and(|id| cohort.iter().any(|c| c == id))
+    };
+    let retain = |control: &mut Value, kind: &str, rule: &dyn Fn(&Value) -> bool| {
+        if let Some(rows) = control[kind].as_array_mut() {
+            rows.retain(|row| rule(row));
+        }
+    };
+    retain(control, "runs", &|run| keep(&run["id"]));
+    retain(control, "attempts", &|attempt| {
+        keep(&attempt["runId"])
+            || matches!(
+                attempt["status"].as_str(),
+                Some("pending" | "starting" | "running" | "waiting")
+            )
+    });
+    for kind in ["checkpoints", "checkpointScopes"] {
+        retain(control, kind, &|row| {
+            row["runId"].is_null() || keep(&row["runId"])
+        });
+    }
+}
+
 /// The message ids and run ids whose messages a bounded projection keeps
 /// (`messagesForBoundedProjection`), for the store to read.
 pub(crate) fn message_scope(control: &Value, turn_items: &[Value]) -> (Vec<String>, Vec<String>) {

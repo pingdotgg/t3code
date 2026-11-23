@@ -5904,6 +5904,14 @@ async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
     let view = next(&mut bounded).await;
     let window = users(&view["projection"]["visibleTurnItems"]);
     assert_eq!(window.len(), 10);
+    // T3's cohort: only the window's runs travel, with their attempts and nodes.
+    for kind in ["runs", "attempts", "nodes"] {
+        assert_eq!(
+            view["projection"][kind].as_array().unwrap().len(),
+            10,
+            "{kind}"
+        );
+    }
     assert_eq!(view["hasMoreHistory"], true);
     // Turns appended while the view is open do not move the cursor: the page still ends
     // right before the window, so window, page and new turns cover every turn once.
