@@ -75,6 +75,7 @@ import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as LoopbackTunnel from "../preview/LoopbackTunnel.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as AppleSpeech from "../speech/AppleSpeech.ts";
+import * as DesktopAppleIntents from "../intents/DesktopAppleIntents.ts";
 
 interface StubbedDesktop {
   readonly localEnvironmentEnabled: boolean;
@@ -235,6 +236,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           Layer.mock(ElectronWindow.ElectronWindow, {}),
           Layer.mock(MacPermissions.MacPermissions, {}),
           Layer.mock(AppleSpeech.AppleSpeech, {}),
+          Layer.mock(DesktopAppleIntents.DesktopAppleIntents, {}),
           Layer.mock(LoopbackTunnel.LoopbackTunnel, {}),
           Layer.mock(PreviewManager.PreviewManager, {
             isBrowserPartition: () => {

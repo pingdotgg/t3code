@@ -999,6 +999,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/apple-speech",
   "!apps/desktop/prod-resources/apple-speech/**/*",
+  "!apps/desktop/prod-resources/apple-intents",
+  "!apps/desktop/prod-resources/apple-intents/**/*",
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
@@ -1123,6 +1125,9 @@ export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
 ] as const;
 export const MAC_APPLE_SPEECH_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/apple-speech", to: "apple-speech" },
+] as const;
+export const MAC_APPLE_INTENTS_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/apple-intents/host", to: "apple-intents" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -1385,6 +1390,10 @@ export function renderMacPasskeyEntitlements(
     <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
     <key>com.apple.developer.team-identifier</key>
     <string>${escapeXml(configuration.teamId)}</string>
+    <key>com.apple.security.application-groups</key>
+    <array>
+      <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
+    </array>
     <key>com.apple.developer.associated-domains</key>
     <array>
 ${associatedDomains}
@@ -2500,6 +2509,31 @@ export const stageAppleSpeech = Effect.fn("stageAppleSpeech")(function* (input: 
   );
 });
 
+export const stageAppleIntents = Effect.fn("stageAppleIntents")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") return;
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      "node",
+      [
+        path.join(input.repoRoot, "apps/desktop/scripts/build-apple-intents.mjs"),
+        "--arch",
+        input.arch,
+        "--outputDir",
+        path.join(input.stageResourcesDir, "apple-intents"),
+      ],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build macOS Apple Intents extension", verbose: input.verbose },
+  );
+});
+
 const generateMacIconSet = Effect.fn("build-desktop-artifact.generateMacIconSet")(function* (
   sourcePng: string,
   targetIcns: string,
@@ -2845,6 +2879,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "mac" ? MAC_APPLE_SPEECH_EXTRA_RESOURCES : []),
+      ...(platform === "mac" ? MAC_APPLE_INTENTS_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -2894,6 +2929,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "T3 Code lets commands run by terminals and coding agents control other apps.",
         NSSpeechRecognitionUsageDescription:
           "T3 Code transcribes your dictation on this Mac when you choose Apple Speech.",
+        NSUserActivityTypes: ["com.t3tools.t3code.view-thread", "com.t3tools.t3code.view-project"],
+        T3AppGroupIdentifier: "ARK85ZXQ4Z.com.t3tools.t3code",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
@@ -3878,6 +3915,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     verbose: options.verbose,
   });
   yield* stageAppleSpeech({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
+  yield* stageAppleIntents({
     repoRoot,
     stageResourcesDir,
     platform: options.platform,

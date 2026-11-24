@@ -1,0 +1,192 @@
+import AppIntents
+import CryptoKit
+import Foundation
+import Testing
+@testable import T3IntentsCore
+
+private final class MockEnvironmentClient: T3EnvironmentOperating, @unchecked Sendable {
+  var lastLaunched: (environmentId: String, projectId: String, title: String?, message: String?, mode: String)?
+  var lastMessage: (environmentId: String, threadId: String, text: String, mode: String)?
+  var lastCommand: (environmentId: String, payload: [String: AnySendable])?
+
+  func launchThread(
+    environmentId: String,
+    projectId: String,
+    title: String?,
+    message: String?,
+    interactionMode: String
+  ) async throws -> T3LaunchThreadResponse {
+    lastLaunched = (environmentId, projectId, title, message, interactionMode)
+    return T3LaunchThreadResponse(
+      threadId: "thread-new",
+      projectId: projectId,
+      title: title ?? "Started Task",
+      resumed: false,
+      sequence: 12
+    )
+  }
+
+  func sendMessage(
+    environmentId: String,
+    threadId: String,
+    text: String,
+    mode: String
+  ) async throws -> T3SendMessageResponse {
+    lastMessage = (environmentId, threadId, text, mode)
+    return T3SendMessageResponse(
+      threadId: threadId,
+      messageId: "msg-1",
+      runId: "run-1",
+      delivery: "steered"
+    )
+  }
+
+  func dispatchCommand(
+    environmentId: String,
+    payload: [String: AnySendable]
+  ) async throws -> T3DispatchCommandResponse {
+    lastCommand = (environmentId, payload)
+    return T3DispatchCommandResponse(sequence: 42)
+  }
+}
+
+private final class InMemoryCredentials: T3CredentialProviding, @unchecked Sendable {
+  private var records: [String: T3AuthCredentialRecord] = [:]
+
+  func credential(for environmentId: String) -> T3AuthCredentialRecord? {
+    records[environmentId]
+  }
+
+  func saveCredentials(_ credentials: [T3AuthCredentialRecord]) {
+    for record in credentials {
+      records[record.environmentId] = record
+    }
+  }
+
+  func removeCredential(for environmentId: String) {
+    records.removeValue(forKey: environmentId)
+  }
+
+  func clearAllCredentials() {
+    records.removeAll()
+  }
+}
+
+private func makeTempStore() -> T3IndexStore {
+  let dir = FileManager.default.temporaryDirectory
+    .appendingPathComponent("t3-intents-tests-\(UUID().uuidString)", isDirectory: true)
+  return T3IndexStore(databaseURL: dir.appendingPathComponent("index.sqlite"))
+}
+
+@Suite("T3IntentsCore")
+struct T3IntentsCoreTests {
+  @Test("Applies deltas, searches projects and threads, and cascades environment removal")
+  func storeDeltaAndCascadeDelete() throws {
+    let store = makeTempStore()
+    let env = T3EnvironmentRecord(
+      id: "env-1",
+      label: "Mac Studio",
+      httpBaseUrl: "http://127.0.0.1:3773",
+      isLocal: true,
+      isConnected: true,
+      updatedAt: "2026-09-10T12:00:00.000Z"
+    )
+    let project = T3ProjectRecord(
+      id: "env-1:proj-1",
+      environmentId: "env-1",
+      projectId: "proj-1",
+      name: "t3code",
+      workspaceRoot: "/Users/dev/t3code",
+      repositoryIdentity: "github.com/pingdotgg/t3code",
+      branch: "main",
+      updatedAt: "2026-09-10T12:00:00.000Z",
+      deepLinkUrl: "t3code://new?environmentId=env-1&projectId=proj-1"
+    )
+    let thread = T3ThreadRecord(
+      id: "env-1:thread-1",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      projectName: "t3code",
+      title: "Fix Siri indexing",
+      branch: "feat/siri",
+      status: "waiting",
+      hasPendingRequest: true,
+      pendingRequestSummary: "Command approval required",
+      isPinned: true,
+      isSettled: false,
+      isSnoozed: false,
+      snoozedUntil: nil,
+      lastMessagePreview: "Ready to run tests",
+      providerLabel: "codex",
+      modelLabel: "gpt-5.4",
+      updatedAt: "2026-09-10T12:00:00.000Z",
+      deepLinkUrl: "t3code://threads/env-1/thread-1"
+    )
+
+    let diff = try store.applyDelta(
+      T3IndexDelta(
+        environments: [env],
+        upsertedProjects: [project],
+        upsertedThreads: [thread]
+      )
+    )
+    #expect(diff.upsertedProjects.count == 1)
+    #expect(diff.upsertedThreads.count == 1)
+    #expect(store.searchProjects(matching: "t3code").map(\.id) == ["env-1:proj-1"])
+    #expect(store.searchThreads(matching: "siri").map(\.id) == ["env-1:thread-1"])
+
+    let removed = try store.removeEnvironment(environmentId: "env-1")
+    #expect(removed.removedProjectIds == ["env-1:proj-1"])
+    #expect(removed.removedThreadIds == ["env-1:thread-1"])
+    #expect(store.allEnvironments().isEmpty)
+    #expect(store.allProjects().isEmpty)
+    #expect(store.allThreads().isEmpty)
+  }
+
+  @Test("Signs valid RFC 9449 ES256 DPoP proof JWT")
+  func signsValidDpopProof() throws {
+    let key = P256.Signing.PrivateKey()
+    let rawKey = (key.rawRepresentation + key.publicKey.x963Representation).base64EncodedString()
+    let client = T3ServerClient(credentials: InMemoryCredentials())
+    let url = URL(string: "https://example.t3.codes/api/orchestration/commands?foo=bar")!
+    let jwt = try client.buildDpopProof(
+      method: "POST",
+      url: url,
+      accessToken: "test-access-token",
+      privateKeyBase64: rawKey
+    )
+    let parts = try #require(jwt).split(separator: ".")
+    #expect(parts.count == 3)
+  }
+
+  @Test("Resolves Spotlight identifier back to deep link URL")
+  func resolvesSpotlightDeepLink() throws {
+    let store = makeTempStore()
+    let runtime = T3IntentsRuntime(store: store, credentials: InMemoryCredentials())
+    let thread = T3ThreadRecord(
+      id: "env-1:thread-abc",
+      environmentId: "env-1",
+      threadId: "thread-abc",
+      projectId: "proj-1",
+      projectName: "t3code",
+      title: "Check CI",
+      branch: nil,
+      status: "running",
+      hasPendingRequest: false,
+      pendingRequestSummary: nil,
+      isPinned: false,
+      isSettled: false,
+      isSnoozed: false,
+      snoozedUntil: nil,
+      lastMessagePreview: nil,
+      providerLabel: nil,
+      modelLabel: nil,
+      updatedAt: "2026-09-10T12:00:00.000Z",
+      deepLinkUrl: "t3code://threads/env-1/thread-abc"
+    )
+    try store.upsertThreadRecord(thread)
+    let resolved = runtime.resolveDeepLink(forSpotlightIdentifier: "env-1:thread-abc")
+    #expect(resolved?.absoluteString == "t3code://threads/env-1/thread-abc")
+  }
+}

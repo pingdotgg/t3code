@@ -1,9 +1,18 @@
 import {
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
+  DEFAULT_RUNTIME_MODE,
   EnvironmentHttpApi,
+  MessageId,
   type OrchestrationProjectShell,
+  type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -17,12 +26,15 @@ import {
   failEnvironmentInternal,
   failEnvironmentInvalidRequest,
   failEnvironmentNotFound,
+  failEnvironmentScopeRequired,
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -31,6 +43,8 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { isProviderSignOutPrompt } from "./CommandPolicy.ts";
+import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import {
@@ -49,11 +63,54 @@ const isThreadTranscriptTooLargeError = Schema.is(
 );
 
 function isThreadNotFound(error: unknown): boolean {
+  if (
+    Predicate.hasProperty(error, "_tag") &&
+    error._tag === "ThreadManagementThreadNotFoundError"
+  ) {
+    return true;
+  }
   return (
     Predicate.hasProperty(error, "cause") &&
     Predicate.hasProperty(error.cause, "_tag") &&
     error.cause._tag === "ProjectionStoreThreadNotFoundError"
   );
+}
+
+function isCommandRejectedError(error: unknown): boolean {
+  if (!Predicate.hasProperty(error, "_tag") || typeof error._tag !== "string") return false;
+  switch (error._tag) {
+    case "OrchestratorCommandRejectedError":
+    case "OrchestratorThreadAlreadyExistsError":
+    case "OrchestratorCommandPreviouslyRejectedError":
+    case "OrchestratorCommandIdConflictError":
+    case "OrchestratorSubagentThreadReadOnlyError":
+    case "OrchestratorThreadAboveModeLimitError":
+    case "OrchestratorProviderSelectionBusyError":
+    case "OrchestratorRuntimeModeAboveCeilingError":
+    case "ThreadManagementProviderInstanceDisabledError":
+    case "ThreadManagementThreadArchivedError":
+    case "ThreadManagementNoSteerableRunError":
+    case "ThreadManagementRunOutputRejectedError":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function commandRequiresProvidersManageScope(command: OrchestrationV2Command): boolean {
+  switch (command.type) {
+    case "message.dispatch":
+      return isProviderSignOutPrompt(command);
+    case "queued-run.edit":
+      return isProviderSignOutPrompt({
+        text: command.text,
+        attachments: command.attachments ?? [],
+      });
+    case "delegated_task.request":
+      return isProviderSignOutPrompt({ text: command.task, attachments: [] });
+    default:
+      return false;
+  }
 }
 
 export const layer = HttpApiBuilder.group(
@@ -63,9 +120,12 @@ export const layer = HttpApiBuilder.group(
     const sql = yield* SqlClient.SqlClient;
     const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
 
     const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
       (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -311,6 +371,197 @@ export const layer = HttpApiBuilder.group(
                     "orchestration_thread_history_failed",
                     cause,
                   );
+                }),
+              ),
+            );
+        }),
+      )
+      .handle(
+        "dispatchCommand",
+        Effect.fn("environment.orchestration.dispatchCommand")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const incoming = args.payload;
+          if (
+            commandRequiresProvidersManageScope(incoming) &&
+            !session.scopes.has(AuthProvidersManageScope)
+          ) {
+            return yield* failEnvironmentScopeRequired(AuthProvidersManageScope);
+          }
+          const command = ThreadManagementService.withCreationProvenance(incoming, {
+            createdBy: "user",
+            creationSource: "creationSource" in incoming ? incoming.creationSource : "web",
+          });
+          return yield* threadManagement.dispatch(command).pipe(
+            Effect.map((result) => ({ sequence: result.sequence })),
+            traceLocalHandlerWork,
+            Effect.catch(
+              Effect.fnUntraced(function* (cause) {
+                if (isThreadNotFound(cause)) {
+                  return yield* failEnvironmentNotFound("thread_not_found");
+                }
+                if (isCommandRejectedError(cause)) {
+                  return yield* failEnvironmentInvalidRequest("invalid_command");
+                }
+                return yield* failEnvironmentInternal("orchestration_command_failed", cause);
+              }),
+            ),
+          );
+        }),
+      )
+      .handle(
+        "launchThread",
+        Effect.fn("environment.orchestration.launchThread")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const { payload } = args;
+          if (
+            payload.message !== undefined &&
+            isProviderSignOutPrompt({ text: payload.message, attachments: [] }) &&
+            !session.scopes.has(AuthProvidersManageScope)
+          ) {
+            return yield* failEnvironmentScopeRequired(AuthProvidersManageScope);
+          }
+          const projectOption = yield* projectStore
+            .getShell(payload.projectId)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_launch_failed", cause),
+              ),
+            );
+          if (Option.isNone(projectOption)) {
+            return yield* failEnvironmentNotFound("project_not_found");
+          }
+          const project = projectOption.value;
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_thread_launch_failed", cause),
+            ),
+          );
+          const effectiveProjectSettings = resolveProjectSettings(
+            settings,
+            payload.projectId,
+            project,
+          ).settings;
+          const providers = yield* providerRegistry.getProviders;
+          const resolvedModel = resolveNewThreadModelSelection({
+            defaultSelection: effectiveProjectSettings.defaultModelSelection,
+            fallbackSelection: effectiveProjectSettings.fallbackModelSelection,
+            providers,
+            settings: effectiveProjectSettings,
+            projectId: payload.projectId,
+            now: DateTime.toEpochMillis(yield* DateTime.now),
+          }).selection;
+          if (resolvedModel === null) {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
+          const trimmedMessage = payload.message?.trim();
+          const title =
+            payload.title ??
+            (trimmedMessage && trimmedMessage.length > 0
+              ? trimmedMessage.slice(0, 80)
+              : `New ${project.title} thread`);
+          return yield* threadLaunch
+            .launch({
+              commandId: payload.commandId,
+              ...(payload.threadId === undefined ? {} : { threadId: payload.threadId }),
+              projectId: payload.projectId,
+              title,
+              generateTitle: payload.title === undefined && Boolean(trimmedMessage),
+              ...(payload.title === undefined ? {} : { titleRenamed: true }),
+              modelSelection: resolvedModel,
+              runtimeMode: effectiveProjectSettings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+              interactionMode: payload.interactionMode ?? "default",
+              workspaceStrategy: { type: "root" },
+              ...(trimmedMessage && trimmedMessage.length > 0
+                ? {
+                    initialMessage: {
+                      text: trimmedMessage,
+                      attachments: [],
+                    },
+                  }
+                : {}),
+              createdBy: "user",
+              creationSource: payload.creationSource ?? "web",
+            })
+            .pipe(
+              Effect.map((result) => ({
+                threadId: result.threadId,
+                projectId: payload.projectId,
+                title: result.projection.thread.title,
+                resumed: result.resumed,
+                ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
+              })),
+              traceLocalHandlerWork,
+              Effect.catch(
+                Effect.fnUntraced(function* (cause) {
+                  if (isCommandRejectedError(cause)) {
+                    return yield* failEnvironmentInvalidRequest("invalid_command");
+                  }
+                  return yield* failEnvironmentInternal(
+                    "orchestration_thread_launch_failed",
+                    cause,
+                  );
+                }),
+              ),
+            );
+        }),
+      )
+      .handle(
+        "sendThreadMessage",
+        Effect.fn("environment.orchestration.sendThreadMessage")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const { payload } = args;
+          if (
+            isProviderSignOutPrompt({ text: payload.text, attachments: [] }) &&
+            !session.scopes.has(AuthProvidersManageScope)
+          ) {
+            return yield* failEnvironmentScopeRequired(AuthProvidersManageScope);
+          }
+          const shell = yield* threadManagement.getThreadShell(args.params.threadId).pipe(
+            Effect.catch(
+              Effect.fnUntraced(function* (cause) {
+                if (isThreadNotFound(cause)) {
+                  return yield* failEnvironmentNotFound("thread_not_found");
+                }
+                return yield* failEnvironmentInternal("orchestration_message_send_failed", cause);
+              }),
+            ),
+          );
+          if (shell === null || shell.deletedAt !== null) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          const messageId = payload.messageId ?? MessageId.make(`msg-${payload.commandId}`);
+          return yield* threadManagement
+            .sendToThread({
+              projectId: shell.projectId,
+              commandId: payload.commandId,
+              threadId: args.params.threadId,
+              messageId,
+              text: payload.text,
+              attachments: [],
+              mode: payload.mode ?? "auto",
+              createdBy: "user",
+              creationSource: payload.creationSource ?? "web",
+            })
+            .pipe(
+              Effect.map((result) => ({
+                threadId: args.params.threadId,
+                messageId: result.message.id,
+                runId: result.run.id,
+                delivery: result.delivery,
+              })),
+              traceLocalHandlerWork,
+              Effect.catch(
+                Effect.fnUntraced(function* (cause) {
+                  if (isThreadNotFound(cause)) {
+                    return yield* failEnvironmentNotFound("thread_not_found");
+                  }
+                  if (isCommandRejectedError(cause)) {
+                    return yield* failEnvironmentInvalidRequest("invalid_command");
+                  }
+                  return yield* failEnvironmentInternal("orchestration_message_send_failed", cause);
                 }),
               ),
             );

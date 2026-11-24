@@ -5,6 +5,7 @@ included:
   - modules/t3-terminal/ios
   - modules/t3-review-diff/ios
   - modules/t3-voice-transcription/ios
+  - modules/t3-apple-intents/ios
 
 excluded:
   - ios/Pods

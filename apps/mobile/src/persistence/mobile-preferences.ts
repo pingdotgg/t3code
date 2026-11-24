@@ -143,6 +143,8 @@ export interface Preferences {
   readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
+  readonly appleIntentsEnabled?: boolean;
+  readonly appleIntentsIndexMessagePreviews?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
@@ -236,6 +238,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
+    appleIntentsEnabled?: boolean;
+    appleIntentsIndexMessagePreviews?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
@@ -302,6 +306,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.appleIntentsEnabled === "boolean") {
+    preferences.appleIntentsEnabled = parsed.appleIntentsEnabled;
+  }
+  if (typeof parsed.appleIntentsIndexMessagePreviews === "boolean") {
+    preferences.appleIntentsIndexMessagePreviews = parsed.appleIntentsIndexMessagePreviews;
   }
   if (
     typeof parsed.themeId === "string" &&

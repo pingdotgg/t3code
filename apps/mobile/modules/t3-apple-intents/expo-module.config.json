@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3AppleIntentsModule"],
+    "appDelegateSubscribers": ["T3AppleIntentsAppDelegateSubscriber"]
+  }
+}

@@ -58,6 +58,9 @@ import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../src/project/ProjectService.ts";
 import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "../src/orchestration-v2/http.ts";
+import * as ProviderRegistry from "../src/provider/ProviderRegistry.ts";
+import * as ServerSettings from "../src/serverSettings.ts";
+import * as ThreadLaunchService from "../src/orchestration-v2/ThreadLaunchService.ts";
 import * as ServerHttp from "../src/http.ts";
 import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from "../src/ws.ts";
 import {
@@ -204,6 +207,9 @@ const layerServices = layerManagement.pipe(
   ),
   Layer.provideMerge(ProjectStore.layer),
   Layer.provideMerge(Layer.mock(ProjectService.ProjectService)({})),
+  Layer.provideMerge(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provideMerge(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+  Layer.provideMerge(ServerSettings.layerTest({})),
   Layer.provideMerge(layerEnrichment),
   Layer.provideMerge(layerPersistence),
 );

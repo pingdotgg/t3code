@@ -2,6 +2,12 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
+import type {
+  AppleIntentAuthCredential,
+  AppleIntentIndexDelta,
+  AppleIntentOnscreenContext,
+  AppleIntentStatus,
+} from "./appleIntents.ts";
 import { EnvironmentId, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
@@ -1250,6 +1256,15 @@ export interface DesktopBridge {
     supportedLocales: () => Promise<readonly string[]>;
     prepare: (locale: string) => Promise<DesktopAppleSpeechResult>;
     transcribe: (input: { locale: string; pcm: Uint8Array }) => Promise<DesktopAppleSpeechResult>;
+  };
+  /** macOS 27.3 Siri App Intents & Spotlight bridge; absent in older or non-macOS builds. */
+  appleIntents?: {
+    getStatus: () => Promise<AppleIntentStatus>;
+    syncIndex: (delta: AppleIntentIndexDelta) => Promise<void>;
+    removeEnvironment: (environmentId: EnvironmentId) => Promise<void>;
+    clearIndex: () => Promise<void>;
+    setOnscreenContext: (context: AppleIntentOnscreenContext) => Promise<void>;
+    syncAuthCredentials: (credentials: readonly AppleIntentAuthCredential[]) => Promise<void>;
   };
 }
 

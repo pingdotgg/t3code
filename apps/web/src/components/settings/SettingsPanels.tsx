@@ -38,6 +38,7 @@ import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { AboutVersionTitle } from "./AboutVersionTitle";
+import { AppleIntentsSettingsSection } from "./AppleIntentsSettingsSection";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
@@ -1226,6 +1227,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <AppleIntentsSettingsSection />
     </SettingsPageContainer>
   );
 }

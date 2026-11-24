@@ -40,6 +40,8 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
+import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as DesktopAppleIntents from "../intents/DesktopAppleIntents.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -416,6 +418,46 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* lifecycle.register;
   yield* clerk.configure;
+
+  if (environment.platform === "darwin") {
+    const intentsContext = yield* Effect.context<
+      DesktopAppleIntents.DesktopAppleIntents | DesktopWebLinks.DesktopWebLinks
+    >();
+    const runIntentsEffect = Effect.runPromiseWith(intentsContext);
+    yield* electronApp.on(
+      "continue-activity",
+      (event: { preventDefault: () => void }, type: string, userInfo: Record<string, unknown>) => {
+        if (type === "com.apple.corespotlightitem") {
+          const identifier = userInfo?.kCSSearchableItemActivityIdentifier;
+          if (typeof identifier !== "string" || identifier.length === 0) return;
+          event.preventDefault();
+          void runIntentsEffect(
+            Effect.gen(function* () {
+              const appleIntents = yield* DesktopAppleIntents.DesktopAppleIntents;
+              const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+              const url = yield* appleIntents.resolveSpotlightUrl(identifier);
+              if (url) yield* webLinks.receive(url);
+            }),
+          );
+          return;
+        }
+        if (
+          type === "com.t3tools.t3code.view-thread" ||
+          type === "com.t3tools.t3code.view-project"
+        ) {
+          const deepLinkUrl = userInfo?.deepLinkUrl;
+          if (typeof deepLinkUrl !== "string" || deepLinkUrl.length === 0) return;
+          event.preventDefault();
+          void runIntentsEffect(
+            Effect.gen(function* () {
+              const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+              yield* webLinks.receive(deepLinkUrl);
+            }),
+          );
+        }
+      },
+    );
+  }
 
   yield* electronApp.whenReady.pipe(
     Effect.withSpan("desktop.electron.whenReady"),

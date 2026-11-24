@@ -1589,6 +1589,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "example.clerk.accounts.dev",
     ]);
     assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
+    assert.match(
+      entitlements,
+      /<key>com\.apple\.security\.application-groups<\/key>\s*<array>\s*<string>ABC1234567\.com\.t3tools\.t3code<\/string>\s*<\/array>/u,
+    );
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");

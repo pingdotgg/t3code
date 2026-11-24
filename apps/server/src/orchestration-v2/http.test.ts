@@ -1,5 +1,6 @@
 import {
   AuthSessionId,
+  CommandId,
   type AuthEnvironmentScope,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -14,6 +15,8 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  ProjectId,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -33,6 +36,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -42,6 +46,7 @@ import { OrchestratorProjectionError } from "./Orchestrator.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -123,6 +128,11 @@ const rolledBackRun = Schema.decodeSync(OrchestrationV2Run)({
 const serveOrchestrationHttp = (
   allowed: () => boolean,
   getThreadSnapshot?: ThreadManagementService.ThreadManagementServiceShape["getThreadSnapshot"],
+  options?: {
+    readonly scopes?: () => ReadonlyArray<AuthEnvironmentScope>;
+    readonly launch?: ThreadLaunchService.ThreadLaunchService["Service"]["launch"];
+    readonly projectShell?: ProjectStore.ProjectStoreV2["Service"]["getShell"];
+  },
 ) =>
   Effect.gen(function* () {
     const runtime = ProviderReplayHarness.layerWithRegistry(
@@ -130,16 +140,16 @@ const serveOrchestrationHttp = (
       ProviderAdapterRegistry.layerFromAdapters([]),
       { runEffectWorker: false },
     );
+    const serverSettingsLayer = ServerSettings.layerTest({});
     const services = yield* Layer.build(
       Layer.mergeAll(
         runtime,
         ThreadManagementService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(runtime, CommandReceiptStore.layer, ServerSettings.layerTest({})),
-          ),
+          Layer.provide(Layer.mergeAll(runtime, CommandReceiptStore.layer, serverSettingsLayer)),
         ),
         OrchestrationEventStore.layer,
         ProjectStore.layer,
+        serverSettingsLayer,
       ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
     );
     const eventSink = Context.get(services, EventSinkV2);
@@ -154,6 +164,20 @@ const serveOrchestrationHttp = (
         },
       ],
     });
+    const baseContext =
+      getThreadSnapshot === undefined
+        ? services
+        : Context.add(services, ThreadManagementService.ThreadManagementService, {
+            ...Context.get(services, ThreadManagementService.ThreadManagementService),
+            getThreadSnapshot,
+          });
+    const serviceContext =
+      options?.projectShell === undefined
+        ? baseContext
+        : Context.add(baseContext, ProjectStore.ProjectStoreV2, {
+            ...Context.get(baseContext, ProjectStore.ProjectStoreV2),
+            getShell: options.projectShell,
+          });
     const routes = HttpApiBuilder.layer(TranscriptTestApi).pipe(
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(
@@ -169,23 +193,46 @@ const serveOrchestrationHttp = (
                 sessionId: AuthSessionId.make("test-session"),
                 subject: "test",
                 method: "bearer-access-token",
-                scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
+                scopes: new Set<AuthEnvironmentScope>(
+                  options?.scopes ? options.scopes() : allowed() ? ["orchestration:read"] : [],
+                ),
               }),
             ),
           ),
         ),
       ),
+      Layer.provide(Layer.succeedContext(serviceContext)),
+      Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
       Layer.provide(
-        Layer.succeedContext(
-          getThreadSnapshot === undefined
-            ? services
-            : Context.add(services, ThreadManagementService.ThreadManagementService, {
-                ...Context.get(services, ThreadManagementService.ThreadManagementService),
-                getThreadSnapshot,
-              }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)(
+          options?.launch ? { launch: options.launch } : {},
         ),
       ),
-      Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
+      Layer.provide(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            {
+              instanceId: "codex",
+              driver: "codex",
+              label: "Codex",
+              enabled: true,
+              status: "ready",
+              installed: true,
+              auth: { status: "authenticated" },
+              models: [
+                {
+                  slug: "gpt-5.4",
+                  name: "GPT-5.4",
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+              supportedRuntimeModes: ["full-access", "approval-required"],
+              checkedAt: "2026-09-29T00:00:00.000Z",
+            } as unknown as import("@t3tools/contracts").ServerProvider,
+          ]),
+        }),
+      ),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),
@@ -481,5 +528,144 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
     for (const cursor of [full.snapshotSequence + 1, "x"]) {
       expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
     }
+  }),
+);
+
+it.effect("dispatches commands, sends messages, and launches threads with scope enforcement", () =>
+  Effect.gen(function* () {
+    let scopes: ReadonlyArray<AuthEnvironmentScope> = ["orchestration:read"];
+    const launchedCalls: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+    const { services, handler } = yield* serveOrchestrationHttp(() => true, undefined, {
+      scopes: () => scopes,
+      projectShell: (projectId) => {
+        if (projectId !== ProjectId.make("source-project")) {
+          return Effect.succeedNone;
+        }
+        return Effect.succeedSome({
+          id: projectId,
+          title: "t3code",
+          workspaceRoot: "/tmp/t3code",
+          defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          scripts: [],
+          createdAt: "2026-09-29T00:00:00.000Z",
+          updatedAt: "2026-09-29T00:00:00.000Z",
+        });
+      },
+      launch: (input) => {
+        launchedCalls.push(input);
+        return Effect.succeed({
+          threadId: input.threadId ?? ThreadId.make("launched-thread"),
+          projection: {
+            thread: {
+              ...thread,
+              id: input.threadId ?? ThreadId.make("launched-thread"),
+              title: input.title,
+            },
+            runs: [],
+            attempts: [],
+            nodes: [],
+            subagents: [],
+            providerSessions: [],
+            providerThreads: [],
+            providerTurns: [],
+            runtimeRequests: [],
+            messages: [],
+            plans: [],
+            turnItems: [],
+            checkpointScopes: [],
+            checkpoints: [],
+            contextHandoffs: [],
+            contextTransfers: [],
+            visibleTurnItems: [],
+            updatedAt: now,
+          },
+          resumed: false,
+          sequence: 9,
+        });
+      },
+    });
+
+    const post = (path: string, body: unknown) =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://localhost${path}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+            },
+            body: JSON.stringify(body),
+          }),
+        ),
+      );
+
+    // Read-only token cannot mutate.
+    const denied = yield* post("/api/orchestration/commands", {
+      type: "thread.pin",
+      commandId: CommandId.make("cmd-denied"),
+      threadId: thread.id,
+    });
+    expect(denied.status).toBe(403);
+
+    scopes = ["orchestration:read", "orchestration:operate"];
+
+    // Pin succeeds and updates persisted shell state.
+    const pinned = yield* post("/api/orchestration/commands", {
+      type: "thread.pin",
+      commandId: CommandId.make("cmd-pin"),
+      threadId: thread.id,
+    });
+    expect(pinned.status).toBe(200);
+    expect(yield* Effect.promise(() => pinned.json())).toMatchObject({
+      sequence: expect.any(Number),
+    });
+    const updatedShell = yield* Context.get(
+      services,
+      ThreadManagementService.ThreadManagementService,
+    ).getThreadShell(thread.id);
+    expect(updatedShell?.pinnedAt).not.toBeNull();
+
+    // Sign-out prompt requires providers:manage scope.
+    const signOutDenied = yield* post(`/api/orchestration/threads/${thread.id}/messages`, {
+      commandId: CommandId.make("cmd-logout"),
+      text: "/logout",
+    });
+    expect(signOutDenied.status).toBe(403);
+
+    // Missing thread on message send yields 404.
+    const missingThread = yield* post("/api/orchestration/threads/missing/messages", {
+      commandId: CommandId.make("cmd-missing-msg"),
+      text: "Check build status",
+    });
+    expect(missingThread.status).toBe(404);
+
+    // Launch resolves project default model and passes initial prompt.
+    const launched = yield* post("/api/orchestration/threads", {
+      commandId: CommandId.make("cmd-launch"),
+      projectId: ProjectId.make("source-project"),
+      message: "Fix the failing unit test",
+      creationSource: "mobile",
+    });
+    expect(launched.status).toBe(200);
+    expect(yield* Effect.promise(() => launched.json())).toMatchObject({
+      threadId: "launched-thread",
+      projectId: "source-project",
+      resumed: false,
+      sequence: 9,
+    });
+    expect(launchedCalls).toHaveLength(1);
+    expect(launchedCalls[0]).toMatchObject({
+      projectId: "source-project",
+      creationSource: "mobile",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      initialMessage: { text: "Fix the failing unit test", attachments: [] },
+    });
+
+    // Missing project on launch yields 404.
+    const missingProject = yield* post("/api/orchestration/threads", {
+      commandId: CommandId.make("cmd-launch-missing"),
+      projectId: ProjectId.make("unknown-project"),
+    });
+    expect(missingProject.status).toBe(404);
   }),
 );

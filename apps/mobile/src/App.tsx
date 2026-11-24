@@ -44,6 +44,10 @@ import {
   recordAppShortcutNavigationState,
 } from "./features/shortcuts/appShortcutsRuntime";
 import {
+  installAppleIntents,
+  recordAppleIntentsNavigationState,
+} from "./features/apple-intents/appleIntentsRuntime";
+import {
   AppearancePreferencesProvider,
   installAppearanceRuntime,
   useAppearancePreferences,
@@ -186,6 +190,7 @@ function handleNavigationStateChange(state: NavigationState | undefined): void {
   if (state.routes[state.index]?.name !== "Home") settleLaunchSplashHomeRows();
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
+  recordAppleIntentsNavigationState(state);
   pruneNewTaskFlowStates(state);
   pruneNewTaskBranchCheckouts(state);
   pruneIncomingShareImports(state);
@@ -215,6 +220,7 @@ const appServiceDisposers = [
   startIncomingShareInbox(),
   installAgentNotificationNavigation(linkToAppPath),
   installAppShortcuts(linkToAppPath),
+  installAppleIntents(),
   installAppUpdateChecks(),
   installShowcaseCapture(rootPathnameFromState),
 ];

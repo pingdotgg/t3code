@@ -141,6 +141,15 @@ export const APPLE_SPEECH_AVAILABLE_CHANNEL = "desktop:apple-speech-available";
 export const APPLE_SPEECH_PREPARE_CHANNEL = "desktop:apple-speech-prepare";
 export const APPLE_SPEECH_TRANSCRIBE_CHANNEL = "desktop:apple-speech-transcribe";
 
+export const APPLE_INTENTS_GET_STATUS_CHANNEL = "desktop:apple-intents-get-status";
+export const APPLE_INTENTS_SYNC_INDEX_CHANNEL = "desktop:apple-intents-sync-index";
+export const APPLE_INTENTS_REMOVE_ENVIRONMENT_CHANNEL = "desktop:apple-intents-remove-environment";
+export const APPLE_INTENTS_CLEAR_INDEX_CHANNEL = "desktop:apple-intents-clear-index";
+export const APPLE_INTENTS_SET_ONSCREEN_CONTEXT_CHANNEL =
+  "desktop:apple-intents-set-onscreen-context";
+export const APPLE_INTENTS_SYNC_AUTH_CREDENTIALS_CHANNEL =
+  "desktop:apple-intents-sync-auth-credentials";
+
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
 
 export const PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL = "desktop:preview-annotation-voice-event";

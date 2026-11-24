@@ -48,8 +48,13 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "./environment.ts";
 import {
+  CommandId,
   DpopFailureReason,
   AuthSessionId,
+  MessageId,
+  NonNegativeInt,
+  ProjectId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -74,6 +79,9 @@ import {
 import { PeerLinkClientPairingCredential, PeerLinkClientPairingRequest } from "./peerLink.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
+  OrchestrationV2Command,
+  OrchestrationV2CreationSource,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2ShellHttpSnapshot,
   OrchestrationV2ShellResumable,
   OrchestrationV2ThreadBoundedSnapshot,
@@ -81,6 +89,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
+import { ProviderInteractionMode } from "./providerPolicy.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
@@ -155,6 +164,9 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_thread_snapshot_failed",
   "orchestration_thread_bounded_snapshot_failed",
   "orchestration_thread_history_failed",
+  "orchestration_command_failed",
+  "orchestration_message_send_failed",
+  "orchestration_thread_launch_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -273,7 +285,10 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "project_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -770,6 +785,47 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentInternalError,
 ] as const;
 
+export const EnvironmentOrchestrationSendMessageRequest = Schema.Struct({
+  commandId: CommandId,
+  messageId: Schema.optional(MessageId),
+  text: TrimmedNonEmptyString,
+  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
+});
+export type EnvironmentOrchestrationSendMessageRequest =
+  typeof EnvironmentOrchestrationSendMessageRequest.Type;
+
+export const EnvironmentOrchestrationSendMessageResult = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  runId: Schema.NullOr(RunId),
+  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+});
+export type EnvironmentOrchestrationSendMessageResult =
+  typeof EnvironmentOrchestrationSendMessageResult.Type;
+
+export const EnvironmentOrchestrationLaunchThreadRequest = Schema.Struct({
+  commandId: CommandId,
+  threadId: Schema.optional(ThreadId),
+  projectId: ProjectId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  message: Schema.optional(Schema.String),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
+});
+export type EnvironmentOrchestrationLaunchThreadRequest =
+  typeof EnvironmentOrchestrationLaunchThreadRequest.Type;
+
+export const EnvironmentOrchestrationLaunchThreadResult = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  resumed: Schema.Boolean,
+  sequence: Schema.optionalKey(NonNegativeInt),
+});
+export type EnvironmentOrchestrationLaunchThreadResult =
+  typeof EnvironmentOrchestrationLaunchThreadResult.Type;
+
 class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
@@ -810,6 +866,31 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       params: EnvironmentOrchestrationThreadSnapshotParams,
       query: EnvironmentOrchestrationThreadHistoryQuery,
       success: OrchestrationV2ThreadHistoryPage,
+      error: EnvironmentOrchestrationThreadHistoryErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("dispatchCommand", "/api/orchestration/commands", {
+      headers: OrchestrationProtocolHeaders,
+      payload: OrchestrationV2Command,
+      success: OrchestrationV2DispatchCommandResult,
+      error: EnvironmentOrchestrationThreadHistoryErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("launchThread", "/api/orchestration/threads", {
+      headers: OrchestrationProtocolHeaders,
+      payload: EnvironmentOrchestrationLaunchThreadRequest,
+      success: EnvironmentOrchestrationLaunchThreadResult,
+      error: EnvironmentOrchestrationThreadHistoryErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("sendThreadMessage", "/api/orchestration/threads/:threadId/messages", {
+      headers: OrchestrationProtocolHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      payload: EnvironmentOrchestrationSendMessageRequest,
+      success: EnvironmentOrchestrationSendMessageResult,
       error: EnvironmentOrchestrationThreadHistoryErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
