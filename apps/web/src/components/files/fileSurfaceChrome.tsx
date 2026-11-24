@@ -185,13 +185,12 @@ export async function saveAssetDownload(input: {
   readonly fileName: string;
   readonly unavailableMessage: string;
   readonly loadFailedMessage: string;
-  readonly useBlobDownload?: boolean;
 }): Promise<void> {
   const target = await input.prepareUrl();
   if (!target) throw new Error(input.unavailableMessage);
   // Plain browsers stream attachment-disposition URLs straight into the native download manager.
   // Desktop's custom app scheme needs a blob URL so it does not open an external browser.
-  if (!(input.useBlobDownload ?? isElectron)) {
+  if (!isElectron) {
     triggerAnchorDownload(target, input.fileName);
     return;
   }
