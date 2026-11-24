@@ -2359,7 +2359,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
       const diffExclusions = excludedPathspecs(input.excludePaths);
       let fromRevision = input.range?.from ?? (yield* resolveTurnStart(input));
-      if (input.fallbackFromToHead === true) {
+      if (input.fallbackFromToHead === true && input.range === undefined) {
         const resolvedFromCommit = yield* resolveCheckpointCommit(
           input.cwd,
           input.fromCheckpointRef,
