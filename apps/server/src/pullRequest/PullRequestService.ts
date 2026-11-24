@@ -2221,11 +2221,16 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        const stackAutoMerge =
+          input.action === "enable-auto-merge" || input.action === "disable-auto-merge";
         if (
           input.stackNumber !== undefined &&
           (project.api.capabilities.stackActions !== true ||
-            !["merge", "update-branch"].includes(input.action) ||
-            input.expectedStackHeads === undefined ||
+            !(
+              ["merge", "update-branch"].includes(input.action) ||
+              (stackAutoMerge && project.api.capabilities.stackAutoMerge === true)
+            ) ||
+            (input.expectedStackHeads === undefined && input.action !== "disable-auto-merge") ||
             (input.action === "update-branch" && input.updateMethod !== "rebase"))
         ) {
           return Effect.fail(
@@ -2315,32 +2320,7 @@ export const make = Effect.gen(function* () {
                     ),
                   )
                 : Effect.succeed(false);
-            // Hosts that cannot pin a merge to a commit still refuse a head that already moved.
-            const expected = input.expectedHeadSha;
-            const headPinned: Effect.Effect<string | undefined, PullRequestError> =
-              expected === undefined
-                ? Effect.undefined
-                : project.api
-                    .getChangeRequest({
-                      cwd: project.project.workspaceRoot,
-                      repository: project.repository,
-                      host: project.host,
-                      number: input.number,
-                    })
-                    .pipe(
-                      Effect.mapError(toPullRequestError("runAction")),
-                      Effect.flatMap((current) =>
-                        typeof current.headSha === "string" && isHeadSha(current.headSha, expected)
-                          ? Effect.succeed(current.headSha)
-                          : Effect.fail(
-                              new PullRequestOperationError({
-                                operation: "runAction",
-                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${expected}. Review the new commits first.`,
-                              }),
-                            ),
-                      ),
-                    );
-            return headPinned.pipe(
+            return pinnedHead(project, input, "runAction").pipe(
               Effect.flatMap((expectedHeadSha) =>
                 Effect.map(mergeSettings, (removeAgentCreditsOnMerge) => ({
                   expectedHeadSha,
@@ -2406,6 +2386,37 @@ export const make = Effect.gen(function* () {
           : operation;
       }),
     );
+
+  // Hosts that cannot pin a write to a commit still refuse a head that already moved.
+  const pinnedHead = (
+    project: SupportedProject,
+    input: { readonly number: number; readonly expectedHeadSha?: string | undefined },
+    operation: string,
+  ): Effect.Effect<string | undefined, PullRequestError> => {
+    const expected = input.expectedHeadSha;
+    return expected === undefined
+      ? Effect.undefined
+      : project.api
+          .getChangeRequest({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+          })
+          .pipe(
+            Effect.mapError(toPullRequestError(operation)),
+            Effect.flatMap((current) =>
+              typeof current.headSha === "string" && isHeadSha(current.headSha, expected)
+                ? Effect.succeed(current.headSha)
+                : Effect.fail(
+                    new PullRequestOperationError({
+                      operation,
+                      detail: `The head is now ${current.headSha ?? "unknown"}, not ${expected}. Review the new commits first.`,
+                    }),
+                  ),
+            ),
+          );
+  };
 
   const comment: PullRequestService["Service"]["comment"] = (input) =>
     (input.body.trim().length === 0
@@ -2566,17 +2577,22 @@ export const make = Effect.gen(function* () {
                 "You need write access on this repository to comment on a line of a change request.",
               );
             }
-            return project.api
-              .submitReview({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
-                number: input.number,
-                verdict: input.verdict,
-                body: input.body,
-                comments: input.comments,
-              })
-              .pipe(Effect.mapError(toPullRequestError("submitReview")));
+            return pinnedHead(project, input, "submitReview").pipe(
+              Effect.flatMap((expectedHeadSha) =>
+                project.api
+                  .submitReview({
+                    cwd: project.project.workspaceRoot,
+                    repository: project.repository,
+                    host: project.host,
+                    number: input.number,
+                    verdict: input.verdict,
+                    body: input.body,
+                    comments: input.comments,
+                    ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
+                  })
+                  .pipe(Effect.mapError(toPullRequestError("submitReview"))),
+              ),
+            );
           }),
         );
       }),
@@ -3707,10 +3723,40 @@ export const make = Effect.gen(function* () {
     );
     return { key, read };
   };
-  const diff: PullRequestService["Service"]["diff"] = (input) => {
-    const { key, read } = readDiff(input);
-    return staleDiff.serve(key, read.pipe(Effect.map((read) => read.value)));
+  // A host reads a commit's diff from the repository, not from the change request, so a named
+  // commit is forwarded only as the one oid the change request's own commit list gives for it.
+  const withListedCommit = <I extends PullRequestRef & { readonly commit?: string | undefined }>(
+    operation: string,
+    input: I,
+    read: (input: I) => Effect.Effect<PullRequestActivity, PullRequestError>,
+  ): Effect.Effect<I, PullRequestError> => {
+    const wanted = input.commit?.toLowerCase();
+    if (wanted === undefined) return Effect.succeed(input);
+    return read(input).pipe(
+      Effect.flatMap(({ commits }) => {
+        const listed = /^[0-9a-f]{7,64}$/.test(wanted)
+          ? commits.filter((commit) => commit.oid.toLowerCase().startsWith(wanted))
+          : [];
+        const [commit] = listed;
+        return commit !== undefined && listed.length === 1
+          ? Effect.succeed({ ...input, commit: commit.oid })
+          : Effect.fail(
+              new PullRequestOperationError({
+                operation,
+                detail: "This commit is not part of the change request.",
+                reason: "not-found",
+              }),
+            );
+      }),
+    );
   };
+  const diff: PullRequestService["Service"]["diff"] = (input) =>
+    withListedCommit("diff", input, activity).pipe(
+      Effect.flatMap((input) => {
+        const { key, read } = readDiff(input);
+        return staleDiff.serve(key, read.pipe(Effect.map((read) => read.value)));
+      }),
+    );
 
   const filesViewedCache = yield* Cache.makeWith(
     (key: string) => {
@@ -4130,18 +4176,23 @@ export const make = Effect.gen(function* () {
     return walk(undefined);
   };
   // PR read access does not grant arbitrary repository reads with the project credential; restrict to changed files.
+  const listedActivity = credentialCached(activity);
   const diffFileContents: PullRequestService["Service"]["diffFileContents"] = (input) =>
-    changesFile(input).pipe(
-      Effect.flatMap((changed) =>
-        changed
-          ? readDiffFileContents(input)
-          : Effect.fail(
-              new PullRequestOperationError({
-                operation: "diffFileContents",
-                detail: "This file is not part of the change request.",
-                reason: "not-found",
-              }),
-            ),
+    withListedCommit("diffFileContents", input, listedActivity).pipe(
+      Effect.flatMap((input) =>
+        changesFile(input).pipe(
+          Effect.flatMap((changed) =>
+            changed
+              ? readDiffFileContents(input)
+              : Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "diffFileContents",
+                    detail: "This file is not part of the change request.",
+                    reason: "not-found",
+                  }),
+                ),
+          ),
+        ),
       ),
     );
 

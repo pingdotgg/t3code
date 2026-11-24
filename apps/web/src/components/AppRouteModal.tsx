@@ -1,7 +1,8 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { T, useGT } from "gt-react";
 import { XIcon } from "lucide-react";
-import { useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { getCommandPaletteOpener } from "../commandPaletteStore";
 import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
@@ -35,6 +36,22 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // buttons). Below sm the modal fills the window and leaves that strip empty; up to lg its
   // 1.5rem inset is shorter than the strip.
   const nativeTitlebarHeight = useNativeTitlebarHeight();
+  const router = useRouter();
+  // Leaving the page without closing (Navigation: Back) unmounts a focused field during a
+  // commit, when React no longer delivers its blur, so commit-on-blur rows would drop what was
+  // typed. Blur text fields before the navigation renders; other controls keep their focus.
+  // Not onBeforeNavigate: the router skips it while a past redirect is still recorded.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router listener that blurs a field before navigation unmounts it
+  useEffect(
+    () =>
+      router.subscribe("onBeforeLoad", ({ pathChanged }) => {
+        const focused = document.activeElement;
+        if (pathChanged && focused?.matches("input, textarea, [contenteditable]")) {
+          blurFocusedWithin(popupRef.current);
+        }
+      }),
+    [router],
+  );
 
   return (
     <DialogPrimitive.Root
@@ -55,8 +72,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
         }
         // Closing unmounts a focused field without a blur, so commit-on-blur rows would
         // drop what was typed. Blur first so they commit.
-        const focused = document.activeElement;
-        if (focused instanceof HTMLElement && popupRef.current?.contains(focused)) focused.blur();
+        blurFocusedWithin(popupRef.current);
         setOpen(false);
       }}
       onOpenChangeComplete={(nextOpen) => {
@@ -114,6 +130,11 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );
+}
+
+function blurFocusedWithin(container: HTMLElement | null) {
+  const focused = document.activeElement;
+  if (focused instanceof HTMLElement && container?.contains(focused)) focused.blur();
 }
 
 export function AppRouteModalClose() {
