@@ -12203,7 +12203,7 @@
   "d13e6ed5f93fc0a0": "更新 {items}",
   "987fb3befba9a863": "无法开始更新",
   "82583b5a529f0ee4": "{machine}：{failure}",
-  "b71d1f7bd235182b": "{minutes} 分钟后仍未恢复。请检查该机器是否已开机，以及 T3 Code 是否在其上运行。",
+  "19a7891b5f5274ae": "{minutes} 分钟后仍未恢复",
   "ffaa75d2db1e7cc1": "更新未生效",
   "626bcbe04dc55f93": "T3 Code 仍为 {current}。请通过更新按钮重新安装 {version}。",
   "49214c047fbb1606": "提供方更新已中断",

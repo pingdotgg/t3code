@@ -12177,7 +12177,7 @@
   "d13e6ed5f93fc0a0": "Atualizar {items}",
   "987fb3befba9a863": "Não foi possível iniciar a atualização",
   "82583b5a529f0ee4": "{machine}: {failure}",
-  "b71d1f7bd235182b": "Não voltou após {minutes} minutos. Verifique se a máquina está ligada e se o T3 Code está em execução nela.",
+  "19a7891b5f5274ae": "Não voltou após {minutes} minutos",
   "ffaa75d2db1e7cc1": "A atualização não foi aplicada",
   "626bcbe04dc55f93": "O T3 Code ainda está na {current}. Instale a {version} novamente pelo botão de atualização.",
   "49214c047fbb1606": "Atualização do provedor interrompida",

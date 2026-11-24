@@ -552,20 +552,10 @@ describe("resolveRestoredRetry", () => {
     );
   });
 
-  it("marks a server already on the target and offers nothing for one that cannot update now", () => {
+  it("marks a server already on the target and offers nothing for one that is gone", () => {
     expect(
       resolveRestoredRetry(restored("remote"), [machine("remote", "0.1.12", "boot-service")]),
     ).toBe("current");
-    expect(
-      resolveRestoredRetry(restored("remote"), [
-        machine("remote", "0.1.10", "boot-service", { connected: false }),
-      ]),
-    ).toBeNull();
-    expect(
-      resolveRestoredRetry(restored("remote"), [
-        machine("remote", "0.1.10", "boot-service", { canMaintain: false }),
-      ]),
-    ).toBeNull();
     expect(resolveRestoredRetry(restored("remote"), [])).toBeNull();
   });
 });

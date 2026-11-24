@@ -12177,7 +12177,7 @@
   "d13e6ed5f93fc0a0": "Mettre à jour {items}",
   "987fb3befba9a863": "Impossible de lancer la mise à jour",
   "82583b5a529f0ee4": "{machine} : {failure}",
-  "b71d1f7bd235182b": "Pas revenu après {minutes} minutes. Vérifiez que la machine est allumée et que T3 Code y est en cours d’exécution.",
+  "19a7891b5f5274ae": "Pas revenu après {minutes} minutes",
   "ffaa75d2db1e7cc1": "La mise à jour ne s’est pas appliquée",
   "626bcbe04dc55f93": "T3 Code est toujours en {current}. Installez à nouveau {version} depuis le bouton de mise à jour.",
   "49214c047fbb1606": "Mise à jour du fournisseur interrompue",

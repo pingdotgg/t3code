@@ -12185,7 +12185,7 @@
   "d13e6ed5f93fc0a0": "Uppdatera {items}",
   "987fb3befba9a863": "Kunde inte starta uppdateringen",
   "82583b5a529f0ee4": "{machine}: {failure}",
-  "b71d1f7bd235182b": "Inte tillbaka efter {minutes} minuter. Kontrollera att datorn är på och att T3 Code körs där.",
+  "19a7891b5f5274ae": "Inte tillbaka efter {minutes} minuter",
   "ffaa75d2db1e7cc1": "Uppdateringen tillämpades inte",
   "626bcbe04dc55f93": "T3 Code har fortfarande {current}. Installera {version} igen med uppdateringsknappen.",
   "49214c047fbb1606": "Leverantörsuppdateringen avbröts",

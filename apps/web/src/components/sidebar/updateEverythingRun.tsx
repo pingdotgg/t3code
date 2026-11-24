@@ -361,12 +361,7 @@ function followHandedOffServers(
     const timer = setTimeout(
       () =>
         settle(
-          m(
-            msg(
-              "Not back after {minutes} minutes. Check that the machine is on and T3 Code is running there.",
-              { minutes: HANDOFF_TIMEOUT_MS / 60_000 },
-            ),
-          ),
+          m(msg("Not back after {minutes} minutes", { minutes: HANDOFF_TIMEOUT_MS / 60_000 })),
         ),
       server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
     );
