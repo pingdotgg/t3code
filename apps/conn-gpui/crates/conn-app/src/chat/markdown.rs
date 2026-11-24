@@ -11,7 +11,7 @@ use conn_theme::{Appearance, Tokens};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, Hsla,
-    InteractiveElement, InteractiveText, IntoElement, ParentElement, SharedString,
+    InteractiveElement, InteractiveText, IntoElement, ParentElement, Role, SharedString,
     StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, Window, div, px,
 };
 use markdown::mdast::Node;
@@ -20,6 +20,7 @@ use syntect::util::LinesWithEndings;
 
 use super::color::{SyntaxRole, hsla, hsla_alpha, prose_foreground};
 use super::icons;
+use crate::a11y::ConnA11yExt as _;
 
 /// Body text size matching Conn's `text-sm` (`14px`) with relaxed (`1.625`) leading.
 const BODY_FONT_PX: f32 = 14.0;
@@ -28,9 +29,10 @@ const BODY_LINE_HEIGHT_PX: f32 = 22.75;
 const BLOCK_GAP_PX: f32 = 10.4;
 /// Rounded corners for fenced code blocks matching Conn's `--radius-bubble` (`calc(0.5rem + 6px)`).
 const CODE_BLOCK_RADIUS_PX: f32 = 14.0;
-/// Monospace code size inside fenced blocks (`leading-1.625`).
-const CODE_FONT_PX: f32 = 12.5;
-const CODE_LINE_HEIGHT_PX: f32 = 20.3;
+/// Monospace code size inside fenced blocks: web's `--font-size-code` (13px default) at
+/// `--line-height-code` (1.625), so 21.125px.
+const CODE_FONT_PX: f32 = 13.0;
+const CODE_LINE_HEIGHT_PX: f32 = 13.0 * 1.625;
 const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
@@ -520,6 +522,43 @@ pub(super) fn render_blocks(
     container.into_any_element()
 }
 
+/// GPUI element id for a block's AX node. Prefixed so it never collides with other row ids.
+fn md_element_id(block_id: &str, kind: &str) -> SharedString {
+    SharedString::from(format!("md-{block_id}-{kind}"))
+}
+
+/// Stable AX identifier of a Markdown block: `chat.md.<entry>-b<n>[-i<item>-<n>].<kind>`,
+/// for example `chat.md.<entry>-b2.code` or `chat.md.<entry>-b1.item.0`.
+fn md_ax_id(block_id: &str, kind: &str) -> SharedString {
+    SharedString::from(format!("chat.md.{block_id}.{kind}"))
+}
+
+fn spans_text(spans: &[InlineSpan]) -> String {
+    spans.iter().map(|span| span.text.as_str()).collect()
+}
+
+/// Text of a list item's first block, for its AX label.
+fn list_item_text(item: &ListItem) -> String {
+    match item.blocks.first() {
+        Some(MarkdownBlock::Paragraph(spans) | MarkdownBlock::Heading { spans, .. }) => {
+            spans_text(spans)
+        }
+        _ => String::new(),
+    }
+}
+
+/// One line of at most 80 characters, so an AX label stays short for long paragraphs.
+fn ax_preview(text: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= MAX_CHARS {
+        return line;
+    }
+    let mut out: String = line.chars().take(MAX_CHARS).collect();
+    out.push('…');
+    out
+}
+
 fn render_block(
     block_id: &str,
     block: &MarkdownBlock,
@@ -531,6 +570,12 @@ fn render_block(
         MarkdownBlock::Paragraph(spans) => {
             let (font_px, line_px) = options.body_size();
             div()
+                .id(md_element_id(block_id, "paragraph"))
+                .a11y(
+                    Role::Paragraph,
+                    md_ax_id(block_id, "paragraph"),
+                    format!("Paragraph: {}", ax_preview(&spans_text(spans))),
+                )
                 .w_full()
                 .min_w_0()
                 .text_size(px(font_px))
@@ -562,6 +607,13 @@ fn render_block(
                 }
             };
             let mut el = div()
+                .id(md_element_id(block_id, "heading"))
+                .a11y(
+                    Role::Heading,
+                    md_ax_id(block_id, "heading"),
+                    format!("Heading level {level}: {}", ax_preview(&spans_text(spans))),
+                )
+                .aria_level(usize::from(*level))
                 .w_full()
                 .min_w_0()
                 .text_size(px(font_px))
@@ -595,8 +647,25 @@ fn render_block(
             items,
         } => {
             // `.chat-markdown li + li { margin-top: 0.25rem }` (4px).
-            let mut list_el = div().flex().flex_col().gap(px(4.0)).w_full().min_w_0();
+            let mut list_el = div()
+                .id(md_element_id(block_id, "list"))
+                .a11y(
+                    Role::List,
+                    md_ax_id(block_id, "list"),
+                    format!(
+                        "{} list, {} {}",
+                        if *ordered { "Numbered" } else { "Bulleted" },
+                        items.len(),
+                        if items.len() == 1 { "item" } else { "items" }
+                    ),
+                )
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .w_full()
+                .min_w_0();
             for (idx, item) in items.iter().enumerate() {
+                let item_kind = format!("item.{idx}");
                 let mut body = div().flex().flex_col().gap(px(4.0)).flex_1().min_w_0();
                 for (b_idx, inner) in item.blocks.iter().enumerate() {
                     let inner_id = format!("{block_id}-i{idx}-{b_idx}");
@@ -663,6 +732,19 @@ fn render_block(
                         )
                         .child(body)
                 };
+                let row = row
+                    .id(md_element_id(block_id, &item_kind))
+                    .a11y(
+                        Role::ListItem,
+                        md_ax_id(block_id, &item_kind),
+                        format!(
+                            "List item {}: {}",
+                            idx + 1,
+                            ax_preview(&list_item_text(item))
+                        ),
+                    )
+                    .aria_position_in_set(idx + 1)
+                    .aria_size_of_set(items.len());
                 list_el = list_el.child(row);
             }
             list_el.into_any_element()
@@ -671,6 +753,8 @@ fn render_block(
         MarkdownBlock::Blockquote(inner) => {
             // `.chat-markdown blockquote`: 2px left border at 35% currentColor, 0.8rem (12.8px) inset.
             let mut inner_col = div()
+                .id(md_element_id(block_id, "quote"))
+                .a11y(Role::Blockquote, md_ax_id(block_id, "quote"), "Block quote")
                 .flex()
                 .flex_col()
                 .gap(px(6.0))
@@ -747,6 +831,7 @@ fn render_code_block(
     // Conn `MarkdownCodeBlock`: icon-only `size="icon-xs"` (24px) button with 12px (`size-3`) glyph.
     let copy_btn = div()
         .id(SharedString::from(format!("copy-{block_id}")))
+        .a11y_button(md_ax_id(block_id, "code.copy"), "Copy code")
         .flex()
         .items_center()
         .justify_center()
@@ -810,6 +895,7 @@ fn render_code_block(
         };
         let wrap_btn = div()
             .id(SharedString::from(format!("wrap-{block_id}")))
+            .a11y_button(md_ax_id(block_id, "code.wrap"), "Toggle word wrap")
             .flex()
             .items_center()
             .justify_center()
@@ -832,6 +918,15 @@ fn render_code_block(
         Appearance::Light => hsla_alpha(tokens.border, 0.70),
     };
     div()
+        .id(md_element_id(block_id, "code"))
+        .a11y(
+            Role::Code,
+            md_ax_id(block_id, "code"),
+            match language {
+                None | Some("text") | Some("") => "Code block".to_owned(),
+                Some(lang) => format!("Code block ({lang})"),
+            },
+        )
         .w_full()
         .min_w_0()
         .overflow_hidden()
@@ -919,11 +1014,36 @@ fn render_table(
     options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     let row_border = hsla_alpha(tokens.border, 0.60);
-    let mut table = div().w_full().min_w_0().flex().flex_col();
+    let column_count = headers
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    let mut table = div()
+        .id(md_element_id(block_id, "table"))
+        .a11y(
+            Role::Table,
+            md_ax_id(block_id, "table"),
+            format!(
+                "Table, {} {}, {} {}",
+                rows.len(),
+                if rows.len() == 1 { "row" } else { "rows" },
+                column_count,
+                if column_count == 1 {
+                    "column"
+                } else {
+                    "columns"
+                }
+            ),
+        )
+        .w_full()
+        .min_w_0()
+        .flex()
+        .flex_col();
 
     if !headers.is_empty() {
         let col_count = headers.len();
         let mut header_row = div()
+            .id(md_element_id(block_id, "row.header"))
+            .a11y(Role::Row, md_ax_id(block_id, "row.header"), "Header row")
             .flex()
             .flex_row()
             .w_full()
@@ -957,6 +1077,12 @@ fn render_table(
     for (r_idx, row) in rows.iter().enumerate() {
         let col_count = row.len();
         let mut row_el = div()
+            .id(md_element_id(block_id, &format!("row.{r_idx}")))
+            .a11y(
+                Role::Row,
+                md_ax_id(block_id, &format!("row.{r_idx}")),
+                format!("Row {}", r_idx + 1),
+            )
             .flex()
             .flex_row()
             .w_full()
@@ -1038,7 +1164,7 @@ fn build_styled_text_with_targets(
     workspace_root: Option<&str>,
     file_links_enabled: bool,
 ) -> (StyledText, Vec<Range<usize>>, Vec<ClickTarget>) {
-    // Runs, not highlights: inline code switches font family (SF Mono), which a highlight
+    // Runs, not highlights: inline code switches font family (the mono font), which a highlight
     // cannot. Every run therefore carries its own font and color.
     let prose = prose_override.unwrap_or_else(|| super::color::prose_foreground(tokens));
     let mut text = String::new();
@@ -1261,6 +1387,30 @@ fn looks_like_file_path(rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ax_ids_and_labels_for_blocks_are_stable_and_short() {
+        assert_eq!(
+            md_ax_id("turn-item:x-b2", "code").as_ref(),
+            "chat.md.turn-item:x-b2.code"
+        );
+        assert_eq!(ax_preview("a  b\n c"), "a b c");
+        let long = "word ".repeat(40);
+        let preview = ax_preview(&long);
+        assert!(preview.ends_with('…'));
+        assert_eq!(preview.chars().count(), 81);
+
+        let blocks = parse_markdown("- first *item*\n- second\n\n```rust\nfn a() {}\n```");
+        let Some(MarkdownBlock::List { items, .. }) = blocks.first() else {
+            panic!("expected a list first");
+        };
+        assert_eq!(list_item_text(&items[0]), "first item");
+        assert_eq!(list_item_text(&items[1]), "second");
+        assert!(matches!(
+            blocks.get(1),
+            Some(MarkdownBlock::CodeBlock { language: Some(lang), .. }) if lang == "rust"
+        ));
+    }
 
     #[test]
     fn resolves_clickable_workspace_file_paths_and_rejects_non_files() {

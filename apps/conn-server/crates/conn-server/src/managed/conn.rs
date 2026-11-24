@@ -68,6 +68,7 @@ impl axum::serve::Listener for Listener {
             match self.0.accept().await {
                 Ok((stream, addr)) => {
                     let _ = stream.set_nodelay(true);
+                    crate::session::keep_alive(&stream);
                     let slot = Arc::new(Slot::default());
                     let io = FencedIo {
                         inner: stream,

@@ -11,6 +11,7 @@ mod stream;
 mod ui;
 mod workspace;
 
+use crate::a11y::ConnA11yExt as _;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -25,13 +26,13 @@ use conn_contract::rpc::device::{
     action, close, configure, detail, eas_account, list, open, shutdown, simlock_identity,
     test_host,
 };
-use conn_contract::rpc::server::{get_config, update_settings};
+use conn_contract::rpc::server::update_settings;
 use conn_contract::{
     ClientServerSettingsPatch, DeviceActionInput, DeviceCloseInput, DeviceConfigureInput,
     DeviceDetail, DeviceDetailInput, DeviceEasAccountInput, DeviceHostStatus, DeviceListInput,
     DeviceListInputUpdateTool, DeviceOpenInput, DeviceOrientation, DevicePlatform,
     DeviceServiceState, DeviceShutdownInput, DeviceSimlockIdentityInput, DeviceSummary,
-    ServerProbePayload, ServerUpdateSettingsPayload,
+    ServerUpdateSettingsPayload,
 };
 use conn_state::{AnnotationPinPoint, AnnotationRecord, build_device_annotation_capture};
 use conn_theme::Tokens;
@@ -132,6 +133,8 @@ pub(crate) struct DevicePanel {
     host_config: Option<HostConfigScreen>,
     saved_hosts: SavedHostConfigs,
     host_config_loading: bool,
+    /// The live server config, whose settings hold the saved hosts (`settingsUpdated`).
+    server_config: Arc<conn_state::providers::ServerConfigState>,
     host_saving: bool,
     host_error: Option<String>,
 
@@ -242,6 +245,7 @@ impl DevicePanel {
             host_config: None,
             saved_hosts: SavedHostConfigs::default(),
             host_config_loading: false,
+            server_config: Arc::default(),
             host_saving: false,
             host_error: None,
             visible: false,
@@ -931,6 +935,22 @@ impl DevicePanel {
         cx.notify();
     }
 
+    /// The latest server config. The saved hosts follow its settings, so a change made from
+    /// another client shows here without reopening the screen.
+    pub(crate) fn set_server_config(
+        &mut self,
+        config: Arc<conn_state::providers::ServerConfigState>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.server_config = config;
+        if !self.host_saving
+            && let Some(settings) = self.server_config.settings()
+        {
+            self.saved_hosts = SavedHostConfigs::from_settings(settings);
+            cx.notify();
+        }
+    }
+
     /// The selected thread and its project folder.
     pub(crate) fn set_thread(
         &mut self,
@@ -1522,33 +1542,13 @@ impl DevicePanel {
         cx.notify();
     }
 
+    /// The saved hosts are in the server's settings, which the config stream keeps current.
     fn load_saved_hosts(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(conn) = self.connection.clone() else {
-            return;
-        };
-        self.host_config_loading = true;
+        if let Some(settings) = self.server_config.settings() {
+            self.saved_hosts = SavedHostConfigs::from_settings(settings);
+        }
+        self.host_config_loading = false;
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            let res = conn
-                .call::<get_config::Payload, get_config::Success>(
-                    "server.getConfig",
-                    &ServerProbePayload {},
-                )
-                .await;
-            let _ = this.update(cx, |panel, cx| {
-                panel.host_config_loading = false;
-                match res {
-                    Ok(config) => {
-                        panel.saved_hosts = SavedHostConfigs::from_settings(&config.settings);
-                    }
-                    Err(err) => {
-                        panel.host_error = Some(format_client_error(&err));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     pub(super) fn test_ssh_host(&mut self, cx: &mut Context<'_, Self>) {
@@ -2058,6 +2058,7 @@ impl DevicePanel {
 
         div()
             .id("device-picker-scroll")
+            .a11y_group("panel.device.picker", "Device list")
             .flex()
             .flex_col()
             .flex_1()

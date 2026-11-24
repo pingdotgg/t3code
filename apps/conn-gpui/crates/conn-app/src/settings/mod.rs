@@ -12,6 +12,8 @@
 //!   `shell_divider_raised` between square rows, no trailing divider).
 
 pub(crate) mod controls;
+pub(crate) mod projects;
+pub(crate) mod providers;
 pub(crate) mod scheduled_tasks;
 
 use conn_client::{Connection, ConnectionStatus};
@@ -55,14 +57,18 @@ pub(crate) enum SettingsPage {
     General,
     Appearance,
     Connections,
+    Providers,
+    Projects,
     ScheduledTasks,
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 5] = [
+const ALL_PAGES: [SettingsPage; 7] = [
     SettingsPage::General,
     SettingsPage::Appearance,
     SettingsPage::Connections,
+    SettingsPage::Providers,
+    SettingsPage::Projects,
     SettingsPage::ScheduledTasks,
     SettingsPage::Keyboard,
 ];
@@ -73,6 +79,8 @@ impl SettingsPage {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Connections => "Connections",
+            Self::Providers => "Providers",
+            Self::Projects => "Projects",
             Self::ScheduledTasks => "Scheduled tasks",
             Self::Keyboard => "Keyboard",
         }
@@ -83,6 +91,8 @@ impl SettingsPage {
             Self::General => IconName::SlidersHorizontal,
             Self::Appearance => IconName::Palette,
             Self::Connections => IconName::Plug,
+            Self::Providers => IconName::Bot,
+            Self::Projects => IconName::Folder,
             Self::ScheduledTasks => IconName::Clock,
             Self::Keyboard => IconName::Keyboard,
         }
@@ -190,6 +200,8 @@ pub(crate) struct SettingsModal {
     operator_url_input: Entity<InputState>,
     operator_saved_notice: Option<String>,
     scheduled_tasks: Entity<ScheduledTasksView>,
+    providers: Entity<providers::ProvidersView>,
+    projects: Entity<projects::ProjectsView>,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -252,6 +264,12 @@ impl SettingsModal {
                 .placeholder(conn_desktop::operator::DEFAULT_OPERATOR_URL)
                 .default_value(operator_url)
         });
+        let provider_connection = live_connection.clone();
+        let projects_connection = live_connection.clone();
+        let provider_environment = connection
+            .server_label
+            .clone()
+            .unwrap_or_else(|| "this environment".to_owned());
         let initial_server_url = connection.server_url.clone().unwrap_or_default();
         let direct_server_url_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -275,7 +293,7 @@ impl SettingsModal {
                     geometry,
                     connection: live_connection,
                     server_url: scheduled_url,
-                    projects,
+                    projects: projects.clone(),
                     default_instance_id,
                     default_model: default_model_slug,
                 },
@@ -283,6 +301,19 @@ impl SettingsModal {
             )
         });
 
+        let providers = cx.new(|_| {
+            providers::ProvidersView::new(providers::ProvidersInit {
+                tokens: tokens.clone(),
+                geometry,
+                connection: provider_connection,
+                environment_label: provider_environment,
+            })
+        });
+
+        let projects_tokens = tokens.clone();
+        let projects = cx.new(|_| {
+            projects::ProjectsView::new(projects_tokens, geometry, projects, projects_connection)
+        });
         Self {
             tokens,
             geometry,
@@ -303,9 +334,41 @@ impl SettingsModal {
             operator_url_input,
             operator_saved_notice: None,
             scheduled_tasks,
+            providers,
+            projects,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
+    }
+
+    /// The live provider catalog, for the Providers page.
+    pub(crate) fn set_server_config(
+        &mut self,
+        config: std::sync::Arc<conn_state::providers::ServerConfigState>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.projects.update(cx, |view, cx| {
+            view.set_server_config(std::sync::Arc::clone(&config), cx);
+        });
+        self.providers
+            .update(cx, |view, cx| view.set_server_config(config, cx));
+    }
+
+    /// The projects the server lists, for each one's actions and workspace default.
+    pub(crate) fn set_project_shells(
+        &mut self,
+        shells: Vec<conn_contract::OrchestrationProjectShell>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.projects
+            .update(cx, |view, cx| view.set_shells(shells, cx));
+    }
+
+    /// `Open provider setup`: the Providers page with `instance_id`'s Account row open.
+    pub(crate) fn focus_provider(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
+        self.providers
+            .update(cx, |view, cx| view.focus_provider(instance_id, cx));
+        self.select_page(SettingsPage::Providers, cx);
     }
 
     /// Updates Orbit sync status, Nodes/Instances fleet, profiles, prefs, and custom themes live.
@@ -319,6 +382,21 @@ impl SettingsModal {
         cx: &mut Context<'_, Self>,
     ) {
         let url_changed = self.connection.server_url != connection.server_url;
+        if url_changed {
+            let environment = connection
+                .server_label
+                .clone()
+                .unwrap_or_else(|| "this environment".to_owned());
+            let provider_connection = live_connection.clone();
+            let projects_connection = provider_connection.clone();
+            self.projects
+                .update(cx, |view, cx| view.set_connection(projects_connection, cx));
+            self.providers.update(cx, |view, cx| {
+                view.set_connection(provider_connection, environment, cx);
+            });
+        }
+        self.projects
+            .update(cx, |view, cx| view.set_projects(projects.clone(), cx));
         self.connection = connection;
         self.orbit = orbit;
         self.themes = build_theme_options(custom_themes);
@@ -341,8 +419,12 @@ impl SettingsModal {
         self.active_theme_id = theme_id.into();
         self.tokens = tokens.clone();
         self.scheduled_tasks.update(cx, |view, cx| {
-            view.set_tokens(tokens, cx);
+            view.set_tokens(tokens.clone(), cx);
         });
+        self.projects
+            .update(cx, |view, cx| view.set_tokens(tokens.clone(), cx));
+        self.providers
+            .update(cx, |view, cx| view.set_tokens(tokens, cx));
         cx.notify();
     }
 
@@ -602,6 +684,8 @@ impl SettingsModal {
                 SettingsPage::General => self.render_general_page(),
                 SettingsPage::Appearance => self.render_appearance_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
+                SettingsPage::Providers => self.providers.clone().into_any_element(),
+                SettingsPage::Projects => self.projects.clone().into_any_element(),
                 SettingsPage::ScheduledTasks => self.scheduled_tasks.clone().into_any_element(),
                 SettingsPage::Keyboard => self.render_keyboard_page(),
             }

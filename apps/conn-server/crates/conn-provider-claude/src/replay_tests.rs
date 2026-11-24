@@ -550,6 +550,44 @@ fn plan_dialog_and_withdrawn_requests() {
     ));
 }
 
+/// A downloaded catalog that moves `sonnet` to a new model: a child thread launched for
+/// `sonnet`, by the `Agent` input or by the child's own assistant frame, records the turn's
+/// catalog slug, not the bundled one (`canonicalClaudeSubagentModel(modelCatalog, …)`).
+#[test]
+fn subagent_models_resolve_through_the_turns_catalog() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    mapper.set_catalog(vec![
+        json!({"slug": "claude-sonnet-9", "aliases": ["sonnet"]}),
+    ]);
+    mapper.begin_turn(
+        &turn_input(1, &provider_thread("n1"), "x", "full-access"),
+        "bypassPermissions",
+    );
+    let frames = [
+        json!({"type": "assistant", "uuid": "r1", "message": {"id": "m_root",
+            "model": "claude-sonnet-4-6", "content": [{"type": "tool_use", "id": "toolu_a",
+            "name": "Agent", "input": {"description": "a", "prompt": "a", "model": "sonnet"}}]}}),
+        json!({"type": "system", "subtype": "task_started", "task_id": "t1",
+            "tool_use_id": "toolu_a", "description": "a"}),
+        json!({"type": "assistant", "parent_tool_use_id": "toolu_b", "uuid": "u2",
+            "message": {"id": "m_b", "model": "sonnet", "content": [{"type": "text", "text": "b"}]}}),
+        json!({"type": "system", "subtype": "task_started", "task_id": "t2",
+            "tool_use_id": "toolu_b", "description": "b"}),
+    ];
+    let mut models = Vec::new();
+    for frame in frames {
+        for out in mapper.handle(Inbound::from_value(frame)) {
+            if let Out::Event(event) = out {
+                let event = serde_json::to_value(&event).unwrap();
+                if event["type"] == "app_thread.created" {
+                    models.push(event["appThread"]["modelSelection"]["model"].clone());
+                }
+            }
+        }
+    }
+    assert_eq!(models, [json!("claude-sonnet-9"), json!("claude-sonnet-9")]);
+}
+
 #[test]
 fn subagent_compaction_and_retry_frames_decode_without_failing() {
     let mut mapper = Mapper::new(FixedEnv::default(), SESSION);

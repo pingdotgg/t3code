@@ -2414,6 +2414,10 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         finish_run(tx, &thread_id, &run_id, "cancelled", None)?;
     }
     let settled_at = command["settledAt"].clone();
+    let current = live_thread(tx, &thread_id)?;
+    let again = current["settledOverride"] == "settled"
+        && !is_null(&current, "settledAt")
+        && is_null(&current, "pinnedAt");
     thread_patch(tx, &command, "thread.settled", |t, now| {
         let already =
             t["settledOverride"] == "settled" && !is_null(t, "settledAt") && is_null(t, "pinnedAt");
@@ -2443,9 +2447,17 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         Ok(())
     })?;
+    let settled_at = live_thread(tx, &thread_id)?["settledAt"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     Ok(vec![Effect::ThreadClosed {
         thread_id,
-        reason: crate::ThreadClose::Settled,
+        reason: if again {
+            crate::ThreadClose::SettledAgain { settled_at }
+        } else {
+            crate::ThreadClose::Settled { settled_at }
+        },
     }])
 }
 

@@ -4,15 +4,18 @@
 //! Hand-written code in this crate stays free of `unsafe`; only the UniFFI proc-macro
 //! scaffolding generates FFI boundary code.
 
+mod approvals;
 mod coalesce;
 mod core;
 mod orbit;
 mod phone_tasks;
+mod questions;
 mod theme;
 mod types;
 
 uniffi::setup_scaffolding!();
 
+pub use crate::approvals::{FfiApprovalOption, FfiButtonTone, FfiPendingApproval};
 pub use crate::core::{ConnCore, CoreListener};
 pub use crate::orbit::{
     FfiAgentRole, FfiAgentState, FfiAttentionKind, FfiChangeTone, FfiConversationRef,
@@ -34,6 +37,11 @@ pub use crate::orbit::{
 pub use crate::phone_tasks::{
     FfiPhoneNotice, FfiPhoneTaskLane, FfiPhoneTaskRow, FfiPhoneTasks, FfiPhoneTasksView,
     FfiTaskDot, phone_tasks_error_text, phone_tasks_view,
+};
+pub use crate::questions::{
+    FfiPendingQuestion, FfiQuestionDraft, FfiQuestionPanel, FfiQuestionPanelOption, FfiTextFits,
+    question_answers, question_context_clamp, question_panel, question_set_custom_answer,
+    question_toggle_option,
 };
 pub use crate::theme::{
     FfiAppearance, FfiColor, FfiShellGeometry, FfiThemeSummary, FfiThemeTokens, builtin_themes,

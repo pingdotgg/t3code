@@ -145,6 +145,14 @@ impl LayoutState {
         self.right_panel_open = !self.right_panel_open;
     }
 
+    /// Whether the open right panel shows the surface launcher (Conn's `Open a surface` list, the
+    /// items of the `+` menu) instead of a surface: it is open and has no tab. A panel with tabs
+    /// shows its active one, so toggling it back open restores them.
+    #[must_use]
+    pub fn shows_surface_launcher(&self, open_tab_count: usize) -> bool {
+        self.right_panel_open && open_tab_count == 0
+    }
+
     /// Opens the right panel on `tab`, or closes it when `tab` is already open.
     pub fn open_panel(&mut self, tab: RightPanelTab) {
         if self.right_panel_open && self.right_panel_tab == tab {
@@ -215,6 +223,23 @@ mod surface_tests {
         assert_eq!(surface.kind(), RightPanelTab::File);
         assert_eq!(surface.file_path(), Some("docs/status.md"));
         assert_eq!(PanelSurface::Kind(RightPanelTab::Api).file_path(), None);
+    }
+
+    #[test]
+    fn opening_the_right_panel_with_no_tabs_shows_the_launcher() {
+        let mut layout = LayoutState::default();
+        // Closed: nothing shows, tabs or not.
+        assert!(!layout.shows_surface_launcher(0));
+        assert!(!layout.shows_surface_launcher(2));
+        layout.toggle_right_panel();
+        // Open with no tab: the launcher, never Files by default.
+        assert!(layout.shows_surface_launcher(0));
+        // Open with tabs: the active tab shows.
+        assert!(!layout.shows_surface_launcher(1));
+        // Closing and reopening a panel that has tabs restores them, with no launcher.
+        layout.toggle_right_panel();
+        layout.toggle_right_panel();
+        assert!(!layout.shows_surface_launcher(3));
     }
 
     #[test]

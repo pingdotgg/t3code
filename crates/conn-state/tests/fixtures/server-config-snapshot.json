@@ -1,0 +1,789 @@
+{
+ "version": 1,
+ "type": "snapshot",
+ "config": {
+  "environment": {
+   "environmentId": "1a28c0a2-29b1-414d-9e2d-be55ecd752fd",
+   "label": "user",
+   "platform": {
+    "os": "darwin",
+    "arch": "arm64",
+    "machine": "laptop"
+   },
+   "serverVersion": "0.1.9",
+   "orchestrationProtocolVersion": 2,
+   "databaseMigration": 87,
+   "capabilities": {
+    "repositoryIdentity": true,
+    "connectionProbe": true,
+    "attachmentUploads": true,
+    "questionAttachments": true,
+    "fileAttachments": {
+     "maxUploadBytes": 52428800
+    },
+    "pullRequests": true,
+    "pullRequestChecks": true,
+    "sideChats": true,
+    "vcsBranchStatus": true,
+    "inlineMessageContext": true,
+    "requiredWorktreeBootstrap": true,
+    "threadSettlement": true,
+    "threadAutoSettlement": true,
+    "storageCleanup": true,
+    "storageCleanupRun": true,
+    "databaseStorage": true,
+    "otlpEndpointCheck": true,
+    "secretSourceCheck": true,
+    "projectWorktreeCleanup": true,
+    "settledWorktreeCleanup": true,
+    "worktreesDirectory": true,
+    "fastWorktreeCheckout": true,
+    "threadAutoSettlementScope": true,
+    "threadRestartContinuation": true,
+    "projectSettingsOverrides": true,
+    "projectProviderInstanceOverrides": true,
+    "threadSnooze": true,
+    "threadForceStop": true,
+    "environmentThemes": true,
+    "usageLimitSources": true,
+    "providerWorkspaceSnapshotsOnDemand": true,
+    "modelCatalogRefresh": true,
+    "usagePriceOverrides": true,
+    "usageModelAliases": true,
+    "threadPinning": true,
+    "threadPinReorder": true,
+    "threadActiveReorder": true,
+    "threadAutoSettleOptOut": true,
+    "threadProjectFromScratch": true,
+    "threadTitleRegeneration": true,
+    "threadVisitedTracking": true,
+    "threadPullRequestLinking": true,
+    "serverResolvedCommandContext": true,
+    "threadStop": true,
+    "localServerStop": true,
+    "threadPullRequests": true,
+    "threadPullRequestWatch": true,
+    "pullRequestStackActions": true,
+    "npmReleaseLookup": true,
+    "agentActivityPublishing": false,
+    "projectCloneTracking": true,
+    "projectOrganization": true,
+    "ignoredFileListing": true,
+    "environmentIcon": true,
+    "commandOutputStreaming": true,
+    "serverBrowser": true,
+    "peerLinks": true,
+    "mcpModeLimitHeader": true,
+    "linkFence": true,
+    "mcpApprovalCodes": true,
+    "mcpHostedApproval": true,
+    "triage": true,
+    "oneTimeSchedules": true,
+    "freshContext": true,
+    "scheduledTaskThreadModes": true,
+    "voiceTranscription": true,
+    "cloudVoiceTranscription": true,
+    "shellThreadFamilies": true,
+    "shellOlderSettled": true
+   }
+  },
+  "auth": {
+   "policy": "loopback-browser",
+   "bootstrapMethods": [
+    "one-time-token"
+   ],
+   "sessionMethods": [
+    "browser-session-cookie",
+    "bearer-access-token",
+    "dpop-access-token"
+   ],
+   "sessionCookieName": "t3_session_64367_37ff9951a678",
+   "serverUpdateScope": "environment:maintain"
+  },
+  "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/conn-rec-YzHC8m/ts-project",
+  "keybindingsConfigPath": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/conn-rec-YzHC8m/base/userdata/keybindings.json",
+  "keybindings": [
+   {
+    "command": "sidebar.toggle",
+    "shortcut": {
+     "key": "b",
+     "metaKey": false,
+     "ctrlKey": false,
+     "shiftKey": false,
+     "altKey": false,
+     "modKey": true
+    }
+   },
+   {
+    "command": "workspace.focusNext",
+    "shortcut": {
+     "key": "f6",
+     "metaKey": false,
+     "ctrlKey": false,
+     "shiftKey": false,
+     "altKey": false,
+     "modKey": false
+    }
+   }
+  ],
+  "issues": [],
+  "providers": [
+   {
+    "instanceId": "codex",
+    "driver": "codex",
+    "displayName": "Codex",
+    "continuation": {
+     "groupKey": "codex:home:/home/user/.codex"
+    },
+    "showInteractionModeToggle": true,
+    "reportsContextWindow": true,
+    "setup": {
+     "canAuthenticate": false,
+     "canInstall": false
+    },
+    "enabled": true,
+    "installed": true,
+    "version": "0.167.0",
+    "status": "ready",
+    "auth": {
+     "status": "authenticated",
+     "type": "chatgpt",
+     "label": "ChatGPT Pro 500 Subscription",
+     "email": "user@example.com",
+     "workspaceId": "<redacted:36>"
+    },
+    "checkedAt": "2026-11-13T12:21:09.868Z",
+    "models": [
+     {
+      "slug": "gpt-6.1-sol",
+      "name": "GPT-6.1-Sol",
+      "isCustom": false,
+      "capabilities": {
+       "optionDescriptors": [
+        {
+         "id": "reasoningEffort",
+         "label": "Reasoning",
+         "type": "select",
+         "options": [
+          {
+           "id": "low",
+           "label": "Low",
+           "isDefault": true
+          },
+          {
+           "id": "medium",
+           "label": "Medium"
+          },
+          {
+           "id": "high",
+           "label": "High"
+          },
+          {
+           "id": "xhigh",
+           "label": "Extra High"
+          },
+          {
+           "id": "max",
+           "label": "Max"
+          },
+          {
+           "id": "ultra",
+           "label": "Ultra"
+          }
+         ],
+         "currentValue": "low"
+        },
+        {
+         "id": "serviceTier",
+         "label": "Service Tier",
+         "type": "select",
+         "options": [
+          {
+           "id": "default",
+           "label": "Standard"
+          },
+          {
+           "id": "priority",
+           "label": "Fast",
+           "description": "2x speed, increased usage"
+          },
+          {
+           "id": "ultrafast",
+           "label": "Ultrafast",
+           "description": "Even faster, more expensive",
+           "isDefault": true
+          }
+         ],
+         "currentValue": "ultrafast"
+        },
+        {
+         "id": "cyberAccessProgram",
+         "label": "Cyber Access",
+         "type": "select",
+         "options": [
+          {
+           "id": "standard",
+           "label": "Standard",
+           "isDefault": true
+          }
+         ],
+         "currentValue": "standard"
+        }
+       ]
+      }
+     },
+     {
+      "slug": "gpt-6-astra",
+      "name": "GPT-6-Astra",
+      "isCustom": false,
+      "isDefault": true,
+      "capabilities": {
+       "optionDescriptors": [
+        {
+         "id": "reasoningEffort",
+         "label": "Reasoning",
+         "type": "select",
+         "options": [
+          {
+           "id": "low",
+           "label": "Low"
+          },
+          {
+           "id": "medium",
+           "label": "Medium",
+           "isDefault": true
+          },
+          {
+           "id": "high",
+           "label": "High"
+          },
+          {
+           "id": "xhigh",
+           "label": "Extra High"
+          },
+          {
+           "id": "max",
+           "label": "Max"
+          },
+          {
+           "id": "ultra",
+           "label": "Ultra"
+          }
+         ],
+         "currentValue": "medium"
+        },
+        {
+         "id": "serviceTier",
+         "label": "Service Tier",
+         "type": "select",
+         "options": [
+          {
+           "id": "default",
+           "label": "Standard"
+          },
+          {
+           "id": "priority",
+           "label": "Fast",
+           "description": "2x speed, increased usage"
+          },
+          {
+           "id": "ultrafast",
+           "label": "Ultrafast",
+           "description": "Even faster, more expensive",
+           "isDefault": true
+          }
+         ],
+         "currentValue": "ultrafast"
+        },
+        {
+         "id": "cyberAccessProgram",
+         "label": "Cyber Access",
+         "type": "select",
+         "options": [
+          {
+           "id": "standard",
+           "label": "Standard",
+           "isDefault": true
+          }
+         ],
+         "currentValue": "standard"
+        }
+       ]
+      }
+     }
+    ],
+    "slashCommands": [
+     {
+      "name": "compact",
+      "description": "Summarize the conversation and reduce context usage"
+     },
+     {
+      "name": "goal",
+      "description": "Set a goal Codex keeps working toward until it is done",
+      "input": {
+       "hint": "Objective, or pause, resume, clear"
+      }
+     }
+    ],
+    "skills": [
+     {
+      "name": "cleanup-host",
+      "description": "Safely free RAM, swap and disk on a Linux or macOS machine, then report what was freed. Use when a host is low on memory or disk, swap is full, /tmp is full, or old processes, git worktrees, caches or Docker data pile up.",
+      "path": "/home/user/.agents/skills/cleanup-host/SKILL.md",
+      "scope": "user",
+      "enabled": true
+     },
+     {
+      "name": "computer-history:computer-history",
+      "description": "Use Computer History to answer questions about the user's recent activity from a rolling local event stream and memory summaries.",
+      "path": "/home/user/.codex/plugins/cache/openai-bundled/computer-history/1.0.1001824/skills/computer-history/SKILL.md",
+      "scope": "user",
+      "enabled": true
+     }
+    ],
+    "usageLimits": {
+     "checkedAt": "2026-11-13T12:21:09.868Z",
+     "windows": [
+      {
+       "id": "primary",
+       "kind": "weekly",
+       "label": "Weekly",
+       "usedPercent": 100,
+       "resetsAt": "2026-11-15T15:27:45.000Z",
+       "windowDurationMins": 10080
+      }
+     ],
+     "resetCredits": {
+      "availableCount": 1,
+      "nextExpiresAt": "2026-12-12T22:19:19.000Z"
+     }
+    },
+    "versionAdvisory": {
+     "status": "behind_latest",
+     "currentVersion": "0.167.0",
+     "latestVersion": "0.169.0",
+     "updateCommand": "vp i -g @openai/codex",
+     "canUpdate": true,
+     "canInstallVersion": true,
+     "checkedAt": "2026-11-13T12:21:11.262Z",
+     "message": "Install the update now or review provider settings."
+    },
+    "compatibilityAdvisory": {
+     "status": "supported",
+     "latestVersionStatus": "supported",
+     "message": null,
+     "recommendedVersion": null,
+     "recommendedRange": ">=0.159.0"
+    }
+   },
+   {
+    "instanceId": "claudeAgent",
+    "driver": "claudeAgent",
+    "displayName": "Claude",
+    "continuation": {
+     "groupKey": "claude:home:/home/user/.claude"
+    },
+    "showInteractionModeToggle": true,
+    "reportsContextWindow": true,
+    "setup": {
+     "canAuthenticate": false,
+     "canInstall": false
+    },
+    "enabled": true,
+    "installed": true,
+    "version": "2.1.322",
+    "status": "ready",
+    "auth": {
+     "status": "authenticated",
+     "type": "customEndpoint",
+     "label": "Custom API endpoint",
+     "workspaceId": "<redacted:36>"
+    },
+    "checkedAt": "2026-11-13T12:21:09.877Z",
+    "models": [
+     {
+      "slug": "claude-opus-5-5",
+      "name": "Claude Opus 5.5",
+      "aliases": [
+       "opus",
+       "opus-5.5",
+       "claude-opus-5.5"
+      ],
+      "isCustom": false,
+      "isDefault": true,
+      "capabilities": {
+       "optionDescriptors": [
+        {
+         "id": "effort",
+         "label": "Reasoning",
+         "type": "select",
+         "options": [
+          {
+           "id": "low",
+           "label": "Low"
+          },
+          {
+           "id": "medium",
+           "label": "Medium",
+           "isDefault": true
+          },
+          {
+           "id": "high",
+           "label": "High"
+          },
+          {
+           "id": "xhigh",
+           "label": "Extra High"
+          },
+          {
+           "id": "max",
+           "label": "Max"
+          },
+          {
+           "id": "ultrathink",
+           "label": "Ultrathink"
+          }
+         ],
+         "promptInjectedValues": [
+          "ultrathink"
+         ]
+        },
+        {
+         "id": "ultracode",
+         "label": "Ultracode",
+         "type": "boolean"
+        },
+        {
+         "id": "fastMode",
+         "label": "Fast Mode",
+         "type": "boolean"
+        }
+       ]
+      }
+     },
+     {
+      "slug": "claude-sonnet-5-5",
+      "name": "Claude Sonnet 5.5",
+      "aliases": [
+       "sonnet",
+       "sonnet-5.5",
+       "claude-sonnet-5.5"
+      ],
+      "isCustom": false,
+      "capabilities": {
+       "optionDescriptors": [
+        {
+         "id": "effort",
+         "label": "Reasoning",
+         "type": "select",
+         "options": [
+          {
+           "id": "low",
+           "label": "Low"
+          },
+          {
+           "id": "medium",
+           "label": "Medium"
+          },
+          {
+           "id": "high",
+           "label": "High",
+           "isDefault": true
+          },
+          {
+           "id": "xhigh",
+           "label": "Extra High"
+          },
+          {
+           "id": "max",
+           "label": "Max"
+          },
+          {
+           "id": "ultrathink",
+           "label": "Ultrathink"
+          }
+         ],
+         "promptInjectedValues": [
+          "ultrathink"
+         ]
+        },
+        {
+         "id": "ultracode",
+         "label": "Ultracode",
+         "type": "boolean"
+        }
+       ]
+      }
+     }
+    ],
+    "slashCommands": [
+     {
+      "name": "compact",
+      "description": "Summarize the conversation and reduce context usage",
+      "input": {
+       "hint": "<optional custom summarization instructions>"
+      }
+     },
+     {
+      "name": "cleanup-host",
+      "description": "Safely free RAM, swap and disk on a Linux or macOS machine, then report what was freed. Use when a host is low on memory or disk, swap is full, /tmp is full, or old processes, git worktrees, caches or Docker data pile up. (user)"
+     }
+    ],
+    "skills": [
+     {
+      "name": "cleanup-host",
+      "description": "Safely free RAM, swap and disk on a Linux or macOS machine, then report what was freed. Use when a host is low on memory or disk, swap is full, /tmp is full, or old processes, git worktrees, caches or Docker data pile up.",
+      "path": "/home/user/.claude/skills/cleanup-host/SKILL.md",
+      "scope": "user",
+      "enabled": true
+     },
+     {
+      "name": "figma:figma-code-connect",
+      "description": "Creates and maintains Figma Code Connect template files that map Figma components to code snippets. Use when the user mentions Code Connect, Figma component mapping, design-to-code translation, or asks to create/update .figma.ts or .figma.js files.",
+      "path": "/home/user/.claude/plugins/cache/claude-plugins-official/figma/2.2.157/skills/figma-code-connect/SKILL.md",
+      "scope": "user",
+      "enabled": true
+     }
+    ],
+    "usageLimits": {
+     "checkedAt": "2026-11-13T12:21:10.130Z",
+     "windows": [],
+     "unavailable": {
+      "reason": "unsupported"
+     }
+    },
+    "versionAdvisory": {
+     "status": "behind_latest",
+     "currentVersion": "2.1.322",
+     "latestVersion": "2.1.323",
+     "updateCommand": "vp i -g @anthropic-ai/claude-code",
+     "canUpdate": true,
+     "canInstallVersion": true,
+     "checkedAt": "2026-11-13T12:21:10.431Z",
+     "message": "Install the update now or review provider settings."
+    },
+    "compatibilityAdvisory": {
+     "status": "supported",
+     "latestVersionStatus": "supported",
+     "message": null,
+     "recommendedVersion": null,
+     "recommendedRange": ">=2.1.301"
+    }
+   },
+   {
+    "instanceId": "antigravity",
+    "driver": "antigravity",
+    "displayName": "Antigravity",
+    "continuation": {
+     "groupKey": "antigravity:instance:antigravity"
+    },
+    "showInteractionModeToggle": false,
+    "supportedRuntimeModes": [
+     "approval-required",
+     "auto-accept-edits",
+     "full-access"
+    ],
+    "supportsConversationRollback": false,
+    "supportsTextGeneration": false,
+    "setup": {
+     "canAuthenticate": true,
+     "canInstall": true
+    },
+    "enabled": false,
+    "installed": false,
+    "version": null,
+    "status": "disabled",
+    "auth": {
+     "status": "unknown",
+     "type": "oauth-personal"
+    },
+    "checkedAt": "2026-11-13T12:21:09.884Z",
+    "message": "Antigravity is disabled in T3 Code settings.",
+    "models": [],
+    "slashCommands": [],
+    "skills": []
+   }
+  ],
+  "availableEditors": [
+   "cursor",
+   "zed",
+   "file-manager"
+  ],
+  "remoteOpenTargets": [
+   {
+    "kind": "mdns",
+    "host": "user.local",
+    "username": "user"
+   }
+  ],
+  "directEndpoints": [],
+  "observability": {
+   "logsDirectoryPath": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/conn-rec-YzHC8m/base/userdata/logs",
+   "localTracingEnabled": true,
+   "otlpTracesEnabled": false,
+   "otlpMetricsEnabled": false,
+   "otlpLogsEnabled": false
+  },
+  "settings": {
+   "favorites": null,
+   "providerModelPreferences": null,
+   "worktreeCleanup": null,
+   "storageCleanup": {
+    "worktreeKeepWhen": "uncommitted-changes",
+    "worktreeAfterDays": null,
+    "worktreeSettledAfterDays": null,
+    "worktreeOnMerge": false,
+    "worktreeOnDelete": false,
+    "worktreeUnchanged": false,
+    "browserArtifactsAfterDays": null,
+    "logsAfterDays": null
+   },
+   "worktreesDirectory": "",
+   "fastWorktreeCheckout": false,
+   "previousWorktreesDirectories": [],
+   "responseStreamingMode": "paragraph",
+   "enableProviderUpdateChecks": true,
+   "continueThreadsAfterServerUpdate": true,
+   "keepAwakeWhileAgentsWork": true,
+   "enableAgentBrowserAccess": true,
+   "cloudSpeechCredentials": {
+    "openai": "",
+    "xai": "",
+    "openrouter": ""
+   },
+   "speechModelId": "handy-computer/parakeet-unified-en-0.6b-gguf",
+   "speechAcceleration": "auto",
+   "speechModelUnloadTimeout": "min_15",
+   "speechProjectCustomWords": [],
+   "speechPostProcessingModelSelection": null,
+   "projectAgentBrowserAccessOverrides": {},
+   "credentialAutofill": {
+    "oneApprovalPerSignIn": false,
+    "approvalTimeoutSeconds": 90,
+    "blockScriptsAfterFill": true,
+    "allowSubdomains": false
+   },
+   "defaultAutoPull": false,
+   "defaultProjectScripts": [],
+   "projectScriptOverrides": {},
+   "projectAutoPullOverrides": {},
+   "defaultModelSelection": null,
+   "fallbackModelSelection": null,
+   "defaultRuntimeMode": "full-access",
+   "projectSettingsOverrides": {},
+   "projectSettingsFolded": false,
+   "enableAgentDeviceAccess": false,
+   "enableDeviceSupport": false,
+   "deviceOnboardingCompleted": false,
+   "deviceHosts": [],
+   "easDeviceHosts": [],
+   "simlockDeviceHosts": [],
+   "simlockDeviceHostsEnabled": false,
+   "sidebarAutoSettleAfterDays": 7,
+   "compactIdleThreads": false,
+   "idleCompaction": "onReturn",
+   "snoozeLimitedThreads": false,
+   "autoResumeLimitedThreads": false,
+   "snoozePresets": [
+    {
+     "kind": "after",
+     "minutes": 60
+    },
+    {
+     "kind": "after",
+     "minutes": 180
+    },
+    {
+     "kind": "at",
+     "day": "today",
+     "time": "18:00"
+    },
+    {
+     "kind": "at",
+     "day": "tomorrow",
+     "time": "09:00"
+    },
+    {
+     "kind": "at",
+     "day": "monday",
+     "time": "09:00"
+    }
+   ],
+   "hiddenThreadTags": [],
+   "hideTaggedThreads": false,
+   "guestSharingEnabled": false,
+   "linkedEnvironmentsEnabled": false,
+   "promptSuggestionsEnabled": false,
+   "sidebarAutoSettleKeepPullRequests": false,
+   "sidebarAutoSettleOnMerge": true,
+   "backgroundActivity": {
+    "schemaVersion": 1,
+    "profile": "balanced",
+    "overrides": {}
+   },
+   "automaticGitFetchInterval": 30000,
+   "providerHealthRefreshInterval": 300000,
+   "backgroundActivityProfile": "balanced",
+   "defaultTheme": "",
+   "defaultThemeSetAt": "",
+   "environmentIcon": null,
+   "newWorktreesStartFromOrigin": true,
+   "worktreeSubmodules": null,
+   "addProjectBaseDirectory": "",
+   "ghqCloneLayout": false,
+   "textGenerationModelSelection": {
+    "instanceId": "codex",
+    "model": "gpt-6-luna",
+    "options": [
+     {
+      "id": "reasoningEffort",
+      "value": "low"
+     }
+    ]
+   },
+   "threadTitleInstructions": "",
+   "branchNamingMode": "static",
+   "branchNamePrefix": "t3",
+   "branchNameInstructions": "",
+   "removeAgentCreditsOnMerge": false,
+   "sourceControlWritingStyle": {
+    "mode": "repo_conventions",
+    "customInstructions": "",
+    "followChangeRequestTemplates": true
+   },
+   "sourceControlWriterModelSelection": null,
+   "reviewGuidesEnabled": false,
+   "reviewGuideModelSelection": null,
+   "reviewGuideInstructions": "",
+   "pullRequestMergeMethod": null,
+   "providerInstances": {},
+   "observability": {
+    "otlpTracesUrl": "",
+    "otlpMetricsUrl": "",
+    "otlpLogsUrl": ""
+   },
+   "sourceControlHosts": {},
+   "offeredSourceControlProviders": {},
+   "usageLimitSources": {},
+   "textGenerators": {},
+   "secretProviders": {},
+   "usagePriceOverrides": {},
+   "usageModelAliases": {}
+  },
+  "shellResumeCompletionMarker": true,
+  "shellThreadFamilies": true,
+  "threadLinkMetadata": true,
+  "shellOlderSettled": true,
+  "shellRevealInFileManager": true,
+  "shellRevealInFileManagerKind": "finder",
+  "threadResumeCompletionMarker": true,
+  "threadSnapshotPagination": true,
+  "threadFind": true,
+  "threadFindProgressive": true,
+  "secretProviderSettings": true,
+  "secretReferences": true,
+  "secretRequestReferences": true,
+  "scratchWorkspaceRoot": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/conn-rec-YzHC8m/base/scratch",
+  "newProjectsRoot": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/conn-rec-YzHC8m/base/projects"
+ }
+}

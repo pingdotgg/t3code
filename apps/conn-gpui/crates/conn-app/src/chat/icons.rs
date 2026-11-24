@@ -3,6 +3,9 @@
 //! Conn draws every icon, timeline included, from superheroicons (decision
 //! `conn-icon-set-solid-v4`); the Lucide/Phosphor split in `lucide-react.ts` is history.
 
+use std::borrow::Cow;
+
+use conn_state::conn_tools::{ConnToolIcon, conn_tool_presentation};
 use gpui_kit::{Hsla, Styled as _, Svg, px, svg};
 
 // Timeline icons (mapped from Conn's Lucide names via superheroicons manifest.json).
@@ -60,149 +63,45 @@ const PULL_REQUEST: &str = "superhero/pull-request.svg";
 const DEVICE: &str = "superhero/phone.svg";
 const KEY: &str = "superhero/key.svg";
 
-/// Servers Conn's agent MCP tools are registered under. `t3-code` is the name before the
-/// rename (PR #223); Codex adds `-direct` for tools kept out of Code Mode.
-const CONN_MCP_SERVERS: &[&str] = &[
-    "conn",
-    "conn-direct",
-    "conn_direct",
-    "t3-code",
-    "t3_code",
-    "t3code",
-    "t3-code-direct",
-    "t3_code_direct",
-];
-
-/// Conn tools that carry the pull-request icon in web's `T3_MCP_TOOLS`.
-const PULL_REQUEST_TOOLS: &[&str] = &[
-    "link_pull_request",
-    "link_pull_requests",
-    "unlink_pull_request",
-    "unlink_pull_requests",
-    "list_thread_pull_requests",
-    "watch_pull_request",
-    "unwatch_pull_request",
-    "write_pull_request_guides",
-    "read_pull_request_guide",
-    "pull_request_read",
-    "pull_request_list",
-    "pull_request_create",
-    "pull_request_update",
-    "pull_request_respond",
-    "pull_request_review",
-    "pull_request_merge",
-    "ci_logs",
-    "ci_rerun",
-];
-
-const CREDENTIAL_TOOLS: &[&str] = &["request_credentials", "fill_credential", "save_test_login"];
-
-/// Conn tools that never had a `conn_`/`t3_` prefix and use the Conn mark.
-const UNPREFIXED_CONN_TOOLS: &[&str] = &[
-    "orchestrator_capabilities",
-    "delegate_task",
-    "task_status",
-    "task_cancel",
-    "schedule_task",
-    "list_scheduled_tasks",
-    "update_scheduled_task",
-    "delete_scheduled_task",
-    "run_scheduled_task_now",
-    "request_secret",
-    "create_threads",
-    "list_issues",
-    "read_issue",
-    "create_issue",
-    "comment_on_issue",
-    "set_issue_state",
-    "link_issue",
-    "unlink_issue",
-    "list_thread_issues",
-    "html_preview",
-    "html_render",
-    "send_to_user",
-];
-
-/// A tool name with no server: threads recorded before the rename call the `conn_` tools `t3_`.
-fn canonical_conn_tool(tool: &str) -> String {
-    match tool.strip_prefix("t3_") {
-        Some(rest) => format!("conn_{rest}"),
-        None => tool.to_owned(),
+fn conn_icon_path(icon: ConnToolIcon) -> &'static str {
+    match icon {
+        ConnToolIcon::ConnMark => CONN_MARK,
+        ConnToolIcon::Browser => GLOBE,
+        ConnToolIcon::Device => DEVICE,
+        ConnToolIcon::PullRequest => PULL_REQUEST,
+        ConnToolIcon::Credential => KEY,
     }
 }
 
-fn conn_tool_icon(tool: &str) -> &'static str {
-    let tool = canonical_conn_tool(tool);
-    let tool = tool.as_str();
-    if PULL_REQUEST_TOOLS.contains(&tool) {
-        PULL_REQUEST
-    } else if tool.starts_with("preview_")
-        || tool.starts_with("conn_preview_")
-        || tool.starts_with("annotations_")
-    {
-        GLOBE
-    } else if tool.starts_with("device_") {
-        DEVICE
-    } else if CREDENTIAL_TOOLS.contains(&tool) {
-        KEY
-    } else {
-        CONN_MARK
+/// Title to show for a tool row. A Conn MCP tool call (`mcp__conn__conn_thread_send`, any provider
+/// spelling, or the pre-rename `t3` forms) gets Conn's friendly label; other rows keep their title.
+pub(super) fn tool_display_title<'a>(kind: &str, title: &'a str) -> Cow<'a, str> {
+    if is_fixed_kind(kind) {
+        return Cow::Borrowed(title);
+    }
+    match conn_tool_presentation(title) {
+        Some(found) => found.display_name,
+        None => Cow::Borrowed(title),
     }
 }
 
-fn is_conn_tool_name(tool: &str) -> bool {
-    tool.starts_with("conn_")
-        || tool.starts_with("t3_")
-        || tool.starts_with("preview_")
-        || tool.starts_with("annotations_")
-        || tool.starts_with("device_")
-        || PULL_REQUEST_TOOLS.contains(&tool)
-        || CREDENTIAL_TOOLS.contains(&tool)
-        || UNPREFIXED_CONN_TOOLS.contains(&tool)
-}
-
-fn is_conn_server(server: &str) -> bool {
-    CONN_MCP_SERVERS.contains(&server.to_ascii_lowercase().as_str())
-}
-
-/// Icon for a tool row titled with a Conn MCP tool name, in any spelling providers use:
-/// `mcp__t3-code__t3_thread_send` (Claude), `t3-code.t3_thread_send` or `conn:conn_thread_send`
-/// (Codex and ACP), `t3-code · t3_thread_send`, or the bare tool name. `None` when the title is
-/// not a Conn tool, so other tools keep their usual icon. Mirrors web's `parseT3McpToolName`
-/// and `T3_MCP_TOOLS` icons.
-fn conn_mcp_tool_icon(title: &str) -> Option<&'static str> {
-    let label = title.trim();
-    let label = label
-        .strip_suffix("completed")
-        .or_else(|| label.strip_suffix("complete"))
-        .filter(|rest| rest.ends_with(char::is_whitespace))
-        .map_or(label, str::trim_end);
-
-    if label.len() >= 5 && label.is_char_boundary(5) && label[..5].eq_ignore_ascii_case("mcp__") {
-        let (server, tool) = label[5..].split_once("__")?;
-        return (is_conn_server(server) && !tool.is_empty()).then(|| conn_tool_icon(tool));
-    }
-
-    for separator in [".", ":", "/", "·"] {
-        if let Some((server, tool)) = label.split_once(separator) {
-            let (server, tool) = (server.trim(), tool.trim());
-            if is_conn_server(server) && !tool.is_empty() {
-                return Some(conn_tool_icon(tool));
-            }
-        }
-    }
-
-    // OpenCode prefixes the tool with its server and thread: `conn-<thread>_<tool>`.
-    let lower = label.to_ascii_lowercase();
-    if lower.starts_with("conn-") || lower.starts_with("t3-code-") {
-        return label
-            .match_indices('_')
-            .map(|(index, _)| &label[index + 1..])
-            .find(|tool| is_conn_tool_name(tool))
-            .map(conn_tool_icon);
-    }
-
-    is_conn_tool_name(label).then(|| conn_tool_icon(label))
+/// Kinds the server types itself; their title is not an MCP tool name.
+fn is_fixed_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "command"
+            | "file_change"
+            | "file_read"
+            | "read"
+            | "file_search"
+            | "web_search"
+            | "subagent"
+            | "todo_list"
+            | "thread_created"
+            | "approval"
+            | "secret_request"
+            | "link_request"
+    )
 }
 
 /// Returns the superheroicons asset path for a `TimelineEntry::Tool` using both its
@@ -218,7 +117,8 @@ pub(super) fn tool_icon_path(kind: &str, title: &str) -> &'static str {
         "todo_list" => LIST_CHECKS,
         "thread_created" => THREAD,
         "approval" | "secret_request" | "link_request" => SHIELD_WARNING,
-        _ => conn_mcp_tool_icon(title)
+        _ => conn_tool_presentation(title)
+            .map(|found| conn_icon_path(found.icon))
             .or_else(|| infer_tool_icon_from_title(title))
             .unwrap_or(if kind == "dynamic_tool" { BUILD } else { TOOL }),
     }
@@ -342,6 +242,43 @@ mod tests {
         for (kind, title, expected) in cases {
             assert_eq!(
                 tool_icon_path(kind, title),
+                *expected,
+                "kind {kind:?} title {title:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn conn_tool_rows_show_the_friendly_label() {
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "dynamic_tool",
+                "Mcp__conn__conn_thread_send",
+                "Send to a Conn thread",
+            ),
+            (
+                "mcp",
+                "mcp__conn__pull_request_create",
+                "Open a pull request",
+            ),
+            (
+                "dynamic_tool",
+                "mcp__t3-code__t3_thread_list",
+                "List Conn threads",
+            ),
+            ("dynamic_tool", "conn.conn_queue", "Manage queued messages"),
+            // Other tools and typed kinds keep their title.
+            (
+                "dynamic_tool",
+                "mcp__github__create_issue",
+                "mcp__github__create_issue",
+            ),
+            ("dynamic_tool", "Read src/main.rs", "Read src/main.rs"),
+            ("command", "conn_thread_send", "conn_thread_send"),
+        ];
+        for (kind, title, expected) in cases {
+            assert_eq!(
+                tool_display_title(kind, title),
                 *expected,
                 "kind {kind:?} title {title:?}"
             );

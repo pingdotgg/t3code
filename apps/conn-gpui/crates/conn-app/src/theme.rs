@@ -31,8 +31,8 @@ pub(crate) fn hsla_alpha(color: ThemeRgba, alpha: f32) -> Hsla {
 
 /// Synchronizes `gpui-kit`'s global theme with Conn's active [`Tokens`] so
 /// default kit colors and radii never leak into Conn surfaces.
-/// Conn's `--font-mono` resolves to `ui-monospace`, SF Mono (registered by `crate::fonts`).
-pub(crate) const MONO_FONT: &str = "SF Mono";
+/// The app's monospace family: JetBrains Mono (embedded and registered by `crate::fonts`).
+pub(crate) const MONO_FONT: &str = "JetBrains Mono";
 
 pub(crate) fn apply_kit_theme(tokens: &Tokens, cx: &mut App) {
     gpui_kit::component::Theme::update(cx, |theme| {

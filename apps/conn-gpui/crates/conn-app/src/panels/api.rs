@@ -548,6 +548,7 @@ impl ApiPanel {
                 rows = rows.child(
                     h_flex()
                         .id(SharedString::from(format!("api-header-row-{}", row.id)))
+                        .a11y_group(format!("panel.api.header-row.{}", row.id), "Request header")
                         .group(group.clone())
                         .w_full()
                         .items_center()
@@ -661,6 +662,7 @@ impl ApiPanel {
             .child(
                 div()
                     .id("api-editor-scroll")
+                    .a11y_group("panel.api.editor", "API request editor")
                     .min_h_0()
                     .overflow_y_scroll()
                     .pb(px(8.0))
@@ -766,6 +768,7 @@ impl ApiPanel {
             .child(
                 div()
                     .id("api-response-scroll")
+                    .a11y_group("panel.api.response", "API response")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -815,6 +818,7 @@ impl Render for ApiPanel {
         let response = self.render_response(&request, cx);
         v_flex()
             .id("api-panel")
+            .a11y_group("panel.api", "API")
             .size_full()
             .on_key_down(cx.listener(|p, event: &KeyDownEvent, _, cx| {
                 let k = &event.keystroke;

@@ -37,6 +37,8 @@ use crate::theme::{hsla, hsla_alpha};
 
 /// `--thread-details-panel-width`.
 pub(crate) const DETAILS_CARD_WIDTH_PX: f32 = 280.0;
+/// `THREAD_DETAILS_CARD_GAP`: the card's gap to the chat card's top and right edges.
+pub(crate) const THREAD_DETAILS_CARD_GAP_PX: f32 = 12.0;
 /// `rounded-bubble` (`--radius + 6px` = `14px`).
 const CARD_RADIUS_PX: f32 = 14.0;
 /// `h-8` rows, `rounded-lg`, `gap-2.5 px-2.5`.
@@ -442,6 +444,7 @@ pub(crate) fn render_thread_details_card(
 
     let mut body = div()
         .id("thread-details-scroll")
+        .a11y_group("thread-details.scroll", "Thread details")
         .flex()
         .flex_col()
         .max_h(px(props.max_height))

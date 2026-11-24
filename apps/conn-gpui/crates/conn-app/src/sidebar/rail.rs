@@ -14,14 +14,23 @@
 //!   Conn shows only "All projects" and `+` (never individual projects).
 //! - Bottom utility column (`gap-2 pb-2`): Usage (`chart`), Pull Requests
 //!   (`pull-request`), and Settings (`settings`).
+//! - A press on a workspace tile that moves 6px drags it (`@dnd-kit` `PointerSensor`), up and
+//!   down only, over the other tiles, which make room; a drop saves the new order. A
+//!   right-click on a tile opens its menu (`Remove workspace`). "All projects" and `+` stay put.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use conn_desktop::orbit::OrbitWorkspace;
 use conn_state::{RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement as _, MouseButton, MouseDownEvent, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
+    AnyElement, Bounds, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
+    MouseDownEvent, ParentElement as _, Pixels, Point, SharedString,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, WindowControlArea, anchored,
+    canvas, deferred, div, point, px,
 };
 
 use crate::a11y::ConnA11yExt as _;
@@ -30,6 +39,10 @@ use crate::icons;
 use crate::orbit_sync::{workspace_monogram, workspace_tile_color};
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
+use crate::sidebar::thread_menu::{
+    MENU_FONT_PX, MENU_ICON_PX, MENU_LINE_PX, MENU_ROW_HEIGHT_PX, MENU_ROW_RADIUS_PX, menu_surface,
+};
+use crate::sidebar::workspace_order::{self, Gesture, Pickup};
 use crate::theme::{hsla, hsla_alpha};
 
 /// `size-9.5` = `38px`.
@@ -44,6 +57,172 @@ const RAIL_TILE_RADIUS_PX: f32 = 6.0;
 /// on the 32px search row inside the sidebar card (`WorkspaceRail.tsx:252`).
 const RAIL_TOP_ALIGN_OFFSET_PX: f32 = 5.0;
 
+/// The open workspace menu: which tile it belongs to and where the pointer was.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RailMenuAnchor {
+    pub(crate) workspace_id: String,
+    pub(crate) workspace_name: String,
+    pub(crate) position: Point<Pixels>,
+}
+
+/// The rail's pointer gesture (a press on a tile, and the drag it becomes) with the extents the
+/// tiles were last painted at, which a drag measures its slots from.
+#[derive(Default)]
+pub(crate) struct RailGesture {
+    pub(crate) state: Gesture,
+    bounds: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
+}
+
+impl RailGesture {
+    /// The pointer moved with the button down; see [`Gesture::moved`]. Whether the rail needs
+    /// to be drawn again.
+    pub(crate) fn pointer_moved(
+        &mut self,
+        position: Point<Pixels>,
+        workspaces: &[OrbitWorkspace],
+    ) -> bool {
+        let Self { state, bounds } = self;
+        let bounds = bounds.borrow();
+        state.moved((f32::from(position.x), f32::from(position.y)), |held| {
+            let slots = workspaces
+                .iter()
+                .map(|w| Some((w.id.clone(), f32::from(bounds.get(&w.id)?.center().y))))
+                .collect::<Option<Vec<_>>>()?;
+            let tile = bounds.get(held)?;
+            Some(Pickup {
+                slots,
+                left: f32::from(tile.left()),
+                top: f32::from(tile.top()),
+            })
+        })
+    }
+}
+
+/// Records where a tile is painted, for a drag's slots.
+fn measure_tile(bounds: &Rc<RefCell<HashMap<String, Bounds<Pixels>>>>, id: &str) -> AnyElement {
+    let bounds = Rc::clone(bounds);
+    let id = id.to_owned();
+    canvas(
+        move |painted, _, _| {
+            bounds.borrow_mut().insert(id, painted);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
+}
+
+/// The `28px` tile of a workspace: its colour, with its monogram on it.
+fn workspace_tile(ws: &OrbitWorkspace, tokens: &Tokens) -> gpui_kit::Div {
+    let tile_rgba = workspace_tile_color(&ws.color, tokens.primary);
+    let luma = 0.2126 * tile_rgba.r + 0.7152 * tile_rgba.g + 0.0722 * tile_rgba.b;
+    let text_color = if luma > 0.58 {
+        hsla(conn_theme::Rgba::hex(0x111111))
+    } else {
+        hsla(conn_theme::Rgba::hex(0xffffff))
+    };
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(RAIL_TILE_SIZE_PX))
+        .rounded(px(RAIL_TILE_RADIUS_PX))
+        .bg(hsla(tile_rgba))
+        .text_size(px(11.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(text_color)
+        .child(workspace_monogram(&ws.name))
+}
+
+/// The tile lifted under the pointer (`z-10 opacity-70` in Conn): it keeps its column and
+/// follows the pointer up and down (`restrictToVerticalAxis`).
+fn render_held_tile(
+    ws: &OrbitWorkspace,
+    drag: &workspace_order::Drag,
+    is_active: bool,
+    tokens: &Tokens,
+) -> AnyElement {
+    let tile = rail_button(
+        SharedString::from(format!("rail-ws-held-{}", ws.id)),
+        is_active,
+        tokens,
+        workspace_tile(ws, tokens),
+        |_, _, _| {},
+    )
+    .opacity(0.7);
+    deferred(
+        anchored()
+            .position(point(px(drag.left()), px(drag.top())))
+            .snap_to_window_with_margin(px(0.0))
+            .child(tile),
+    )
+    .with_priority(7)
+    .into_any_element()
+}
+
+/// Renders the anchored workspace menu (`Remove workspace`), styled like the Thread Actions menu.
+#[must_use]
+pub(crate) fn render_rail_menu(
+    anchor: &RailMenuAnchor,
+    tokens: &Tokens,
+    cx: &mut Context<'_, ConnApp>,
+) -> AnyElement {
+    let destructive = hsla(tokens.destructive);
+    let highlight = hsla(tokens.shell_highlight);
+    let workspace_id = anchor.workspace_id.clone();
+    let workspace_name = anchor.workspace_name.clone();
+    let remove = div()
+        .id("rail-menu-remove")
+        .test_support()
+        .a11y(
+            gpui_kit::Role::MenuItem,
+            "rail.menu.remove-workspace",
+            "Remove workspace",
+        )
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .w_full()
+        .min_h(px(MENU_ROW_HEIGHT_PX))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(MENU_ROW_RADIUS_PX))
+        .text_size(px(MENU_FONT_PX))
+        .line_height(px(MENU_LINE_PX))
+        .text_color(destructive)
+        .cursor_pointer()
+        .hover(move |s| s.bg(highlight))
+        .child(icons::concept(
+            "superhero/delete.svg",
+            MENU_ICON_PX,
+            destructive,
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child("Remove workspace"),
+        )
+        .on_click(cx.listener(move |app, _, window, cx| {
+            cx.stop_propagation();
+            app.confirm_remove_workspace(workspace_id.clone(), workspace_name.clone(), window, cx);
+        }));
+    let list = menu_surface(SharedString::from("rail-menu"), tokens)
+        .a11y(gpui_kit::Role::Menu, "rail.menu", "Workspace actions")
+        .child(remove);
+    deferred(
+        anchored()
+            .position(anchor.position)
+            .snap_to_window_with_margin(px(8.0))
+            .child(list),
+    )
+    .with_priority(6)
+    .into_any_element()
+}
+
 /// Renders the vertical workspace rail matching real Conn (`WorkspaceRail.tsx`).
 #[must_use]
 pub(crate) fn render_workspace_rail(
@@ -52,6 +231,7 @@ pub(crate) fn render_workspace_rail(
     active_workspace: Option<&str>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
+    gesture: &RailGesture,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     let all_active = active_workspace.is_none();
@@ -86,46 +266,70 @@ pub(crate) fn render_workspace_rail(
     .aria_selected(all_active)
     .conn_tooltip("All projects", tokens);
 
-    let workspace_btns: Vec<_> = workspaces
-        .iter()
-        .enumerate()
-        .map(|(idx, ws)| {
+    // While a tile is held the others have made room for it (`SortableContext`): the list is
+    // drawn in the order a drop would leave, with an empty slot where the held tile will land.
+    let held = gesture.state.drag();
+    let shown: Vec<&OrbitWorkspace> = match held {
+        Some(drag) => workspace_order::preview(workspaces, &drag.id, &drag.over),
+        None => workspaces.iter().collect(),
+    };
+    let mut workspace_btns: Vec<AnyElement> = shown
+        .into_iter()
+        .map(|ws| {
+            if held.is_some_and(|drag| drag.id == ws.id) {
+                return div()
+                    .id(SharedString::from(format!("rail-ws-slot-{}", ws.id)))
+                    .size(px(RAIL_BUTTON_SIZE_PX))
+                    .flex_shrink_0()
+                    .into_any_element();
+            }
             let ws_id = ws.id.clone();
             let is_active = active_workspace == Some(ws.id.as_str());
-            let tile_rgba = workspace_tile_color(&ws.color, tokens.primary);
-            let luma = 0.2126 * tile_rgba.r + 0.7152 * tile_rgba.g + 0.0722 * tile_rgba.b;
-            let text_color = if luma > 0.58 {
-                hsla(conn_theme::Rgba::hex(0x111111))
-            } else {
-                hsla(conn_theme::Rgba::hex(0xffffff))
-            };
-            let tile = div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(RAIL_TILE_SIZE_PX))
-                .rounded(px(RAIL_TILE_RADIUS_PX))
-                .bg(hsla(tile_rgba))
-                .text_size(px(11.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(text_color)
-                .child(workspace_monogram(&ws.name));
-
             let ax_id = SharedString::from(format!("rail.workspace.{}", ws.id));
+            let press_id = ws.id.clone();
+            let menu_id = ws.id.clone();
+            let menu_name = ws.name.clone();
             rail_button(
-                SharedString::from(format!("rail-ws-{idx}-{}", ws.id)),
+                SharedString::from(format!("rail-ws-{}", ws.id)),
                 is_active,
                 tokens,
-                tile,
+                workspace_tile(ws, tokens),
                 cx.listener(move |app, _event, _window, cx| {
-                    app.select_workspace(Some(ws_id.clone()), cx);
+                    // The click that ends a drag selects nothing.
+                    if !app.rail_click_suppressed() {
+                        app.select_workspace(Some(ws_id.clone()), cx);
+                    }
                 }),
             )
+            // A press that moves 6px drags the tile (`PointerSensor` `distance: 6`).
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
+                    app.rail_tile_pressed(&press_id, event.position, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |app, event: &MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                    app.open_rail_menu(menu_id.clone(), menu_name.clone(), event.position, cx);
+                }),
+            )
+            .child(measure_tile(&gesture.bounds, &ws.id))
+            .test_support()
             .a11y_button(ax_id, format!("Workspace {}", ws.name))
             .aria_selected(is_active)
-            .conn_tooltip(ws.name.clone(), tokens)
+            // Conn's tooltip: the name, then the hint `drag to reorder`.
+            .conn_tooltip(format!("{} · drag to reorder", ws.name), tokens)
+            .into_any_element()
         })
         .collect();
+    let held_tile = held.and_then(|drag| {
+        let ws = workspaces.iter().find(|w| w.id == drag.id)?;
+        let is_active = active_workspace == Some(ws.id.as_str());
+        Some(render_held_tile(ws, drag, is_active, tokens))
+    });
+    workspace_btns.extend(held_tile);
 
     let add_workspace_btn = rail_button(
         "rail-new-workspace",

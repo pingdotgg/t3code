@@ -173,6 +173,8 @@ mod tests {
             active_run_id: None,
             queued_count: 0,
             synchronized: true,
+            pending_approvals: Vec::new(),
+            pending_question: None,
         }
     }
 
