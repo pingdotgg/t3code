@@ -15,10 +15,10 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
-  isExecutableOnPath,
   isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
+  type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
@@ -30,6 +30,46 @@ import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullR
 import * as ForgejoChangeRequestTemplate from "./forgejoChangeRequestTemplate.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
+
+/**
+ * What Settings says about gt. With `defaultHost`, it names the account a repository published
+ * without a server goes to; without it, any signed-in account.
+ */
+function gtAuth(input: SourceControlAuthProbeInput, defaultHost?: string) {
+  const accounts = ForgejoCli.parseGtAccounts(input.stdout);
+  if (!accounts)
+    return providerAuth({
+      status: "unknown",
+      detail: firstSafeAuthLine(combinedAuthOutput(input)) ?? "Could not read gt's accounts.",
+    });
+  const chosen =
+    defaultHost === undefined
+      ? undefined
+      : ForgejoCli.defaultGtLogin(ForgejoCli.parseForgejoLogins(input.stdout), defaultHost);
+  if (defaultHost !== undefined && !chosen && accounts.length > 0)
+    return providerAuth({ status: "unknown", detail: ForgejoCli.NO_DEFAULT_GT_SERVER });
+  const account = chosen
+    ? accounts.find((entry) => entry.host === chosen.url && entry.user === chosen.user)
+    : (accounts.find((entry) => entry.active && entry.verified) ??
+      accounts.find((entry) => entry.active) ??
+      accounts[0]);
+  return account
+    ? providerAuth({
+        status: account.verified
+          ? "authenticated"
+          : // gt prints this for a server that did not answer, never for a rejected token.
+            account.error?.startsWith("cannot reach")
+            ? "unknown"
+            : "unauthenticated",
+        account: account.user,
+        host: ForgejoCli.parseForgejoRemote(account.host)?.host,
+        detail: account.error ?? undefined,
+      })
+    : providerAuth({
+        status: "unauthenticated",
+        detail: "Run `gt auth login` to authenticate a Forgejo or Gitea server.",
+      });
+}
 
 export const discovery = {
   type: "cli",
@@ -47,34 +87,7 @@ export const discovery = {
     `${ForgejoCli.GT_ACCOUNT_FIELDS},verified,error`,
   ],
   remoteRefinementArgs: () => ["auth", "status", "--json", ForgejoCli.GT_ACCOUNT_FIELDS],
-  parseAuth: (input) => {
-    const accounts = ForgejoCli.parseGtAccounts(input.stdout);
-    if (!accounts)
-      return providerAuth({
-        status: "unknown",
-        detail: firstSafeAuthLine(combinedAuthOutput(input)) ?? "Could not read gt's accounts.",
-      });
-    const account =
-      accounts.find((entry) => entry.active && entry.verified) ??
-      accounts.find((entry) => entry.active) ??
-      accounts[0];
-    return account
-      ? providerAuth({
-          status: account.verified
-            ? "authenticated"
-            : // gt prints this for a server that did not answer, never for a rejected token.
-              account.error?.startsWith("cannot reach")
-              ? "unknown"
-              : "unauthenticated",
-          account: account.user,
-          host: ForgejoCli.parseForgejoRemote(account.host)?.host,
-          detail: account.error ?? undefined,
-        })
-      : providerAuth({
-          status: "unauthenticated",
-          detail: "Run `gt auth login` to authenticate a Forgejo or Gitea server.",
-        });
-  },
+  parseAuth: (input) => gtAuth(input),
   refineUnknownRemote: (input) => {
     const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
     const login =
@@ -184,34 +197,43 @@ export const makeDiscovery = Effect.gen(function* () {
         }
         return fj;
       }
-      // Settings names gt's default instance: a repository published without a server goes there.
-      const defaultHost = (yield* isExecutableOnPath("gt"))
-        ? yield* process
-            .run({
-              operation: "source-control.discovery.default-host",
-              command: "gt",
-              args: ["config", "get", "default_host"],
-              cwd,
-              allowNonZeroExit: true,
-              timeoutMs: 5_000,
-              maxOutputBytes: 8_000,
-            })
-            .pipe(
-              Effect.map((result) => (Number(result.exitCode) === 0 ? result.stdout.trim() : "")),
-              Effect.orElseSucceed(() => ""),
-            )
-        : "";
+      let accounts: SourceControlAuthProbeInput | undefined;
       const gt = yield* probeSourceControlProvider({
         cwd,
         process,
-        spec: defaultHost
-          ? { ...discovery, authArgs: [...discovery.authArgs, "--host", defaultHost] }
-          : discovery,
+        spec: {
+          ...discovery,
+          parseAuth: (input) => {
+            accounts = input;
+            return gtAuth(input);
+          },
+        },
       });
       // Discovery keeps the install hint only for an absent executable; a slow or broken fj
       // explains itself better than gt's install advice.
       const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
-      return gt.status === "available" || fjAbsent ? gt : fj;
+      if (gt.status !== "available") return fjAbsent ? gt : fj;
+      const servers = new Set(
+        ForgejoCli.parseForgejoLogins(accounts?.stdout ?? "").map((login) => login.url),
+      );
+      if (!accounts || servers.size < 2) return gt;
+      // With several servers signed in, Settings names the one a repository published without
+      // a server goes to. gt is asked only now, after its version probe answered.
+      const defaultHost = yield* process
+        .run({
+          operation: "source-control.discovery.default-host",
+          command: "gt",
+          args: ["config", "get", "default_host"],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 8_000,
+        })
+        .pipe(
+          Effect.map((result) => (Number(result.exitCode) === 0 ? result.stdout.trim() : "")),
+          Effect.orElseSucceed(() => ""),
+        );
+      return { ...gt, auth: gtAuth(accounts, defaultHost) };
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {

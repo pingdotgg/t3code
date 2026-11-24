@@ -1926,13 +1926,57 @@ it.effect("asks gt for the SSH alias of every server that is not named after the
   );
 });
 
-it.effect("sends a repository named without its server to gt's default instance", () =>
-  Effect.gen(function* () {
+it.effect("sends a repository named without its server where Settings says it goes", () => {
+  const three = "http://forgejo.local:3000";
+  const four = "http://forgejo.local:4000";
+  let servers = [three, four];
+  let defaultHost = four;
+  const asked: Array<string> = [];
+  return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
-    const resolved = yield* cli.resolveRepository({ cwd: "/new", repository: "maria/new" });
-    assert.strictEqual(resolved.baseUrl, "http://forgejo.local:4000");
-    assert.strictEqual(resolved.repository, "maria/new");
+    const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    assert.strictEqual(spec.type, "managed-cli");
+    if (spec.type !== "managed-cli") return;
+    const resolve = cli
+      .resolveRepository({ cwd: "/new", repository: "maria/new" })
+      .pipe(Effect.result);
+
+    // Several servers: gt's default instance, for the request and in Settings.
+    const toDefault = yield* resolve;
+    assert.strictEqual(toDefault._tag === "Success" && toDefault.success.baseUrl, four);
+    assert.deepStrictEqual(
+      (yield* spec.probe("/new")).auth.host,
+      Option.some("forgejo.local:4000"),
+    );
+
+    // A default without an account decides nothing, and both say what to set.
+    defaultHost = "http://gone.local";
+    const undecided = yield* resolve;
+    assert.strictEqual(
+      undecided._tag === "Failure" && undecided.failure.detail,
+      ForgejoCli.NO_DEFAULT_GT_SERVER,
+    );
+    const unsettled = (yield* spec.probe("/new")).auth;
+    assert.strictEqual(unsettled.status, "unknown");
+    assert.deepStrictEqual(unsettled.detail, Option.some(ForgejoCli.NO_DEFAULT_GT_SERVER));
+
+    // One server answers for itself, whatever the default says, and gt is not asked for it.
+    servers = [three];
+    asked.length = 0;
+    const only = yield* resolve;
+    assert.strictEqual(only._tag === "Success" && only.success.baseUrl, three);
+    assert.deepStrictEqual(
+      (yield* spec.probe("/new")).auth.host,
+      Option.some("forgejo.local:3000"),
+    );
+    assert.notInclude(asked, "config");
   }).pipe(
+    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+    Effect.provideService(SpawnExecutableResolution, (command) =>
+      command === "gt" ? onPath(command) : undefined,
+    ),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
@@ -1946,24 +1990,35 @@ it.effect("sends a repository named without its server to gt's default instance"
     Effect.provide(
       TestSourceControlHost.layer({
         process: {
-          run: (input) =>
-            Effect.succeed(
-              input.command === "git"
-                ? processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) })
-                : input.args[0] === "config"
-                  ? processOutput("http://forgejo.local:4000\n")
-                  : processOutput(
-                      encodeJson([
-                        { host: "http://forgejo.local:3000", user: "maria", active: true },
-                        { host: "http://forgejo.local:4000", user: "maria", active: true },
-                      ]),
-                    ),
-            ),
+          run: (input) => {
+            if (input.command === "git")
+              return Effect.succeed(
+                processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
+              );
+            asked.push(input.args[0] ?? "");
+            return Effect.succeed(
+              processOutput(
+                input.args[0] === "version"
+                  ? "gt version 2.0.0 (2026-11-18)"
+                  : input.args[0] === "config"
+                    ? `${defaultHost}\n`
+                    : encodeJson(
+                        servers.map((host) => ({
+                          host,
+                          user: "maria",
+                          active: true,
+                          verified: true,
+                          error: null,
+                        })),
+                      ),
+              ),
+            );
+          },
         },
       }),
     ),
-  ),
-);
+  );
+});
 
 it.effect(
   "treats a gt that is not the Gitea CLI as not installed, and a broken one as unknown",
@@ -2732,13 +2787,6 @@ it.effect(
                       );
                     }
                     assert.strictEqual(input.command, "gt");
-                    if (input.args[0] === "config")
-                      return Effect.succeed(processOutput("http://forgejo.local:3000\n"));
-                    if (input.args[0] === "auth")
-                      assert.deepStrictEqual(input.args.slice(-2), [
-                        "--host",
-                        "http://forgejo.local:3000",
-                      ]);
                     return Effect.succeed(
                       input.args[0] === "version"
                         ? processOutput("gt version 2.0.0 (2026-11-18)")

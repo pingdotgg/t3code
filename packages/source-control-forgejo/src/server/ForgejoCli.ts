@@ -183,6 +183,25 @@ export class ForgejoCli extends Context.Service<
   }
 >()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
+export const NO_DEFAULT_GT_SERVER =
+  "Several gt servers are signed in and gt's default server has no account. Choose one with `gt config set default_host <server-url>`.";
+
+/**
+ * The gt login a repository named without its server goes to, as it went to tea's default
+ * login: an account on gt's default instance, else on the only instance signed in.
+ */
+export function defaultGtLogin(
+  logins: ReadonlyArray<typeof ForgejoLoginSchema.Type>,
+  defaultHost: string,
+) {
+  const server = (url: string) => url.replace(/\/+$/, "").toLowerCase();
+  const onDefault = logins.filter((login) => server(login.url) === server(defaultHost));
+  const candidates = onDefault.length > 0 ? onDefault : logins;
+  return new Set(candidates.map((login) => server(login.url))).size === 1
+    ? (candidates.find((login) => login.default === "true") ?? candidates[0])
+    : undefined;
+}
+
 /** Selects the account a resolved repository belongs to; an environment token names no user. */
 export const gtAccountArgs = (repository: Pick<ForgejoRepository, "login" | "baseUrl">) => [
   "--host",
@@ -736,14 +755,22 @@ export const make = Effect.gen(function* () {
         ...(remote?.ssh && remoteUrl ? { remoteUrl } : {}),
       });
       login = selectLogin(gtLogins);
-      // A repository named without its server goes to gt's default instance, as it went to
-      // tea's default login. Publishing a new repository names no server.
+      // Publishing a new repository names no server. One server answers for itself above;
+      // with several, gt's default instance decides.
       if (!login && !remote && gtLogins.length > 0) {
-        const defaultHost = (yield* execute({
+        const answer = yield* execute({
           cwd: input.cwd,
           args: ["config", "get", "default_host"],
-        })).stdout.trim();
-        login = gtLogins.find((item) => item.url === defaultHost && item.default === "true");
+          allowNonZeroExit: true,
+        });
+        login = defaultGtLogin(gtLogins, Number(answer.exitCode) === 0 ? answer.stdout.trim() : "");
+        if (!login)
+          return yield* new ForgejoCliError({
+            command: "gt",
+            cwd: input.cwd,
+            reason: "authentication",
+            detail: NO_DEFAULT_GT_SERVER,
+          });
       }
     }
     if (!login)
