@@ -6115,12 +6115,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               payload.item.text &&
               context.firstSteerOrdinalByAnswerId?.size
             ) {
-              const position = context.itemPositions.get(payload.item.id);
-              if (position)
-                context.latestCompletedAnswerOrdinal = Math.max(
-                  context.latestCompletedAnswerOrdinal ?? 0,
-                  position.ordinal,
-                );
+              const ordinal = yield* resolveItemOrdinal(context, payload.item.id);
+              context.latestCompletedAnswerOrdinal = Math.max(
+                context.latestCompletedAnswerOrdinal ?? 0,
+                ordinal,
+              );
             }
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {

@@ -6394,14 +6394,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
-  it.effect.each([false, true])(
+  it.effect.each(["none", "streamed", "completion-only"] as const)(
     "settles a visible unfinished answer after a steer (replacement: %s)",
-    (replacement) =>
+    (replacementKind) =>
       Effect.gen(function* () {
         const scenario = "steered-unfinished-answer";
         const transcript = finalAnswerTranscript(scenario, [
           { id: "draft", text: "First answer", streamed: true },
-          ...(replacement ? [{ id: "replacement", text: "Updated answer", streamed: true }] : []),
+          ...(replacementKind === "none"
+            ? []
+            : [
+                {
+                  id: "replacement",
+                  text: "Updated answer",
+                  streamed: replacementKind === "streamed",
+                },
+              ]),
         ]);
         // The steer reaches Codex while the draft is open. Only the replacement gets a completion.
         const entries = transcript.entries.map((entry): CodexReplay.CodexAppServerReplayEntry =>
@@ -6462,6 +6470,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* harness.until(() => draftUpdates().some((item) => item.streaming));
         yield* Deferred.succeed(continueReplay, undefined);
         yield* harness.awaitTerminal(1);
+        const replacement = replacementKind !== "none";
         assert.equal(draftUpdates().at(-1)?.status, replacement ? "cancelled" : "completed");
         assert.deepEqual(
           assistantMessages(harness.events).map(({ message }) => message.text),
