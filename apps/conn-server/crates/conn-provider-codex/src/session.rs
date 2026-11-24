@@ -34,8 +34,8 @@ const PLAN_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
 const CHILD_METADATA_TIMEOUT: Duration = Duration::from_secs(5);
 /// T3's wait on a late child's `turn/interrupt`.
 const CHILD_INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
-/// How many times a closed session's silent subagent is checked with Codex before it ends
-/// interrupted: an hour at the default interval.
+/// How many times a closed session's silent subagent is checked with Codex before one that
+/// Codex does not report running ends interrupted: an hour at the default interval.
 const MAX_CHILD_CHECKS: u32 = 60;
 
 pub struct CodexSession {
@@ -625,14 +625,17 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
 /// `interval`, each open one is checked with Codex (`thread/read` with turns, as T3's
 /// `readThreadSnapshot`): a turn Codex reports ended ends here, and a thread Codex does not
 /// know (`thread not found:`) ends interrupted. Any other failed read is tried again. At the
-/// last of [`MAX_CHILD_CHECKS`] checks, each open child turn gets `turn/interrupt` and is read
-/// once more; a turn still running keeps its route, and its own end settles it. A read that
-/// fails after that is tried again once per `interval`, without another interrupt. Every answer
-/// goes through the session's inbox, so the driver applies it in order with Codex's frames.
+/// last of [`MAX_CHILD_CHECKS`] checks, each open child turn that Codex's latest read did not
+/// report `inProgress` gets `turn/interrupt` and is read once more. A turn Codex reports running
+/// is only read: Stop or its own end settles it. A read that fails after that is tried again
+/// once per `interval`, without another interrupt. Every answer goes through the session's
+/// inbox, so the driver applies it in order with Codex's frames.
 async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
     // Past the last check: the threads whose read after the interrupt failed, read again once
     // per `interval` until Codex answers, without another interrupt.
     let mut inconclusive: Option<Vec<String>> = None;
+    // The (thread, turn) pairs Codex's latest read of each thread reported `inProgress`.
+    let mut running: Vec<(String, String)> = Vec::new();
     let mut check: u32 = 0;
     loop {
         check = check.saturating_add(1);
@@ -664,7 +667,9 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
                     .map(|i| i.lock().mapper.open_child_turns())
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|(t, _)| *t == thread)
+                    .filter(|(t, turn)| {
+                        *t == thread && !running.contains(&(t.clone(), turn.clone()))
+                    })
                     .map(|(_, turn)| turn)
                     .collect();
                 for turn in turns {
@@ -689,7 +694,19 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
                 {
                     ChildRead::Missing
                 }
-                Ok(answer) => ChildRead::Turns(answer),
+                Ok(answer) => {
+                    running.retain(|(t, _)| *t != thread);
+                    running.extend(
+                        answer["thread"]["turns"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|turn| turn["status"] == "inProgress")
+                            .filter_map(|turn| turn["id"].as_str())
+                            .map(|turn| (thread.clone(), turn.to_owned())),
+                    );
+                    ChildRead::Turns(answer)
+                }
                 // Tried again at the next check; the process's exit ends them if it stopped.
                 Err(_) => {
                     failed.push(thread);
@@ -1769,10 +1786,10 @@ while IFS= read -r line; do
       emit '{"method":"turn/started","params":{"threadId":"chb","turn":{"id":"ctb","status":"inProgress","startedAt":1}}}'
       emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":5}}}' ;;
     *'"method":"thread/read"'*'"includeTurns":true'*'chb'*)
+      readsb=$((${readsb:-0} + 1))
       emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"chb\",\"model\":\"gpt-6-luna\",\"turns\":[{\"id\":\"ctb\",\"status\":\"inProgress\"}]}}}"
-      if [ "${intb:-0}" = 1 ]; then sleep 0.3; emit '{"method":"turn/completed","params":{"threadId":"chb","turn":{"id":"ctb","status":"completed","completedAt":5}}}'; fi ;;
+      if [ "$readsb" = 60 ]; then emit '{"method":"turn/completed","params":{"threadId":"chb","turn":{"id":"ctb","status":"completed","completedAt":5}}}'; fi ;;
     *'"method":"turn/interrupt"'*'"ctb"'*)
-      intb=1
       emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"turn/start"'*'stop quiet child'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu6\",\"startedAt\":null}}}"
@@ -2507,11 +2524,19 @@ done
         silent_child_keeps_running("odd error child", "ct9").await;
     }
 
-    /// The last check finds the child still running after `turn/interrupt`: it keeps its
-    /// route, and its own end settles it.
+    /// Every check finds the child running, so none interrupts it, the last one included: it
+    /// keeps its route, and its own end, which Codex sends after the 60th read, settles it.
     #[tokio::test(flavor = "current_thread")]
-    async fn a_child_still_running_at_the_last_check_settles_with_its_own_end() {
+    async fn a_child_codex_reports_running_is_never_interrupted() {
         silent_child_keeps_running("busy child", "ctb").await;
+        let stdin = std::fs::read_to_string(fake_stdin()).unwrap();
+        assert!(
+            !stdin
+                .lines()
+                .any(|line| line.contains("\"method\":\"turn/interrupt\"")
+                    && line.contains("\"ctb\"")),
+            "a running child gets no turn/interrupt"
+        );
     }
 
     async fn silent_child_keeps_running(text: &str, child_turn: &str) {
