@@ -488,7 +488,8 @@ it needs no pairing code.
 A machine this app is not connected to, shown only because another environment
 links to it, can still be linked without a code when that link has full access:
 drop the plus on it and the environment holding the link gets the pairing code
-from it. Your session on that environment must manage access there. The result
+from it. Your session on that environment must manage access there and already
+have the access you pick. The result
 is a separate link with the access you pick, listed and revocable on the linked
 machine like any other. Links still do not chain.
 

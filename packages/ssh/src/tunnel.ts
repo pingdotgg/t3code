@@ -625,6 +625,8 @@ LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
 LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
 @@T3_ENSURE_T3_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
+# The state directory and log are for their owner only. A umask set here would reach the server.
+chmod 700 "$STATE_DIR"
 cleanup_launch() {
   rm -f "$RUNNER_NEXT"
   for OWNED_LOCK in "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK"; do
@@ -1014,6 +1016,7 @@ if [ -z "$REMOTE_PORT" ]; then
   # Start this launch's log empty. Unlink rather than truncate: a process from an
   # earlier launch can still hold the old log open and keep writing to it.
   rm -f "$LOG_FILE"
+  (umask 077 && : >"$LOG_FILE")
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"

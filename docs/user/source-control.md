@@ -234,6 +234,11 @@ Where you can edit a description, you can also tick its checkboxes from the Summ
 (the Overview tab on mobile).
 GitLab calls these merge requests.
 
+A merge or review applies to the commits you opened the pull request on. When someone pushes
+meanwhile, the web and desktop apps offer **Load new commits**; until you do, a merge or review is refused and your
+review draft is kept. Merging from a thread's pull request row, or from the list, lands the head that
+row had when you confirmed.
+
 Save a filter setup with **Views → Save current view** on the Pull Requests page. For example, choose
 **Reviewing** (**Your review** on mobile) and save it as "PRs Requesting My Review". Choose a saved view to restore its search,
 filters, sort order, and server/project scope. After changing filters, use **Update saved view** to
