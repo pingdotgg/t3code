@@ -171,12 +171,25 @@ function ProjectIconPickerBody({
 
         {mode === "lucide" ? (
           <>
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <Input
-              type="search"
+              type="text"
+              role="searchbox"
               value={query}
               aria-label={gt("Search Lucide icons")}
               placeholder={gt("Search all Lucide icons")}
               onChange={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.key !== "Escape" ||
+                  event.nativeEvent.isComposing ||
+                  event.keyCode === 229
+                )
+                  return;
+                if (!query && !event.repeat) return;
+                event.stopPropagation();
+                setQuery("");
+              }}
             />
             <ScrollArea scrollFade className="max-h-64">
               <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">

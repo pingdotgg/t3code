@@ -207,7 +207,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
-    Layer.mock(PullRequestService.PullRequestService)(options.pullRequests ?? {}),
+    Layer.mock(PullRequestService.PullRequestService)({
+      addressedProject: () => Effect.succeed(project ?? undefined),
+      ...options.pullRequests,
+    }),
     Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
@@ -413,6 +416,18 @@ describe("pull request toolkit handlers", () => {
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.link", number: 123, url: supplied },
       ]);
+    }),
+  );
+
+  it.effect("says when repository is not owner/repo on a known host", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: makeProject() });
+      const error = yield* harness
+        .call("link_pull_request", { repository: "github.com/org/repo", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestRepositoryInvalidError" });
+      expect(error.message).toContain("owner/repo");
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 
@@ -837,6 +852,7 @@ describe("source control tools", () => {
     body: "Adds tools.",
     state: "open",
     isDraft: false,
+    visibility: "private",
     author: null,
     headBranch: "tools",
     baseBranch: "main",
@@ -847,7 +863,20 @@ describe("source control tools", () => {
     changedFiles: 1,
     labels: [],
     reviewers: [],
-    checks: [{ name: "CI", status: "success", description: null, url: null }],
+    checks: [
+      { name: "CI", status: "success", description: null, url: null },
+      { name: "Lint", status: "failure", description: null, url: null },
+      { name: "E2E", status: "cancelled", description: null, url: null },
+      { name: "Deploy", status: "pending", description: null, url: null },
+      {
+        name: "Approval",
+        status: "action-required",
+        description: null,
+        url: null,
+        placeholder: true,
+      },
+      { name: "Docs", status: "skipped", description: null, url: null },
+    ],
   } as unknown as PullRequestDetail;
   const reviewThread = (id: string, isResolved: boolean) => ({
     id,
@@ -866,34 +895,86 @@ describe("source control tools", () => {
     commits: [],
   };
 
-  it.effect("reads the thread's branch PR, only the sections asked, without resolved threads", () =>
+  it.effect("reads the thread's branch PR compactly, adding only the sections asked", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      let reviewThreadsTruncated = false;
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.sync(() => ({ ...activity, reviewThreadsTruncated })),
+        },
+      });
+      const compact = yield* harness.call("pull_request_read", {});
+      expect(compact).toMatchObject({
+        visibility: "private",
+        headSha: "abc123",
+        checks: { passed: 2, pending: 1, failed: ["Lint", "E2E"], incomplete: true },
+        unresolvedThreads: 1,
+      });
+      expect(compact.body).toBeUndefined();
+      expect(compact.checkRuns).toBeUndefined();
+      expect(compact.conversation).toBeUndefined();
+      expect(compact.unresolvedThreadsTruncated).toBeUndefined();
+      const result = yield* harness.call("pull_request_read", { include: ["body", "threads"] });
+      expect(asked[1]).toEqual({
+        projectId: PROJECT_ID,
+        host: "github.com",
+        repository: "t3tools/t3code",
+        number: 42,
+        allowStale: false,
+      });
+      expect(result.body).toBe("Adds tools.");
+      expect(result.checkRuns).toBeUndefined();
+      expect(result.conversation?.comments).toBeUndefined();
+      expect(result.conversation?.reviewThreads?.map((thread) => thread.id)).toEqual([
+        "open-thread",
+      ]);
+      // Unfetched threads may be unresolved, so the compact count says it is partial.
+      reviewThreadsTruncated = true;
+      expect(yield* harness.call("pull_request_read", {})).toMatchObject({
+        unresolvedThreads: 1,
+        unresolvedThreadsTruncated: true,
+      });
+      const commentsOnly = yield* harness.call("pull_request_read", { include: ["comments"] });
+      expect(commentsOnly.conversation?.truncated).toBe(false);
+      const threadsOnly = yield* harness.call("pull_request_read", { include: ["threads"] });
+      expect(threadsOnly.conversation?.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("reads an Azure DevOps PR by number at its organization and project", () =>
     Effect.gen(function* () {
       const asked: Array<PullRequestRef> = [];
       const harness = yield* makeHarness({
-        thread: branchThread,
+        project: makeProject({
+          canonicalKey: "dev.azure.com/contoso/project/_git/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://contoso@dev.azure.com/contoso/project/_git/repo",
+          },
+          provider: SourceControlProviderKind.make("azure-devops"),
+          displayName: "contoso/project/_git/repo",
+          owner: "contoso",
+          name: "repo",
+        }),
         pullRequests: {
           detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
           activity: () => Effect.succeed(activity),
         },
       });
-      const result = yield* harness.call("pull_request_read", {
-        sections: ["summary", "conversation"],
+      const result = yield* harness.call("pull_request_read", { number: 123 });
+      expect(result).toMatchObject({
+        host: "dev.azure.com",
+        repository: "contoso/project/_git/repo",
+        number: 123,
+        url: "https://dev.azure.com/contoso/project/_git/repo/pullrequest/123",
       });
-      expect(asked).toEqual([
-        {
-          projectId: PROJECT_ID,
-          host: "github.com",
-          repository: "t3tools/t3code",
-          number: 42,
-          allowStale: false,
-        },
+      expect(asked).toMatchObject([
+        { host: "dev.azure.com", repository: "contoso/project/_git/repo", number: 123 },
       ]);
-      expect(result.summary?.headSha).toBe("abc123");
-      expect(result.checks).toBeUndefined();
-      expect(result.conversation?.reviewThreads.map((thread) => thread.id)).toEqual([
-        "open-thread",
-      ]);
-      expect(result.conversation?.hiddenResolvedThreads).toBe(1);
     }),
   );
 
@@ -910,6 +991,7 @@ describe("source control tools", () => {
       const harness = yield* makeHarness({
         thread: branchThread,
         pullRequests: {
+          detail: () => Effect.succeed(detail),
           activity: () =>
             Effect.sync(() => ({
               ...activity,
@@ -942,7 +1024,7 @@ describe("source control tools", () => {
             ),
         },
       });
-      const first = yield* harness.call("pull_request_read", { sections: ["conversation"] });
+      const first = yield* harness.call("pull_request_read", { include: ["threads"] });
       expect(first.conversation?.reviewThreads).toMatchObject([
         { id: "first", moreComments: false, comments: [{}, { body: "reply" }] },
       ]);
@@ -951,12 +1033,12 @@ describe("source control tools", () => {
       // The agent resolves what it read; the next page still starts at the next thread.
       firstResolved = true;
       const second = yield* harness.call("pull_request_read", { cursor: cursor! });
-      expect(second.summary).toBeUndefined();
-      expect(second.conversation?.reviewThreads.map((thread) => thread.id)).toEqual(["second"]);
+      expect(second.conversation?.comments).toBeUndefined();
+      expect(second.conversation?.reviewThreads?.map((thread) => thread.id)).toEqual(["second"]);
       expect(second.conversation?.nextCursor).toBeNull();
       // A cursor past the current end finishes instead of repeating an empty page.
       const stale = Base64Url.encode(
-        JSON.stringify({ threads: 99, comments: 99, includeResolved: false }),
+        JSON.stringify({ threads: 99, comments: null, includeResolved: false }),
       );
       const past = yield* harness.call("pull_request_read", { cursor: stale });
       expect(past.conversation).toMatchObject({ reviewThreads: [], nextCursor: null });
@@ -991,10 +1073,11 @@ describe("source control tools", () => {
           pullRequests: {
             summary: () => Effect.succeed({ state: "open", headBranch } as never),
             detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+            activity: () => Effect.succeed(activity),
           },
         });
       const harness = yield* opened("tools");
-      yield* harness.call("pull_request_read", { sections: ["summary"] });
+      yield* harness.call("pull_request_read", {});
       expect(asked).toMatchObject([{ number: 43 }]);
 
       // Before sync, the host says which branch it came from; another branch's is not this one.
@@ -1146,7 +1229,11 @@ describe("source control tools", () => {
 
   it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
     Effect.gen(function* () {
-      const opened: Array<{ readonly cwd: string; readonly draft: boolean | undefined }> = [];
+      const opened: Array<{
+        readonly cwd: string;
+        readonly draft: boolean | undefined;
+        readonly private: boolean | undefined;
+      }> = [];
       const harness = yield* makeHarness({
         thread: {
           ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
@@ -1154,7 +1241,9 @@ describe("source control tools", () => {
         },
         git: {
           createPullRequest: (input) =>
-            Effect.sync(() => opened.push({ cwd: input.cwd, draft: input.draft })).pipe(
+            Effect.sync(() =>
+              opened.push({ cwd: input.cwd, draft: input.draft, private: input.private }),
+            ).pipe(
               Effect.as({
                 status: "created" as const,
                 url: "https://github.com/t3tools/t3code/pull/43",
@@ -1170,9 +1259,10 @@ describe("source control tools", () => {
         title: "Add tools",
         body: "Adds tools.",
         draft: true,
+        private: true,
       });
       expect(result).toMatchObject({ number: 43, created: true });
-      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true }]);
+      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true, private: true }]);
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.link", number: 43, source: "created" },
       ]);

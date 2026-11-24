@@ -598,10 +598,16 @@ async function boundWorkbook(archive: JSZip) {
   relationships.on("opentag", (tag) => {
     if (tag.local !== "Relationship") return;
     const type = tag.attributes.Type?.value;
-    const path = new URL(
-      tag.attributes.Target?.value ?? "",
-      "https://docx.invalid/xl/workbook.xml",
-    ).pathname.slice(1);
+    const target = tag.attributes.Target?.value ?? "";
+    // Resolve as the engine does: literal ZIP names split on `/`, never URL syntax or escapes.
+    const segments = target.startsWith("/") ? [] : ["xl"];
+    for (const segment of target.split("/")) {
+      if (segment === "..") segments.pop();
+      else if (segment && segment !== ".") segments.push(segment);
+    }
+    const external = tag.attributes.TargetMode?.value.toLowerCase() === "external";
+    // The engine reads an external worksheet from its default part, so leave it unresolved to refuse it.
+    const path = external && type?.endsWith("/worksheet") ? "" : segments.join("/");
     if (type?.endsWith("/worksheet")) paths.set(tag.attributes.Id?.value ?? "", path);
     else if (/\/(?:chartsheet|dialogsheet|xlMacrosheet|xlIntlMacrosheet)$/.test(type ?? ""))
       otherSheets.add(tag.attributes.Id?.value ?? "");
@@ -755,13 +761,13 @@ function wordPartTypes() {
         const external =
           attr("TargetMode").toLowerCase() === "external" ||
           /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(attr("Target"));
-        const folder = path === "_rels/.rels" ? "" : path.replace(/_rels\/[^/]+\.rels$/, "");
-        // Preserve archive URL resolution, including literal query/fragment
-        // characters in ZIP names rather than silently classifying another file.
-        const target = new URL(attr("Target"), `https://docx.invalid/${folder}`)
-          .toString()
-          .slice("https://docx.invalid/".length);
         if (!external) {
+          const folder = path === "_rels/.rels" ? "" : path.replace(/_rels\/[^/]+\.rels$/, "");
+          // Preserve archive URL resolution, including literal query/fragment
+          // characters in ZIP names rather than silently classifying another file.
+          const target = new URL(attr("Target"), `https://docx.invalid/${folder}`)
+            .toString()
+            .slice("https://docx.invalid/".length);
           if (
             !WORD_BINARY_PARTS.has(role) &&
             role !== "hyperlink" &&
