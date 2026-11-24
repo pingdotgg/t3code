@@ -5,9 +5,9 @@ import { DEFAULT_READ_ALOUD_SETTINGS } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import { Pressable } from "react-native";
 import { mobilePreferencesAtom } from "../../state/preferences";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
+import { readAloudButtonMode, type ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
 import { readAloudController, warmReadAloud } from "./playback";
 
 /**
@@ -50,31 +50,55 @@ export function ReadAloudButton({
   useEffect(() => warmReadAloud(settings), [settings]);
   const gt = useGT();
   if (settings.provider === "off") return null;
-  const active = state.id === id;
-  const stoppable = active && (state.status === "playing" || state.status === "loading");
-  const label = stoppable
-    ? gt("Stop reading")
-    : active && state.status === "paused"
-      ? gt("Resume reading")
-      : gt("Read aloud");
+  const { action, stoppable } = readAloudButtonMode(state, id);
+  const label = {
+    read: gt("Read aloud"),
+    cancel: gt("Cancel speech generation"),
+    pause: gt("Pause reading"),
+    resume: gt("Resume reading"),
+  }[action];
+  const icon: Record<typeof action, AppSymbolName> = {
+    read: "play",
+    cancel: "stop.fill",
+    pause: "pause",
+    resume: "play",
+  };
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      className="items-center justify-center"
-      style={{ width: buttonSize, height: buttonSize }}
-      onPress={async () => {
-        if (stoppable) return readAloudController.stop();
-        if (active && state.status === "paused") await readAloudController.resume();
-        else await readAloudController.start(id, text, settings);
-        alertReadAloudError(id, gt("Could not read aloud"));
-      }}
-    >
-      <SymbolView
-        name={stoppable ? "stop.fill" : "play"}
-        size={iconSize}
-        tintColorClassName="accent-foreground-secondary"
-      />
-    </Pressable>
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        className="items-center justify-center"
+        style={{ width: buttonSize, height: buttonSize }}
+        onPress={async () => {
+          if (action === "cancel") return readAloudController.stop();
+          if (action === "pause") return readAloudController.pause();
+          if (action === "resume") await readAloudController.resume();
+          else await readAloudController.start(id, text, settings);
+          alertReadAloudError(id, gt("Could not read aloud"));
+        }}
+      >
+        <SymbolView
+          name={icon[action]}
+          size={iconSize}
+          tintColorClassName="accent-foreground-secondary"
+        />
+      </Pressable>
+      {stoppable && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={gt("Stop reading")}
+          className="items-center justify-center"
+          style={{ width: buttonSize, height: buttonSize }}
+          onPress={() => readAloudController.stop()}
+        >
+          <SymbolView
+            name="stop.fill"
+            size={iconSize}
+            tintColorClassName="accent-foreground-secondary"
+          />
+        </Pressable>
+      )}
+    </>
   );
 }

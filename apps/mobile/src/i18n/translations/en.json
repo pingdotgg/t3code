@@ -3160,6 +3160,8 @@
   "ec0512298086d37a": "Couldn't open a thread",
   "154bec57dbece73c": "Stop reading",
   "e3c3d4bcfa9727b9": "Resume reading",
+  "e5ad64bb69db1045": "Pause reading",
+  "81923647f1ef9740": "Cancel speech generation",
   "0eceb5780908eb6c": "Read aloud",
   "09a3f02127015c7d": "Could not read aloud",
   "7948f8bd21d282f2": "File comment",

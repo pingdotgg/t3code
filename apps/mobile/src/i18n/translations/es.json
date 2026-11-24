@@ -3154,6 +3154,8 @@
   "ec0512298086d37a": "No se pudo abrir un hilo",
   "154bec57dbece73c": "Dejar de leer",
   "e3c3d4bcfa9727b9": "Reanudar lectura",
+  "e5ad64bb69db1045": "Pausar lectura",
+  "81923647f1ef9740": "Cancelar la generación de voz",
   "0eceb5780908eb6c": "Leer en voz alta",
   "09a3f02127015c7d": "No se pudo leer en voz alta",
   "7948f8bd21d282f2": "Comentario de archivo",
