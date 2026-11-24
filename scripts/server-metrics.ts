@@ -68,6 +68,7 @@ import {
   competingBetween,
   loadWarnings,
   noiseReport,
+  noiseRulesFor,
   noisePairProblem,
   profileMismatch,
   round,
@@ -2444,6 +2445,8 @@ const noiseCommand = Command.make(
         return [a, b] as const;
       }),
     );
+    const { warning } = noiseRulesFor(pairs.flat());
+    if (warning !== undefined) yield* Console.error(`Warning: ${warning}`);
     const { rows, table } = noiseReport(pairs);
     if (rows.length === 0) {
       return yield* new MetricsError({
