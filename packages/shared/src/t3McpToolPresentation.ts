@@ -462,6 +462,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   plugin_call: tool(["Call", "Calling", "Called", "a plugin"], "environment-read"),
   suggest_threads: tool(["Suggest", "Suggesting", "Suggested", "threads"], "widget"),
   ask_decision: tool(["Ask", "Asking", "Asked", "for a decision"], "widget"),
+  file_read: tool(["Read", "Reading", "Read", "a file"], "environment-read"),
   project_library_list: tool(["List", "Listing", "Listed", "the library"], "environment-read"),
   project_library_add: tool(["Add", "Adding", "Added", "to the library"], "environment-update"),
 };

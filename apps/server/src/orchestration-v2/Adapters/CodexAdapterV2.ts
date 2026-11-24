@@ -883,9 +883,12 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const baseSandboxPolicy =
-      input.runtimePolicy.sandboxPolicy === undefined
-        ? runtimeModeDefaults.sandboxPolicy
-        : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+      // Codex cannot drop its patch tool, so a coordinator gets nothing to patch.
+      input.runtimePolicy.profile === "coordinator"
+        ? ({ type: "readOnly" } as const)
+        : input.runtimePolicy.sandboxPolicy === undefined
+          ? runtimeModeDefaults.sandboxPolicy
+          : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
     const extraRoots = input.runtimePolicy.workspace?.extraRoots ?? [];
     const sandboxPolicy =
       baseSandboxPolicy?.type === "workspaceWrite" && extraRoots.length > 0
@@ -1715,6 +1718,11 @@ function codexThreadRuntimeParams(input: {
             "memories.generate_memories": false,
             "features.apps": false,
             "features.plugins": false,
+            // As in Claude's conversations: no commands. Files are read with `file_read`.
+            "features.shell_tool": false,
+            "features.unified_exec": false,
+            "features.browser_use": false,
+            "features.computer_use": false,
             ...Object.fromEntries(
               userMcpServers
                 .filter(({ name }) => !sharedNames.has(name))

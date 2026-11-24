@@ -7,6 +7,7 @@ import { LearningService, type NewCard } from "../../../kompas/LearningService.t
 import { MemoryService, projectScope } from "../../../kompas/MemoryService.ts";
 import { PluginProxy } from "../../../kompas/PluginProxy.ts";
 import { PluginStore } from "../../../kompas/PluginStore.ts";
+import { ThreadFiles } from "../../../kompas/ThreadFiles.ts";
 import { ThreadProfiles } from "../../../kompas/ThreadProfiles.ts";
 import { type WidgetName, WidgetPublisher } from "../../../kompas/WidgetDocument.ts";
 import { WorkstreamStore } from "../../../kompas/WorkstreamStore.ts";
@@ -399,6 +400,16 @@ const handlers = {
           }),
           message: SHOWN,
         };
+      }),
+  ),
+  file_read: McpToolAccess.readsAsCaller(
+    (input: { readonly path: string; readonly offset?: number | undefined }) =>
+      Effect.gen(function* () {
+        const thread = yield* callerThread;
+        const files = yield* ThreadFiles;
+        return yield* files
+          .read({ thread, path: input.path, offset: input.offset ?? 0 })
+          .pipe(Effect.mapError(toFailure));
       }),
   ),
   project_library_list: McpToolAccess.readsAsCaller(() =>

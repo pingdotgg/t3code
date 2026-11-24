@@ -6,6 +6,7 @@ import { LearningService } from "../../../kompas/LearningService.ts";
 import { MemoryService } from "../../../kompas/MemoryService.ts";
 import { PluginProxy } from "../../../kompas/PluginProxy.ts";
 import { PluginStore } from "../../../kompas/PluginStore.ts";
+import { ThreadFiles } from "../../../kompas/ThreadFiles.ts";
 import { ThreadProfiles } from "../../../kompas/ThreadProfiles.ts";
 import { WidgetPublisher } from "../../../kompas/WidgetDocument.ts";
 import { WorkstreamStore } from "../../../kompas/WorkstreamStore.ts";
@@ -426,6 +427,25 @@ const AskDecisionTool = readonlyTool(
   "Ask for a decision",
 );
 
+const FileReadTool = readonlyTool(
+  Tool.make("file_read", {
+    description:
+      "Read a text file, or list a folder, in this conversation's folder, or read one of its attachments by the path you were given. Prefer your own file tools if you have them.",
+    parameters: Schema.Struct({
+      path: text(4_000),
+      offset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    }),
+    success: Schema.Struct({
+      text: Schema.String,
+      nextOffset: Schema.optional(Schema.Int),
+    }),
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies: [...caller, ThreadFiles],
+  }),
+  "Read a file",
+);
+
 const LibraryItem = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literals(["file", "deck", "note"]),
@@ -481,6 +501,7 @@ export const KompasToolkit = Toolkit.make(
   PluginCallTool,
   SuggestThreadsTool,
   AskDecisionTool,
+  FileReadTool,
   LibraryListTool,
   LibraryAddTool,
 );

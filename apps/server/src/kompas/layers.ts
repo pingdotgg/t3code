@@ -11,6 +11,7 @@ import * as MemoryService from "./MemoryService.ts";
 import * as PluginProxy from "./PluginProxy.ts";
 import * as PluginService from "./PluginService.ts";
 import * as PluginStore from "./PluginStore.ts";
+import * as ThreadFiles from "./ThreadFiles.ts";
 import * as ThreadProfiles from "./ThreadProfiles.ts";
 import * as WidgetDocument from "./WidgetDocument.ts";
 import * as WidgetTools from "./WidgetTools.ts";
@@ -38,6 +39,7 @@ export const layerThreadProfiles = ThreadProfiles.layer.pipe(
 export const layerApplication = Layer.mergeAll(
   KompasRpc.layer,
   KompasApps.layer,
+  ThreadFiles.layer,
   Layer.effectDiscard(
     Effect.flatMap(WorkstreamService.WorkstreamService, (service) => service.start()),
   ),

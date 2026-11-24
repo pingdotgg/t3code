@@ -45,6 +45,8 @@ const CONVERSATION_TOOLS = [
 ];
 /** The user talks to these threads about the app itself; workers run unattended. */
 const APP_TOOLS = ["t3_theme_read", "t3_theme_set"];
+/** For models that would need a shell to read a file. */
+const FILE_TOOLS = ["file_read"];
 const PROJECT_TOOLS = ["project_library_list", "project_library_add"];
 const COORDINATOR_TOOLS = [
   "choices",
@@ -70,13 +72,14 @@ const COORDINATOR_TOOLS = [
 ];
 
 const ALLOWED: Record<Exclude<ThreadProfile, "developer">, ReadonlySet<string>> = {
-  chat: new Set([...CONVERSATION_TOOLS, ...APP_TOOLS]),
-  worker: new Set([...CONVERSATION_TOOLS, ...PROJECT_TOOLS]),
+  chat: new Set([...CONVERSATION_TOOLS, ...FILE_TOOLS, ...APP_TOOLS]),
+  worker: new Set([...CONVERSATION_TOOLS, ...FILE_TOOLS, ...PROJECT_TOOLS]),
   coordinator: new Set([...COORDINATOR_TOOLS, ...PROJECT_TOOLS, ...APP_TOOLS]),
 };
 /** Everything only profiled threads use; a coding thread keeps exactly upstream's tools. */
 const KOMPAS_ONLY = new Set([
   ...CONVERSATION_TOOLS.slice(0, 15),
+  ...FILE_TOOLS,
   ...PROJECT_TOOLS,
   "suggest_threads",
   "ask_decision",
