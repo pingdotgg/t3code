@@ -241,6 +241,7 @@ import {
   createThreadFeedCache,
   threadFeedCompactionLabels,
   failedFeedRunIds,
+  finalAnswerIds,
   deriveThreadFeedPresentation,
   threadFeedRunIsUnsettled,
   isContextCompactionActivityGroup,
@@ -3915,7 +3916,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         terminalIdsByTurn.set(entry.message.runId, entry.message.id);
       }
     }
-    return new Set(terminalIdsByTurn.values());
+    return new Set<string>([...terminalIdsByTurn.values(), ...finalAnswerIds(props.feed)]);
   })();
   // An interrupted run unfolds; a run that is no longer latest folds back.
   const [previousLatestRun, setPreviousLatestRun] = useState(props.latestRun);

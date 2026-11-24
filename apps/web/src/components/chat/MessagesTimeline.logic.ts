@@ -1320,6 +1320,13 @@ function attachTrailingToolGroupsToAssistant(
     number,
     Extract<MessagesTimelineRow, { kind: "assistant-meta" }>
   >();
+  // A kept earlier reply keeps its meta under itself; only the run's last one moves.
+  const lastMetaIndexByRunId = new Map<RunId, number>();
+  for (const [index, row] of rows.entries()) {
+    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+      lastMetaIndexByRunId.set(row.message.runId, index);
+    }
+  }
 
   for (const [messageIndex, row] of rows.entries()) {
     const runId = row.kind === "message" ? (row.message.runId ?? null) : null;
@@ -1327,7 +1334,8 @@ function attachTrailingToolGroupsToAssistant(
       row.kind !== "message" ||
       row.message.role !== "assistant" ||
       !row.showAssistantMeta ||
-      runId === null
+      runId === null ||
+      lastMetaIndexByRunId.get(runId) !== messageIndex
     ) {
       continue;
     }
@@ -2313,7 +2321,8 @@ export function deriveMessagesTimelineRows(
 
     const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
-      terminalAssistantMessageIds.has(timelineEntry.message.id) &&
+      (terminalAssistantMessageIds.has(timelineEntry.message.id) ||
+        retainedAssistantReplyIds.has(timelineEntry.id)) &&
       !assistantResponseStillInProgress;
 
     nextRows.push({
@@ -2507,7 +2516,12 @@ function attachCreatedThreadSummaries(
       )
         return [];
     }
-    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+    if (
+      row.kind === "message" &&
+      row.showAssistantMeta &&
+      row.message.runId &&
+      terminalIndexes.get(row.message.runId) === index
+    ) {
       return [
         row,
         ...(createdByRun.get(row.message.runId) ?? []).map((entry) => ({
