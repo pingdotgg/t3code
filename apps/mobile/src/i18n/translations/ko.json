@@ -5596,5 +5596,8 @@
   "8d545d54c0a9e950": "에이전트가 실행하는 명령, 편집, 검색을 숨깁니다. 성공한 항목 숨기기는 실패를 남겨 둡니다. Zen은 최종 답변만 표시합니다. 승인, 질문, 오류는 항상 표시됩니다.",
   "99d51127f573296b": "다른 계정",
   "8ec2c57414669b79": "두 번째 {tracker} 워크스페이스 또는 사용자를 연결합니다.",
-  "892f08d21b8e48a9": "요구 사항이 충족되면 {layers}을(를) {kind, select, squash {스쿼시} merge {병합} rebase {리베이스} fastForward {빨리 감기} other {{method}}} 방식으로 {base}에 병합합니다. 바로 병합될 수도 있습니다."
+  "892f08d21b8e48a9": "요구 사항이 충족되면 {layers}을(를) {kind, select, squash {스쿼시} merge {병합} rebase {리베이스} fastForward {빨리 감기} other {{method}}} 방식으로 {base}에 병합합니다. 바로 병합될 수도 있습니다.",
+  "89bf40eb2503b6c5": "{environment}에 새 기기가 로그인했습니다",
+  "c94b5fe9ef372bc0": "{device}이(가) {product}를 통해 연결되었습니다. 본인이 아니라면 해당 컴퓨터의 T3 Code에서 설정 → 액세스에서 제거하세요.",
+  "bec67d0ed485f885": "{count, plural, other {기기 {count}대}}가 {product}를 통해 연결되었습니다. 본인이 아니라면 해당 컴퓨터의 T3 Code에서 설정 → 액세스에서 제거하세요."
 }
