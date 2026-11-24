@@ -1234,8 +1234,13 @@ fn interactive_inline_text(
     let Some(on_link_menu) = on_link_menu.filter(|_| !menu_targets.is_empty()) else {
         return text.into_any_element();
     };
+    // Capture phase: `InteractiveText` records a press of any button and opens the link on
+    // release, so a right-click on a link must stop before the text sees it.
     div()
-        .on_mouse_down(gpui_kit::MouseButton::Right, move |event, window, cx| {
+        .capture_any_mouse_down(move |event, window, cx| {
+            if event.button != gpui_kit::MouseButton::Right {
+                return;
+            }
             let Ok(index) = layout.index_for_position(event.position) else {
                 return;
             };
