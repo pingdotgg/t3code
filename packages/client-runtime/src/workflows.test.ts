@@ -246,6 +246,8 @@ describe("the list of runs", () => {
     expect(workflowChip("nightly-report").letters).toBe("NR");
     expect(workflowChip("issue").letters).toBe("IS");
     expect(workflowChip("issue")).toEqual(workflowChip("issue"));
+    expect(workflowChip("𠮷野-report").letters).toBe("𠮷R");
+    expect(workflowChip("a𝒜b").letters).toBe("A𝒜");
   });
 });
 
