@@ -8912,6 +8912,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pendingTurnItemsByThreadId.set(threadId, existing);
       }
 
+      const unreadTaskItems = new Map<ThreadId, ReadonlyArray<string>>();
+      for (const [threadId, threads] of providerThreadsByThreadId) {
+        const read = new Set(
+          (pendingTurnItemsByThreadId.get(threadId) ?? []).map(
+            (item) => item.nativeItemRef?.nativeId ?? String(item.id),
+          ),
+        );
+        const unread = threads.flatMap((thread) =>
+          (thread.pendingBackgroundTasks ?? []).flatMap((task) =>
+            task.kind === "background_task" &&
+            task.nativeItemId !== undefined &&
+            !read.has(task.nativeItemId)
+              ? [task.nativeItemId]
+              : [],
+          ),
+        );
+        if (unread.length > 0) unreadTaskItems.set(threadId, unread);
+      }
+      if (unreadTaskItems.size > 0) {
+        const rows = yield* sql<PayloadRow & { readonly thread_id: string }>`
+          SELECT i.thread_id, i.payload_json
+          FROM orchestration_v2_projection_turn_items i
+          WHERE i.thread_id IN (SELECT value FROM json_each(${encodeIdList([...unreadTaskItems.keys()])}))
+            AND i.type = 'dynamic_tool'
+            AND json_extract(i.payload_json, '$.nativeItemRef.nativeId') IN
+              (SELECT value FROM json_each(${encodeIdList([...unreadTaskItems.values()].flat())}))
+        `;
+        for (const row of rows) {
+          const threadId = ThreadId.make(row.thread_id);
+          const existing = pendingTurnItemsByThreadId.get(threadId) ?? [];
+          existing.push(yield* decodeTurnItemPayload(row.payload_json));
+          pendingTurnItemsByThreadId.set(threadId, existing);
+        }
+      }
+
       return { providerThreadsByThreadId, pendingTurnItemsByThreadId };
     });
 

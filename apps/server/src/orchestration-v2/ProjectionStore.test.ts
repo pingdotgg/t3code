@@ -12237,4 +12237,156 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }
     }),
   );
+
+  it.effect(
+    "names backgrounded codemode work by its finished call's script in every shell read",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread:backgrounded-codemode");
+        const runId = RunId.make("run:backgrounded-codemode");
+        const providerThreadId = ProviderThreadId.make("provider-thread:backgrounded-codemode");
+        const at = DateTime.makeUnsafe("2026-11-24T12:00:00.000Z");
+        yield* store.apply({
+          id: EventId.make("event:backgrounded-codemode:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: at,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:backgrounded-codemode"),
+            title: "Run a long script",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: at,
+            updatedAt: at,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make("event:backgrounded-codemode:run"),
+          type: "run.created",
+          threadId,
+          runId,
+          driver,
+          providerInstanceId,
+          occurredAt: at,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId,
+            userMessageId: MessageId.make("message:backgrounded-codemode"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: at,
+            startedAt: at,
+            completedAt: at,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make("event:backgrounded-codemode:item"),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          driver,
+          occurredAt: at,
+          payload: {
+            id: TurnItemId.make("item:backgrounded-codemode"),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: { driver, nativeId: "toolu_backgrounded", strength: "strong" },
+            parentItemId: null,
+            ordinal: 1,
+            type: "dynamic_tool",
+            toolName: "mcp__codemode__codemode",
+            input: { code: "const r = await tools.bash({ command: 'sleep 60' });" },
+            status: "completed",
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make("event:backgrounded-codemode:roster"),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          providerInstanceId,
+          occurredAt: at,
+          payload: {
+            id: providerThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            pendingBackgroundTasks: [
+              {
+                taskId: "task:backgrounded-codemode",
+                kind: "background_task",
+                description: "codemode/codemode",
+                nativeItemId: "toolu_backgrounded",
+              },
+            ],
+            createdAt: at,
+            updatedAt: at,
+          },
+        });
+        const expected = [
+          {
+            taskId: "task:backgrounded-codemode",
+            kind: "background_task" as const,
+            nativeItemId: "toolu_backgrounded",
+            description: "const r = await tools.bash({ command: 'sleep 60' });",
+          },
+        ];
+        assert.deepEqual((yield* store.getThreadShell(threadId))?.pendingBackgroundTasks, expected);
+        const { statements, tracer } = traceSqlStatements();
+        assert.deepEqual(
+          (yield* store.getShellSnapshot().pipe(Effect.withTracer(tracer))).threads.find(
+            (thread) => thread.id === threadId,
+          )?.pendingBackgroundTasks,
+          expected,
+        );
+        const read = statements.find((statement) =>
+          statement.includes("'$.nativeItemRef.nativeId'"),
+        );
+        assert.isDefined(read);
+        const sql = yield* SqlClient.SqlClient;
+        const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${read}`,
+        )).map((row) => row.detail);
+        assert.isTrue(plan.some((detail) => detail.includes("turn_items_thread_type_idx")));
+      }),
+  );
 });
