@@ -228,12 +228,23 @@ pub trait TaskRunner: Send + Sync + std::fmt::Debug {
         task_id: String,
         thread_id: String,
     ) -> BoxFuture<'_, Result<bool, String>>;
-    /// Waits for the run of `message_id` to end, at most [`RUN_OUTCOME_WAIT`]. `Some(error)`
-    /// when it ended without success and still holds the message (`recordRunFailure`).
-    fn run_outcome(&self, thread_id: String, message_id: String) -> BoxFuture<'_, Option<String>>;
+    /// Waits for the run of `message_id` to end, at most [`RUN_OUTCOME_WAIT`]
+    /// (`recordRunOutcome`).
+    fn run_outcome(&self, thread_id: String, message_id: String) -> BoxFuture<'_, RunEnd>;
     /// `isScratchProject || isNonGitProject`: the project's folder is positively no Git
     /// repository. An unknown project, or a repository Git cannot read, is `false`.
     fn is_non_git_project(&self, project_id: String) -> BoxFuture<'_, bool>;
+}
+
+/// How the run of a dispatched message ended, as `recordRunOutcome` reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEnd {
+    /// The run completed.
+    Completed,
+    /// The run ended without success and still holds the message: the error to record.
+    Failed(String),
+    /// No outcome to record: the wait ran out, the run is gone, or a steer took the message.
+    Unknown,
 }
 
 /// What runs a task: the timer, a person, or an agent.
@@ -1294,37 +1305,27 @@ impl ScheduledTasks {
         }
     }
 
-    /// `recordRunFailure`: the provider can still refuse a turn after its message was
-    /// accepted, so the run is followed and a failure replaces the recorded success.
+    /// `recordRunOutcome` (`ScheduledTaskService.ts:887`): the provider can still refuse a turn
+    /// after its message was accepted, so the run is followed and a failure replaces the
+    /// recorded success. A one-time task whose turn completed at or after its `runAt` is spent
+    /// and removed; its thread stays.
     fn follow_outcome(&self, task_id: &str, started_iso: &str, thread_id: &str, message_id: &str) {
         let service = self.clone();
         let (task_id, started_iso) = (task_id.to_owned(), started_iso.to_owned());
         let (thread_id, message_id) = (thread_id.to_owned(), message_id.to_owned());
         let key = task_id.clone();
         let handle = tokio::spawn(async move {
-            let Some(error) = service
+            match service
                 .inner
                 .runner
                 .run_outcome(thread_id, message_id)
                 .await
-            else {
-                return;
-            };
-            let mut tasks = service.inner.tasks.lock().await;
-            let mut next_tasks = tasks.clone();
-            let Some(slot) = next_tasks.iter_mut().find(|t| {
-                t.id == task_id
-                    && t.last_run_at.as_deref() == Some(started_iso.as_str())
-                    && t.last_run_status == ScheduledTaskRunStatus::Succeeded
-            }) else {
-                return;
-            };
-            slot.last_run_status = ScheduledTaskRunStatus::Failed;
-            slot.last_run_error = Some(error);
-            if service.persist(&next_tasks, None).await.is_ok() {
-                *tasks = next_tasks;
-                drop(tasks);
-                service.notify_changed();
+            {
+                RunEnd::Completed => service.remove_spent(&task_id, &started_iso).await,
+                RunEnd::Failed(error) => {
+                    service.record_failure(&task_id, &started_iso, error).await
+                }
+                RunEnd::Unknown => {}
             }
         });
         if let Ok(mut followers) = self.inner.followers.lock()
@@ -1332,6 +1333,59 @@ impl ScheduledTasks {
         {
             previous.abort();
         }
+    }
+
+    /// The failure of a run whose message was accepted replaces its recorded success.
+    async fn record_failure(&self, task_id: &str, started_iso: &str, error: String) {
+        let mut tasks = self.inner.tasks.lock().await;
+        let mut next_tasks = tasks.clone();
+        let Some(slot) = next_tasks.iter_mut().find(|t| {
+            t.id == task_id
+                && t.last_run_at.as_deref() == Some(started_iso)
+                && t.last_run_status == ScheduledTaskRunStatus::Succeeded
+        }) else {
+            return;
+        };
+        slot.last_run_status = ScheduledTaskRunStatus::Failed;
+        slot.last_run_error = Some(error);
+        if self.persist(&next_tasks, None).await.is_ok() {
+            *tasks = next_tasks;
+            drop(tasks);
+            self.notify_changed();
+        }
+    }
+
+    /// T3's `DELETE ... WHERE` in `recordRunOutcome`: only the row of this run, recorded as
+    /// succeeded, with no next run, of a one-time schedule run at or after its `runAt`. An
+    /// early run by hand keeps the task.
+    async fn remove_spent(&self, task_id: &str, started_iso: &str) {
+        let mut tasks = self.inner.tasks.lock().await;
+        let spent = tasks.iter().any(|t| {
+            t.id == task_id
+                && t.last_run_at.as_deref() == Some(started_iso)
+                && t.last_run_status == ScheduledTaskRunStatus::Succeeded
+                && t.next_run_at.is_none()
+                && matches!(&t.schedule, ScheduledTaskSchedule::Once(once)
+                    if parse_iso(&once.run_at)
+                        .zip(parse_iso(started_iso))
+                        .is_some_and(|(run_at, ran)| ran >= run_at))
+        });
+        if !spent {
+            return;
+        }
+        let next_tasks: Vec<ScheduledTask> =
+            tasks.iter().filter(|t| t.id != task_id).cloned().collect();
+        if self.persist(&next_tasks, None).await.is_err() {
+            return;
+        }
+        *tasks = next_tasks;
+        drop(tasks);
+        // This runs as the task's follower: drop its entry without aborting itself.
+        if let Ok(mut followers) = self.inner.followers.lock() {
+            followers.remove(task_id);
+        }
+        self.set_credentials(task_id, None);
+        self.notify_changed();
     }
 
     /// `rescheduleMissedRun`: moves a skipped run on, only when the row is still the one the

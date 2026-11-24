@@ -430,7 +430,7 @@ pub(crate) fn recover(
     match outcome {
         Ok(effects) => Ok(effects),
         Err(CommandError::Store(e)) => Err(e),
-        Err(CommandError::Rejected(e)) => {
+        Err(CommandError::Rejected(e) | CommandError::ThreadArchived(e)) => {
             eprintln!("conn-engine: no restart continuation for {thread_id}: {e}");
             Ok(vec![])
         }

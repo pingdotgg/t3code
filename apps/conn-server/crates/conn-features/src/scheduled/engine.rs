@@ -8,7 +8,9 @@ use conn_engine::{BoxFuture, Engine, EngineError};
 use conn_vcs::setup::MissingBase;
 use serde_json::{Value, json};
 
-use super::{LaunchRequest, RUN_OUTCOME_WAIT, SendError, SendRequest, TaskRunner, ThreadShell};
+use super::{
+    LaunchRequest, RUN_OUTCOME_WAIT, RunEnd, SendError, SendRequest, TaskRunner, ThreadShell,
+};
 
 /// Run statuses after which a run never changes (`isTerminalRunStatus`).
 const TERMINAL: [&str; 5] = [
@@ -174,6 +176,9 @@ impl TaskRunner for EngineRunner {
             {
                 return Err(not_found());
             }
+            if let Some(refusal) = conn_engine::send_refusal(thread) {
+                return Err(SendError::Other(refusal));
+            }
             let command = json!({
                 "type": "message.dispatch",
                 "commandId": request.command_id,
@@ -243,31 +248,11 @@ impl TaskRunner for EngineRunner {
         })
     }
 
-    fn run_outcome(&self, thread_id: String, message_id: String) -> BoxFuture<'_, Option<String>> {
+    fn run_outcome(&self, thread_id: String, message_id: String) -> BoxFuture<'_, RunEnd> {
         Box::pin(async move {
-            let deadline = tokio::time::Instant::now() + RUN_OUTCOME_WAIT;
-            let input = from_json(json!({"threadId": thread_id})).ok()?;
-            let mut stream = self.engine.subscribe_thread(input).await.ok()?;
-            loop {
-                let projection = self.projection(&thread_id).await.ok()??;
-                let run = run_of(&projection, &message_id)?;
-                if TERMINAL.contains(&run["status"].as_str().unwrap_or_default()) {
-                    return judge(&projection, run, &message_id);
-                }
-                // Wait for the next run event; the projection is read again after it.
-                loop {
-                    let item = match tokio::time::timeout_at(deadline, stream.recv()).await {
-                        Err(_) | Ok(None) | Ok(Some(Err(_))) => return None,
-                        Ok(Some(Ok(item))) => to_json(&item),
-                    };
-                    if item["event"]["type"]
-                        .as_str()
-                        .is_some_and(|kind| kind.starts_with("run."))
-                    {
-                        break;
-                    }
-                }
-            }
+            self.follow_run(&thread_id, &message_id)
+                .await
+                .unwrap_or(RunEnd::Unknown)
         })
     }
 
@@ -294,6 +279,42 @@ impl TaskRunner for EngineRunner {
             // A repository Git cannot read keeps its worktree and its own error at launch.
             conn_vcs::repo::is_plain_folder(std::path::Path::new(&root)).await
         })
+    }
+}
+
+impl EngineRunner {
+    async fn follow_run(&self, thread_id: &str, message_id: &str) -> Option<RunEnd> {
+        {
+            let deadline = tokio::time::Instant::now() + RUN_OUTCOME_WAIT;
+            let input = from_json(json!({"threadId": thread_id})).ok()?;
+            let mut stream = self.engine.subscribe_thread(input).await.ok()?;
+            loop {
+                let projection = self.projection(thread_id).await.ok()??;
+                let run = run_of(&projection, message_id)?;
+                let status = run["status"].as_str().unwrap_or_default();
+                if status == "completed" {
+                    return Some(RunEnd::Completed);
+                }
+                if TERMINAL.contains(&status) {
+                    return Some(
+                        judge(&projection, run, message_id).map_or(RunEnd::Unknown, RunEnd::Failed),
+                    );
+                }
+                // Wait for the next run event; the projection is read again after it.
+                loop {
+                    let item = match tokio::time::timeout_at(deadline, stream.recv()).await {
+                        Err(_) | Ok(None) | Ok(Some(Err(_))) => return None,
+                        Ok(Some(Ok(item))) => to_json(&item),
+                    };
+                    if item["event"]["type"]
+                        .as_str()
+                        .is_some_and(|kind| kind.starts_with("run."))
+                    {
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
