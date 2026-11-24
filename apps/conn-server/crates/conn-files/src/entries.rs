@@ -158,21 +158,34 @@ pub enum WalkEnd {
     Bounded,
 }
 
+/// Whether a walk yields file links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileLinks {
+    /// A link to a file inside the root counts as a file, as T3's search index lists it
+    /// (`WorkspaceSearchIndex.ts` `scanDirectory`).
+    Listed,
+    /// Links are left out: content search reads each file once, by its own name.
+    Skipped,
+}
+
 /// Visits each non-ignored file under `root` as a `/`-separated relative path, in no fixed
 /// order. `visit` returns false to stop. Nothing is kept between calls.
 ///
 /// Ignore rules are Git's (`.gitignore` in the tree and its parents, `.git/info/exclude`, the
 /// global excludes file), applied in and out of a Git checkout, as fff does. Hidden files are
-/// listed; `.git` and the server's internal files are not; links are not followed.
+/// listed; `.git` and the server's internal files are not; links are never followed, and a
+/// link to a file is listed only with [`FileLinks::Listed`].
 pub fn walk_files(
     root: &Path,
     internal: &InternalPaths,
+    links: FileLinks,
     deadline: Option<Instant>,
     visit: &mut dyn FnMut(&str) -> bool,
 ) -> WalkEnd {
     // From the canonical root, every path the walk yields is canonical too (it follows no
     // links), so the internal check needs no further lookups.
     let root = &InternalPaths::real(root);
+    let excluded = internal.clone();
     let internal = internal.clone();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)
@@ -187,7 +200,14 @@ pub fn walk_files(
         .build();
     let mut seen = 0usize;
     for entry in walker.filter_map(Result::ok) {
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
+        let file = match entry.file_type() {
+            Some(t) if t.is_file() => true,
+            Some(t) if t.is_symlink() && links == FileLinks::Listed => {
+                symlink_kind(entry.path(), root, &[], &excluded) == Some(ProjectEntryKind::File)
+            }
+            _ => false,
+        };
+        if !file {
             continue;
         }
         let Ok(relative) = entry.path().strip_prefix(root) else {
@@ -214,7 +234,7 @@ pub fn walk_files(
 /// [`MAX_ENTRIES`].
 pub fn list_all(root: &Path, internal: &InternalPaths) -> ProjectListEntriesResult {
     let mut files: Vec<String> = Vec::new();
-    let end = walk_files(root, internal, None, &mut |path| {
+    let end = walk_files(root, internal, FileLinks::Listed, None, &mut |path| {
         files.push(path.to_owned());
         true
     });

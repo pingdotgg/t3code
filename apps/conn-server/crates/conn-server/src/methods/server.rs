@@ -99,12 +99,30 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.unary("server.refreshProviders", move |_, input: Value| {
         let deps = providers.clone();
         async move {
-            // T3 awaits the refresh before it answers. `modelCatalogOnly` answers no providers.
+            use crate::model_manifest::Window;
+            let only = input["instanceId"].as_str();
+            // T3 awaits the refresh before it answers. `modelCatalogOnly` (an opened model
+            // picker) ignores the other fields; the config stream carries the result.
             if input["modelCatalogOnly"] == true {
+                super::provider::refresh_model_catalog(&deps).await;
                 return Ok(json!({ "providers": [] }));
             }
-            super::provider::refresh(&deps, input["instanceId"].as_str()).await;
-            Ok(json!({ "providers": current_providers(&deps) }))
+            // A workspace (`cwd`, `fresh`) is not scanned and keeps main's behaviour: the
+            // instance is probed, nothing else is fetched, and the reply lists every entry.
+            if input["cwd"].is_string() {
+                super::provider::refresh(&deps, only).await;
+                return Ok(json!({ "providers": current_providers(&deps) }));
+            }
+            let refresh_models = input["refreshModels"] == true;
+            if refresh_models && let Some(manifest) = &deps.model_manifest {
+                manifest.refresh(Window::Force).await;
+            }
+            super::provider::refresh(&deps, only).await;
+            if refresh_models {
+                super::provider::refresh_models(&deps, only).await?;
+            }
+            let providers = current_providers(&deps);
+            Ok(json!({ "providers": refresh_reply(&input, providers) }))
         }
     });
 
@@ -475,6 +493,79 @@ fn open_stream(first: Vec<Value>) -> ItemStream {
     rx
 }
 
+/// The providers `server.refreshProviders` answers with (T3's `ws.ts`), for a refresh
+/// without a workspace: none for `omitProviders`; with `workspaceSnapshotsOnDemand`, every
+/// entry without its workspace snapshots, and `usageLimitsCommand` adds `/usage-limits`.
+fn refresh_reply(input: &Value, providers: Vec<Value>) -> Vec<Value> {
+    if input["omitProviders"] == true {
+        return Vec::new();
+    }
+    if input["workspaceSnapshotsOnDemand"] != true {
+        return providers;
+    }
+    let providers = if input["usageLimitsCommand"] == true {
+        with_usage_limits_commands(providers)
+    } else {
+        providers
+    };
+    providers
+        .into_iter()
+        .map(|mut provider| {
+            if let Some(entry) = provider.as_object_mut() {
+                entry.remove("workspaceSnapshots");
+            }
+            provider
+        })
+        .collect()
+}
+
+/// `USAGE_LIMITS_COMMAND`.
+const USAGE_LIMITS_COMMAND: (&str, &str) = ("usage-limits", "Show this provider's usage limits");
+
+/// `withUsageLimitsCommands` with no usage-limit sources (this server reads none): providers
+/// that report limits get `/usage-limits` last, in their snapshots too.
+fn with_usage_limits_commands(providers: Vec<Value>) -> Vec<Value> {
+    let with_limits: Vec<Value> = providers
+        .iter()
+        .filter(|p| {
+            p["enabled"] == true
+                && p["installed"] == true
+                && p["availability"] != "unavailable"
+                && p.get("usageLimits").is_some_and(|limits| !limits.is_null())
+        })
+        .map(|p| p["driver"].clone())
+        .collect();
+    let commands = |items: &Value| {
+        let mut commands: Vec<Value> = items
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| c["name"] != USAGE_LIMITS_COMMAND.0)
+            .cloned()
+            .collect();
+        commands
+            .push(json!({"name": USAGE_LIMITS_COMMAND.0, "description": USAGE_LIMITS_COMMAND.1}));
+        Value::Array(commands)
+    };
+    providers
+        .into_iter()
+        .map(|mut provider| {
+            if !with_limits.contains(&provider["driver"]) {
+                return provider;
+            }
+            let machine = commands(&provider["slashCommands"]);
+            provider["slashCommands"] = machine;
+            if let Some(snapshots) = provider["workspaceSnapshots"].as_array_mut() {
+                for snapshot in snapshots {
+                    let scoped = commands(&snapshot["slashCommands"]);
+                    snapshot["slashCommands"] = scoped;
+                }
+            }
+            provider
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,6 +646,432 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// A provider that counts its probes and model refreshes; `fail` makes the refresh fail.
+    struct Models {
+        id: conn_contract::ProviderInstanceId,
+        probes: std::sync::atomic::AtomicUsize,
+        refreshes: std::sync::atomic::AtomicUsize,
+        fail: bool,
+    }
+
+    impl conn_provider::Provider for Models {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "antigravity"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn server_provider_entry(&self, _checked_at: &str) -> Option<Value> {
+            Some(json!({
+                "instanceId": self.id.as_str(), "enabled": true, "installed": true,
+                "models": [{"slug": "m"}], "slashCommands": [{"name": "c"}], "skills": [],
+                "workspaceSnapshots": [{"cwd": "/w", "slashCommands": []},
+                                       {"cwd": "/other", "slashCommands": []}],
+            }))
+        }
+        fn refresh_status(&self, _instance: Option<Value>) -> conn_provider::BoxFuture<'_, ()> {
+            self.probes
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Box::pin(async {})
+        }
+        fn refresh_models(
+            &self,
+        ) -> Option<conn_provider::BoxFuture<'_, conn_provider::ProviderResult<()>>> {
+            self.refreshes
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let fail = self.fail;
+            Some(Box::pin(async move {
+                if fail {
+                    Err(conn_provider::ProviderError::Failed {
+                        operation: "refresh-models",
+                        detail: "no models".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }))
+        }
+    }
+
+    /// T3's `serverRefreshProviders`: `modelCatalogOnly` answers no providers and probes them
+    /// only when an on-demand manifest fetch changed the manifest; `refreshModels` runs each
+    /// targeted provider's model refresh after the probe, and a failure answers
+    /// `ProviderSetupError` with operation `refresh-models`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_providers_follows_model_catalog_only_and_refresh_models() {
+        use crate::model_manifest::{ModelManifest, Source, tests as manifest};
+        use crate::table::{CallContext, Handler};
+        use std::sync::atomic::Ordering::Relaxed;
+        let (env, dir) = environment();
+        let model = |id: &str, fail: bool| {
+            Arc::new(Models {
+                id: id.into(),
+                probes: Default::default(),
+                refreshes: Default::default(),
+                fail,
+            })
+        };
+        let (good, bad) = (model("good", false), model("bad", true));
+        let (url, server) = manifest::serve_once(manifest::manifest("2999-01-01T00:00:00.000Z"), 1);
+        let deps = Deps {
+            environment: Some(env.clone()),
+            providers: vec![
+                good.clone() as Arc<dyn conn_provider::Provider>,
+                bad.clone() as Arc<dyn conn_provider::Provider>,
+            ]
+            .into(),
+            model_manifest: Some(ModelManifest::with_source(
+                Source::Url(url),
+                dir.clone(),
+                env.clone(),
+                Default::default(),
+            )),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        let Some(Handler::Unary(call)) = table.get("server.refreshProviders") else {
+            panic!("server.refreshProviders is not registered");
+        };
+        let call = |input: Value| call(CallContext::default(), input);
+
+        // A newer manifest: no providers in the reply, every provider probed once.
+        let reply = call(json!({"modelCatalogOnly": true, "refreshModels": true})).await;
+        assert_eq!(reply, Ok(json!({"providers": []})));
+        assert_eq!(server.join().unwrap(), 1);
+        assert_eq!(good.probes.load(Relaxed), 1);
+        assert_eq!(bad.probes.load(Relaxed), 1);
+        assert_eq!(
+            good.refreshes.load(Relaxed),
+            0,
+            "the other fields are ignored"
+        );
+        // Fetched within 5 minutes: nothing changes, nothing is probed.
+        call(json!({"modelCatalogOnly": true})).await.unwrap();
+        assert_eq!(good.probes.load(Relaxed), 1);
+
+        // Without `refreshModels` no model refresh runs.
+        let reply = call(json!({"instanceId": "good"})).await.unwrap();
+        assert_eq!(reply["providers"].as_array().unwrap().len(), 2);
+        assert_eq!(good.refreshes.load(Relaxed), 0);
+        assert_eq!(good.probes.load(Relaxed), 2);
+        // With it: the targeted instance only, probed again after its refresh.
+        call(json!({"instanceId": "good", "refreshModels": true}))
+            .await
+            .unwrap();
+        assert_eq!(good.refreshes.load(Relaxed), 1);
+        assert_eq!(good.probes.load(Relaxed), 4);
+        assert_eq!(bad.refreshes.load(Relaxed), 0);
+        let mut changes = deps.provider_status.subscribe();
+        let seen = *changes.borrow_and_update();
+        let failure = call(json!({"instanceId": "bad", "refreshModels": true}))
+            .await
+            .err();
+        // The probe and the failed refresh each told the config streams.
+        assert_eq!(changes.borrow().wrapping_sub(seen), 2);
+        assert_eq!(
+            failure,
+            Some(Failure::Fail(json!({
+                "_tag": "ProviderSetupError",
+                "instanceId": "bad",
+                "operation": "refresh-models",
+                "detail": "no models",
+            })))
+        );
+
+        // `omitProviders` without a workspace: the refresh runs, the reply lists nothing.
+        let reply = call(json!({"refreshModels": true, "omitProviders": true}))
+            .await
+            .unwrap_err();
+        assert!(matches!(reply, Failure::Fail(_)), "`bad` still fails");
+        let reply =
+            call(json!({"instanceId": "good", "refreshModels": true, "omitProviders": true})).await;
+        assert_eq!(reply, Ok(json!({"providers": []})));
+        assert_eq!(good.refreshes.load(Relaxed), 3);
+        // A workspace is not scanned: the instance is probed, and the reply lists every
+        // entry as it is, as before workspace snapshots.
+        let probes = good.probes.load(Relaxed);
+        let reply = call(
+            json!({"instanceId": "good", "cwd": "/w", "fresh": true, "omitProviders": true,
+            "workspaceSnapshotsOnDemand": true}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(good.probes.load(Relaxed), probes + 1);
+        assert_eq!(reply["providers"], json!(current_providers(&deps)));
+        // A workspace refresh keeps main's behaviour even with `refreshModels`: one probe,
+        // no manifest fetch or model refresh, every entry in the reply.
+        let refreshes = good.refreshes.load(Relaxed);
+        let reply = call(json!({"instanceId": "good", "cwd": "/w", "refreshModels": true}))
+            .await
+            .unwrap();
+        assert_eq!(good.probes.load(Relaxed), probes + 2);
+        assert_eq!(good.refreshes.load(Relaxed), refreshes);
+        assert_eq!(reply["providers"], json!(current_providers(&deps)));
+        // On demand without a workspace: every entry, without its snapshots.
+        let reply = call(json!({"workspaceSnapshotsOnDemand": true}))
+            .await
+            .unwrap();
+        let providers = reply["providers"].as_array().unwrap();
+        assert_eq!(providers.len(), 2);
+        assert!(
+            providers
+                .iter()
+                .all(|p| p.get("workspaceSnapshots").is_none())
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A provider whose probe waits until the test releases it.
+    struct Blocked {
+        id: conn_contract::ProviderInstanceId,
+        probes: std::sync::atomic::AtomicUsize,
+        started: tokio::sync::Notify,
+        release: tokio::sync::Semaphore,
+    }
+
+    impl conn_provider::Provider for Blocked {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "codex"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn server_provider_entry(&self, _checked_at: &str) -> Option<Value> {
+            Some(json!({"instanceId": self.id.as_str()}))
+        }
+        fn refresh_status(&self, _instance: Option<Value>) -> conn_provider::BoxFuture<'_, ()> {
+            Box::pin(async move {
+                self.probes
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.started.notify_one();
+                let _ = self.release.acquire().await;
+            })
+        }
+    }
+
+    /// T3's shared `refreshAll` (`ProviderRegistry.test.ts`, "keeps a shared refresh running
+    /// after its first caller is interrupted"): a second opened picker joins the pass in
+    /// flight instead of answering early, and cancelling the first caller does not lose it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn model_catalog_refreshes_share_one_pass_that_outlives_its_first_caller() {
+        use crate::model_manifest::{ModelManifest, Source, tests as manifest};
+        use crate::table::{CallContext, Handler};
+        use std::sync::atomic::Ordering::Relaxed;
+        let (env, dir) = environment();
+        let blocked = Arc::new(Blocked {
+            id: "codex".into(),
+            probes: Default::default(),
+            started: tokio::sync::Notify::new(),
+            release: tokio::sync::Semaphore::new(0),
+        });
+        let (url, server) = manifest::serve_once(manifest::manifest("2999-01-01T00:00:00.000Z"), 1);
+        let deps = Deps {
+            environment: Some(env.clone()),
+            providers: vec![blocked.clone() as Arc<dyn conn_provider::Provider>].into(),
+            model_manifest: Some(ModelManifest::with_source(
+                Source::Url(url),
+                dir.clone(),
+                env.clone(),
+                Default::default(),
+            )),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        let Some(Handler::Unary(call)) = table.get("server.refreshProviders") else {
+            panic!("server.refreshProviders is not registered");
+        };
+        let picker = || call(CallContext::default(), json!({"modelCatalogOnly": true}));
+
+        let first = tokio::spawn(picker());
+        blocked.started.notified().await;
+        assert_eq!(server.join().unwrap(), 1);
+        let second = tokio::spawn(picker());
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !second.is_finished(),
+            "the second caller waits for the pass"
+        );
+        first.abort();
+        let _ = first.await;
+        blocked.release.add_permits(1);
+        assert_eq!(second.await.unwrap(), Ok(json!({"providers": []})));
+        assert_eq!(blocked.probes.load(Relaxed), 1, "one shared pass");
+        // The pass recorded the manifest it probed with: the next picker probes nothing.
+        assert_eq!(picker().await, Ok(json!({"providers": []})));
+        assert_eq!(blocked.probes.load(Relaxed), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A provider that classifies two models with Codex's catalog code on each probe, as
+    /// `CodexDriver` applies `ModelCatalog.current` to its probe result.
+    struct CatalogProbe {
+        id: conn_contract::ProviderInstanceId,
+        manifest: conn_provider::LiveManifest,
+        entry: std::sync::Mutex<Value>,
+    }
+
+    impl conn_provider::Provider for CatalogProbe {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "codex"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn server_provider_entry(&self, _checked_at: &str) -> Option<Value> {
+            Some(self.entry.lock().unwrap().clone())
+        }
+        fn refresh_status(&self, _instance: Option<Value>) -> conn_provider::BoxFuture<'_, ()> {
+            use conn_provider_codex::{CodexConfig, status};
+            let config = CodexConfig {
+                model_manifest: self.manifest.clone(),
+                ..CodexConfig::default()
+            };
+            let settings = status::StatusSettings {
+                enabled: true,
+                ..status::StatusSettings::default()
+            };
+            let checked_at = "2026-11-23T00:00:00.000Z";
+            let mut entry = status::pending_entry("codex", &config, &settings, &[], checked_at);
+            let no_options = json!({"optionDescriptors": []});
+            entry["models"] = json!([
+                {"slug": "gpt-6-astra", "name": "A", "isCustom": false, "isDefault": true,
+                 "aliases": ["default"], "capabilities": no_options},
+                {"slug": "gpt-x", "name": "X", "isCustom": false, "capabilities": no_options}
+            ]);
+            status::apply_model_catalog(&mut entry, &self.manifest, 0);
+            *self.entry.lock().unwrap() = entry;
+            Box::pin(async {})
+        }
+    }
+
+    /// T3 applies the current manifest to the probe result: once an opened picker fetched a
+    /// manifest with a new Codex default, `server.getConfig` shows it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_fetched_manifest_reaches_the_codex_entry_in_the_config() {
+        use crate::model_manifest::{ModelManifest, Source, tests as manifest};
+        use crate::table::{CallContext, Handler};
+        let (env, dir) = environment();
+        let live = conn_provider::LiveManifest::default();
+        let codex = Arc::new(CatalogProbe {
+            id: "codex".into(),
+            manifest: live.clone(),
+            entry: std::sync::Mutex::new(Value::Null),
+        });
+        let (url, server) = manifest::serve_once(manifest::manifest("2999-01-01T00:00:00.000Z"), 1);
+        let deps = Deps {
+            environment: Some(env.clone()),
+            providers: vec![codex.clone() as Arc<dyn conn_provider::Provider>].into(),
+            model_manifest: Some(ModelManifest::with_source(
+                Source::Url(url),
+                dir.clone(),
+                env.clone(),
+                live,
+            )),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        let unary = |method: &str| match table.get(method) {
+            Some(Handler::Unary(call)) => call.clone(),
+            _ => panic!("{method} is not registered"),
+        };
+        let default_model = |config: Value| {
+            config["providers"][0]["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["isDefault"] == true)
+                .map(|m| m["slug"].clone())
+        };
+        conn_provider::Provider::refresh_status(&*codex, None).await;
+        let config = unary("server.getConfig")(CallContext::default(), json!({}));
+        assert_eq!(
+            default_model(config.await.unwrap()),
+            Some(json!("gpt-6-astra"))
+        );
+
+        let picker = unary("server.refreshProviders");
+        let reply = picker(CallContext::default(), json!({"modelCatalogOnly": true})).await;
+        assert_eq!(reply, Ok(json!({"providers": []})));
+        assert_eq!(server.join().unwrap(), 1);
+        let config = unary("server.getConfig")(CallContext::default(), json!({}));
+        assert_eq!(default_model(config.await.unwrap()), Some(json!("gpt-x")));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn the_access_stream_shows_links_and_clients_as_they_change() {
         let (env, dir) = environment();
@@ -591,6 +1108,112 @@ mod tests {
         let removed = stream.recv().await.unwrap().unwrap();
         assert_eq!(removed["type"], "clientRemoved");
         assert_eq!(removed["revision"], 5);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `withUsageLimitsCommands`: providers that report limits get `/usage-limits` last.
+    #[test]
+    fn the_usage_limits_command_follows_t3() {
+        let with = json!({"driver": "codex", "enabled": true, "installed": true,
+            "usageLimits": {}, "slashCommands": [{"name": "usage-limits"}, {"name": "goal"}],
+            "workspaceSnapshots": [{"cwd": "/w", "slashCommands": []}]});
+        let without = json!({"driver": "claudeAgent", "enabled": true, "installed": true,
+            "slashCommands": []});
+        let out = with_usage_limits_commands(vec![with, without.clone()]);
+        let command =
+            json!({"name": "usage-limits", "description": "Show this provider's usage limits"});
+        assert_eq!(out[0]["slashCommands"], json!([{"name": "goal"}, command]));
+        assert_eq!(
+            out[0]["workspaceSnapshots"][0]["slashCommands"],
+            json!([command])
+        );
+        assert_eq!(out[1], without);
+    }
+
+    /// A provider whose probe ends abnormally on its first run.
+    struct Crashes {
+        id: conn_contract::ProviderInstanceId,
+        probes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl conn_provider::Provider for Crashes {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "codex"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn refresh_status(&self, _instance: Option<Value>) -> conn_provider::BoxFuture<'_, ()> {
+            let first = self
+                .probes
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                == 0;
+            Box::pin(async move {
+                assert!(!first, "the first probe ends abnormally");
+            })
+        }
+    }
+
+    /// T3 records the probed manifest only when the pass completes: a probe that ended
+    /// abnormally leaves it unprobed, so the next opened picker runs the pass again.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_abnormal_probe_leaves_the_manifest_unprobed() {
+        use crate::model_manifest::{ModelManifest, Source, tests as manifest};
+        use crate::table::{CallContext, Handler};
+        use std::sync::atomic::Ordering::Relaxed;
+        let (env, dir) = environment();
+        let crashes = Arc::new(Crashes {
+            id: "codex".into(),
+            probes: Default::default(),
+        });
+        let (url, server) = manifest::serve_once(manifest::manifest("2999-01-01T00:00:00.000Z"), 1);
+        let deps = Deps {
+            environment: Some(env.clone()),
+            providers: vec![crashes.clone() as Arc<dyn conn_provider::Provider>].into(),
+            model_manifest: Some(ModelManifest::with_source(
+                Source::Url(url),
+                dir.clone(),
+                env.clone(),
+                Default::default(),
+            )),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        let Some(Handler::Unary(call)) = table.get("server.refreshProviders") else {
+            panic!("server.refreshProviders is not registered");
+        };
+        let picker = || call(CallContext::default(), json!({"modelCatalogOnly": true}));
+        assert_eq!(picker().await, Ok(json!({"providers": []})));
+        assert_eq!(server.join().unwrap(), 1);
+        // The first pass ended abnormally, so a second pass ran in the same call.
+        assert_eq!(crashes.probes.load(Relaxed), 2);
+        // That one completed: the manifest counts as probed.
+        assert_eq!(picker().await, Ok(json!({"providers": []})));
+        assert_eq!(crashes.probes.load(Relaxed), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

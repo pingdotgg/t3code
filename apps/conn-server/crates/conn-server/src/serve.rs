@@ -51,6 +51,10 @@ pub struct ServeOptions {
     /// `--managed-provision`: serve managed callers on a second ingress
     /// (`crate::managed`).
     pub managed_provision: Option<PathBuf>,
+    /// Receives each model manifest the server accepts; `main` gives it to the providers.
+    pub model_manifest: conn_provider::LiveManifest,
+    /// Providers report entry changes here; the config streams listen.
+    pub status_notifier: conn_provider::StatusNotifier,
 }
 
 impl ServeOptions {
@@ -109,6 +113,8 @@ impl ServeOptions {
             session_idle: args.session_idle,
             sdk_host: args.sdk_host,
             managed_provision: args.managed_provision,
+            model_manifest: conn_provider::LiveManifest::default(),
+            status_notifier: conn_provider::StatusNotifier::default(),
         }
     }
 }
@@ -155,6 +161,8 @@ pub async fn serve_with_instances(
         session_idle,
         sdk_host: _,
         managed_provision,
+        model_manifest,
+        status_notifier,
     } = options;
     // SIGHUP asks for a reload (`reload.rs`). Its default action stops the process, so the
     // handler goes in before any startup work an Orbit finalize could overlap.
@@ -273,6 +281,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        settle_cleanups: Arc::default(),
     });
 
     // A state folder the T3 server used: its threads and projects, once (`t3_import.rs`).
@@ -325,6 +334,16 @@ pub async fn serve_with_instances(
         Ok(Err(error)) => or_exit(Err(error), "cannot import the T3 server's state"),
         Err(error) => or_exit(Err(error), "cannot import the T3 server's state"),
     }
+    // Bound before the engine opens: every `/mcp` credential carries this address. Clients
+    // wait in the backlog until the router serves, below.
+    let listener = match tokio::net::TcpListener::bind(listen).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("conn-server: cannot listen on {listen}: {error}");
+            std::process::exit(1);
+        }
+    };
+    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = projects;
     config.provider_set = Some(providers.clone());
@@ -332,7 +351,8 @@ pub async fn serve_with_instances(
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
-    config.recover_runs = !inert;
+    // `start_agent_tools` recovers them, once agents can reach `/mcp`.
+    config.recover_runs = false;
     // Attention events for iOS push: off unless asked for, and only where a sender exists
     // (`attention.rs`). A container server sends through its managed Gateway client.
     let attention = !inert && crate::attention::enabled_by_env();
@@ -404,15 +424,21 @@ pub async fn serve_with_instances(
         // An inert copy holds the original's peer links: it must not use them.
         peers: (!inert).then(|| crate::peers::PeerLinks::new(environment.clone(), engine.clone())),
         devices: Some(crate::methods::devices::start(environment.clone())),
+        provider_status: crate::methods::provider::ProviderStatus::with_notifier(status_notifier),
+        model_manifest: Some(crate::model_manifest::ModelManifest::new(
+            state_dir.clone(),
+            environment.clone(),
+            model_manifest,
+        )),
         ..Deps::default()
     };
     if let Some(devices) = &deps.devices {
         let _ = host.devices.set(devices.clone());
     }
-    deps.mcp = crate::routes::mcp::service(&deps);
-    if let Some(mcp) = &deps.mcp {
-        let _ = host.mcp.set(mcp.clone());
-    }
+    or_exit(
+        start_agent_tools(&mut deps, &host, &sqlite_engine, addr),
+        "cannot recover the runs a previous process left active",
+    );
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -421,14 +447,6 @@ pub async fn serve_with_instances(
         deps,
     };
 
-    let listener = match tokio::net::TcpListener::bind(listen).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!("conn-server: cannot listen on {listen}: {error}");
-            std::process::exit(1);
-        }
-    };
-    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
     // The write and its fsync run on a blocking thread, as all file work here does.
     let published = {
@@ -439,9 +457,6 @@ pub async fn serve_with_instances(
         Ok(Ok(())) => {}
         Ok(Err(error)) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
         Err(error) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
-    }
-    if let Some(mcp) = &state.deps.mcp {
-        mcp.set_listen_address(addr);
     }
     println!("conn-server listening on http://{addr}");
     println!(
@@ -463,7 +478,9 @@ pub async fn serve_with_instances(
         crate::methods::pull_requests::start_watches(&state.deps);
     }
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
-    crate::model_manifest::start(state_dir.clone(), environment.clone());
+    if let Some(manifest) = &state.deps.model_manifest {
+        manifest.start();
+    }
     // `spawn` starts nothing when the engine has attention events off.
     let managed_server = match provision {
         Some(provision) => {
@@ -490,6 +507,7 @@ pub async fn serve_with_instances(
     }
 
     let devices = state.deps.devices.clone();
+    let mcp = state.deps.mcp.clone();
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let listener = axum::serve::ListenerExt::tap_io(listener, |stream| {
@@ -511,6 +529,9 @@ pub async fn serve_with_instances(
             eprintln!("conn-server: {signal}, stopping");
             // Mark shutdown before draining: provider exits must leave runs for restart recovery.
             engine.begin_shutdown();
+            if let Some(mcp) = &mcp {
+                mcp.begin_stopping_remote_tasks();
+            }
             let _ = stop_tx.send(true);
             // Open WebSockets keep the graceful stop waiting; give them a moment, no more.
             let _ = tokio::time::timeout(Duration::from_secs(2), &mut server).await;
@@ -522,6 +543,12 @@ pub async fn serve_with_instances(
     // Shells and provider processes end with their whole process groups, so nothing they
     // started outlives the server.
     terminals.shutdown().await;
+    // Remote task followers stop before the engine closes, so none settles a task or wakes a
+    // parent during shutdown. Unbounded: a follower stops at its next await, and a write the
+    // engine already took must commit before the engine closes.
+    if let Some(mcp) = &mcp {
+        mcp.stop_remote_tasks().await;
+    }
     engine.shutdown().await;
     preview.shutdown().await;
     // Device hubs and agent daemons stop, here and on SSH hosts, as T3's finalizers do;
@@ -534,6 +561,25 @@ pub async fn serve_with_instances(
         // A failure exit also restarts units with Restart=on-failure.
         std::process::exit(1);
     }
+}
+
+/// Gives the engine's agents `/mcp` at `listen`, and only then recovers the runs a previous
+/// process left active (none in an inert copy). A resumed session keeps the credential it
+/// opens with, so its URL must already be the one this server answers on.
+pub(crate) fn start_agent_tools(
+    deps: &mut Deps,
+    host: &Host,
+    engine: &SqliteEngine,
+    listen: SocketAddr,
+) -> Result<(), String> {
+    deps.mcp = crate::routes::mcp::service(deps, listen);
+    if let Some(mcp) = &deps.mcp {
+        let _ = host.mcp.set(mcp.clone());
+    }
+    if inert() {
+        return Ok(());
+    }
+    engine.recover_runs()
 }
 
 /// Binds the managed ingress and starts its authority, probe, lease, ACK and notice tasks.

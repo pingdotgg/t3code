@@ -22,6 +22,9 @@ use tokio::{
 use crate::lines::{Line, read_lines, read_lines_keeping_last};
 
 const STDERR_TAIL_BYTES: usize = 4096;
+/// The longest stderr line an observer reads whole: Antigravity's sign-in URL may be 16,384
+/// characters (T3's `maxAuthorizationUrlLength`) behind its marker. The tail keeps its 4 KiB.
+const OBSERVED_STDERR_LINE_BYTES: usize = 16_384 + 1024;
 /// How long a closed stdin may take to end the CLI before it is killed.
 pub const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
@@ -59,6 +62,9 @@ impl ExitInfo {
     }
 }
 
+/// Sees each stderr line; a line it returns is delivered as stdout.
+pub type StderrObserver = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 pub struct Process {
     pub pid: u32,
     writer: mpsc::Sender<String>,
@@ -83,6 +89,18 @@ impl Process {
         spec: &LaunchSpec,
         max_line_bytes: usize,
         events: mpsc::Sender<ProcEvent>,
+    ) -> io::Result<Process> {
+        Self::spawn_observing_stderr(spec, max_line_bytes, events, None)
+    }
+
+    /// [`Process::spawn`] with `on_stderr` shown each stderr line: a line it returns goes to
+    /// `events` as if the child had written it to stdout (a CLI that reports on stderr what
+    /// the protocol reader must see).
+    pub fn spawn_observing_stderr(
+        spec: &LaunchSpec,
+        max_line_bytes: usize,
+        events: mpsc::Sender<ProcEvent>,
+        on_stderr: Option<StderrObserver>,
     ) -> io::Result<Process> {
         let mut command = Command::new(&spec.program);
         command
@@ -133,7 +151,11 @@ impl Process {
         });
 
         let tail = Arc::new(Mutex::new(String::new()));
-        let stderr_done = spawn_stderr_tail(stderr, tail.clone());
+        let stderr_done = spawn_stderr_tail(
+            stderr,
+            tail.clone(),
+            on_stderr.map(|observe| (observe, events.clone())),
+        );
 
         let (stdout_done_tx, stdout_done) = oneshot::channel();
         let reader_events = events.clone();
@@ -371,20 +393,30 @@ pub async fn wait_gone(pid: u32, timeout: Duration) -> bool {
     }
 }
 
-/// Keeps the last [`STDERR_TAIL_BYTES`] of stderr. Lines are framed with a cap and decoded
-/// lossily, so a long line or invalid UTF-8 cannot grow memory or end the reader (which would
-/// close the pipe and fail the child's next stderr write).
+/// Keeps the last [`STDERR_TAIL_BYTES`] of stderr. Lines are framed with a cap (larger for an
+/// observer, [`OBSERVED_STDERR_LINE_BYTES`]) and decoded lossily, so a long line or invalid
+/// UTF-8 cannot grow memory or end the reader (which would close the pipe and fail the
+/// child's next stderr write).
 fn spawn_stderr_tail(
     stderr: impl AsyncRead + Unpin + Send + 'static,
     tail: Arc<Mutex<String>>,
+    observer: Option<(StderrObserver, mpsc::Sender<ProcEvent>)>,
 ) -> oneshot::Receiver<()> {
     let (done_tx, done) = oneshot::channel();
     tokio::spawn(async move {
-        read_lines_keeping_last(stderr, STDERR_TAIL_BYTES, |line| {
+        let line_bytes = if observer.is_some() {
+            OBSERVED_STDERR_LINE_BYTES
+        } else {
+            STDERR_TAIL_BYTES
+        };
+        read_lines_keeping_last(stderr, line_bytes, |line| {
             let text = match line {
                 Line::Text(text) => text,
                 Line::Oversized(bytes) => format!("[{bytes}-byte line dropped]"),
             };
+            let forward = observer
+                .as_ref()
+                .and_then(|(observe, events)| Some((observe(&text)?, events.clone())));
             if let Ok(mut tail) = tail.lock() {
                 tail.push_str(&text);
                 tail.push('\n');
@@ -396,7 +428,12 @@ fn spawn_stderr_tail(
                     tail.drain(..cut);
                 }
             }
-            async { true }
+            async move {
+                if let Some((line, events)) = forward {
+                    let _ = events.send(ProcEvent::Line(Line::Text(line))).await;
+                }
+                true
+            }
         })
         .await;
         let _ = done_tx.send(());
@@ -441,6 +478,51 @@ mod tests {
         };
         assert_eq!(info.code, Some(0), "the second stderr write succeeded");
         assert!(info.stderr_tail.contains("after"));
+    }
+
+    /// Antigravity's sign-in URL may be 16,384 characters behind its marker: an observer
+    /// sees a stderr line that long whole, and the tail still keeps only its last 4 KiB.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_observed_stderr_line_may_carry_a_16k_url() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let script = "printf 'url: %s\\n' \"$(printf '%16384s' x | tr ' ' a)\" >&2";
+        let observer: StderrObserver =
+            Box::new(|line| line.starts_with("url: ").then(|| line.len().to_string()));
+        let _process =
+            Process::spawn_observing_stderr(&sh(script), 1024, tx, Some(observer)).unwrap();
+        let Some(ProcEvent::Line(Line::Text(len))) = rx.recv().await else {
+            panic!("the observed line arrives")
+        };
+        assert_eq!(len, (5 + 16_384).to_string());
+        let Some(ProcEvent::Exited(info)) = rx.recv().await else {
+            panic!("expected exit")
+        };
+        assert!(info.stderr_tail.len() <= STDERR_TAIL_BYTES);
+        assert!(info.stderr_tail.ends_with("ax\n"));
+    }
+
+    /// A stderr line the observer recognises reaches the reader as stdout, after the stdout
+    /// written before it; other stderr lines stay in the tail only.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_observed_stderr_line_is_delivered_as_stdout() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let script = "echo out; sleep 0.1; echo noise >&2; echo 'url: x' >&2; sleep 0.1";
+        let observer: StderrObserver =
+            Box::new(|line| line.strip_prefix("url: ").map(|u| format!("signal {u}")));
+        let _process =
+            Process::spawn_observing_stderr(&sh(script), 1024, tx, Some(observer)).unwrap();
+        let mut lines = Vec::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                ProcEvent::Line(Line::Text(text)) => lines.push(text),
+                ProcEvent::Line(Line::Oversized(_)) => {}
+                ProcEvent::Exited(info) => {
+                    assert!(info.stderr_tail.contains("noise"));
+                    break;
+                }
+            }
+        }
+        assert_eq!(lines, ["out", "signal x"]);
     }
 
     #[tokio::test(flavor = "current_thread")]

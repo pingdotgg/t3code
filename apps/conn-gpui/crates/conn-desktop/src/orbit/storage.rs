@@ -138,6 +138,20 @@ impl OrbitSessionStore {
         );
     }
 
+    /// Records a bearer token for a server the app lists beside its active one (a linked
+    /// environment). Unlike [`Self::record_bearer`] it leaves the active server alone.
+    pub fn record_linked_bearer(
+        &mut self,
+        server_id: impl Into<String>,
+        url: impl Into<String>,
+        label: impl Into<String>,
+        bearer: impl Into<String>,
+    ) {
+        let active = self.active_server_id.take();
+        self.record_bearer(server_id, url, label, bearer);
+        self.active_server_id = active;
+    }
+
     /// Clears a cached bearer token (e.g. after a 401/Auth failure so next attempt re-pairs).
     pub fn remove_bearer(&mut self, server_id: &str) {
         self.sessions.remove(server_id);
@@ -224,6 +238,19 @@ mod tests {
         let loaded = OrbitSessionStore::load_from(&path);
         assert_eq!(loaded.active_server_id.as_deref(), Some("node-beast"));
         assert_eq!(loaded.bearer_for("node-beast"), Some("tok-secret"));
+    }
+
+    #[test]
+    fn a_linked_bearer_is_stored_without_changing_the_active_server() {
+        let mut store = OrbitSessionStore::default();
+        store.record_bearer("nick", "http://10.44.0.6:3773", "nick", "tok-nick");
+        store.record_linked_bearer("mini", "http://10.44.0.9:3773", "mini", "tok-mini");
+        assert_eq!(store.active_server_id.as_deref(), Some("nick"));
+        assert_eq!(store.bearer_for("mini"), Some("tok-mini"));
+
+        let mut empty = OrbitSessionStore::default();
+        empty.record_linked_bearer("mini", "http://10.44.0.9:3773", "mini", "tok-mini");
+        assert_eq!(empty.active_server_id, None);
     }
 
     #[test]

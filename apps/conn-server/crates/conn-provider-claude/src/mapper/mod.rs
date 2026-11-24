@@ -110,6 +110,8 @@ pub struct Mapper<E: Env> {
     echo_mode: EchoMode,
     /// Claude's pending `ScheduleWakeup` (`scheduledWakeupsByNativeThread`).
     scheduled: wakes::Scheduled,
+    /// The picker's models for the turn's catalog ([`Self::set_catalog`]).
+    catalog: Vec<Value>,
 }
 
 /// `ClaudeLiveQueryContext.promptEchoMode`.
@@ -353,6 +355,22 @@ impl<E: Env> Mapper<E> {
             wakes: wakes::Wakes::default(),
             echo_mode: EchoMode::Unknown,
             scheduled: wakes::Scheduled::default(),
+            catalog: Vec::new(),
+        }
+    }
+
+    /// The turn's resolved catalog models (`modelCatalog`): subagent models resolve their
+    /// aliases through it. Empty means the bundled catalog.
+    pub fn set_catalog(&mut self, models: Vec<Value>) {
+        self.catalog = models;
+    }
+
+    /// `resolveClaudeModelSlug` over the turn's catalog (`canonicalClaudeSubagentModel`).
+    fn resolve_model(&self, value: &str) -> String {
+        if self.catalog.is_empty() {
+            crate::catalog::resolve_slug(value)
+        } else {
+            crate::catalog::resolve_slug_in(&self.catalog, value)
         }
     }
 
@@ -1437,6 +1455,7 @@ impl<E: Env> Mapper<E> {
             failure: failure.and_then(|f| from_json(f).ok()),
             retry,
             thread_disposition: ThreadDisposition::Reusable,
+            reason: None,
         })));
     }
 

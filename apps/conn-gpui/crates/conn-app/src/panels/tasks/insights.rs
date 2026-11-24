@@ -36,8 +36,22 @@ const GROUP_RADIUS_PX: f32 = 12.0;
 /// Value font size (`text-lg leading-6` = 18px / 24px).
 const VALUE_FONT_PX: f32 = 18.0;
 const VALUE_LINE_HEIGHT_PX: f32 = 24.0;
-/// Height of the expanded insight chart card (matches a 2-row strip so the board stays put).
-const EXPANDED_HEIGHT_PX: f32 = 216.0;
+/// Height of one insight card: top border 1 + padding 10 + label 20 + gap 4 + value 24 + gap 4 +
+/// sparkline 32 (4 above, 28 tall) + padding 8. Cards are set to it, so the strip's height is
+/// known and the expanded chart can take exactly the same space.
+const CARD_HEIGHT_PX: f32 = 103.0;
+
+/// Height of a strip of `rows` cards.
+fn strip_height(rows: usize) -> f32 {
+    rows as f32 * CARD_HEIGHT_PX + rows.saturating_sub(1) as f32 * GRID_GAP_PX
+}
+
+/// Height of the expanded insight chart: the two-row strip it replaces, so clicking a number
+/// moves nothing below it. (A strip of one or two numbers is a single row; the chart still gets
+/// room for two.)
+fn expanded_height(shown: usize) -> f32 {
+    strip_height(insight_grid_layout(shown).rows.max(2))
+}
 /// Width of the horizontal edge fade overlays (`w-8` = 32px).
 const EDGE_FADE_WIDTH_PX: f32 = 32.0;
 
@@ -85,6 +99,7 @@ pub(super) fn render_insights_strip(
                 .child(render_insight_detail(
                     tokens,
                     &surface,
+                    expanded_height(shown.len()),
                     open_spec,
                     result,
                     insights,
@@ -226,7 +241,15 @@ fn render_insight_card(
 
     let mut card = v_flex()
         .id(SharedString::from(format!("tasks-insight-{:?}", spec.id)))
-        .a11y_group(format!("panel.tasks.insight.{:?}", spec.id), spec.label)
+        .a11y_button(
+            format!("panel.tasks.insight.{:?}", spec.id),
+            format!(
+                "{}: {}",
+                spec.label,
+                formatted_value.as_deref().unwrap_or("no data")
+            ),
+        )
+        .h(px(CARD_HEIGHT_PX))
         .min_w(px(min_w))
         .flex_grow(span as f32)
         .flex_shrink(1.0)
@@ -344,6 +367,7 @@ fn render_insight_change(
 fn render_insight_detail(
     tokens: &Tokens,
     surface: &TasksSurfaceColors,
+    height: f32,
     spec: InsightSpec,
     result: InsightResult,
     insights: Option<&TaskInsights>,
@@ -407,7 +431,7 @@ fn render_insight_detail(
     v_flex()
         .relative()
         .w_full()
-        .h(px(EXPANDED_HEIGHT_PX))
+        .h(px(height))
         .gap(px(4.0))
         .rounded(px(GROUP_RADIUS_PX))
         .border_t_1()
@@ -473,4 +497,18 @@ fn render_insight_detail(
         )
         .child(div().mt(px(12.0)).flex_1().min_h_0().child(chart_body))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_expanded_chart_takes_exactly_the_strip_it_replaces() {
+        for shown in 3..=8 {
+            assert_eq!(expanded_height(shown), strip_height(2));
+        }
+        assert_eq!(strip_height(2), 208.0);
+        assert_eq!(expanded_height(2), strip_height(2));
+    }
 }
