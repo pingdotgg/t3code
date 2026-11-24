@@ -187,41 +187,58 @@ fn escape_literal_autolinks(markdown: &str) -> Cow<'_, str> {
     {
         return Cow::Borrowed(markdown);
     }
-    // Inline text runs: paragraphs, headings and table cells, without code spans, HTML,
-    // links, images and footnote references.
-    let mut containers: Vec<(Range<usize>, bool)> = Vec::new();
-    let mut skipped: Vec<Range<usize>> = Vec::new();
+    // Each block's inline content is one run: the source its inline events span. Code
+    // blocks, HTML blocks, code spans, inline HTML, links, images and footnote references
+    // are protected and keep their text.
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    let mut protected: Vec<Range<usize>> = Vec::new();
+    let mut run: Option<Range<usize>> = None;
+    let mut in_literal_block = false;
     for (event, range) in Parser::new_ext(markdown, OPTIONS).into_offset_iter() {
-        match event {
-            Event::Start(Tag::Paragraph | Tag::Heading { .. }) => containers.push((range, false)),
-            Event::Start(Tag::TableCell) => containers.push((range, true)),
+        let inline = match &event {
+            Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock) => {
+                protected.push(range.clone());
+                in_literal_block = true;
+                false
+            }
+            Event::End(TagEnd::CodeBlock | TagEnd::HtmlBlock) => {
+                in_literal_block = false;
+                false
+            }
+            Event::Start(tag) => !is_block(tag),
+            Event::End(tag) => !is_block_end(*tag),
+            Event::Rule => false,
+            _ => true,
+        };
+        if !inline || in_literal_block {
+            runs.extend(run.take());
+            continue;
+        }
+        if matches!(
+            event,
             Event::Start(Tag::Link { .. } | Tag::Image { .. })
-            | Event::Code(_)
-            | Event::InlineHtml(_)
-            | Event::FootnoteReference(_) => skipped.push(range),
-            _ => {}
+                | Event::Code(_)
+                | Event::InlineHtml(_)
+                | Event::FootnoteReference(_)
+        ) {
+            protected.push(range.clone());
         }
+        run = Some(match run {
+            Some(open) => open.start.min(range.start)..open.end.max(range.end),
+            None => range,
+        });
     }
+    runs.extend(run);
+    protected.sort_by_key(|range| range.start);
     let mut spans: Vec<Range<usize>> = Vec::new();
-    for (container, in_cell) in containers {
-        let mut open_brackets = 0_usize;
-        let text = markdown.get(container.clone()).unwrap_or_default();
-        // A cell's text never holds its `|`.
-        let mut at = container.start;
-        for (n, piece) in text.split(|c| in_cell && c == '|').enumerate() {
-            let prev = (n > 0).then_some('|');
-            let run = Run {
-                text: piece,
-                offset: at,
-                skipped: &skipped,
-            };
-            run.scan(prev, &mut open_brackets, &mut spans);
-            at += piece.len() + 1;
-        }
+    for run in runs {
+        let text = markdown.get(run.clone()).unwrap_or_default();
+        scan(text, run.start, &protected, &mut spans);
     }
     if spans.is_empty() {
         return Cow::Borrowed(markdown);
     }
+    spans.sort_by_key(|span| span.start);
     let mut escaped = String::with_capacity(markdown.len() + 16);
     let mut spans = spans.into_iter().peekable();
     for (at, c) in markdown.char_indices() {
@@ -234,71 +251,61 @@ fn escape_literal_autolinks(markdown: &str) -> Cow<'_, str> {
     Cow::Owned(escaped)
 }
 
-/// One run of inline text, at byte `offset` of the message.
-struct Run<'a> {
-    text: &'a str,
-    offset: usize,
-    /// Code spans, HTML, links, images and footnote references, as byte ranges of the
-    /// message. An autolink never starts in one, but runs on through one that starts inside
-    /// it, as micromark reads the URL first.
-    skipped: &'a [Range<usize>],
-}
-
-impl Run<'_> {
-    /// Adds the byte range of each literal autolink in the run to `spans`.
-    fn scan(
-        &self,
-        mut prev: Option<char>,
-        open_brackets: &mut usize,
-        spans: &mut Vec<Range<usize>>,
-    ) {
-        let chars: Vec<(usize, char)> = self.text.char_indices().collect();
-        let at = |k: usize| chars.get(k).map(|&(_, c)| c);
-        let byte = |k: usize| self.offset + chars.get(k).map_or(self.text.len(), |&(at, _)| at);
-        let mut i = 0;
-        while let Some(c) = at(i) {
-            // The ranges come in source order, so their starts are sorted.
-            let first = self.skipped.partition_point(|skip| skip.start < byte(i));
-            let skip_end = self
-                .skipped
-                .get(first)
-                .filter(|skip| skip.start == byte(i))
-                .map(|skip| skip.end);
-            if let Some(end) = skip_end {
-                while at(i).is_some() && byte(i) < end {
-                    prev = at(i);
-                    i += 1;
-                }
-                continue;
+/// Adds the byte range of each literal autolink in one run of inline text, at byte `offset`
+/// of the message, to `spans`. An autolink never starts in a `protected` range, but runs on
+/// through one that starts inside it, as micromark reads the URL first.
+fn scan(text: &str, offset: usize, protected: &[Range<usize>], spans: &mut Vec<Range<usize>>) {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let at = |k: usize| chars.get(k).map(|&(_, c)| c);
+    let byte = |k: usize| offset + chars.get(k).map_or(text.len(), |&(at, _)| at);
+    let trails = trails(&at, chars.len());
+    let trail = |k: usize| trails.get(k).copied().unwrap_or(true);
+    let (mut i, mut prev, mut open_brackets) = (0, None, 0_usize);
+    while let Some(c) = at(i) {
+        let first = protected.partition_point(|skip| skip.start < byte(i));
+        let skip_end = protected
+            .get(first)
+            .filter(|skip| skip.start == byte(i))
+            .map(|skip| skip.end);
+        if let Some(end) = skip_end {
+            while at(i).is_some() && byte(i) < end {
+                prev = at(i);
+                i += 1;
             }
-            // An escape is one token, so no autolink starts at its mark.
-            if c == '\\' && at(i + 1).is_some_and(|next| next.is_ascii_punctuation()) {
-                prev = at(i + 1);
-                i += 2;
-                continue;
-            }
-            if *open_brackets == 0
-                && let Some(end) = autolink(&at, i, prev)
-            {
-                spans.push(byte(i)..byte(end));
-                prev = end.checked_sub(1).and_then(at);
-                i = end;
-                continue;
-            }
-            match c {
-                '[' => *open_brackets += 1,
-                ']' => *open_brackets = open_brackets.saturating_sub(1),
-                _ => {}
-            }
-            prev = Some(c);
-            i += 1;
+            continue;
         }
+        // An escape is one token, so no autolink starts at its mark.
+        if c == '\\' && at(i + 1).is_some_and(|next| next.is_ascii_punctuation()) {
+            prev = at(i + 1);
+            i += 2;
+            continue;
+        }
+        if open_brackets == 0
+            && let Some(end) = autolink(&at, &trail, i, prev)
+        {
+            spans.push(byte(i)..byte(end));
+            prev = end.checked_sub(1).and_then(at);
+            i = end;
+            continue;
+        }
+        match c {
+            '[' => open_brackets += 1,
+            ']' => open_brackets = open_brackets.saturating_sub(1),
+            _ => {}
+        }
+        prev = Some(c);
+        i += 1;
     }
 }
 
 /// The end of the literal autolink that starts at `i`, if one does. `at(k)` is the character
 /// at `k`, `None` past the end.
-fn autolink(at: &impl Fn(usize) -> Option<char>, i: usize, prev: Option<char>) -> Option<usize> {
+fn autolink(
+    at: &impl Fn(usize) -> Option<char>,
+    trail: &impl Fn(usize) -> bool,
+    i: usize,
+    prev: Option<char>,
+) -> Option<usize> {
     let c = at(i)?;
     let alpha = |k: usize| at(k).is_some_and(|c| c.is_ascii_alphabetic());
     if is_atext(c)
@@ -320,7 +327,7 @@ fn autolink(at: &impl Fn(usize) -> Option<char>, i: usize, prev: Option<char>) -
             && at(k + 2) == Some('/')
             && at(k + 3).is_some_and(|c| !c.is_control() && !c.is_whitespace() && !is_punct(c))
         {
-            return domain(at, k + 3).map(|end| path(at, end));
+            return domain(at, trail, k + 3).map(|end| path(at, trail, end));
         }
     }
     let www =
@@ -330,7 +337,7 @@ fn autolink(at: &impl Fn(usize) -> Option<char>, i: usize, prev: Option<char>) -
         && at(i + 3) == Some('.')
         && at(i + 4).is_some()
     {
-        return domain(at, i).map(|end| path(at, end));
+        return domain(at, trail, i).map(|end| path(at, trail, end));
     }
     None
 }
@@ -377,12 +384,16 @@ fn email(at: &impl Fn(usize) -> Option<char>, i: usize) -> Option<usize> {
 }
 
 /// A domain up to punctuation, space or a trail; its last two parts hold no `_`.
-fn domain(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> Option<usize> {
+fn domain(
+    at: &impl Fn(usize) -> Option<char>,
+    trail: &impl Fn(usize) -> bool,
+    mut k: usize,
+) -> Option<usize> {
     let (mut underscore_last, mut underscore_last_last, mut seen) = (false, false, false);
     loop {
         match at(k) {
             Some(c @ ('.' | '_')) => {
-                if trail(at, k) {
+                if trail(k) {
                     break;
                 }
                 if c == '_' {
@@ -402,7 +413,11 @@ fn domain(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> Option<usize> {
 }
 
 /// The path up to space, with balanced parentheses kept and trailing punctuation left out.
-fn path(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> usize {
+fn path(
+    at: &impl Fn(usize) -> Option<char>,
+    trail: &impl Fn(usize) -> bool,
+    mut k: usize,
+) -> usize {
     let (mut opened, mut closed) = (0_usize, 0_usize);
     loop {
         match at(k) {
@@ -411,7 +426,7 @@ fn path(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> usize {
             Some('(') => opened += 1,
             Some(')') if closed < opened => closed += 1,
             Some(c) if "!\"&')*,.:;<?]_~".contains(c) => {
-                if trail(at, k) {
+                if trail(k) {
                     return k;
                 }
                 if c == ')' {
@@ -424,36 +439,36 @@ fn path(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> usize {
     }
 }
 
-/// Whether only trailing punctuation follows `k` before space, `<` or the end.
-fn trail(at: &impl Fn(usize) -> Option<char>, mut k: usize) -> bool {
-    loop {
-        match at(k) {
-            None | Some('<') => return true,
-            Some(c) if c.is_whitespace() => return true,
-            Some('!' | '"' | '\'' | ')' | '*' | ',' | '.' | ':' | ';' | '?' | '_' | '~') => k += 1,
-            // A character reference, `&name;`.
+/// For each character `k` of a run, whether only trailing punctuation follows from `k`
+/// before space, `<` or the end, in one backward pass over the `len` characters.
+fn trails(at: &impl Fn(usize) -> Option<char>, len: usize) -> Vec<bool> {
+    let mut trails = vec![true; len + 1];
+    for k in (0..len).rev() {
+        let next = |k: usize| trails.get(k).copied().unwrap_or(true);
+        let value = match at(k) {
+            None | Some('<') => true,
+            Some(c) if c.is_whitespace() => true,
+            Some('!' | '"' | '\'' | ')' | '*' | ',' | '.' | ':' | ';' | '?' | '_' | '~') => {
+                next(k + 1)
+            }
+            // A character reference, `&name;`. Each run of letters follows one `&` at most.
             Some('&') => {
-                k += 1;
-                if !at(k).is_some_and(|c| c.is_ascii_alphabetic()) {
-                    return false;
+                let mut j = k + 1;
+                while at(j).is_some_and(|c| c.is_ascii_alphabetic()) {
+                    j += 1;
                 }
-                while at(k).is_some_and(|c| c.is_ascii_alphabetic()) {
-                    k += 1;
-                }
-                if at(k) != Some(';') {
-                    return false;
-                }
-                k += 1;
+                j > k + 1 && at(j) == Some(';') && next(j + 1)
             }
             Some(']') => {
-                k += 1;
-                if at(k).is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '[')) {
-                    return true;
-                }
+                at(k + 1).is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '[')) || next(k + 1)
             }
-            Some(_) => return false,
+            Some(_) => false,
+        };
+        if let Some(slot) = trails.get_mut(k) {
+            *slot = value;
         }
     }
+    trails
 }
 
 /// The tags that end a segment, T3's `THREAD_FIND_BLOCK_TAGS`.
@@ -918,6 +933,57 @@ mod tests {
             "| https://x.com/__a__ | b |\n|--|--|\n| c | d |",
             &["https://x.com/__a__", "b", "c", "d"],
         );
+    }
+
+    /// A bare URL keeps its marks in any block, and a code span in a table cell stays one.
+    #[test]
+    fn a_bare_url_keeps_its_marks_in_every_block() {
+        let both = |text: &str, expected: &[&str]| {
+            assert_eq!(shown("user_message", text), expected, "user: {text}");
+            assert_eq!(
+                shown("assistant_message", text),
+                expected,
+                "assistant: {text}"
+            );
+        };
+        both(
+            "- https://example.com/pkg/__init__.py",
+            &["https://example.com/pkg/__init__.py"],
+        );
+        both(
+            "- https://example.com/pkg/__init__.py\n\n- www.x.com/__a__ end",
+            &["https://example.com/pkg/__init__.py", "www.x.com/__a__ end"],
+        );
+        // remark ends `a` and the URL with a space before each nested list.
+        let nested = "- a\n  - https://x.com/__init__.py\n    - see https://y.com/a*b*c";
+        for kind in ["user_message", "assistant_message"] {
+            let trimmed: Vec<String> = shown(kind, nested)
+                .iter()
+                .map(|segment| segment.trim_end().to_owned())
+                .collect();
+            assert_eq!(
+                trimmed,
+                ["a", "https://x.com/__init__.py", "see https://y.com/a*b*c"],
+                "{kind}"
+            );
+        }
+        both(
+            "> see https://x.com/__init__.py and www.x.com/__a__",
+            &["see https://x.com/__init__.py and www.x.com/__a__"],
+        );
+        both(
+            "| Command |\n| --- |\n| `env \\| grep https://example.com/api` |",
+            &["Command", "env | grep https://example.com/api"],
+        );
+    }
+
+    /// Trailing punctuation is found in linear time, so a long run of dots stays fast.
+    #[test]
+    fn a_url_with_many_dots_keeps_them() {
+        let text = format!("https://example.com/{}x", ".".repeat(50_000));
+        assert_eq!(shown("assistant_message", &text), [text.as_str()]);
+        let text = format!("see https://example.com/{} end", ".".repeat(50_000));
+        assert_eq!(shown("user_message", &text), [text.as_str()]);
     }
 
     /// An image shows no text, alone, in a link, or in a list item.
