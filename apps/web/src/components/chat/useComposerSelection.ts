@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { UnifiedSettings } from "@t3tools/contracts";
+import type { ProviderOptionSelection, UnifiedSettings } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
@@ -135,7 +135,11 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const onProviderModelSelect = (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: {
+      focusComposer?: boolean;
+      /** Replaces the model's options, as picking a named agent does. */
+      modelOptions?: ReadonlyArray<ProviderOptionSelection>;
+    },
   ) => {
     if (!activeThread) return;
     cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
@@ -188,7 +192,8 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       draft?.modelSelectionByProvider[shownInstanceId] ?? activeThread.modelSelection;
     if (
       !resolvedModel ||
-      (instanceId === shownInstanceId &&
+      (options?.modelOptions === undefined &&
+        instanceId === shownInstanceId &&
         shownSelection.instanceId === instanceId &&
         shownSelection.model === resolvedModel)
     ) {
@@ -202,7 +207,8 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     const threadSelection = activeThread.modelSelection;
     // This pick replaces the stored options, so the thread's own model carries them over.
     const pickOptions =
-      rememberedOptions !== undefined && rememberedOptions.length > 0
+      options?.modelOptions ??
+      (rememberedOptions !== undefined && rememberedOptions.length > 0
         ? rememberedOptions
         : threadSelection.instanceId === instanceId &&
             entry !== undefined &&
@@ -212,7 +218,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
               { instanceId, model: resolvedModel },
             )
           ? threadSelection.options
-          : undefined;
+          : undefined);
     const nextModelSelection: ModelSelection =
       pickOptions !== undefined && pickOptions.length > 0
         ? { instanceId, model: resolvedModel, options: [...pickOptions] }

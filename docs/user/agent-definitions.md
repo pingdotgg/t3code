@@ -2,7 +2,8 @@
 
 Define named agents for a project, such as a planner, an implementer, and a
 reviewer. A thread's agent can then hand work to one by name, and it runs as its
-own thread with the model, instructions, and limits you set.
+own thread with the model, instructions, and limits you set. You can also
+[chat with one directly](#chat-with-an-agent).
 
 ## Define an agent
 
@@ -62,6 +63,19 @@ refused.
 Definitions are read from the delegating thread's checkout and your T3 home each time, so edits
 apply to the next delegation. A file that does not parse is skipped. Agents run in
 this environment only, not in a linked one.
+
+## Chat with an agent
+
+To talk to an agent directly instead of asking for a delegation, pick it in the
+agent menu beside **Attach** in the web or desktop composer. **Default** is the usual chat. Each
+thread remembers its pick, and the agent answers in that same thread.
+
+Picking an agent switches the composer to the agent's provider, model, and options,
+and you can still change them. Its instructions go to the provider with your next
+message, and again whenever the conversation starts over, such as after a
+compaction or a provider switch. Your message shows as you typed it. The thread
+keeps its own permissions, plan mode, and checkout, so `runtimeMode`,
+`interactionMode`, and `isolation` apply only to delegation.
 
 ## Your OpenCode agents
 

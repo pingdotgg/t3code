@@ -12793,5 +12793,9 @@
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
   "99963c0142e17f00": "För det nya {tracker}-kontot.",
-  "6d8e4ebc889bace9": "Lägg till konto"
+  "6d8e4ebc889bace9": "Lägg till konto",
+  "00aa45c83e0154ae": "Den vanliga chatten. Be den delegera när du vill ha en agent.",
+  "6603b5ff577bc0f6": "Inte längre definierad. Meddelanden skickas utan dess instruktioner.",
+  "807cfd65d6d0680c": "Agent: {agent}",
+  "d5e092ec2d8484ee": "Standard"
 }

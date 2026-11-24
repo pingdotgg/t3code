@@ -10,6 +10,8 @@ import {
   applyAgentDefinition,
   loadAgentDefinitions,
   parseAgentDefinition,
+  projectAgentFromDefinition,
+  withAgentInstructions,
 } from "./delegatedAgents.ts";
 
 const REVIEWER = `---
@@ -138,4 +140,37 @@ describe("loadAgentDefinitions", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("projectAgentFromDefinition", () => {
+  it("offers the agent's model without its instructions or limits", () => {
+    expect(projectAgentFromDefinition(parseAgentDefinition("reviewer", REVIEWER)!)).toStrictEqual({
+      name: "reviewer",
+      description: "Reviews diffs for correctness",
+      providerInstanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(projectAgentFromDefinition(parseAgentDefinition("planner", "Plan.")!)).toStrictEqual({
+      name: "planner",
+      description: "",
+    });
+  });
+});
+
+describe("withAgentInstructions", () => {
+  const agent = parseAgentDefinition("reviewer", REVIEWER)!;
+
+  it("leads the message with the agent's instructions", () => {
+    const prompt = withAgentInstructions(agent, "Check this branch.");
+    expect(prompt.indexOf("Review the change. Report bugs only.")).toBeLessThan(
+      prompt.indexOf("Check this branch."),
+    );
+    expect(prompt.endsWith("Check this branch.")).toBe(true);
+  });
+
+  it("keeps a leading slash command or skill mention first", () => {
+    expect(withAgentInstructions(agent, "/review staged").startsWith("/review staged")).toBe(true);
+    expect(withAgentInstructions(agent, "$deploy now").startsWith("$deploy now")).toBe(true);
+  });
 });

@@ -3,6 +3,8 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { ProviderOptionSelection } from "./model.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   CommandId,
   ForwardCompatibleUnion,
@@ -365,6 +367,27 @@ export const ProjectListIgnoredFilesResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ProjectListIgnoredFilesResult = typeof ProjectListIgnoredFilesResult.Type;
+
+export const ProjectListAgentsInput = Schema.Struct({
+  /** The checkout whose `.agents/agents` to read. Without one, only the T3 home's agents. */
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectListAgentsInput = typeof ProjectListAgentsInput.Type;
+
+/** A named agent from `.agents/agents` or the T3 home, as a chat can talk to it directly. */
+export const ProjectAgent = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  description: Schema.String,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  model: Schema.optional(TrimmedNonEmptyString),
+  options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+});
+export type ProjectAgent = typeof ProjectAgent.Type;
+
+export const ProjectListAgentsResult = Schema.Struct({
+  agents: Schema.Array(ProjectAgent),
+});
+export type ProjectListAgentsResult = typeof ProjectListAgentsResult.Type;
 
 export const ProjectEntriesFailure = Schema.Literals([
   "workspace_root_not_found",

@@ -3,8 +3,10 @@ import {
   ProviderOptionSelectionValue,
   ProviderInstanceId,
   RuntimeMode,
+  startsWithProviderCommand,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTarget,
+  type ProjectAgent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -115,14 +117,17 @@ const readDirectoryDefinitions = Effect.fn("DelegatedAgents.readDirectory")(func
 
 /**
  * Reads the definitions in a checkout plus the user's own, ordered by name. The project's
- * definition wins when both define a name. A missing directory has none.
+ * definition wins when both define a name. A missing directory, or no checkout, has none.
  */
 export const loadAgentDefinitions = Effect.fn("DelegatedAgents.load")(function* (
-  cwd: string,
+  cwd: string | null,
   userDirectory: string,
 ) {
   const path = yield* Path.Path;
-  const project = yield* readDirectoryDefinitions(path.join(cwd, AGENT_DEFINITIONS_DIRECTORY));
+  const project =
+    cwd === null
+      ? []
+      : yield* readDirectoryDefinitions(path.join(cwd, AGENT_DEFINITIONS_DIRECTORY));
   const user = yield* readDirectoryDefinitions(userDirectory);
   const projectNames = new Set(project.map((definition) => definition.name));
   return [...project, ...user.filter((definition) => !projectNames.has(definition.name))].toSorted(
@@ -189,4 +194,34 @@ export function applyAgentDefinition(
       ? { isolation: agent.isolation }
       : {}),
   };
+}
+
+/** What a client needs to offer the agent in a chat; the instructions stay on the server. */
+export function projectAgentFromDefinition(agent: AgentDefinition): ProjectAgent {
+  return {
+    name: agent.name,
+    description: agent.description,
+    ...(agent.target?.providerInstanceId === undefined
+      ? {}
+      : { providerInstanceId: agent.target.providerInstanceId }),
+    ...(agent.target?.model === undefined ? {} : { model: agent.target.model }),
+    ...(agent.target?.options === undefined ? {} : { options: agent.target.options }),
+  };
+}
+
+/**
+ * The prompt a chat sends to the agent the user picked: its instructions, then the message. A
+ * leading slash command or skill mention stays first, since its provider parses it from there.
+ */
+export function withAgentInstructions(agent: AgentDefinition, text: string): string {
+  const intro = `[T3 Code: the user picked the named agent ${JSON.stringify(agent.name)} for this chat. Act as that agent and follow its instructions until the user picks another.]`;
+  if (startsWithProviderCommand(text)) {
+    return [text, intro, agent.instructions].join("\n\n");
+  }
+  return [
+    intro,
+    agent.instructions,
+    "[T3 Code: end of the agent's instructions. The user's message follows.]",
+    text,
+  ].join("\n\n");
 }

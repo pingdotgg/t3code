@@ -103,7 +103,10 @@ const normalize = (target: string) => {
 const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
   Layer.mergeAll(
     Path.layer,
-    Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
+    Layer.mock(ServerConfig.ServerConfig)({
+      baseDir: "/tmp/t3-home",
+      worktreesDir,
+    } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
   );
 
@@ -457,6 +460,7 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly agent?: string;
   readonly manualContinuation?: boolean;
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
@@ -574,6 +578,9 @@ function makeLocalCommandHarness(input: {
     createdBy: input.createdBy ?? "user",
     creationSource: input.createdBy === undefined ? "web" : "mcp",
     ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
+    ...(input.agent === undefined
+      ? {}
+      : { context: { version: 1 as const, agent: input.agent, records: [] } }),
     createdAt: now,
     updatedAt: now,
   };
@@ -2247,6 +2254,28 @@ it("finds abandoned turns in a long history reading each record a bounded number
   const records = runs.length + attempts.length + providerTurns.length;
   expect(reads).toBeLessThanOrEqual(4 * records);
 });
+
+effectIt.effect("gives the provider the picked agent's instructions ahead of the message", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Check this branch",
+      agent: "yoda",
+      sideChat: { contextRun: "delivered" },
+      fileSystem: FileSystem.makeNoop({
+        readDirectory: (directory) =>
+          Effect.succeed(
+            directory.replaceAll("\\", "/").endsWith("/t3-home/agents") ? ["yoda.md"] : [],
+          ),
+        readFileString: () => Effect.succeed("---\ndescription: Leads\n---\nSpeak like Yoda."),
+      }),
+    });
+    yield* harness.start;
+    const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+    expect(text).toContain("Speak like Yoda.");
+    expect(text.endsWith("Check this branch")).toBe(true);
+    expect(harness.projection().messages[0]?.text).toBe("Check this branch");
+  }),
+);
 
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
   Effect.gen(function* () {

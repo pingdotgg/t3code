@@ -67,6 +67,12 @@ import {
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
+import { agentAlreadyInstructed } from "./agentChat.ts";
+import {
+  loadAgentDefinitions,
+  USER_AGENT_DEFINITIONS_DIRECTORY,
+  withAgentInstructions,
+} from "../mcp/delegatedAgents.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -297,6 +303,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const serverConfig = yield* ServerConfig.ServerConfig;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -1017,7 +1024,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const messageText = withMessageSenderNote(
+      const senderText = withMessageSenderNote(
         providerMessage,
         projectComposerContextForProvider({
           text: providerMessage.text,
@@ -1025,6 +1032,23 @@ export const layer: Layer.Layer<
         }),
       );
       const slashCommand = isSlashCommandMessage(providerMessage);
+      const agentName = providerMessage.context?.agent;
+      // A missing definition sends the message as typed; the agent file may have been removed.
+      const agent =
+        agentName === undefined ||
+        slashCommand ||
+        isProviderCommand(providerMessage) ||
+        agentAlreadyInstructed(projection, run, agentName)
+          ? undefined
+          : (yield* loadAgentDefinitions(
+              resolvedRuntimePolicy.cwd,
+              path.join(serverConfig.baseDir, USER_AGENT_DEFINITIONS_DIRECTORY),
+            ).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            )).find((definition) => definition.name === agentName);
+      const messageText =
+        agent === undefined ? senderText : withAgentInstructions(agent, senderText);
       const goalDriver =
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||

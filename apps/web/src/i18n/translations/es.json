@@ -12781,5 +12781,9 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "6d8e4ebc889bace9": "Añadir cuenta",
+  "00aa45c83e0154ae": "El chat habitual. Pídele que delegue cuando quieras un agente.",
+  "6603b5ff577bc0f6": "Ya no está definido. Los mensajes se envían sin sus instrucciones.",
+  "807cfd65d6d0680c": "Agente: {agent}",
+  "d5e092ec2d8484ee": "Predeterminado"
 }

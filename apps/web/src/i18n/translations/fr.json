@@ -12786,5 +12786,9 @@
   "99d51127f573296b": "Autre compte",
   "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
   "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
-  "6d8e4ebc889bace9": "Ajouter un compte"
+  "6d8e4ebc889bace9": "Ajouter un compte",
+  "00aa45c83e0154ae": "Le chat habituel. Demandez-lui de déléguer quand vous voulez un agent.",
+  "6603b5ff577bc0f6": "N'est plus défini. Les messages partent sans ses instructions.",
+  "807cfd65d6d0680c": "Agent : {agent}",
+  "d5e092ec2d8484ee": "Par défaut"
 }

@@ -642,6 +642,9 @@ export function isCompactionCommandMessage(message: CompactionMessageFields): bo
 
 const LEADING_COMMAND = /^\s*(?:\/|\p{Sc}[a-zA-Z0-9:_-]*[a-zA-Z])/u;
 
+/** Whether a prompt opens with a slash command or skill mention its provider parses. */
+export const startsWithProviderCommand = (text: string): boolean => LEADING_COMMAND.test(text);
+
 /**
  * Who sent a message, in a line the model reads before its text, or the text unchanged when a
  * person typed it. Providers parse slash commands and skill mentions such as `$deploy` from the

@@ -12795,5 +12795,9 @@
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "99963c0142e17f00": "For the new {tracker} account.",
-  "6d8e4ebc889bace9": "Add account"
+  "6d8e4ebc889bace9": "Add account",
+  "00aa45c83e0154ae": "The usual chat. Ask it to delegate when you want an agent.",
+  "6603b5ff577bc0f6": "No longer defined. Messages go without its instructions.",
+  "807cfd65d6d0680c": "Agent: {agent}",
+  "d5e092ec2d8484ee": "Default"
 }

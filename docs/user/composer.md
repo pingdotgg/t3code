@@ -60,6 +60,14 @@ in split screen.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Talk to a named agent
+
+The agent menu beside **Attach** lists **Default** and the
+[agents you defined](./agent-definitions.md). Pick one, such as a planner or a
+reviewer, and your messages in that thread go straight to it, on its model, with
+no need to ask for a delegation. See
+[Chat with an agent](./agent-definitions.md#chat-with-an-agent).
+
 ## Send while the agent is working
 
 On web and desktop, choose **Settings → Chat → Follow-up behavior** to queue

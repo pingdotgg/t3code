@@ -30,6 +30,8 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProjectId,
+  ProviderOptionSelection,
+  ProjectAgent,
   PreviewAnnotationPayload,
   ThreadContextRecord,
   EnvironmentContextRecord,
@@ -290,6 +292,7 @@ import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
+import { ComposerAgentPicker } from "./ComposerAgentPicker";
 import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 import {
   cancelHeldComposerSend,
@@ -504,7 +507,10 @@ export interface ChatComposerProps {
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: {
+      focusComposer?: boolean;
+      modelOptions?: ReadonlyArray<ProviderOptionSelection>;
+    },
   ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -3623,6 +3629,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton onOpenPicker={() => composerAttachInputRef.current?.click()} />
   ) : null;
+  // A named agent runs on its own model; one that names none keeps the composer's.
+  const pickComposerAgent = (agent: ProjectAgent) => {
+    if (agent.providerInstanceId === undefined && agent.model === undefined) return;
+    const instanceId = agent.providerInstanceId ?? selectedInstanceId;
+    onProviderModelSelect(
+      instanceId,
+      agent.model ?? (instanceId === selectedInstanceId ? selectedModel : ""),
+      agent.options === undefined ? {} : { modelOptions: agent.options },
+    );
+  };
+  const composerAgentPicker =
+    activeThread && canOperateThread && !isComposerCollapsedMobile ? (
+      <ComposerAgentPicker
+        environmentId={environmentId}
+        thread={scopeThreadRef(environmentId, activeThread.id)}
+        cwd={gitCwd}
+        onPickAgent={pickComposerAgent}
+      />
+    ) : null;
   return (
     <form
       ref={composerFormRef}
@@ -4053,6 +4078,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 {composerAttachButton && !dictationTakesFooter ? (
                   <div className="me-2">{composerAttachButton}</div>
+                ) : null}
+                {composerAgentPicker && !dictationTakesFooter ? (
+                  <div className="me-2 min-w-0">{composerAgentPicker}</div>
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

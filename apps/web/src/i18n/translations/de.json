@@ -12786,5 +12786,9 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "99963c0142e17f00": "Für das neue {tracker}-Konto.",
-  "6d8e4ebc889bace9": "Konto hinzufügen"
+  "6d8e4ebc889bace9": "Konto hinzufügen",
+  "00aa45c83e0154ae": "Der normale Chat. Bitte ihn ums Delegieren, wenn du einen Agenten willst.",
+  "6603b5ff577bc0f6": "Nicht mehr definiert. Nachrichten gehen ohne seine Anweisungen raus.",
+  "807cfd65d6d0680c": "Agent: {agent}",
+  "d5e092ec2d8484ee": "Standard"
 }

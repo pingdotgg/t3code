@@ -182,6 +182,7 @@ async function submitQueuedRunEdit(input: {
           attachments: uploads,
           context: {
             version: 1,
+            ...(editing.context?.agent === undefined ? {} : { agent: editing.context.agent }),
             records: [
               ...new Map(
                 [...keptRecords, ...newRecords].map(

@@ -3,6 +3,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { readWorktreeBaseBranch } from "../../worktreeRepositoryChoiceStore";
+import { readComposerAgent } from "../../composerAgentStore";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -1039,6 +1040,7 @@ export function useComposerSend(input: ComposerSendInput) {
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
+    const agentForSend = readComposerAgent(scopeThreadRef(environmentId, threadIdForSend));
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
@@ -1051,6 +1053,7 @@ export function useComposerSend(input: ComposerSendInput) {
           attachment,
           attachmentId: attachmentIds[index] ?? attachment.id,
         })),
+        agent: agentForSend,
       });
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
@@ -1254,7 +1257,10 @@ export function useComposerSend(input: ComposerSendInput) {
         respondingRequestIdsRef.current.includes(approval.requestId),
       );
       if (approvalFeedbackTarget !== undefined) {
-        if (composerAttachmentsSnapshot.length > 0 || outgoingMessageContext !== undefined) {
+        if (
+          composerAttachmentsSnapshot.length > 0 ||
+          (outgoingMessageContext?.records.length ?? 0) > 0
+        ) {
           setThreadError(
             threadIdForSend,
             m(msg("Send approval feedback without attachments or added context.")),

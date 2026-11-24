@@ -119,6 +119,11 @@ import { RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ServerConfig from "./config.ts";
+import {
+  loadAgentDefinitions,
+  projectAgentFromDefinition,
+  USER_AGENT_DEFINITIONS_DIRECTORY,
+} from "./mcp/delegatedAgents.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -3073,6 +3078,16 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectsListAgents]:
+          /* Request instrumentation already owns the span; keep this helper in that context. */
+          Effect.fnUntraced(function* (input) {
+            const path = yield* Path.Path;
+            const definitions = yield* loadAgentDefinitions(
+              input.cwd ?? null,
+              path.join(config.baseDir, USER_AGENT_DEFINITIONS_DIRECTORY),
+            );
+            return { agents: definitions.map(projectAgentFromDefinition) };
+          }),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
           workspaceEntries.listIgnoredFiles(input).pipe(
             Effect.mapError(

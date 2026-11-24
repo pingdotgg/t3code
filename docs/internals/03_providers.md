@@ -60,6 +60,22 @@ Declare broken-version minimums in the manifest policy rather than as driver con
 and adapter semantics with synthetic model names so adding a model never requires duplicating config
 in tests.
 
+## Named agents in chat
+
+A thread can talk to a [named agent](../user/agent-definitions.md#chat-with-an-agent) directly.
+The client sends only the agent's name, as `agent` on the message's context. At turn start the
+server reads the definition from the thread's checkout and the T3 home, then puts its
+instructions ahead of the user's text in the prompt the provider gets. Instructions never go over
+the client wire and never enter the transcript, so every client and connection mode stays the same
+size, and a file edit applies to the next turn.
+
+The instructions go once per provider conversation, not on every turn, because a definition can run
+to many kilobytes. `agentAlreadyInstructed` (`orchestration-v2/agentChat.ts`) skips them only when
+the previous delivered turn on the same provider thread went to the same agent. A fresh context, a
+compaction, a failed turn, a provider switch, or another agent in between sends them again. Steered
+messages join a running turn and carry no instructions. Picking an agent changes the composer's
+model, never the thread's permissions, plan mode, or checkout.
+
 ## Cross-provider traps and testing
 
 Prove adapter behavior with replay fixtures recorded from the real provider and replayed through the
