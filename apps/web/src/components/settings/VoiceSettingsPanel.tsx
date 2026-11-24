@@ -479,7 +479,13 @@ function DictionaryEditor(props: {
                   onBlur={() => setAliasDraft(null)}
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                    if (event.key === "Escape") setAliasDraft(null);
+                    if (event.key === "Escape") {
+                      event.stopPropagation();
+                      // Unmounting the focused input lets the dialog move focus to a control whose
+                      // tooltip would swallow the next Esc; the surface keeps Esc closing Settings.
+                      event.currentTarget.closest<HTMLElement>("[data-app-modal]")?.focus();
+                      setAliasDraft(null);
+                    }
                     if (event.key !== "Enter") return;
                     event.preventDefault();
                     addAlias();

@@ -2999,6 +2999,138 @@ it.effect("cancels tracked setup before provider work is released", () =>
   }),
 );
 
+it.live(
+  "a thread started through a link below full access gets no worktree from a project's layout command",
+  () => {
+    const state: TaskFoldersTestState = {
+      workspaceRoot: "/unset",
+      trackedFolders: [],
+      thread: null,
+    };
+    const layerGit = GitVcsDriver.layer.pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-layout-" })),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(
+      Layer.provide(layerGit),
+      Layer.orDie,
+    );
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const tmp = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-layout-" }),
+      );
+      const shop = path.join(tmp, "shop");
+      const ran = path.join(tmp, "ran");
+      yield* fileSystem.makeDirectory(shop);
+      for (const args of [
+        ["init", "-b", "main"],
+        ["config", "user.email", "launch@example.test"],
+        ["config", "user.name", "Launch"],
+        ["commit", "--allow-empty", "-m", "initial"],
+      ]) {
+        yield* git.execute({ operation: "launch-test", cwd: shop, args });
+      }
+      yield* fileSystem.writeFileString(
+        path.join(shop, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create: `echo create >> "${ran}" && git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"`,
+          },
+        }),
+      );
+      state.workspaceRoot = shop;
+      const harness = makeHarness({ taskFolders: layerTaskFolders });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const launch = Effect.fnUntraced(function* (
+          name: string,
+          access: "full-access" | "auto-accept-edits",
+        ) {
+          const launched = yield* launches.launch({
+            ...launchInput({
+              command: `launch:${name}`,
+              thread: `thread:${name}`,
+              message: "Start",
+              workspace: { type: "worktree", baseRef: "main", branch: `feature/${name}` },
+            }),
+            createdBy: "agent",
+            creationSource: "mcp",
+            linkOrigin: { sessionId: "mcp-session:linked", label: "Linked laptop", access },
+          });
+          return yield* preparationSettled(launched.threadId);
+        });
+
+        const limited = yield* launch("limited", "auto-accept-edits");
+        assert.equal(limited.runs[0]?.status, "failed");
+        assert.isNull(limited.thread.worktreePath);
+        assert.isFalse(yield* fileSystem.exists(ran));
+
+        // Preparing the same run again reads the link from the thread, not from a request.
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* launches.retryPreparation({
+          commandId: CommandId.make("launch:limited:retry"),
+          threadId: limited.thread.id,
+          runId: limited.runs[0]!.id,
+        });
+        yield* threads.streamStoredEventsFrom({ threadId: limited.thread.id }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              (stored.commandId?.endsWith(":release") === true ||
+                stored.event.payload.status === "failed"),
+          ),
+          Stream.take(2),
+          Stream.runDrain,
+        );
+        assert.isFalse(yield* fileSystem.exists(ran));
+
+        // A first message sent into an empty thread the link started names no link; the
+        // thread's own link still decides.
+        const emptyThreadId = ThreadId.make("thread:limited-empty");
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("launch:limited-empty:create"),
+          threadId: emptyThreadId,
+          projectId,
+          title: "Linked",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkOrigin: {
+            sessionId: "mcp-session:linked",
+            label: "Linked laptop",
+            access: "auto-accept-edits",
+          },
+        });
+        yield* launches.launch({
+          ...launchInput({
+            command: "launch:limited-empty",
+            thread: emptyThreadId,
+            message: "Start",
+            workspace: { type: "worktree", baseRef: "main", branch: "feature/limited-empty" },
+          }),
+          reuseExistingThread: true,
+        });
+        const reused = yield* preparationSettled(emptyThreadId);
+        assert.equal(reused.runs[0]?.status, "failed");
+        assert.isNull(reused.thread.worktreePath);
+        assert.isFalse(yield* fileSystem.exists(ran));
+
+        const full = yield* launch("full", "full-access");
+        assert.equal(full.runs[0]?.status, "starting");
+        assert.equal(yield* fileSystem.readFileString(ran), "create\n");
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, layerGit)), Effect.scoped);
+  },
+);
+
 it.live("launches into a task folder and leaves nothing behind when its setup is cancelled", () => {
   const state: TaskFoldersTestState = { workspaceRoot: "/unset", trackedFolders: [], thread: null };
   const layerGit = GitVcsDriver.layer.pipe(

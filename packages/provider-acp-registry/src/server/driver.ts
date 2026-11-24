@@ -56,6 +56,7 @@ import {
   type AcpRegistryConfigurationProbeResolved,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
+  type AcpRegistryModelDiscovery,
   deleteAcpRegistrySession,
   disableAcpRegistryProvider,
   listAcpRegistrySessions,
@@ -68,6 +69,12 @@ import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
+import {
+  acpRegistryCurrentModelOptions,
+  acpRegistryModelsToDiscover,
+  makeAcpRegistryLearnedModelOptionsStore,
+  withAcpRegistryLearnedModelOptions,
+} from "./learnedModelOptions.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -600,6 +607,20 @@ interface CheckedAcpRegistryReadiness {
   readonly probeFailed?: boolean;
 }
 
+interface CheckedAcpRegistryProviderStatus {
+  readonly provider: ServerProvider;
+  readonly launchIdentity: string | null;
+  readonly indexRevision: number | null;
+  readonly cacheable: boolean;
+  readonly fallback?: boolean;
+  readonly fallbackTargetLaunchIdentity?: string | null;
+  readonly fallbackTargetVersion?: string | null;
+  readonly fallbackTargetIndexRevision?: number | null;
+  readonly probedLaunchIdentity?: string | null;
+  readonly failedTargetLaunchIdentity?: string | null;
+  readonly probeFailed?: boolean;
+}
+
 interface ActiveFallbackState {
   readonly targetLaunchIdentity: string | null;
   readonly targetVersion: string | null;
@@ -652,22 +673,15 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
     readonly settings: AcpRegistrySettings;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
+    readonly modelDiscovery?: Omit<AcpRegistryModelDiscovery, "onProbed"> & {
+      readonly onProbed: (
+        probed: CheckedAcpRegistryProviderStatus,
+      ) => Effect.Effect<ReadonlyArray<string>>;
+    };
   },
   probeConfiguration: AcpRegistryConfigurationProbe<Requirements>,
 ): Effect.fn.Return<
-  {
-    readonly provider: ServerProvider;
-    readonly launchIdentity: string | null;
-    readonly indexRevision: number | null;
-    readonly cacheable: boolean;
-    readonly fallback?: boolean;
-    readonly fallbackTargetLaunchIdentity?: string | null;
-    readonly fallbackTargetVersion?: string | null;
-    readonly fallbackTargetIndexRevision?: number | null;
-    readonly probedLaunchIdentity?: string | null;
-    readonly failedTargetLaunchIdentity?: string | null;
-    readonly probeFailed?: boolean;
-  },
+  CheckedAcpRegistryProviderStatus,
   never,
   AcpRegistrySupport.AcpRegistryCatalog | Requirements
 > {
@@ -711,9 +725,83 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
       cacheable: false,
     };
   }
+  const readyInspection = inspected.success;
+  const buildProbedStatus = (
+    probe: AcpRegistryConfigurationProbeResult,
+  ): CheckedAcpRegistryProviderStatus => {
+    if (input.settings.source === "local") {
+      return {
+        provider: buildCheckedAcpRegistrySnapshot({
+          ...input,
+          checkedAt,
+          inspection: readyInspection,
+          probe,
+        }),
+        launchIdentity: null,
+        indexRevision: null,
+        cacheable: true,
+      };
+    }
+    const resolved = probe.resolved;
+    if (resolved === undefined) {
+      return {
+        provider: buildCheckedAcpRegistrySnapshot({
+          ...input,
+          checkedAt,
+          inspection: readyInspection,
+          probe,
+        }),
+        launchIdentity: null,
+        indexRevision: null,
+        cacheable: readyInspection.launchIdentity === undefined,
+      };
+    }
+    const resolvedVersion =
+      input.settings.commandPath.trim().length > 0
+        ? null
+        : (resolved.agent?.version ?? readyInspection.version);
+    const resolvedDocumentationUrl =
+      resolved.agent === undefined
+        ? readyInspection.documentationUrl
+        : (resolved.agent.website ?? resolved.agent.repository);
+    const resolvedIcon = resolved.agent === undefined ? readyInspection.icon : resolved.agent.icon;
+    const resolvedInspection: AcpRegistrySupport.AcpRegistryInspection = {
+      status: "ready",
+      agentId: readyInspection.agentId,
+      version: resolvedVersion,
+      distribution: resolved.distribution,
+      ...(resolved.launchIdentity === undefined ? {} : { launchIdentity: resolved.launchIdentity }),
+      ...(resolved.indexRevision === undefined ? {} : { indexRevision: resolved.indexRevision }),
+      ...(resolvedIcon ? { icon: resolvedIcon } : {}),
+      ...(resolvedDocumentationUrl ? { documentationUrl: resolvedDocumentationUrl } : {}),
+    };
+    return {
+      provider: buildCheckedAcpRegistrySnapshot({
+        ...input,
+        checkedAt,
+        inspection: resolvedInspection,
+        probe,
+      }),
+      launchIdentity: resolved.launchIdentity ?? null,
+      indexRevision: resolved.indexRevision ?? null,
+      cacheable:
+        resolved.launchIdentity !== undefined || readyInspection.launchIdentity === undefined,
+      ...(resolved.fallback
+        ? {
+            fallback: true,
+            fallbackTargetLaunchIdentity:
+              resolved.failedTarget?.launchIdentity ?? readyInspection.launchIdentity ?? null,
+            fallbackTargetVersion: resolved.failedTarget?.version ?? readyInspection.version,
+            fallbackTargetIndexRevision:
+              resolved.failedTarget?.indexRevision ?? inspectedIndexRevision,
+          }
+        : {}),
+    };
+  };
   const resolvedDuringProbeRef = yield* Ref.make<AcpRegistryConfigurationProbeResolved | undefined>(
     undefined,
   );
+  const modelDiscovery = input.modelDiscovery;
   const probed = yield* Effect.result(
     probeConfiguration({
       instanceId: input.instanceId,
@@ -721,25 +809,33 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
       cwd: input.cwd,
       environment: providerProbeEnvironment(input.environment),
       onResolved: (resolved) => Ref.set(resolvedDuringProbeRef, resolved),
+      ...(modelDiscovery === undefined
+        ? {}
+        : {
+            modelDiscovery: {
+              onProbed: (probe) => modelDiscovery.onProbed(buildProbedStatus(probe)),
+              onDiscovered: modelDiscovery.onDiscovered,
+            },
+          }),
     }),
   );
   if (Result.isFailure(probed)) {
     const resolvedDuringProbe = yield* Ref.get(resolvedDuringProbeRef);
     const failedInspection: AcpRegistrySupport.AcpRegistryInspection =
       resolvedDuringProbe === undefined || input.settings.source === "local"
-        ? inspected.success
+        ? readyInspection
         : {
-            ...inspected.success,
+            ...readyInspection,
             version:
               input.settings.commandPath.trim().length > 0
                 ? null
-                : (resolvedDuringProbe.agent?.version ?? inspected.success.version),
+                : (resolvedDuringProbe.agent?.version ?? readyInspection.version),
             ...(resolvedDuringProbe.launchIdentity === undefined
               ? {}
               : { launchIdentity: resolvedDuringProbe.launchIdentity }),
           };
     const probedLaunchIdentity =
-      resolvedDuringProbe?.launchIdentity ?? inspected.success.launchIdentity ?? null;
+      resolvedDuringProbe?.launchIdentity ?? readyInspection.launchIdentity ?? null;
     const failedTargetLaunchIdentity =
       (resolvedDuringProbe?.fallback
         ? resolvedDuringProbe.failedTarget?.launchIdentity
@@ -765,74 +861,7 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
       probeFailed: true,
     };
   }
-  if (input.settings.source === "local") {
-    return {
-      provider: buildCheckedAcpRegistrySnapshot({
-        ...input,
-        checkedAt,
-        inspection: inspected.success,
-        probe: probed.success,
-      }),
-      launchIdentity: null,
-      indexRevision: null,
-      cacheable: true,
-    };
-  }
-  const resolved = probed.success.resolved;
-  if (resolved === undefined) {
-    return {
-      provider: buildCheckedAcpRegistrySnapshot({
-        ...input,
-        checkedAt,
-        inspection: inspected.success,
-        probe: probed.success,
-      }),
-      launchIdentity: null,
-      indexRevision: null,
-      cacheable: inspected.success.launchIdentity === undefined,
-    };
-  }
-  const resolvedVersion =
-    input.settings.commandPath.trim().length > 0
-      ? null
-      : (resolved.agent?.version ?? inspected.success.version);
-  const resolvedDocumentationUrl =
-    resolved.agent === undefined
-      ? inspected.success.documentationUrl
-      : (resolved.agent.website ?? resolved.agent.repository);
-  const resolvedIcon = resolved.agent === undefined ? inspected.success.icon : resolved.agent.icon;
-  const resolvedInspection: AcpRegistrySupport.AcpRegistryInspection = {
-    status: "ready",
-    agentId: inspected.success.agentId,
-    version: resolvedVersion,
-    distribution: resolved.distribution,
-    ...(resolved.launchIdentity === undefined ? {} : { launchIdentity: resolved.launchIdentity }),
-    ...(resolved.indexRevision === undefined ? {} : { indexRevision: resolved.indexRevision }),
-    ...(resolvedIcon ? { icon: resolvedIcon } : {}),
-    ...(resolvedDocumentationUrl ? { documentationUrl: resolvedDocumentationUrl } : {}),
-  };
-  return {
-    provider: buildCheckedAcpRegistrySnapshot({
-      ...input,
-      checkedAt,
-      inspection: resolvedInspection,
-      probe: probed.success,
-    }),
-    launchIdentity: resolved.launchIdentity ?? null,
-    indexRevision: resolved.indexRevision ?? null,
-    cacheable:
-      resolved.launchIdentity !== undefined || inspected.success.launchIdentity === undefined,
-    ...(resolved.fallback
-      ? {
-          fallback: true,
-          fallbackTargetLaunchIdentity:
-            resolved.failedTarget?.launchIdentity ?? inspected.success.launchIdentity ?? null,
-          fallbackTargetVersion: resolved.failedTarget?.version ?? inspected.success.version,
-          fallbackTargetIndexRevision:
-            resolved.failedTarget?.indexRevision ?? inspectedIndexRevision,
-        }
-      : {}),
-  };
+  return buildProbedStatus(probed.success);
 });
 
 export const checkAcpRegistryProviderStatus = <Requirements>(
@@ -840,12 +869,28 @@ export const checkAcpRegistryProviderStatus = <Requirements>(
     readonly settings: AcpRegistrySettings;
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
+    readonly modelDiscovery?: Omit<AcpRegistryModelDiscovery, "onProbed"> & {
+      readonly onProbed: (provider: ServerProvider) => Effect.Effect<ReadonlyArray<string>>;
+    };
   },
   probeConfiguration: AcpRegistryConfigurationProbe<Requirements>,
-): Effect.Effect<ServerProvider, never, AcpRegistrySupport.AcpRegistryCatalog | Requirements> =>
-  checkAcpRegistryProviderStatusWithIdentity(input, probeConfiguration).pipe(
-    Effect.map(({ provider }) => provider),
-  );
+): Effect.Effect<ServerProvider, never, AcpRegistrySupport.AcpRegistryCatalog | Requirements> => {
+  const { modelDiscovery, ...rest } = input;
+  return checkAcpRegistryProviderStatusWithIdentity(
+    {
+      ...rest,
+      ...(modelDiscovery === undefined
+        ? {}
+        : {
+            modelDiscovery: {
+              onProbed: (probed) => modelDiscovery.onProbed(probed.provider),
+              onDiscovered: modelDiscovery.onDiscovered,
+            },
+          }),
+    },
+    probeConfiguration,
+  ).pipe(Effect.map(({ provider }) => provider));
+};
 
 const checkAcpRegistryProviderReadinessWithIdentity = Effect.fn(
   "AcpRegistryDriver.checkProviderReadiness",
@@ -992,22 +1037,36 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         processEnvironment,
       });
     // Refreshes rebuild the snapshot from the probe, so per-model options
-    // learned from earlier sessions are kept here.
-    const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
-    const applyLiveConfiguration = (
+    // reported by sessions and probe discovery are kept here and on disk.
+    const learnedModelOptions = yield* makeAcpRegistryLearnedModelOptionsStore({
+      cacheDir: host.paths.providerStatusCacheDir,
+      instanceId,
+      settings: effectiveConfig,
+    });
+    const applyLiveConfiguration = Effect.fn("AcpRegistryDriver.applyLiveConfiguration")(function* (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
-    ) =>
-      Ref.modify(learnedModels, (learned) => {
-        const next = applyAcpRegistryLiveConfiguration(
-          provider,
-          configuration,
-          effectiveConfig.customModels,
-          learned.length > 0 ? learned : provider.models,
-        );
-        return [next, next.models === provider.models ? learned : next.models];
-      });
-    const clearLearnedModels = Ref.set(learnedModels, []);
+      options?: {
+        readonly useLearnedModels?: boolean;
+        readonly persistLearnedModels?: boolean;
+      },
+    ) {
+      if (options?.persistLearnedModels !== false) {
+        const reported = acpRegistryCurrentModelOptions(configuration);
+        if (reported !== undefined) {
+          yield* learnedModelOptions.learn(reported.modelId, reported.options, "live");
+        }
+      }
+      const applied = applyAcpRegistryLiveConfiguration(
+        provider,
+        configuration,
+        effectiveConfig.customModels,
+      );
+      return options?.useLearnedModels === false
+        ? applied
+        : withAcpRegistryLearnedModelOptions(applied, yield* learnedModelOptions.get);
+    });
+    const clearLearnedModels = learnedModelOptions.clear;
     const activeRuntimeIdentity = yield* Ref.make<string | null>(null);
     // Probes never produce "authenticated" directly; saved confirmation re-promotes "unknown"
     // in withLiveRuntimeState, so stripping it prevents historical auth surviving logout.
@@ -1061,7 +1120,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         readonly persistLearnedModels?: boolean;
       },
     ) {
-      if (!input.installed) return { provider: input, appliedLiveConfiguration: false };
+      if (!input.installed) {
+        return {
+          provider: input,
+          appliedLiveConfiguration: undefined as AcpRegistryLiveConfiguration | undefined,
+        };
+      }
+      if (options?.persistLearnedModels !== false && options?.useLearnedModels !== false) {
+        yield* learnedModelOptions.setVersion(input.version);
+      }
       const provider =
         input.enabled &&
         input.installed &&
@@ -1070,7 +1137,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
           : input;
       if (Option.isNone(runtimeCoordinator)) {
-        return { provider, appliedLiveConfiguration: false };
+        return {
+          provider:
+            options?.useLearnedModels === false
+              ? provider
+              : withAcpRegistryLearnedModelOptions(provider, yield* learnedModelOptions.get),
+          appliedLiveConfiguration: undefined as AcpRegistryLiveConfiguration | undefined,
+        };
       }
       const applySessionLiveState = options?.applySessionLiveState ?? true;
       const readOptions: AcpRegistryRuntimeCoordinator.AcpRegistryReadLiveStateOptions | undefined =
@@ -1093,39 +1166,25 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       });
       const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
       const withConfiguration = yield* Option.match(configuration, {
-        onNone: () => Effect.succeed(withCommands),
-        onSome: (liveConfiguration) => {
-          if (options?.persistLearnedModels === false) {
-            return (
-              options.useLearnedModels === false
-                ? Effect.succeed<ReadonlyArray<ServerProviderModel>>([])
-                : Ref.get(learnedModels)
-            ).pipe(
-              Effect.map((learned) =>
-                applyAcpRegistryLiveConfiguration(
-                  withCommands,
-                  liveConfiguration,
-                  effectiveConfig.customModels,
-                  learned.length > 0 ? learned : withCommands.models,
-                ),
+        onNone: () =>
+          options?.useLearnedModels === false
+            ? Effect.succeed(withCommands)
+            : learnedModelOptions.get.pipe(
+                Effect.map((learned) => withAcpRegistryLearnedModelOptions(withCommands, learned)),
               ),
-            );
-          }
-          return options?.useLearnedModels === false
-            ? Effect.succeed(
-                applyAcpRegistryLiveConfiguration(
-                  withCommands,
-                  liveConfiguration,
-                  effectiveConfig.customModels,
-                  withCommands.models,
-                ),
-              )
-            : applyLiveConfiguration(withCommands, liveConfiguration);
-        },
+        onSome: (liveConfiguration) =>
+          applyLiveConfiguration(withCommands, liveConfiguration, {
+            ...(options?.useLearnedModels === undefined
+              ? {}
+              : { useLearnedModels: options.useLearnedModels }),
+            ...(options?.persistLearnedModels === undefined
+              ? {}
+              : { persistLearnedModels: options.persistLearnedModels }),
+          }),
       });
       return {
         provider: applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
-        appliedLiveConfiguration: Option.isSome(configuration),
+        appliedLiveConfiguration: Option.getOrUndefined(configuration),
       };
     });
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
@@ -1310,19 +1369,44 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.tap((readiness) => Ref.set(latestCheckedReadiness, readiness)),
       Effect.map(({ snapshot }) => snapshot),
     );
-    const enrichProvider = checkAcpRegistryProviderStatusWithIdentity(
-      {
-        ...readinessInput,
-        cwd: host.paths.cwd,
+    interface EnrichedAcpRegistryProvider {
+      readonly provider: ServerProvider;
+      readonly launchIdentity: string | null;
+      readonly indexRevision: number | null;
+      readonly fallback: boolean;
+      readonly fallbackTargetLaunchIdentity: string | null;
+      readonly fallbackTargetVersion: string | null;
+      readonly fallbackTargetIndexRevision: number | null;
+      readonly probedLaunchIdentity: string | null;
+      readonly failedTargetLaunchIdentity: string | null;
+      readonly probeFailed: boolean;
+      readonly fromCache: boolean;
+      readonly captured: {
+        readonly invalidationGeneration: number;
+        readonly liveGenerationByRuntime: ReadonlyMap<string | null, number>;
+      };
+    }
+    const enrichProvider = (
+      modelDiscovery: Omit<AcpRegistryModelDiscovery, "onProbed"> & {
+        readonly onProbed: (
+          probed: CheckedAcpRegistryProviderStatus,
+        ) => Effect.Effect<ReadonlyArray<string>>;
       },
-      probeAcpRegistryConfiguration,
-    ).pipe(
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(SecureRandom.SecureRandom, random),
-    );
+    ) =>
+      checkAcpRegistryProviderStatusWithIdentity(
+        {
+          ...readinessInput,
+          cwd: host.paths.cwd,
+          modelDiscovery,
+        },
+        probeAcpRegistryConfiguration,
+      ).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+      );
     const tracksRegistryIndex =
       effectiveConfig.enabled &&
       effectiveConfig.source !== "local" &&
@@ -1397,7 +1481,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         (captured.liveGenerationByRuntime.get(probeIdentity) ?? 0);
     const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       target: CheckedAcpRegistryReadiness,
-    ) {
+      publishProbed: (
+        enriched: EnrichedAcpRegistryProvider,
+      ) => Effect.Effect<{ readonly published: boolean }>,
+    ): Effect.fn.Return<EnrichedAcpRegistryProvider> {
       const now = yield* Clock.currentTimeMillis;
       const cacheState = yield* Ref.get(enrichmentCache);
       const captured = {
@@ -1476,54 +1563,94 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           captured,
         };
       }
-      const {
-        provider: enriched,
-        launchIdentity,
-        indexRevision,
-        cacheable,
-        fallback,
-        fallbackTargetLaunchIdentity,
-        fallbackTargetVersion,
-        fallbackTargetIndexRevision,
-        probedLaunchIdentity,
-        failedTargetLaunchIdentity,
-        probeFailed,
-      } = yield* enrichProvider;
-      if (effectiveConfig.source === "local" && enriched.status === "ready") {
-        yield* Ref.set(reportedLocalVersion, enriched.version);
-      }
-      const probeIdentity = enriched.installed
-        ? runtimeIdentityFor(enriched, launchIdentity)
-        : null;
-      if (cacheable && enriched.status === "ready") {
-        const completedAt = yield* Clock.currentTimeMillis;
-        yield* Ref.update(enrichmentCache, (current) =>
-          isProbeStillCurrent(current, captured, probeIdentity)
-            ? {
-                ...current,
-                entry: {
-                  provider: enriched,
-                  expiresAt: completedAt + acpRegistryProbeTtlMs(enriched),
-                  launchIdentity,
-                },
-              }
-            : current,
-        );
-      }
-      return {
-        provider: enriched,
-        launchIdentity,
-        indexRevision,
-        fallback: fallback === true,
-        fallbackTargetLaunchIdentity: fallbackTargetLaunchIdentity ?? target.launchIdentity,
-        fallbackTargetVersion: fallbackTargetVersion ?? target.snapshot.version,
-        fallbackTargetIndexRevision: fallbackTargetIndexRevision ?? target.indexRevision,
-        probedLaunchIdentity: probedLaunchIdentity ?? null,
-        failedTargetLaunchIdentity: failedTargetLaunchIdentity ?? null,
-        probeFailed: probeFailed === true,
+      const toEnriched = (
+        status: CheckedAcpRegistryProviderStatus,
+      ): EnrichedAcpRegistryProvider => ({
+        provider: status.provider,
+        launchIdentity: status.launchIdentity,
+        indexRevision: status.indexRevision,
+        fallback: status.fallback === true,
+        fallbackTargetLaunchIdentity: status.fallbackTargetLaunchIdentity ?? target.launchIdentity,
+        fallbackTargetVersion: status.fallbackTargetVersion ?? target.snapshot.version,
+        fallbackTargetIndexRevision: status.fallbackTargetIndexRevision ?? target.indexRevision,
+        probedLaunchIdentity: status.probedLaunchIdentity ?? null,
+        failedTargetLaunchIdentity: status.failedTargetLaunchIdentity ?? null,
+        probeFailed: status.probeFailed === true,
         fromCache: false,
         captured,
-      };
+      });
+      const remember = Effect.fn("AcpRegistryDriver.rememberEnrichment")(function* (
+        status: CheckedAcpRegistryProviderStatus,
+      ) {
+        if (effectiveConfig.source === "local" && status.provider.status === "ready") {
+          yield* Ref.set(reportedLocalVersion, status.provider.version);
+        }
+        const probeIdentity = status.provider.installed
+          ? runtimeIdentityFor(status.provider, status.launchIdentity)
+          : null;
+        if (status.cacheable && status.provider.status === "ready") {
+          const completedAt = yield* Clock.currentTimeMillis;
+          yield* Ref.update(enrichmentCache, (current) =>
+            isProbeStillCurrent(current, captured, probeIdentity)
+              ? {
+                  ...current,
+                  entry: {
+                    provider: status.provider,
+                    expiresAt: completedAt + acpRegistryProbeTtlMs(status.provider),
+                    launchIdentity: status.launchIdentity,
+                  },
+                }
+              : current,
+          );
+        }
+      });
+      let probedRuntimeIdentity: string | null = null;
+      const enriched = yield* enrichProvider({
+        // Publish what the probe found first; discovery only adds options to it.
+        onProbed: Effect.fn("AcpRegistryDriver.onProbed")(function* (probed) {
+          const probeIdentity = probed.provider.installed
+            ? runtimeIdentityFor(probed.provider, probed.launchIdentity)
+            : null;
+          probedRuntimeIdentity = probeIdentity;
+          if (!isProbeStillCurrent(yield* Ref.get(enrichmentCache), captured, probeIdentity)) {
+            return [];
+          }
+          const previousIdentity = yield* Ref.get(activeRuntimeIdentity);
+          const runtimeChanged =
+            previousIdentity !== null &&
+            probeIdentity !== null &&
+            previousIdentity !== probeIdentity;
+          if (!runtimeChanged && probed.provider.installed) {
+            yield* learnedModelOptions.setVersion(probed.provider.version);
+          }
+          const settings = yield* host.settings.get.pipe(Effect.option);
+          // Without settings the hidden models are unknown, so nothing is opened.
+          if (Option.isNone(settings)) return [];
+          const learned = runtimeChanged ? new Map() : yield* learnedModelOptions.get;
+          const modelIds = acpRegistryModelsToDiscover({
+            provider: probed.provider,
+            settings: settings.value,
+            learned,
+          });
+          if (modelIds.length === 0) return [];
+          yield* remember(probed);
+          const { published } = yield* publishProbed(toEnriched(probed));
+          return published ? modelIds : [];
+        }),
+        onDiscovered: Effect.fn("AcpRegistryDriver.onDiscovered")(function* (configuration) {
+          if (
+            !isProbeStillCurrent(yield* Ref.get(enrichmentCache), captured, probedRuntimeIdentity)
+          ) {
+            return;
+          }
+          const discovered = acpRegistryCurrentModelOptions(configuration);
+          if (discovered !== undefined) {
+            yield* learnedModelOptions.learn(discovered.modelId, discovered.options, "discovered");
+          }
+        }),
+      });
+      yield* remember(enriched);
+      return toEnriched(enriched);
     });
     const reconcilingState = yield* Ref.make<ReadonlyMap<string, boolean>>(new Map());
     const refreshTarget = yield* Deferred.make<Effect.Effect<void>>();
@@ -1717,18 +1844,367 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               } as const;
             }),
           );
+        const publishEnriched = ({
+          provider,
+          launchIdentity,
+          indexRevision,
+          fallback,
+          fallbackTargetLaunchIdentity,
+          fallbackTargetVersion,
+          fallbackTargetIndexRevision,
+          probedLaunchIdentity,
+          failedTargetLaunchIdentity,
+          probeFailed,
+          fromCache,
+          captured,
+        }: EnrichedAcpRegistryProvider) =>
+          liveSnapshotSemaphore.withPermit(
+            Effect.gen(function* () {
+              const previousIdentity = yield* Ref.get(activeRuntimeIdentity);
+              const resolvedIdentity =
+                provider.installed && !probeFailed
+                  ? runtimeIdentityFor(provider, launchIdentity)
+                  : null;
+              const current = yield* Ref.get(enrichmentCache);
+              if (!isProbeStillCurrent(current, captured, resolvedIdentity)) {
+                return {
+                  published: false,
+                  readiness: null,
+                  publishedIdentity: null,
+                };
+              }
+              if (probeFailed && provider.installed && previousIdentity !== null) {
+                // The new runtime failed before resolving/starting; preserve the last
+                // accepted snapshot only when one exists for previousIdentity so we never
+                // overlay A's live models/commands onto B's failure snapshot.
+                const lastRuntime = yield* Ref.get(lastSuccessfulRuntime);
+                const isProbedDifferentRuntime =
+                  probedLaunchIdentity !== null && probedLaunchIdentity !== previousIdentity;
+                const isUpgradeFailure =
+                  failedTargetLaunchIdentity !== null &&
+                  failedTargetLaunchIdentity !== previousIdentity;
+                if (lastRuntime !== null && lastRuntime.identity === previousIdentity) {
+                  const { message: _previousMessage, ...base } = lastRuntime.provider;
+                  const acceptedAuth = yield* Ref.get(latestAcceptedAuth);
+                  const retainedAuth =
+                    acceptedAuth !== null && acceptedAuth.identity === previousIdentity
+                      ? acceptedAuth.auth
+                      : base.auth;
+                  const activeRuntimeUnauthenticated =
+                    !isProbedDifferentRuntime && provider.auth.status === "unauthenticated";
+                  const preservedBase: ServerProvider = {
+                    ...base,
+                    checkedAt: provider.checkedAt,
+                    status: provider.status,
+                    auth: activeRuntimeUnauthenticated ? provider.auth : retainedAuth,
+                    ...(provider.message !== undefined ? { message: provider.message } : {}),
+                  };
+                  const { provider: nextSnapshotRaw } = yield* withLiveRuntimeState(preservedBase, {
+                    sessionRuntimeIdentity: previousIdentity,
+                    requireMatchingRuntimeIdentity: false,
+                    useLearnedModels: true,
+                    persistLearnedModels: false,
+                  });
+                  const preserveProbeFailure =
+                    isUpgradeFailure || provider.auth.status === "unauthenticated";
+                  const nextSnapshot = preserveProbeFailure
+                    ? {
+                        ...nextSnapshotRaw,
+                        status: provider.status,
+                        ...(provider.message !== undefined ? { message: provider.message } : {}),
+                      }
+                    : nextSnapshotRaw;
+                  const published = yield* Effect.uninterruptible(
+                    tryPublishSnapshot(
+                      nextSnapshot,
+                      activeRuntimeUnauthenticated ? markAuthConfirmationCleared : undefined,
+                    ).pipe(
+                      Effect.tap((didPublish) =>
+                        didPublish
+                          ? Effect.gen(function* () {
+                              if (activeRuntimeUnauthenticated) {
+                                // Clear fallback backoff so a user's sign-in retry probes immediately.
+                                yield* Ref.set(activeFallback, null);
+                                yield* recordAcceptedAuthRejection(previousIdentity, provider.auth);
+                              }
+                              yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
+                              yield* Ref.set(
+                                failedUpgradeTarget,
+                                isUpgradeFailure
+                                  ? {
+                                      targetLaunchIdentity: failedTargetLaunchIdentity,
+                                      status: provider.status,
+                                      message: provider.message,
+                                    }
+                                  : null,
+                              );
+                            })
+                          : Effect.void,
+                      ),
+                    ),
+                  );
+                  return {
+                    published,
+                    readiness: published
+                      ? {
+                          snapshot: nextSnapshot,
+                          launchIdentity: previousIdentity,
+                          indexRevision,
+                          probeFailed: true,
+                        }
+                      : null,
+                    publishedIdentity: published ? previousIdentity : null,
+                  };
+                }
+                // No accepted snapshot exists for previousIdentity; publish the failure
+                // snapshot directly without attaching previousIdentity's live state and
+                // align watcher identities so previousIdentity updates cannot land on it.
+                const failedIdentity = runtimeIdentityFor(
+                  provider,
+                  probedLaunchIdentity ?? failedTargetLaunchIdentity,
+                );
+                const published = yield* Effect.uninterruptible(
+                  tryPublishSnapshot(
+                    provider,
+                    provider.auth.status === "unauthenticated"
+                      ? markAuthConfirmationCleared
+                      : undefined,
+                  ).pipe(
+                    Effect.tap((didPublish) =>
+                      didPublish
+                        ? Effect.gen(function* () {
+                            if (provider.auth.status === "unauthenticated") {
+                              // Adopting failedIdentity with no retained runtime clears
+                              // saved confirmation so refreshes do not flash authenticated.
+                              yield* recordAcceptedAuthRejection(failedIdentity, provider.auth);
+                            }
+                            if (failedIdentity !== null && failedIdentity !== previousIdentity) {
+                              yield* clearLiveState({
+                                preserveRuntimeIdentity: failedIdentity,
+                              });
+                            }
+                            yield* Ref.set(expectedRuntimeIdentity, failedIdentity);
+                          })
+                        : Effect.void,
+                    ),
+                  ),
+                );
+                return {
+                  published,
+                  readiness: published
+                    ? {
+                        snapshot: provider,
+                        launchIdentity: failedIdentity,
+                        indexRevision,
+                        probeFailed: true,
+                      }
+                    : null,
+                  publishedIdentity: null,
+                };
+              }
+              const existingFallback = fallback ? yield* Ref.get(activeFallback) : null;
+              const fallbackMessage =
+                fallback && !fromCache
+                  ? fallbackTargetVersion !== null &&
+                    provider.version !== null &&
+                    fallbackTargetVersion !== provider.version
+                    ? `Could not install ${effectiveConfig.agentId} ${fallbackTargetVersion}; using installed ${provider.version}. Will retry on the next refresh.`
+                    : "Could not install the latest agent update; using the previously installed version. Will retry on the next refresh."
+                  : existingFallback?.message;
+              const effectiveMessage = fallback
+                ? (fallbackMessage ?? provider.message)
+                : provider.message;
+              const providerToPublish =
+                fallback && effectiveMessage !== undefined
+                  ? { ...provider, message: effectiveMessage }
+                  : provider;
+              const runtimeChanged =
+                previousIdentity !== null &&
+                resolvedIdentity !== null &&
+                previousIdentity !== resolvedIdentity;
+              const { provider: nextSnapshotRaw, appliedLiveConfiguration } =
+                yield* withLiveRuntimeState(providerToPublish, {
+                  sessionRuntimeIdentity: resolvedIdentity,
+                  requireMatchingRuntimeIdentity: runtimeChanged,
+                  useLearnedModels: !runtimeChanged,
+                  persistLearnedModels: false,
+                });
+              const preserveUnauthenticated = providerToPublish.auth.status === "unauthenticated";
+              const nextSnapshot = preserveUnauthenticated
+                ? {
+                    ...nextSnapshotRaw,
+                    status: providerToPublish.status,
+                    ...(providerToPublish.message !== undefined
+                      ? { message: providerToPublish.message }
+                      : {}),
+                  }
+                : fallback && effectiveMessage !== undefined
+                  ? { ...nextSnapshotRaw, message: effectiveMessage }
+                  : nextSnapshotRaw;
+              const published = yield* Effect.uninterruptible(
+                tryPublishSnapshot(
+                  nextSnapshot,
+                  providerToPublish.installed && nextSnapshot.auth.status === "unauthenticated"
+                    ? markAuthConfirmationCleared
+                    : undefined,
+                ).pipe(
+                  Effect.tap((didPublish) =>
+                    didPublish
+                      ? Effect.gen(function* () {
+                          if (!providerToPublish.installed) {
+                            yield* Ref.set(activeFallback, null);
+                            yield* Ref.set(failedUpgradeTarget, null);
+                            yield* Ref.set(lastSuccessfulRuntime, null);
+                            yield* Ref.set(latestAcceptedAuth, null);
+                            if (previousIdentity !== null || current.entry !== null) {
+                              yield* clearLiveState();
+                              yield* invalidateEnrichmentCache;
+                            }
+                            yield* Ref.set(expectedRuntimeIdentity, null);
+                          } else {
+                            const previousLastSuccessful = yield* Ref.get(lastSuccessfulRuntime);
+                            if (nextSnapshot.auth.status === "unauthenticated") {
+                              yield* recordAcceptedAuthRejection(
+                                resolvedIdentity ??
+                                  runtimeIdentityFor(providerToPublish, probedLaunchIdentity),
+                                nextSnapshot.auth,
+                              );
+                            }
+                            if (!probeFailed) {
+                              yield* Ref.set(failedUpgradeTarget, null);
+                            }
+                            if (fallback && !fromCache) {
+                              const now = yield* Clock.currentTimeMillis;
+                              const keepFailedAt =
+                                existingFallback !== null &&
+                                existingFallback.targetLaunchIdentity ===
+                                  fallbackTargetLaunchIdentity &&
+                                now >= existingFallback.failedAtMs &&
+                                now - existingFallback.failedAtMs < FALLBACK_RETRY_BACKOFF_MS;
+                              yield* Ref.set(activeFallback, {
+                                targetLaunchIdentity: fallbackTargetLaunchIdentity,
+                                targetVersion: fallbackTargetVersion,
+                                targetIndexRevision: fallbackTargetIndexRevision,
+                                fallbackVersion: providerToPublish.version,
+                                fallbackLaunchIdentity: launchIdentity,
+                                failedAtMs: keepFailedAt ? existingFallback.failedAtMs : now,
+                                message:
+                                  fallbackMessage ??
+                                  existingFallback?.message ??
+                                  "Using the previously installed version.",
+                              });
+                            } else if (!fallback && !probeFailed) {
+                              yield* Ref.set(activeFallback, null);
+                            }
+                            if (runtimeChanged) {
+                              yield* clearLiveState({
+                                preserveRuntimeIdentity: resolvedIdentity,
+                              });
+                              const retiredAtRevision =
+                                (fallback ? fallbackTargetIndexRevision : indexRevision) ??
+                                (yield* currentCatalogIndexRevision);
+                              yield* Ref.update(retiredRuntimeIdentities, (retired) => {
+                                const next = new Map(retired);
+                                // Retire only a runtime that actually succeeded; a
+                                // never-installed target replaced during cold fallback
+                                // stays eligible to reconcile.
+                                if (previousLastSuccessful?.identity === previousIdentity) {
+                                  next.set(previousIdentity, retiredAtRevision);
+                                }
+                                next.delete(resolvedIdentity);
+                                return next;
+                              });
+                              yield* learnedModelOptions.setVersion(providerToPublish.version);
+                              if (appliedLiveConfiguration !== undefined) {
+                                const reported =
+                                  acpRegistryCurrentModelOptions(appliedLiveConfiguration);
+                                if (reported !== undefined) {
+                                  yield* learnedModelOptions.learn(
+                                    reported.modelId,
+                                    reported.options,
+                                    "live",
+                                  );
+                                }
+                              }
+                              yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
+                            } else {
+                              yield* learnedModelOptions.setVersion(providerToPublish.version);
+                              if (appliedLiveConfiguration !== undefined) {
+                                const reported =
+                                  acpRegistryCurrentModelOptions(appliedLiveConfiguration);
+                                if (reported !== undefined) {
+                                  yield* learnedModelOptions.learn(
+                                    reported.modelId,
+                                    reported.options,
+                                    "live",
+                                  );
+                                }
+                              }
+                              if (resolvedIdentity !== null) {
+                                yield* Ref.set(activeRuntimeIdentity, resolvedIdentity);
+                                yield* Ref.update(retiredRuntimeIdentities, (retired) => {
+                                  if (!retired.has(resolvedIdentity)) return retired;
+                                  const next = new Map(retired);
+                                  next.delete(resolvedIdentity);
+                                  return next;
+                                });
+                              }
+                              yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
+                            }
+                            if (!probeFailed && resolvedIdentity !== null) {
+                              const { message: _fallbackMsg, ...cleanProvider } = nextSnapshotRaw;
+                              const storedProvider = fallback ? cleanProvider : nextSnapshotRaw;
+                              yield* Ref.set(lastSuccessfulRuntime, {
+                                identity: resolvedIdentity,
+                                provider: {
+                                  ...storedProvider,
+                                  auth: stripConfirmedAuth(storedProvider.auth),
+                                },
+                              });
+                              yield* Ref.set(latestAcceptedAuth, {
+                                identity: resolvedIdentity,
+                                auth: stripConfirmedAuth(nextSnapshot.auth),
+                              });
+                            }
+                          }
+                        })
+                      : Effect.void,
+                  ),
+                ),
+              );
+              return {
+                published,
+                readiness: published
+                  ? {
+                      snapshot: providerToPublish,
+                      launchIdentity,
+                      indexRevision,
+                      ...(fallback
+                        ? {
+                            fallback: true,
+                            fallbackTargetIndexRevision,
+                          }
+                        : {}),
+                      ...(probeFailed ? { probeFailed: true } : {}),
+                    }
+                  : null,
+                publishedIdentity: published ? resolvedIdentity : null,
+              };
+            }),
+          );
         const runProbeAndPublish = (target: CheckedAcpRegistryReadiness) => {
           const targetIdentity = target.snapshot.installed
             ? runtimeIdentityFor(target.snapshot, target.launchIdentity)
             : null;
+          const enrichment = enrichProviderCached(target, publishEnriched);
           const probeEffect = Option.isSome(runtimeCoordinator)
             ? runtimeCoordinator.value.runBackgroundProbe(
                 effectiveConfig.source === "local"
                   ? `local:${instanceId}`
                   : effectiveConfig.agentId,
-                enrichProviderCached(target),
+                enrichment,
               )
-            : enrichProviderCached(target).pipe(Effect.asSome);
+            : enrichment.pipe(Effect.asSome);
           let drainedPending: string | null = null;
           return Ref.update(probeReconcileState, (state) => ({
             ...state,
@@ -1743,370 +2219,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     readonly readiness: CheckedAcpRegistryReadiness | null;
                     readonly publishedIdentity: string | null;
                   }>({ published: false, readiness: null, publishedIdentity: null }),
-                onSome: ({
-                  provider,
-                  launchIdentity,
-                  indexRevision,
-                  fallback,
-                  fallbackTargetLaunchIdentity,
-                  fallbackTargetVersion,
-                  fallbackTargetIndexRevision,
-                  probedLaunchIdentity,
-                  failedTargetLaunchIdentity,
-                  probeFailed,
-                  fromCache,
-                  captured,
-                }) =>
-                  liveSnapshotSemaphore.withPermit(
-                    Effect.gen(function* () {
-                      const previousIdentity = yield* Ref.get(activeRuntimeIdentity);
-                      const resolvedIdentity =
-                        provider.installed && !probeFailed
-                          ? runtimeIdentityFor(provider, launchIdentity)
-                          : null;
-                      const current = yield* Ref.get(enrichmentCache);
-                      if (!isProbeStillCurrent(current, captured, resolvedIdentity)) {
-                        return {
-                          published: false,
-                          readiness: null,
-                          publishedIdentity: null,
-                        };
-                      }
-                      if (probeFailed && provider.installed && previousIdentity !== null) {
-                        // The new runtime failed before resolving/starting; preserve the last
-                        // accepted snapshot only when one exists for previousIdentity so we never
-                        // overlay A's live models/commands onto B's failure snapshot.
-                        const lastRuntime = yield* Ref.get(lastSuccessfulRuntime);
-                        const isProbedDifferentRuntime =
-                          probedLaunchIdentity !== null &&
-                          probedLaunchIdentity !== previousIdentity;
-                        const isUpgradeFailure =
-                          failedTargetLaunchIdentity !== null &&
-                          failedTargetLaunchIdentity !== previousIdentity;
-                        if (lastRuntime !== null && lastRuntime.identity === previousIdentity) {
-                          const { message: _previousMessage, ...base } = lastRuntime.provider;
-                          const acceptedAuth = yield* Ref.get(latestAcceptedAuth);
-                          const retainedAuth =
-                            acceptedAuth !== null && acceptedAuth.identity === previousIdentity
-                              ? acceptedAuth.auth
-                              : base.auth;
-                          const activeRuntimeUnauthenticated =
-                            !isProbedDifferentRuntime && provider.auth.status === "unauthenticated";
-                          const preservedBase: ServerProvider = {
-                            ...base,
-                            checkedAt: provider.checkedAt,
-                            status: provider.status,
-                            auth: activeRuntimeUnauthenticated ? provider.auth : retainedAuth,
-                            ...(provider.message !== undefined
-                              ? { message: provider.message }
-                              : {}),
-                          };
-                          const { provider: nextSnapshotRaw } = yield* withLiveRuntimeState(
-                            preservedBase,
-                            {
-                              sessionRuntimeIdentity: previousIdentity,
-                              requireMatchingRuntimeIdentity: false,
-                              useLearnedModels: true,
-                              persistLearnedModels: false,
-                            },
-                          );
-                          const preserveProbeFailure =
-                            isUpgradeFailure || provider.auth.status === "unauthenticated";
-                          const nextSnapshot = preserveProbeFailure
-                            ? {
-                                ...nextSnapshotRaw,
-                                status: provider.status,
-                                ...(provider.message !== undefined
-                                  ? { message: provider.message }
-                                  : {}),
-                              }
-                            : nextSnapshotRaw;
-                          const published = yield* Effect.uninterruptible(
-                            tryPublishSnapshot(
-                              nextSnapshot,
-                              activeRuntimeUnauthenticated
-                                ? markAuthConfirmationCleared
-                                : undefined,
-                            ).pipe(
-                              Effect.tap((didPublish) =>
-                                didPublish
-                                  ? Effect.gen(function* () {
-                                      if (activeRuntimeUnauthenticated) {
-                                        // Clear fallback backoff so a user's sign-in retry probes immediately.
-                                        yield* Ref.set(activeFallback, null);
-                                        yield* recordAcceptedAuthRejection(
-                                          previousIdentity,
-                                          provider.auth,
-                                        );
-                                      }
-                                      yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
-                                      yield* Ref.set(
-                                        failedUpgradeTarget,
-                                        isUpgradeFailure
-                                          ? {
-                                              targetLaunchIdentity: failedTargetLaunchIdentity,
-                                              status: provider.status,
-                                              message: provider.message,
-                                            }
-                                          : null,
-                                      );
-                                    })
-                                  : Effect.void,
-                              ),
-                            ),
-                          );
-                          return {
-                            published,
-                            readiness: published
-                              ? {
-                                  snapshot: nextSnapshot,
-                                  launchIdentity: previousIdentity,
-                                  indexRevision,
-                                  probeFailed: true,
-                                }
-                              : null,
-                            publishedIdentity: published ? previousIdentity : null,
-                          };
-                        }
-                        // No accepted snapshot exists for previousIdentity; publish the failure
-                        // snapshot directly without attaching previousIdentity's live state and
-                        // align watcher identities so previousIdentity updates cannot land on it.
-                        const failedIdentity = runtimeIdentityFor(
-                          provider,
-                          probedLaunchIdentity ?? failedTargetLaunchIdentity,
-                        );
-                        const published = yield* Effect.uninterruptible(
-                          tryPublishSnapshot(
-                            provider,
-                            provider.auth.status === "unauthenticated"
-                              ? markAuthConfirmationCleared
-                              : undefined,
-                          ).pipe(
-                            Effect.tap((didPublish) =>
-                              didPublish
-                                ? Effect.gen(function* () {
-                                    if (provider.auth.status === "unauthenticated") {
-                                      // Adopting failedIdentity with no retained runtime clears
-                                      // saved confirmation so refreshes do not flash authenticated.
-                                      yield* recordAcceptedAuthRejection(
-                                        failedIdentity,
-                                        provider.auth,
-                                      );
-                                    }
-                                    if (
-                                      failedIdentity !== null &&
-                                      failedIdentity !== previousIdentity
-                                    ) {
-                                      yield* clearLiveState({
-                                        preserveRuntimeIdentity: failedIdentity,
-                                      });
-                                    }
-                                    yield* Ref.set(expectedRuntimeIdentity, failedIdentity);
-                                  })
-                                : Effect.void,
-                            ),
-                          ),
-                        );
-                        return {
-                          published,
-                          readiness: published
-                            ? {
-                                snapshot: provider,
-                                launchIdentity: failedIdentity,
-                                indexRevision,
-                                probeFailed: true,
-                              }
-                            : null,
-                          publishedIdentity: null,
-                        };
-                      }
-                      const existingFallback = fallback ? yield* Ref.get(activeFallback) : null;
-                      const fallbackMessage =
-                        fallback && !fromCache
-                          ? fallbackTargetVersion !== null &&
-                            provider.version !== null &&
-                            fallbackTargetVersion !== provider.version
-                            ? `Could not install ${effectiveConfig.agentId} ${fallbackTargetVersion}; using installed ${provider.version}. Will retry on the next refresh.`
-                            : "Could not install the latest agent update; using the previously installed version. Will retry on the next refresh."
-                          : existingFallback?.message;
-                      const effectiveMessage = fallback
-                        ? (fallbackMessage ?? provider.message)
-                        : provider.message;
-                      const providerToPublish =
-                        fallback && effectiveMessage !== undefined
-                          ? { ...provider, message: effectiveMessage }
-                          : provider;
-                      const runtimeChanged =
-                        previousIdentity !== null &&
-                        resolvedIdentity !== null &&
-                        previousIdentity !== resolvedIdentity;
-                      const { provider: nextSnapshotRaw, appliedLiveConfiguration } =
-                        yield* withLiveRuntimeState(providerToPublish, {
-                          sessionRuntimeIdentity: resolvedIdentity,
-                          requireMatchingRuntimeIdentity: runtimeChanged,
-                          useLearnedModels: !runtimeChanged,
-                          persistLearnedModels: false,
-                        });
-                      const preserveUnauthenticated =
-                        providerToPublish.auth.status === "unauthenticated";
-                      const nextSnapshot = preserveUnauthenticated
-                        ? {
-                            ...nextSnapshotRaw,
-                            status: providerToPublish.status,
-                            ...(providerToPublish.message !== undefined
-                              ? { message: providerToPublish.message }
-                              : {}),
-                          }
-                        : fallback && effectiveMessage !== undefined
-                          ? { ...nextSnapshotRaw, message: effectiveMessage }
-                          : nextSnapshotRaw;
-                      const published = yield* Effect.uninterruptible(
-                        tryPublishSnapshot(
-                          nextSnapshot,
-                          providerToPublish.installed &&
-                            nextSnapshot.auth.status === "unauthenticated"
-                            ? markAuthConfirmationCleared
-                            : undefined,
-                        ).pipe(
-                          Effect.tap((didPublish) =>
-                            didPublish
-                              ? Effect.gen(function* () {
-                                  if (!providerToPublish.installed) {
-                                    yield* Ref.set(activeFallback, null);
-                                    yield* Ref.set(failedUpgradeTarget, null);
-                                    yield* Ref.set(lastSuccessfulRuntime, null);
-                                    yield* Ref.set(latestAcceptedAuth, null);
-                                    if (previousIdentity !== null || current.entry !== null) {
-                                      yield* clearLiveState();
-                                      yield* invalidateEnrichmentCache;
-                                    }
-                                    yield* Ref.set(expectedRuntimeIdentity, null);
-                                  } else {
-                                    const previousLastSuccessful =
-                                      yield* Ref.get(lastSuccessfulRuntime);
-                                    if (nextSnapshot.auth.status === "unauthenticated") {
-                                      yield* recordAcceptedAuthRejection(
-                                        resolvedIdentity ??
-                                          runtimeIdentityFor(
-                                            providerToPublish,
-                                            probedLaunchIdentity,
-                                          ),
-                                        nextSnapshot.auth,
-                                      );
-                                    }
-                                    if (!probeFailed) {
-                                      yield* Ref.set(failedUpgradeTarget, null);
-                                    }
-                                    if (fallback && !fromCache) {
-                                      const now = yield* Clock.currentTimeMillis;
-                                      const keepFailedAt =
-                                        existingFallback !== null &&
-                                        existingFallback.targetLaunchIdentity ===
-                                          fallbackTargetLaunchIdentity &&
-                                        now >= existingFallback.failedAtMs &&
-                                        now - existingFallback.failedAtMs <
-                                          FALLBACK_RETRY_BACKOFF_MS;
-                                      yield* Ref.set(activeFallback, {
-                                        targetLaunchIdentity: fallbackTargetLaunchIdentity,
-                                        targetVersion: fallbackTargetVersion,
-                                        targetIndexRevision: fallbackTargetIndexRevision,
-                                        fallbackVersion: providerToPublish.version,
-                                        fallbackLaunchIdentity: launchIdentity,
-                                        failedAtMs: keepFailedAt
-                                          ? existingFallback.failedAtMs
-                                          : now,
-                                        message:
-                                          fallbackMessage ??
-                                          existingFallback?.message ??
-                                          "Using the previously installed version.",
-                                      });
-                                    } else if (!fallback && !probeFailed) {
-                                      yield* Ref.set(activeFallback, null);
-                                    }
-                                    if (runtimeChanged) {
-                                      yield* clearLiveState({
-                                        preserveRuntimeIdentity: resolvedIdentity,
-                                      });
-                                      const retiredAtRevision =
-                                        (fallback ? fallbackTargetIndexRevision : indexRevision) ??
-                                        (yield* currentCatalogIndexRevision);
-                                      yield* Ref.update(retiredRuntimeIdentities, (retired) => {
-                                        const next = new Map(retired);
-                                        // Retire only a runtime that actually succeeded; a
-                                        // never-installed target replaced during cold fallback
-                                        // stays eligible to reconcile.
-                                        if (previousLastSuccessful?.identity === previousIdentity) {
-                                          next.set(previousIdentity, retiredAtRevision);
-                                        }
-                                        next.delete(resolvedIdentity);
-                                        return next;
-                                      });
-                                      if (appliedLiveConfiguration) {
-                                        yield* Ref.set(learnedModels, nextSnapshot.models);
-                                      }
-                                      yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
-                                    } else {
-                                      if (
-                                        appliedLiveConfiguration &&
-                                        nextSnapshot.models !== providerToPublish.models
-                                      ) {
-                                        yield* Ref.set(learnedModels, nextSnapshot.models);
-                                      }
-                                      if (resolvedIdentity !== null) {
-                                        yield* Ref.set(activeRuntimeIdentity, resolvedIdentity);
-                                        yield* Ref.update(retiredRuntimeIdentities, (retired) => {
-                                          if (!retired.has(resolvedIdentity)) return retired;
-                                          const next = new Map(retired);
-                                          next.delete(resolvedIdentity);
-                                          return next;
-                                        });
-                                      }
-                                      yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
-                                    }
-                                    if (!probeFailed && resolvedIdentity !== null) {
-                                      const { message: _fallbackMsg, ...cleanProvider } =
-                                        nextSnapshotRaw;
-                                      const storedProvider = fallback
-                                        ? cleanProvider
-                                        : nextSnapshotRaw;
-                                      yield* Ref.set(lastSuccessfulRuntime, {
-                                        identity: resolvedIdentity,
-                                        provider: {
-                                          ...storedProvider,
-                                          auth: stripConfirmedAuth(storedProvider.auth),
-                                        },
-                                      });
-                                      yield* Ref.set(latestAcceptedAuth, {
-                                        identity: resolvedIdentity,
-                                        auth: stripConfirmedAuth(nextSnapshot.auth),
-                                      });
-                                    }
-                                  }
-                                })
-                              : Effect.void,
-                          ),
-                        ),
-                      );
-                      return {
-                        published,
-                        readiness: published
-                          ? {
-                              snapshot: providerToPublish,
-                              launchIdentity,
-                              indexRevision,
-                              ...(fallback
-                                ? {
-                                    fallback: true,
-                                    fallbackTargetIndexRevision,
-                                  }
-                                : {}),
-                              ...(probeFailed ? { probeFailed: true } : {}),
-                            }
-                          : null,
-                        publishedIdentity: published ? resolvedIdentity : null,
-                      };
-                    }),
-                  ),
+                onSome: publishEnriched,
               }),
             ),
             Effect.ensuring(
@@ -2191,13 +2304,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     if (!gate.accepted) return gate.reconcileIdentity;
                     const current = yield* getSnapshot;
                     if (!current.installed) return undefined;
-                    const learned = gate.runtimeTransitioning ? [] : yield* Ref.get(learnedModels);
-                    const applied = applyAcpRegistryLiveConfiguration(
+                    const baseApplied = applyAcpRegistryLiveConfiguration(
                       current,
                       configuration,
                       effectiveConfig.customModels,
-                      learned.length > 0 ? learned : current.models,
                     );
+                    const applied = gate.runtimeTransitioning
+                      ? baseApplied
+                      : withAcpRegistryLearnedModelOptions(
+                          baseApplied,
+                          yield* learnedModelOptions.get,
+                        );
                     const activeId = yield* Ref.get(activeRuntimeIdentity);
                     const fallbackState = yield* Ref.get(activeFallback);
                     const failedUpgrade = yield* Ref.get(failedUpgradeTarget);
@@ -2233,8 +2350,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           : applied;
                     const published = yield* tryPublishSnapshot(next);
                     if (!published) return undefined;
-                    if (!gate.runtimeTransitioning && next.models !== current.models) {
-                      yield* Ref.set(learnedModels, next.models);
+                    if (!gate.runtimeTransitioning) {
+                      yield* learnedModelOptions.setVersion(current.version);
+                      const reported = acpRegistryCurrentModelOptions(configuration);
+                      if (reported !== undefined) {
+                        yield* learnedModelOptions.learn(
+                          reported.modelId,
+                          reported.options,
+                          "live",
+                        );
+                      }
                     }
                     if (!gate.runtimeTransitioning && activeId !== null) {
                       const { message: _transientMsg, ...appliedClean } = applied;
