@@ -292,6 +292,7 @@ function odfValue(cell: XmlNode): string {
   }
 }
 function hasCellText(cell: XmlNode): boolean {
+  if (cell.name === "covered-table-cell") return false;
   if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
@@ -317,8 +318,11 @@ function* table(node: XmlNode): Generator<TextPart, void> {
           if (column >= 512) throw new Truncation("Column limit");
           if (column++) yield "\t";
           yield CELL_START;
-          yield* paragraphs(cell);
-          yield { fallback: odfValue(cell) };
+          // Covered cells preserve column alignment for a merge; any retained content is hidden.
+          if (cell.name !== "covered-table-cell") {
+            yield* paragraphs(cell);
+            yield { fallback: odfValue(cell) };
+          }
           yield CELL_END;
         }
       }

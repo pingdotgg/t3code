@@ -1258,6 +1258,30 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "content.xml":
+              '<office:document><table:table table:name="Merged">' +
+              '<table:table-row><table:table-cell table:number-columns-spanned="4" table:number-rows-spanned="2"><text:p>Total</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:covered-table-cell><table:covered-table-cell table:number-columns-repeated="2"/><table:table-cell table:number-columns-spanned="2"><text:p>Lead</text:p></table:table-cell><table:covered-table-cell office:value-type="string" office:string-value="HiddenRight"><text:p>HiddenRight</text:p></table:covered-table-cell></table:table-row>' +
+              '<table:table-row><table:covered-table-cell office:value-type="string" office:string-value="Below"/><table:covered-table-cell table:number-columns-repeated="3"/><table:table-cell><text:p>Q2</text:p></table:table-cell></table:table-row>' +
+              '<table:table-row><table:covered-table-cell office:value-type="string" office:string-value="HiddenRow"><text:p>HiddenRow</text:p></table:covered-table-cell></table:table-row>' +
+              "</table:table></office:document>",
+          },
+          expected: ["## Sheet: Merged\nTotal\t\t\t\tLead\n\t\t\t\tQ2"],
+          absent: ["2\t", "Below", "HiddenRight", "HiddenRow"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<office:document><table:table><table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>Merged</text:p></table:table-cell><table:covered-table-cell><text:p>HiddenDoc</text:p></table:covered-table-cell><table:table-cell><text:p>Right</text:p></table:table-cell></table:table-row></table:table></office:document>',
+          },
+          expected: ["Merged\t\tRight"],
+          absent: ["HiddenDoc"],
+        },
+        {
+          ext: "ods",
+          bounded: true,
+          parts: {
+            "content.xml":
               '<office:document><table:table table:name="Padded rows"><table:table-row><table:table-cell><text:p>Left</text:p></table:table-cell><table:table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>Right</text:p></table:table-cell></table:table-row><table:table-row table:number-rows-repeated="1048575"><table:table-cell/></table:table-row></table:table></office:document>',
           },
           expected: ["## Sheet: Padded rows", "Left\t\t\tRight"],
