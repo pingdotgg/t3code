@@ -62,4 +62,17 @@ describe("importPastedComposerText", () => {
       importPastedComposerText(clipboard({ "text/plain": "x\r\n\r\ny\rz" }), () => new Map()),
     ).toBe("x\n\ny\nz");
   });
+
+  it("keeps a hyperlink's destination from rich text as a Markdown link", () => {
+    expect(
+      importPastedComposerText(
+        clipboard({
+          "text/plain": "实现参考另附 Agent-Autoloop 仓库",
+          "text/html":
+            '<meta charset="utf-8"><span>实现参考另附 </span><a href="https://github.com/KKKKhazix/agent-autoloop">Agent-Autoloop 仓库</a>',
+        }),
+        () => new Map(),
+      ),
+    ).toBe("实现参考另附 [Agent-Autoloop 仓库](https://github.com/KKKKhazix/agent-autoloop)");
+  });
 });
