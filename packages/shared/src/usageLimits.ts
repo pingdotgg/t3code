@@ -774,12 +774,18 @@ function resetMillis(window: ServerProviderUsageWindow): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
+function elapsedPercent(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;
   const length = window.windowDurationMins * MINUTE;
   if (length <= 0) return null;
-  return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
+  // Scaled before dividing, so a half-percent tie stays exact and rounds like the fill.
+  return Math.max(0, Math.min(100, ((length - (resetsAt - now)) * 100) / length));
+}
+
+export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
+  const elapsed = elapsedPercent(window, now);
+  return elapsed === null ? null : elapsed / 100;
 }
 
 // Bars show quota remaining, so even pace tracks time remaining.
@@ -787,14 +793,14 @@ export function paceRemainingPercent(
   window: ServerProviderUsageWindow,
   now: number,
 ): number | null {
-  const elapsed = elapsedShare(window, now);
-  return elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const elapsed = elapsedPercent(window, now);
+  return elapsed === null ? null : Math.round(100 - elapsed);
 }
 
 // Rounded on its own, like usedPercent: 100 - paceRemainingPercent drops a point at .5 ties.
 export function paceElapsedPercent(window: ServerProviderUsageWindow, now: number): number | null {
-  const elapsed = elapsedShare(window, now);
-  return elapsed === null ? null : Math.round(elapsed * 100);
+  const elapsed = elapsedPercent(window, now);
+  return elapsed === null ? null : Math.round(elapsed);
 }
 
 /** Even pace as the bar shows it: time left, or time passed. */

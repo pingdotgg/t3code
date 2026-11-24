@@ -227,6 +227,20 @@ describe("pace", () => {
     expect(pacePercent(onPace, now, "used")).toBe(limitPercent(onPace, "used"));
     expect(pacePercent(onPace, now, "left")).toBe(limitPercent(onPace, "left"));
   });
+
+  it.each([
+    [14.5, "2026-09-03T16:16:30.000Z"],
+    [28.5, "2026-09-03T15:34:30.000Z"],
+    [56.5, "2026-09-03T14:10:30.000Z"],
+    [57.5, "2026-09-03T14:07:30.000Z"],
+  ])(
+    "keeps the pace mark level with an on-pace fill at %s percent despite float division",
+    (used, resetsAt) => {
+      const onPace = { ...window, usedPercent: used, resetsAt };
+      expect(pacePercent(onPace, now, "used")).toBe(limitPercent(onPace, "used"));
+      expect(pacePercent(onPace, now, "left")).toBe(limitPercent(onPace, "left"));
+    },
+  );
 });
 
 describe("pools", () => {
