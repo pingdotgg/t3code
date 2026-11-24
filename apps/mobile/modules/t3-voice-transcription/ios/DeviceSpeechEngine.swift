@@ -76,8 +76,15 @@ enum DeviceSpeechEngine {
     var parameters = transcribe_run_params()
     transcribe_run_params_init(&parameters)
     parameters.timestamps = TRANSCRIBE_TIMESTAMPS_NONE
-    let status = samples.withUnsafeBufferPointer {
-      transcribe_run(session, $0.baseAddress, Int32($0.count), &parameters)
+    let hint = try languageHint(session)
+    let status = samples.withUnsafeBufferPointer { buffer in
+      if let hint {
+        return hint.withCString { value in
+          parameters.language = value
+          return transcribe_run(session, buffer.baseAddress, Int32(buffer.count), &parameters)
+        }
+      }
+      return transcribe_run(session, buffer.baseAddress, Int32(buffer.count), &parameters)
     }
     try cancellation.check()
     try check(status)
@@ -88,7 +95,28 @@ enum DeviceSpeechEngine {
     }
     return Transcript(
       text: transcribe_full_text(session).map { String(cString: $0) } ?? "",
-      language: language)
+      language: language ?? hint)
+  }
+
+  private static func languageHint(_ session: OpaquePointer) throws -> String? {
+    var capabilities = transcribe_capabilities()
+    transcribe_capabilities_init(&capabilities)
+    try check(transcribe_model_get_capabilities(transcribe_get_model(session), &capabilities))
+    guard !capabilities.supports_language_detect, let languages = capabilities.languages else {
+      return nil
+    }
+    let codes = (0..<Int(capabilities.n_languages)).compactMap {
+      languages[$0].map { String(cString: $0) }
+    }
+    for preferred in Locale.preferredLanguages + ["en"] {
+      let tag = preferred.lowercased().replacingOccurrences(of: "_", with: "-")
+      if let exact = codes.first(where: { $0.lowercased() == tag }) { return exact }
+      let base = tag.split(separator: "-").first
+      if let match = codes.first(where: { $0.lowercased().split(separator: "-").first == base }) {
+        return match
+      }
+    }
+    return codes.first
   }
 
   private static func check(_ status: transcribe_status) throws {

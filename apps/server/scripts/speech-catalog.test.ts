@@ -20,7 +20,11 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
   const { fastCpuMaxWaitSeconds, ...methodology } = catalog.methodology;
   expect(policy).toEqual({ ...methodology, fastMaxWaitSeconds: fastCpuMaxWaitSeconds });
   expect(NodeFS.readFileSync(new URL("../src/speech/catalog.json", import.meta.url), "utf8")).toBe(
-    await renderSpeechCatalog(generate()),
+    await renderSpeechCatalog(
+      catalog.data,
+      manifest.devDependencies["@handy-computer/models"],
+      manifest.dependencies["transcribe-cpp"],
+    ),
   );
   for (const model of generate().models) {
     const source = catalog.models.find((entry) => entry.repository === model.id)!;

@@ -9,7 +9,7 @@ import { format } from "vite-plus/fmt";
 import * as Schema from "effect/Schema";
 
 import manifest from "../package.json" with { type: "json" };
-import { generateSpeechCatalog, renderSpeechCatalog } from "./speech-catalog.ts";
+import { renderSpeechCatalog } from "./speech-catalog.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
 const source = require.resolve("@handy-computer/models/catalog.json");
@@ -20,12 +20,11 @@ if (sourceManifest.version !== manifest.devDependencies["@handy-computer/models"
   throw new Error("Install the exact pinned @handy-computer/models version before generating.");
 }
 const target = new URL("../src/speech/catalog.json", import.meta.url);
-const generated = generateSpeechCatalog(
+const expected = await renderSpeechCatalog(
   catalog.data,
   sourceManifest.version,
   manifest.dependencies["transcribe-cpp"],
 );
-const expected = await renderSpeechCatalog(generated);
 const policyTarget = new URL(
   "../../../packages/shared/src/speechRecommendationPolicy.json",
   import.meta.url,

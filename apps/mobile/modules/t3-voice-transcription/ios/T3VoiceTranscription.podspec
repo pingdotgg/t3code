@@ -10,5 +10,6 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
   s.dependency 'TranscribeCpp'
   s.source_files = '*.swift'
+  s.resource_bundles = { 'T3SpeechModels' => ['Resources/catalog.json'] }
   s.frameworks = 'AudioToolbox'
 end

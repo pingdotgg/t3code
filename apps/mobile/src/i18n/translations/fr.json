@@ -1634,7 +1634,6 @@
   "40c503999bce960e": "Nouvelle tâche",
   "2225f6bda46f4cc6": "Masquer le clavier",
   "a1dbe20d209982b6": "Rechercher",
-  "f248baa236fb70ca": "Téléchargez {model} dans Réglages → Voix pour l’utiliser pour la dictée.",
   "1065488dde93b8e4": "La transcription vocale sur l’appareil n’est pas disponible pour la langue de cet appareil.",
   "f77d42d7e6973692": "Espace insuffisant pour la dictée sur l’appareil. Libérez de l’espace et réessayez.",
   "98da64927f544c96": "Quota de reconnaissance vocale sur l’appareil atteint. Laissez l’appareil se reposer ou chargez-le, puis réessayez.",
@@ -1928,7 +1927,28 @@
   "c2f0e285ba21bf0f": "Fermer l’aperçu flottant",
   "2f38f2e60ed18790": "{count, plural, =1 {Voir le navigateur} one {Voir {count} onglet du navigateur} other {Voir {count} onglets du navigateur}}",
   "50abaf3c0482c1fb": "Suivez et contrôlez les onglets du navigateur ouverts dans ce fil",
-  "97bd56f5784e255d": "{count, plural, =1 {Un onglet ouvert} other {{count} onglets ouverts}}",
+  "a210f8081a5d0e42": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "singular": "Un onglet ouvert",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " onglets ouverts"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "4d1f68ef069c7a0b": "Nouvel onglet",
   "9c149c8c50e58e4c": "Actualiser les environnements",
   "d81626aad3a95cb2": "Connectez-vous à votre compte T3 pour configurer {product}.",
@@ -2136,7 +2156,28 @@
   "2301668017451371": "Connexion à l’appareil...",
   "763b01de7b957db6": "{count, plural, =1 {Voir l’appareil} one {Voir {count} appareil} other {Voir {count} appareils}}",
   "1fce83f5af71f632": "Suivez et contrôlez les appareils ouverts dans ce fil",
-  "a92fe56ee3cdd944": "{count, plural, =1 {Un appareil ouvert} other {{count} appareils ouverts}}",
+  "459a156e0efc23f2": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "singular": "Un appareil ouvert",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " appareils ouverts"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "9ecbf9cadd5bbf7f": "Plantages au démarrage",
   "0bab38399ee6746c": "Journal des plantages indisponible",
   "be735b872d5ac200": "Les plantages au démarrage ne sont enregistrés que dans les builds de l’App Store et de TestFlight.",
@@ -3273,16 +3314,6 @@
   "2538822db1093509": "Retour aux fournisseurs",
   "7c19d25484218384": "Fournisseurs cloud",
   "a2f4d7c36423bbe5": "Aucun modèle de transcription ne correspond.",
-  "1fa254d98545ab8e": "Échec du téléchargement. Réessayez.",
-  "7ac0f48b44b95f3f": "Téléchargez {size} pour dicter hors ligne.",
-  "a4be2da8ba636a75": "Annulation du téléchargement…",
-  "651cb409bda342a8": "Supprimer {model}",
-  "68f05c5e4e67c24d": "Supprimer {model} ?",
-  "9be40a016dc63138": "Téléchargez à nouveau le modèle pour l’utiliser pour la dictée.",
-  "16182194d9202688": "Supprimer",
-  "bbed5949ca5cade3": "Impossible de supprimer le modèle",
-  "31187edd3f8e47a3": "Méthode sur cet appareil",
-  "1c8c24c85e11a338": "La dictée sur cet appareil nécessite iOS 26 ou une version ultérieure, un appareil compatible et une langue prise en charge. La dictée de votre clavier est distincte.",
   "a0e02b39c140831e": "Supprimer {route} ?",
   "987c5623ba70f390": "Routes",
   "192bed196981e02d": "Vos autorisations",
@@ -3789,6 +3820,7 @@
   "43bede0ca8240cae": "Le microphone de cet appareil",
   "2638893eacbb570f": "Le microphone de la voiture",
   "2c14a72bd967f644": "La dictée sur cet appareil nécessite Android 12 ou une version ultérieure et des services vocaux Google compatibles avec votre langue. La saisie vocale de votre clavier est distincte.",
+  "1c8c24c85e11a338": "La dictée sur cet appareil nécessite iOS 26 ou une version ultérieure, un appareil compatible et une langue prise en charge. La dictée de votre clavier est distincte.",
   "6e9c96e6b25914bd": "Impossible d’enregistrer le choix de transcription",
   "a808542c8c257a51": "La dictée dans un environnement est désactivée pour cette session. Enregistrez à nouveau avant de fermer l’app, sinon votre choix précédent pourrait revenir au redémarrage.",
   "88b8883d4b35039b": "Transcription indisponible",
@@ -5589,5 +5621,15 @@
   "eb287395a09cd288": "Envoyer les traces de connexion",
   "6787f93bbf6ce0b6": "Aide l’équipe T3 Code à résoudre les problèmes de connexion. Les traces contiennent des durées, des types d’erreur, un identifiant de cette session de l’app et la version de l’app, jamais vos fils, prompts ni votre code. Modifiable dans Réglages > À propos de T3 Code > Diagnostic.",
   "0b1e4aecbd38e0cf": "Quand l’app se connecte à un ordinateur via {product}, elle envoie à l’équipe T3 Code la durée de chaque étape, le type d’erreur, un identifiant de cette session de l’app et la version de l’app. Les traces n’incluent jamais vos fils, prompts ni votre code.",
-  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets."
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
+  "f248baa236fb70ca": "Download {model} in Settings → Voice to use it for dictation.",
+  "7ac0f48b44b95f3f": "Download {size} for offline dictation.",
+  "68f05c5e4e67c24d": "Remove {model}?",
+  "9be40a016dc63138": "Download the model again to use it for dictation.",
+  "16182194d9202688": "Remove",
+  "bbed5949ca5cade3": "Could not remove the model",
+  "a4be2da8ba636a75": "Cancelling download…",
+  "31187edd3f8e47a3": "Method on this device",
+  "651cb409bda342a8": "Remove {model}",
+  "1fa254d98545ab8e": "Download failed. Try again."
 }

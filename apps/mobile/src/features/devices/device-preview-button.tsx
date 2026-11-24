@@ -1,4 +1,4 @@
-import { useGT } from "gt-react-native";
+import { Plural, T, useGT, Var } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -33,9 +33,17 @@ export function DevicePreviewButton(props: {
       />
       {!compact ? (
         <AppText className="font-t3-medium text-xs text-foreground">
-          {gt("{count, plural, =1 {One device open} other {{count} devices open}}", {
-            count: props.count,
-          })}
+          <T>
+            <Plural
+              n={props.count}
+              singular="One device open"
+              other={
+                <>
+                  <Var>{props.count}</Var> devices open
+                </>
+              }
+            />
+          </T>
         </AppText>
       ) : props.count > 1 ? (
         <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-primary px-1">

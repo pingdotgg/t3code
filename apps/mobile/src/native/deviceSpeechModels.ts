@@ -3,6 +3,7 @@ import {
   throwIfVoiceTranscriptionAborted,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
+import { EnvironmentSpeechModel } from "@t3tools/contracts";
 import { Option } from "effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
@@ -31,6 +32,7 @@ const Model = Schema.Struct({
   description: Schema.String,
   size: Schema.Int.check(Schema.isGreaterThan(0)),
   languages: Schema.Array(Schema.String),
+  benchmark: EnvironmentSpeechModel.fields.benchmark,
 });
 type Model = typeof Model.Type;
 type CatalogState =

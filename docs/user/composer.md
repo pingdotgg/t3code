@@ -231,10 +231,12 @@ and edit before sending.
 
 By default, audio stays on the phone. iPhone uses Apple Speech by default, which
 requires a supported device with iOS 26 or later. In **Settings → Voice**, choose
-**This device**, then open **Local model** to view the models available on iPhone.
-Download a model and select it to dictate offline. It detects the spoken language
-and transcribes after you stop. Switch models or remove downloaded models from the
-same list, or choose **Apple Speech** in **Voice**.
+**This device**, then open **Local model** to view the models that fit the app's
+available memory. The model picker shows benchmark accuracy by language.
+Download a model and select it to dictate offline. Models with language detection
+detect the spoken language. Other models use a supported device language when
+available. Switch models or remove downloaded models from the same list, or choose
+**Apple Speech** in **Voice**.
 On-device dictation on Android requires Android 12 or later with compatible Google speech services.
 To use a paired environment instead, open **Settings → Voice → Transcribe on**,
 choose the environment, and confirm. Finished recordings go only to that environment,

@@ -125,10 +125,15 @@ export function generateSpeechCatalog(
   return { source: "@handy-computer/models", sourceVersion, engineVersion, models };
 }
 
-type SpeechCatalog = ReturnType<typeof generateSpeechCatalog>;
-
-export async function renderSpeechCatalog(catalog: SpeechCatalog) {
-  const result = await format("catalog.json", JSON.stringify(catalog));
+export async function renderSpeechCatalog(
+  data: CatalogData,
+  sourceVersion: string,
+  engineVersion: string,
+) {
+  const result = await format(
+    "catalog.json",
+    JSON.stringify(generateSpeechCatalog(data, sourceVersion, engineVersion)),
+  );
   if (result.errors.length > 0) throw new Error("Could not format speech catalog.");
   return result.code;
 }

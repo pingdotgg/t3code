@@ -1634,7 +1634,6 @@
   "40c503999bce960e": "Neue Aufgabe",
   "2225f6bda46f4cc6": "Tastatur ausblenden",
   "a1dbe20d209982b6": "Suchen",
-  "f248baa236fb70ca": "Lade {model} unter Einstellungen → Spracheingabe herunter, um damit zu diktieren.",
   "1065488dde93b8e4": "Sprachtranskription auf dem Gerät ist für diese Gerätesprache nicht verfügbar.",
   "f77d42d7e6973692": "Nicht genug Speicher für Diktieren auf dem Gerät. Gib Gerätespeicher frei und versuch es erneut.",
   "98da64927f544c96": "Kontingent für Spracherkennung auf dem Gerät erreicht. Lass das Gerät ruhen oder lade es auf und versuch es dann erneut.",
@@ -1928,7 +1927,28 @@
   "c2f0e285ba21bf0f": "Schwebende Vorschau schließen",
   "2f38f2e60ed18790": "{count, plural, =1 {Browser ansehen} other {{count} Browser-Tabs ansehen}}",
   "50abaf3c0482c1fb": "In diesem Thread geöffnete Browser-Tabs ansehen und steuern",
-  "97bd56f5784e255d": "{count, plural, =1 {Ein Tab geöffnet} other {{count} Tabs geöffnet}}",
+  "a210f8081a5d0e42": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "singular": "Ein Tab geöffnet",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " Tabs geöffnet"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "4d1f68ef069c7a0b": "Neuer Tab",
   "9c149c8c50e58e4c": "Umgebungen aktualisieren",
   "d81626aad3a95cb2": "Melde dich bei deinem T3-Konto an, um {product} einzurichten.",
@@ -2136,7 +2156,28 @@
   "2301668017451371": "Verbindung zum Gerät wird hergestellt...",
   "763b01de7b957db6": "{count, plural, =1 {Gerät ansehen} other {{count} Geräte ansehen}}",
   "1fce83f5af71f632": "In diesem Thread geöffnete Geräte ansehen und steuern",
-  "a92fe56ee3cdd944": "{count, plural, =1 {Ein Gerät geöffnet} other {{count} Geräte geöffnet}}",
+  "459a156e0efc23f2": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "singular": "Ein Gerät geöffnet",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " Geräte geöffnet"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "9ecbf9cadd5bbf7f": "Abstürze beim Start",
   "0bab38399ee6746c": "Absturzprotokoll nicht verfügbar",
   "be735b872d5ac200": "Aufzeichnungen über Abstürze beim Start werden nur in Store- und TestFlight-Builds gespeichert.",
@@ -3278,16 +3319,6 @@
   "2538822db1093509": "Zurück zu den Anbietern",
   "7c19d25484218384": "Cloud-Anbieter",
   "a2f4d7c36423bbe5": "Kein Transkriptionsmodell passt.",
-  "1fa254d98545ab8e": "Download fehlgeschlagen. Versuche es erneut.",
-  "7ac0f48b44b95f3f": "{size} für das Offline-Diktat herunterladen.",
-  "a4be2da8ba636a75": "Download wird abgebrochen …",
-  "651cb409bda342a8": "{model} entfernen",
-  "68f05c5e4e67c24d": "{model} entfernen?",
-  "9be40a016dc63138": "Lade das Modell erneut herunter, um damit zu diktieren.",
-  "16182194d9202688": "Entfernen",
-  "bbed5949ca5cade3": "Das Modell konnte nicht entfernt werden",
-  "31187edd3f8e47a3": "Methode auf diesem Gerät",
-  "1c8c24c85e11a338": "Diktieren auf diesem Gerät erfordert iOS 26 oder neuer, ein unterstütztes Gerät und eine unterstützte Sprache. Das Diktieren deiner Tastatur ist davon unabhängig.",
   "a0e02b39c140831e": "{route} entfernen?",
   "987c5623ba70f390": "Routen",
   "192bed196981e02d": "Deine Berechtigungen",
@@ -3794,6 +3825,7 @@
   "43bede0ca8240cae": "Das Mikrofon dieses Geräts",
   "2638893eacbb570f": "Das Mikrofon des Autos",
   "2c14a72bd967f644": "Diktieren auf diesem Gerät erfordert Android 12 oder neuer und Google-Sprachdienste, die deine Sprache unterstützen. Die Spracheingabe deiner Tastatur ist davon unabhängig.",
+  "1c8c24c85e11a338": "Diktieren auf diesem Gerät erfordert iOS 26 oder neuer, ein unterstütztes Gerät und eine unterstützte Sprache. Das Diktieren deiner Tastatur ist davon unabhängig.",
   "6e9c96e6b25914bd": "Transkriptionswahl konnte nicht gespeichert werden",
   "a808542c8c257a51": "Diktieren in einer Umgebung ist für diese Sitzung aus. Speichere erneut, bevor du die App schließt, sonst kehrt deine vorherige Wahl beim Neustart eventuell zurück.",
   "88b8883d4b35039b": "Transkription nicht verfügbar",
@@ -5595,5 +5627,15 @@
   "eb287395a09cd288": "Verbindungs-Traces senden",
   "6787f93bbf6ce0b6": "Hilft dem T3 Code-Team, Verbindungsprobleme zu beheben. Traces enthalten Zeiten, Fehlertypen, eine ID für diese App-Sitzung und die App-Version, nie deine Threads, Prompts oder deinen Code. Du kannst das unter Einstellungen > Über T3 Code > Diagnose ändern.",
   "0b1e4aecbd38e0cf": "Wenn die App über {product} eine Verbindung zu einem Computer herstellt, sendet sie dem T3 Code-Team, wie lange jeder Schritt gedauert hat, den Fehlertyp, eine ID für diese App-Sitzung und die App-Version. Traces enthalten nie deine Threads, Prompts oder deinen Code.",
-  "e0856d6a402ad821": "Die Richtlinie von {organization} erlaubt keine Worktree-Layout-Befehle von Projekten."
+  "e0856d6a402ad821": "Die Richtlinie von {organization} erlaubt keine Worktree-Layout-Befehle von Projekten.",
+  "f248baa236fb70ca": "Download {model} in Settings → Voice to use it for dictation.",
+  "7ac0f48b44b95f3f": "Download {size} for offline dictation.",
+  "68f05c5e4e67c24d": "Remove {model}?",
+  "9be40a016dc63138": "Download the model again to use it for dictation.",
+  "16182194d9202688": "Remove",
+  "bbed5949ca5cade3": "Could not remove the model",
+  "a4be2da8ba636a75": "Cancelling download…",
+  "31187edd3f8e47a3": "Method on this device",
+  "651cb409bda342a8": "Remove {model}",
+  "1fa254d98545ab8e": "Download failed. Try again."
 }

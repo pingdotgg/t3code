@@ -11,7 +11,6 @@
     "dev:client:preview": "eas env:exec preview 'EXPO_NO_DOTENV=1 APP_VARIANT=preview expo start --dev-client --scheme t3code-preview --lan'",
     "i18n:generate": "gt generate",
     "i18n:translate": "gt translate",
-    "speech:catalog:sync": "node scripts/sync-speech-catalog.mts",
     "start": "expo start",
     "start:dev": "APP_VARIANT=development expo start",
     "start:preview": "APP_VARIANT=preview expo start",

@@ -46,7 +46,7 @@ public class T3VoiceTranscriptionModule: Module {
       try VoiceRecordingPCM.signed16(file: uri)
     }
 
-    Function("getDeviceSpeechCatalog") { DeviceSpeechCatalog.models.map(\.payload) }
+    Function("getDeviceSpeechCatalog") { DeviceSpeechCatalog.availableModels.map(\.payload) }
 
     AsyncFunction("getDeviceSpeechModelStates") { () async -> [String: Any] in
       await self.models.snapshot(publish: self.publishModelStates).payload
@@ -68,8 +68,7 @@ public class T3VoiceTranscriptionModule: Module {
 
     AsyncFunction("transcribeWithDeviceSpeechModel") {
       (modelId: String, id: String, uri: URL) async throws -> [String: String] in
-      try await self.models.transcribe(
-        modelId: modelId, id: id, file: uri, publish: self.publishModelStates).payload
+      try await self.models.transcribe(modelId: modelId, id: id, file: uri).payload
     }
 
     AsyncFunction("cancelDeviceSpeechInference") { (id: String) async in

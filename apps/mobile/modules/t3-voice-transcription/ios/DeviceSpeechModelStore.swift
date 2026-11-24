@@ -2,21 +2,6 @@ import CryptoKit
 import Foundation
 import Synchronization
 
-struct DeviceSpeechModel: Sendable {
-  let id: String
-  let name: String
-  let description: String
-  let languages: [String]
-  let revision: String
-  let filename: String
-  let byteCount: Int
-  let sha256: String
-
-  var payload: [String: Any] {
-    ["id": id, "name": name, "description": description, "languages": languages, "size": byteCount]
-  }
-}
-
 actor DeviceSpeechModelStore {
   enum State: Equatable, Sendable {
     case missing
@@ -64,7 +49,7 @@ actor DeviceSpeechModelStore {
   private var current: Snapshot { Snapshot(states: states, revision: revision) }
 
   private func model(_ id: String) throws -> DeviceSpeechModel {
-    guard let model = DeviceSpeechCatalog.models.first(where: { $0.id == id }) else {
+    guard let model = DeviceSpeechCatalog.availableModels.first(where: { $0.id == id }) else {
       throw CocoaError(.featureUnsupported)
     }
     return model
@@ -72,11 +57,16 @@ actor DeviceSpeechModelStore {
 
   func snapshot(publish: Publish) -> Snapshot {
     prepareStorage()
-    for model in DeviceSpeechCatalog.models where model.id != download?.modelId {
-      let ready = Self.isCompleteFile(modelURL(model), size: model.byteCount)
+    let previous = states
+    for model in DeviceSpeechCatalog.availableModels where model.id != download?.modelId {
+      let ready = Self.isCompleteFile(modelURL(model), size: model.size)
       if ready || states[model.id] != .failed {
-        setState(ready ? .ready : .missing, for: model.id, publish: publish)
+        states[model.id] = ready ? .ready : .missing
       }
+    }
+    if states != previous {
+      revision += 1
+      publish(current)
     }
     return current
   }
@@ -107,6 +97,7 @@ actor DeviceSpeechModelStore {
   func prepareStorage() {
     guard !storagePrepared else { return }
     storagePrepared = true
+    guard !DeviceSpeechCatalog.models.isEmpty else { return }
     if !FileManager.default.fileExists(atPath: directory.path) {
       let previous = URL.applicationSupportDirectory.appending(path: "ParakeetUltra")
       try? FileManager.default.moveItem(at: previous, to: directory)
@@ -125,7 +116,7 @@ actor DeviceSpeechModelStore {
     inference?.cancellation.cancel()
   }
 
-  func transcribe(modelId: String, id: String, file: URL, publish: Publish) async throws
+  func transcribe(modelId: String, id: String, file: URL) async throws
     -> DeviceSpeechEngine.Transcript
   {
     if earlyCancellation == id {
@@ -134,8 +125,12 @@ actor DeviceSpeechModelStore {
     }
     guard inference == nil else { throw CocoaError(.fileLocking) }
     let model = try model(modelId)
-    guard snapshot(publish: publish).states[modelId] == .ready else {
+    prepareStorage()
+    guard Self.isCompleteFile(modelURL(model), size: model.size) else {
       throw CocoaError(.fileNoSuchFile)
+    }
+    guard model.fits(availableMemory: DeviceSpeechCatalog.availableMemory) else {
+      throw POSIXError(.ENOMEM)
     }
 
     let cancellation = SpeechInferenceCancellation()
@@ -170,7 +165,7 @@ actor DeviceSpeechModelStore {
         string:
           "https://huggingface.co/\(model.id)/resolve/\(model.revision)/\(model.filename)"
       )!
-      let progress = DownloadProgress(size: Int64(model.byteCount)) { [weak self] percent in
+      let progress = DownloadProgress(size: Int64(model.size)) { [weak self] percent in
         Task { await self?.reportProgress(percent, revision: revision, publish: publish) }
       }
       let session = URLSession(configuration: .ephemeral)
@@ -179,7 +174,7 @@ actor DeviceSpeechModelStore {
       defer { try? Self.removeIfPresent(temporary) }
       try Task.checkCancellation()
       guard (response as? HTTPURLResponse)?.statusCode == 200,
-        Self.isCompleteFile(temporary, size: model.byteCount)
+        Self.isCompleteFile(temporary, size: model.size)
       else {
         throw CocoaError(.fileReadCorruptFile)
       }

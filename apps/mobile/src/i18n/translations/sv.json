@@ -1634,7 +1634,6 @@
   "40c503999bce960e": "Ny uppgift",
   "2225f6bda46f4cc6": "Stäng tangentbordet",
   "a1dbe20d209982b6": "Sök",
-  "f248baa236fb70ca": "Ladda ner {model} under Inställningar → Röst för att använda modellen för diktering.",
   "1065488dde93b8e4": "Rösttranskribering på enheten är inte tillgänglig för enhetens språk.",
   "f77d42d7e6973692": "Inte tillräckligt med lagring för diktering på enheten. Frigör lagringsutrymme och försök igen.",
   "98da64927f544c96": "Kvoten för tal på enheten har nåtts. Låt enheten vila eller ladda den och försök sedan igen.",
@@ -1928,7 +1927,28 @@
   "c2f0e285ba21bf0f": "Stäng svävande förhandsvisning",
   "2f38f2e60ed18790": "{count, plural, =1 {Visa webbläsaren} one {Visa {count} webbläsarflik} other {Visa {count} webbläsarflikar}}",
   "50abaf3c0482c1fb": "Följ och styr webbläsarflikar som är öppna i den här tråden",
-  "97bd56f5784e255d": "{count, plural, =1 {En flik öppen} other {{count} flikar öppna}}",
+  "a210f8081a5d0e42": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "singular": "En flik öppen",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " flikar öppna"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "4d1f68ef069c7a0b": "Ny flik",
   "9c149c8c50e58e4c": "Uppdatera miljöer",
   "d81626aad3a95cb2": "Logga in på ditt T3-konto för att konfigurera {product}.",
@@ -2136,7 +2156,28 @@
   "2301668017451371": "Ansluter till enheten...",
   "763b01de7b957db6": "{count, plural, =1 {Visa enheten} one {Visa {count} enhet} other {Visa {count} enheter}}",
   "1fce83f5af71f632": "Följ och styr enheter som är öppna i den här tråden",
-  "a92fe56ee3cdd944": "{count, plural, =1 {En enhet öppen} other {{count} enheter öppna}}",
+  "459a156e0efc23f2": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "singular": "En enhet öppen",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " enheter öppna"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "9ecbf9cadd5bbf7f": "Krascher vid start",
   "0bab38399ee6746c": "Kraschloggen är inte tillgänglig",
   "be735b872d5ac200": "Poster om krascher vid start sparas bara i App Store- och TestFlight-versioner.",
@@ -3279,16 +3320,6 @@
   "2538822db1093509": "Tillbaka till leverantörer",
   "7c19d25484218384": "Molnleverantörer",
   "a2f4d7c36423bbe5": "Ingen transkriberingsmodell matchar.",
-  "1fa254d98545ab8e": "Nedladdningen misslyckades. Försök igen.",
-  "7ac0f48b44b95f3f": "Ladda ner {size} för diktering offline.",
-  "a4be2da8ba636a75": "Avbryter nedladdningen …",
-  "651cb409bda342a8": "Ta bort {model}",
-  "68f05c5e4e67c24d": "Vill du ta bort {model}?",
-  "9be40a016dc63138": "Ladda ner modellen igen för att använda den för diktering.",
-  "16182194d9202688": "Ta bort",
-  "bbed5949ca5cade3": "Det gick inte att ta bort modellen",
-  "31187edd3f8e47a3": "Metod på den här enheten",
-  "1c8c24c85e11a338": "Diktering på den här enheten kräver iOS 26 eller senare, en enhet som stöds och ett språk som stöds. Tangentbordets diktering är separat.",
   "a0e02b39c140831e": "Ta bort {route}?",
   "987c5623ba70f390": "Rutter",
   "192bed196981e02d": "Dina behörigheter",
@@ -3795,6 +3826,7 @@
   "43bede0ca8240cae": "Mikrofonen på den här enheten",
   "2638893eacbb570f": "Bilens mikrofon",
   "2c14a72bd967f644": "Diktering på den här enheten kräver Android 12 eller senare och Googles taltjänster med stöd för ditt språk. Tangentbordets röstinmatning är separat.",
+  "1c8c24c85e11a338": "Diktering på den här enheten kräver iOS 26 eller senare, en enhet som stöds och ett språk som stöds. Tangentbordets diktering är separat.",
   "6e9c96e6b25914bd": "Kunde inte spara transkriberingsvalet",
   "a808542c8c257a51": "Diktering i en miljö är avstängd för den här sessionen. Spara igen innan du stänger appen, annars kan ditt tidigare val komma tillbaka när den startar om.",
   "88b8883d4b35039b": "Transkribering är inte tillgänglig",
@@ -5595,5 +5627,15 @@
   "eb287395a09cd288": "Skicka anslutningsspårningar",
   "6787f93bbf6ce0b6": "Hjälper T3 Code-teamet att åtgärda anslutningsproblem. Spårningar innehåller tider, feltyper, ett ID för den här appsessionen och appversionen, aldrig dina trådar, prompter eller din kod. Du kan ändra det under Inställningar > Om T3 Code > Diagnostik.",
   "0b1e4aecbd38e0cf": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog, feltypen, ett ID för den här appsessionen och appversionen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod.",
-  "e0856d6a402ad821": "Policyn för {organization} tillåter inte projekts layoutkommandon för worktrees."
+  "e0856d6a402ad821": "Policyn för {organization} tillåter inte projekts layoutkommandon för worktrees.",
+  "f248baa236fb70ca": "Download {model} in Settings → Voice to use it for dictation.",
+  "7ac0f48b44b95f3f": "Download {size} for offline dictation.",
+  "68f05c5e4e67c24d": "Remove {model}?",
+  "9be40a016dc63138": "Download the model again to use it for dictation.",
+  "16182194d9202688": "Remove",
+  "bbed5949ca5cade3": "Could not remove the model",
+  "a4be2da8ba636a75": "Cancelling download…",
+  "31187edd3f8e47a3": "Method on this device",
+  "651cb409bda342a8": "Remove {model}",
+  "1fa254d98545ab8e": "Download failed. Try again."
 }
