@@ -1967,7 +1967,7 @@ describe("UsageService", () => {
       const sources = yield* Fiber.join(wider);
       assert.deepStrictEqual(cursor.state.calls, [
         { sinceMs: input.retentionCutoffMs, untilMs: CURSOR_NOW },
-        { sinceMs: 0, untilMs: CURSOR_NOW },
+        { sinceMs: 0, untilMs: input.retentionCutoffMs },
       ]);
       assert.strictEqual(sources[0]?.status, "ok");
       assert.deepStrictEqual(
@@ -2071,6 +2071,78 @@ describe("UsageService", () => {
             platform: "darwin",
             environment: {},
             secretStore: { get: () => Effect.sync(signIn) },
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("loads Cursor history that cannot be read in one request within the deadline", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [
+        { timestampMs: CURSOR_NOW - 40 * HOUR_MS, outputTokens: 7 },
+        { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 5 },
+      ];
+      // A large account: a window wider than half a day has too many pages for the read deadlines.
+      const read: CursorAccountReader.CursorAccountReader["Service"]["read"] = (
+        credential,
+        sinceMs,
+        untilMs,
+      ) =>
+        untilMs - sinceMs > 12 * HOUR_MS
+          ? Effect.succeed({
+              accountKey: cursor.state.accountKey,
+              records: [],
+              missing: false,
+              error: "Cursor account usage could not be read.",
+            })
+          : cursor.read(credential, sinceMs, untilMs);
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(read);
+        let summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        for (let attempt = 1; attempt < 10 && totalOutputTokens(summary) < 12; attempt++) {
+          yield* TestClock.adjust("2 minutes");
+          summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }
+        assert.strictEqual(totalOutputTokens(summary), 12);
+
+        // Failed reads during an outage narrow the span; it widens back once reads work again.
+        cursor.state.error = "Cursor account usage could not be read.";
+        for (let attempt = 0; attempt < 20; attempt++) {
+          yield* TestClock.adjust("2 minutes");
+          yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }
+        cursor.state.error = null;
+        yield* TestClock.adjust("10 hours");
+        cursor.state.events.push({ timestampMs: CURSOR_NOW + 10 * HOUR_MS, outputTokens: 3 });
+        const callsBeforeRecovery = cursor.state.calls.length;
+        summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(totalOutputTokens(summary), 15);
+        assert.isBelow(cursor.state.calls.length - callsBeforeRecovery, 20);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-large-account",
+            home,
+            settings,
+            platform: "darwin",
+            environment: {},
+            secretStore: {
+              get: () =>
+                Effect.succeedSome(
+                  new TextEncoder().encode(
+                    encodeUnknownJsonString({
+                      version: 1,
+                      backendUrl: "https://api2.cursor.sh",
+                      apiKey: "large-account-key",
+                      createdAtMs: 0,
+                    }),
+                  ),
+                ),
+            },
           }),
         ),
       );
@@ -2437,7 +2509,11 @@ describe("UsageService", () => {
       );
       const summary = yield* service.readSummary(WINDOW);
       const sourcesFor = (provider: "opencode" | "antigravity") =>
-        summary.sources.filter((source) => source.fingerprint.provider === provider);
+        summary.sources.filter(
+          (source) =>
+            source.fingerprint.provider === provider &&
+            !source.fingerprint.resolvedHomePath.endsWith("antigravity-acp"),
+        );
       assert.strictEqual(sourcesFor("opencode").length, 1);
       assert.strictEqual(sourcesFor("antigravity").length, 1);
       assert.strictEqual(
@@ -2519,6 +2595,61 @@ describe("UsageService", () => {
           outputTokens,
         );
       }
+    }),
+  );
+
+  it.effect("reads Antigravity history from the default instance's T3-managed profile", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const prefix = "usage-service-antigravity-default-profile-test";
+      const stateDir = NodePath.join(home, prefix, "userdata");
+      const conversations = NodePath.join(
+        stateDir,
+        "providers",
+        "antigravity",
+        // sha256("antigravity"), the default instance's profile key.
+        "ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
+        "antigravity-acp",
+        "conversations",
+      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(conversations, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(NodePath.join(conversations, "profile.db"));
+        try {
+          db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+          // Step protobuf: 100 input tokens, 7 output tokens, and 2026-08-01T10:00Z.
+          const metadata = new Uint8Array([
+            0x4a,
+            4,
+            0x10,
+            100,
+            0x18,
+            7,
+            ...Buffer.from("420608a087b7d306", "hex"),
+          ]);
+          db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
+        } finally {
+          db.close();
+        }
+      });
+      yield* Effect.gen(function* () {
+        assert.strictEqual((yield* ServerConfig.ServerConfig).stateDir, stateDir);
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        const root = yield* Effect.promise(() => NodeFSP.realpath(conversations));
+        assert.include(
+          summary.sources
+            .filter((source) => source.fingerprint.provider === "antigravity")
+            .map((source) => source.fingerprint.resolvedHomePath),
+          root,
+        );
+        assert.strictEqual(
+          summary.buckets
+            .filter((bucket) => bucket.provider === "antigravity" && bucket.sourcePath === root)
+            .reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+          7,
+        );
+      }).pipe(Effect.provide(layerService({ prefix, home, settings })));
     }),
   );
 
@@ -3167,6 +3298,72 @@ describe("UsageService", () => {
       }),
   );
 
+  it.effect("limits cached transcript work and diagnostics to the requested dates", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const dir = NodePath.join(home, "codex", "sessions");
+      const transcript = NodePath.join(dir, "rollout.jsonl");
+      const line = (timestamp: string, input: number, total: number) =>
+        JSON.stringify({
+          type: "event_msg",
+          timestamp,
+          payload: {
+            type: "token_count",
+            info: {
+              last_token_usage: { input_tokens: input, output_tokens: 1 },
+              total_token_usage: { input_tokens: total, output_tokens: total / 10 },
+            },
+          },
+        });
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(dir, { recursive: true });
+        await NodeFSP.writeFile(
+          transcript,
+          [
+            JSON.stringify({ type: "turn_context", payload: { model: "gpt-6-astra" } }),
+            line("2026-08-01T10:00:00Z", 10, 10),
+            line("2026-08-01T11:00:00Z", 10, 40),
+          ].join("\n") + "\n",
+        );
+      });
+      yield* Effect.gen(function* () {
+        const first = yield* UsageService.make;
+        const source = (summary: UsageSummary) =>
+          summary.sources.find((s) => s.fingerprint.provider === "codex")!;
+        assert.strictEqual(source(yield* first.readSummary(WINDOW)).malformedRecords, 1);
+        const hour = {
+          ...WINDOW,
+          resolution: "hour" as const,
+          sinceTime: "2026-08-01T10:00:00Z",
+          untilTime: "2026-08-01T11:00:00Z",
+        };
+        assert.strictEqual(source(yield* first.readSummary(hour)).malformedRecords, 0);
+
+        yield* first.awaitPersisted;
+        const restarted = yield* UsageService.make;
+        const nextDay = {
+          ...WINDOW,
+          sinceDay: UsageDay.make("2026-08-02"),
+          untilDay: UsageDay.make("2026-08-02"),
+        };
+        const outside = source(yield* restarted.readSummary(nextDay));
+        assert.strictEqual(outside.malformedRecords, 0);
+        assert.strictEqual(outside.scannedFiles, 0);
+        assert.strictEqual(outside.message, null);
+        yield* Effect.promise(() =>
+          NodeFSP.appendFile(transcript, line("2026-08-02T10:00:00Z", 10, 10)),
+        );
+        const mixed = yield* restarted.readSummary(nextDay);
+        assert.strictEqual(totalOutputTokens(mixed), 1);
+        assert.strictEqual(source(mixed).malformedRecords, 0);
+        yield* restarted.awaitPersisted;
+        const saved = yield* UsageService.make;
+        assert.strictEqual(source(yield* saved.readSummary(nextDay)).malformedRecords, 0);
+        assert.strictEqual(source(yield* saved.readSummary(WINDOW)).malformedRecords, 1);
+      }).pipe(Effect.provide(layerService({ prefix: "usage-window-diagnostics", home, settings })));
+    }),
+  );
+
   it.effect(
     "merges partial Claude copies through tail replacement, newline completion and restart",
     () =>
@@ -3761,6 +3958,32 @@ describe("UsageService", () => {
     }),
   );
 
+  it.effect("leaves a duplicate uncounted when its first copy is before the window", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const dir = NodePath.dirname(transcript);
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
+        await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
+        const [first = "", second = ""] = (await NodeFSP.readdir(dir)).map((name) =>
+          NodePath.join(dir, name),
+        );
+        const nextDay = (line: string) => line.replace("2026-08-01", "2026-08-02");
+        await NodeFSP.writeFile(first, claudeLine(1, 5));
+        await NodeFSP.writeFile(second, nextDay(claudeLine(1, 5)) + nextDay(claudeLine(2, 7)));
+      });
+      yield* Effect.gen(function* () {
+        const summary = yield* (yield* UsageService.make).readSummary({
+          ...WINDOW,
+          sinceDay: UsageDay.make("2026-08-02"),
+        });
+        assert.strictEqual(totalOutputTokens(summary), 7);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-early-copy-test", home, settings })),
+      );
+    }),
+  );
+
   it.effect("credits the same copy of a duplicate from the last scan as an exact read does", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-08-15T00:00:00Z"));
@@ -3871,7 +4094,7 @@ describe("UsageService", () => {
                   provider: "claude" as const,
                   records: [],
                   tailRecords: [],
-                  malformedRecords: 2,
+                  malformedRecords: [mtimeMs, mtimeMs],
                   position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
                 },
               ],

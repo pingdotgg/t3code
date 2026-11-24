@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react-native";
 import { Platform, Pressable } from "react-native";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -7,17 +8,22 @@ import { useAndroidControlSizing } from "../../../components/ui/useAndroidContro
 import { isSharedSlotTab, type SharedSlotTab } from "./navigation-tab-order";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
-const TITLES = { pullRequests: "Pull requests", issues: "Issues" } as const;
+const TITLES = {
+  pullRequests: msg("Pull requests"),
+  issues: msg("Issues", { $context: "screen title, list of issues" }),
+} as const;
 
 /** The header title of the tab pull requests and issues share: names the list and switches it. */
 export function SharedSlotTitle(props: { readonly tab: SharedSlotTab }) {
+  const gt = useGT();
+  const messages = useMessages();
   const selectTab = useSelectWorkspaceTab();
   const { scale } = useAndroidControlSizing();
   return (
     <Menu
       actions={Object.entries(TITLES).map(([id, title]) => ({
         id,
-        title,
+        title: messages(title),
         state: id === props.tab ? ("on" as const) : ("off" as const),
       }))}
       onPressAction={({ nativeEvent }) => {
@@ -27,7 +33,7 @@ export function SharedSlotTitle(props: { readonly tab: SharedSlotTab }) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${TITLES[props.tab]}, switch list`}
+        accessibilityLabel={gt("{list}, switch list", { list: messages(TITLES[props.tab]) })}
         hitSlop={8}
         className="flex-row items-center gap-1.5"
       >
@@ -38,7 +44,7 @@ export function SharedSlotTitle(props: { readonly tab: SharedSlotTab }) {
           className="font-t3-bold text-foreground"
           style={{ fontSize: 20 * scale, letterSpacing: -0.4 * scale }}
         >
-          {TITLES[props.tab]}
+          {messages(TITLES[props.tab])}
         </Text>
         <SymbolView
           name="chevron.down"

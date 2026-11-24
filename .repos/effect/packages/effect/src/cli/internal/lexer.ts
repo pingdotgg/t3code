@@ -46,6 +46,20 @@ export function lex(argv: ReadonlyArray<string>): LexResult {
   }
 }
 
+/**
+ * Formats a token as an argument. Short option clusters become one argument
+ * per flag.
+ *
+ * @internal
+ */
+export const formatToken = (token: Token): string => {
+  if (token._tag === "Value") return token.value
+  if (token._tag === "LongOption") return token.raw
+  // Numeric aliases need long-option syntax to avoid becoming negative numbers.
+  const flag = negativeNumberRegex.test(token.raw) ? `--${token.flag}` : token.raw
+  return token.value === undefined ? flag : `${flag}=${token.value}`
+}
+
 const negativeNumberRegex = /^-(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
 
 const lexTokens = (args: ReadonlyArray<string>): ReadonlyArray<Token> => {

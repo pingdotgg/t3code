@@ -261,6 +261,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
       readonly remoteUrl?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
 
@@ -494,7 +495,8 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
     return { command: "az", args: [] } satisfies AzureCliInvocation;
   }
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const launcher = resolveExecutable("az", "win32", yield* HostProcess.Environment);
+  const env = yield* HostProcess.Environment;
+  const launcher = yield* Effect.promise(async () => resolveExecutable("az", "win32", env));
   const installFor = yield* AzureCliInstallLocation;
   const install = launcher === undefined ? undefined : installFor(launcher);
   // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
@@ -746,6 +748,7 @@ export const make = Effect.gen(function* () {
           title.arg,
           // Joined: az expands a separate `@file` value again, so a body of `@path` read that file.
           `--description=@${input.bodyFile}`,
+          ...(input.draft === true ? ["--draft", "true"] : []),
         ],
         ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
       }).pipe(Effect.asVoid);
