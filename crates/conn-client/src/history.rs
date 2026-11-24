@@ -27,6 +27,12 @@ pub fn build_thread_history_url(
     thread_id: &str,
     cursor: &str,
 ) -> Result<Url, ClientError> {
+    let mut url = thread_url(http_base_url, thread_id, "history")?;
+    url.query_pairs_mut().append_pair("cursor", cursor);
+    Ok(url)
+}
+
+fn thread_url(http_base_url: &Url, thread_id: &str, resource: &str) -> Result<Url, ClientError> {
     let mut url = http_base_url.clone();
     url.set_query(None);
     url.set_fragment(None);
@@ -38,9 +44,8 @@ pub fn build_thread_history_url(
             ))
         })?;
         segments.pop_if_empty();
-        segments.extend(["api", "orchestration", "threads", thread_id, "history"]);
+        segments.extend(["api", "orchestration", "threads", thread_id, resource]);
     }
-    url.query_pairs_mut().append_pair("cursor", cursor);
     Ok(url)
 }
 
@@ -62,6 +67,39 @@ impl Connection {
         cursor: &str,
     ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
         let url = build_thread_history_url(&self.http_base_url, thread_id, cursor)?;
+        self.get_history_json(url).await
+    }
+
+    /// Fetches the ordered prompt index without downloading transcript bodies.
+    ///
+    /// # Errors
+    /// Returns the transport, authentication or decoding error.
+    pub async fn fetch_thread_outline(
+        &self,
+        thread_id: &str,
+    ) -> Result<conn_contract::ThreadOutline, ClientError> {
+        self.get_history_json(thread_url(&self.http_base_url, thread_id, "outline")?)
+            .await
+    }
+
+    /// Fetches a bounded page containing a visible prompt and its neighbors.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown target, rejected request or invalid response.
+    pub async fn fetch_thread_window(
+        &self,
+        thread_id: &str,
+        entry_id: &str,
+    ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
+        let mut url = thread_url(&self.http_base_url, thread_id, "window")?;
+        url.query_pairs_mut().append_pair("entryId", entry_id);
+        self.get_history_json(url).await
+    }
+
+    async fn get_history_json<T: serde::de::DeserializeOwned + Send + 'static>(
+        &self,
+        url: Url,
+    ) -> Result<T, ClientError> {
         let http = self.http.clone();
         let bearer = self.bearer.read().ok().and_then(|g| g.clone());
 
