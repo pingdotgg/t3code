@@ -253,7 +253,9 @@ async fn project_file(cwd: &Path, rev: &str) -> Option<ProjectFile> {
     let text = repo::optional_text(git(OPERATION, cwd, ["show", spec.as_str()]))
         .await
         .ok()??;
-    conn_support::json::parse_lenient(&text)
+    // Through `Value`, so a repeated key takes its last value, as `JSON.parse` does.
+    let value: serde_json::Value = conn_support::json::parse_lenient(&text)?;
+    ProjectFile::deserialize(value).ok()
 }
 
 /// `T3ProjectFile`. Fields Conn does not use are decoded only so an invalid one rejects the

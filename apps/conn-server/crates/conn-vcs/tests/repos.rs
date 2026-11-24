@@ -1725,6 +1725,17 @@ async fn submodule_mode_follows_the_setting_then_t3_json() {
         mode(None).await,
         Some((Submodules::None, Origin::ProjectFile))
     );
+    // A repeated key takes its last value, as `JSON.parse` does.
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSubmodules":"recursive","worktreeSubmodules":"top-level"}"#,
+    );
+    commit_all(&fx.work, "repeated key");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::TopLevel, Origin::ProjectFile))
+    );
     write(
         &fx.work,
         "t3.json",
