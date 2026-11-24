@@ -818,6 +818,7 @@
   "21872f69ccbc711d": "正在啟動 {provider} MCP 伺服器",
   "fedaa29ff8815a77": "正在載入 {provider} hook",
   "57025ae4de5beb57": "正在載入 {provider} 規則和技能",
+  "1cbfbcad9f0d04fe": "正在恢復 {provider} 工作階段",
   "4729a188600f1501": "正在連線 {provider}",
   "8c8977097681630f": "正在啟動 {provider}",
   "f1d27d127ab27ac6": "正在啟動",
@@ -6644,29 +6645,7 @@
   "1b381201aba745c2": "沒有回報任何檢查",
   "a6d75a4380173c60": "開啟檢查：{summary}",
   "be3d1766bad18693": "檢查：{summary}",
-  "425e4a3d6c5c2867": "{count, plural, other {{count} 個失敗}}",
   "cb116c139cdace98": "沒有回報任何檢查",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "項檢查"
-  ],
   "60b56e201607c7ec": "檢查詳細資訊已過時。請重新整理提取請求以更新。",
   "e74cd4e960cbb5e5": "包含截斷行的檔案中無法檢視未變更的行。",
   "38d6169e04a9a4ce": "無法載入更多留言",
@@ -7345,6 +7324,9 @@
   "9b0647af63a7d8c1": "已核准較早的變更",
   "abe99679224fea5e": "已對較早的變更請求修改",
   "6b31ad910278ff72": "對較早變更的審查已忽略",
+  "425e4a3d6c5c2867": "{count, plural, other {{count} 個失敗}}",
+  "fd63b391898889f9": "{count, plural, other {{count} 個等待處理}}",
+  "948185631ef288e6": "{count, plural, other {{count} 個執行中}}",
   "aaf22207b2f18c45": "{workflows, plural, other {{workflows} 個工作流程}}和 {checks, plural, other {{checks} 項檢查}}等待操作",
   "c51411813ebafcc1": "{count, plural, other {{count} 個工作流程等待核准}}",
   "4946778c8e18a1db": "{count, plural, other {{count} 項檢查等待操作}}",
@@ -12192,7 +12174,6 @@
   "c1a9fe8e24876f1d": "{count, plural, other {{count} 個正在執行的對話將被中斷。}}",
   "ecdf5f108ecc71d0": "{count, plural, other {{count} 個可在重新啟動後恢復。}}",
   "0576c87870fb6389": "更新",
-  "948185631ef288e6": "{count, plural, other {{count} 個執行中}}",
   "3d9a2f6b9c114039": "供應商",
   "f4baf8deafbb227d": "已略過",
   "f938bb483eb3d189": "最後重新啟動",
