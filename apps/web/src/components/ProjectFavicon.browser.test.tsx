@@ -19,6 +19,7 @@ vi.mock(import("../state/assets"), () => ({
 }));
 
 function setup() {
+  state.refresh = () => {};
   const activeResources = new Set<string>();
   state.favicon = Atom.make((get) => {
     activeResources.add("favicon");
