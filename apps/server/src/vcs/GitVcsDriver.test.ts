@@ -799,6 +799,25 @@ const trackIgnoredFileOnBranch = ({ git, write }: CaptureIndexChange) =>
     yield* git(["commit", "--quiet", "-m", "other"]);
   });
 
+const makeNestedRepository = ({ git }: CaptureIndexChange) =>
+  git(["init", "--quiet", "nested"]).pipe(
+    Effect.andThen(
+      git([
+        "-C",
+        "nested",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@test.com",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "nested",
+      ]),
+    ),
+  );
+
 it.effect.each([
   { name: "nothing changed", reuses: true, change: () => Effect.void },
   {
@@ -886,24 +905,38 @@ it.effect.each([
   {
     name: "an untracked directory became a repository",
     reuses: true,
-    change: ({ git }: CaptureIndexChange) =>
-      git(["init", "--quiet", "nested"]).pipe(
-        Effect.andThen(
-          git([
-            "-C",
-            "nested",
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@test.com",
-            "commit",
-            "--quiet",
-            "--allow-empty",
-            "-m",
-            "nested",
-          ]),
-        ),
-      ),
+    change: makeNestedRepository,
+  },
+  {
+    name: "an untracked repository lost its .git but kept its files",
+    reuses: true,
+    setup: makeNestedRepository,
+    change: ({ fs, path, cwd }: CaptureIndexChange) =>
+      fs.remove(path.join(cwd, "nested/.git"), { recursive: true }),
+  },
+  {
+    name: "an untracked file was edited under core.ignorestat",
+    reuses: true,
+    setup: ({ git }: CaptureIndexChange) => git(["config", "core.ignorestat", "true"]),
+    change: ({ write }: CaptureIndexChange) => write("nested/small.txt", "edited\n"),
+  },
+  {
+    name: "core.ignorestat was turned on",
+    reuses: false,
+    change: ({ git }: CaptureIndexChange) => git(["config", "core.ignorestat", "true"]),
+  },
+  {
+    name: "the last of several core.attributesFile values changed its rules",
+    reuses: false,
+    // Git reads only the last value, as a local value overrides a global one.
+    setup: ({ git, write, path, cwd }: CaptureIndexChange) =>
+      Effect.gen(function* () {
+        for (const name of ["attributes-first", "attributes-last"]) {
+          yield* write(`.git/${name}`, "");
+          yield* git(["config", "--add", "core.attributesFile", path.join(cwd, ".git", name)]);
+        }
+      }),
+    change: ({ write }: CaptureIndexChange) => write(".git/attributes-last", "*.txt text eol=lf\n"),
   },
   {
     name: "its conversion attributes changed",
@@ -1057,13 +1090,49 @@ it.effect.each([
         checkpointRef: freshRef,
       });
 
-      assert.strictEqual(rebuilt === 0, reuses);
       assert.strictEqual(
         (yield* git(["rev-parse", `${checkpointRef}^{tree}`])).stdout,
         (yield* git(["rev-parse", `${freshRef}^{tree}`])).stdout,
       );
+      assert.strictEqual(rebuilt === 0, reuses);
       yield* git(["fsck", "--connectivity-only"]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([
+  { name: "2", line: "sparseCheckout = 2", sparse: true },
+  { name: "valueless", line: "sparseCheckout", sparse: true },
+  { name: "empty", line: "sparseCheckout =", sparse: false },
+  { name: "missing", line: "", sparse: false },
+])("checkpoint capture reads core.sparseCheckout as Git does: $name", ({ line, sparse }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const sparseAdds: boolean[] = [];
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (
+            input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
+            input.args.includes("add") &&
+            !input.args.includes("-h")
+          )
+            sparseAdds.push(input.args.includes("--sparse"));
+          return liveProcess.run(input);
+        },
+      }),
+    );
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-capture-sparse-bool-" });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const configFile = path.join(cwd, ".git/config");
+    yield* fs.writeFileString(
+      configFile,
+      `${yield* fs.readFileString(configFile)}[core]\n\t${line}\n`,
+    );
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    assert.deepEqual(sparseAdds, [sparse]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("a capture through a kept index skips the index rebuild and its scan", () =>
@@ -1093,11 +1162,29 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
     commands = [];
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
-    assert.includeMembers(rebuilt, ["read-tree", "ls-files", "add", "write-tree"]);
-    assert.notInclude(commands, "read-tree");
-    assert.notInclude(commands, "ls-files");
-    assert.includeMembers(commands, ["diff-tree", "add", "write-tree"]);
-    assert.isAtMost(commands.length, rebuilt.length + 3);
+    const [start, end] = [
+      ["rev-parse", "log", "config"],
+      ["commit-tree", "update-ref"],
+    ];
+    assert.deepStrictEqual(rebuilt, [
+      ...start,
+      "read-tree",
+      "ls-files",
+      "add",
+      "write-tree",
+      ...end,
+    ]);
+    // HEAD lacks untracked.txt, so check-ignore runs; the last diff-tree checks .gitattributes.
+    assert.deepStrictEqual(commands, [
+      ...start,
+      "diff-tree",
+      "check-ignore",
+      "cat-file",
+      "add",
+      "write-tree",
+      "diff-tree",
+      ...end,
+    ]);
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

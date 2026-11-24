@@ -70,6 +70,28 @@ export const removeForScopes = Effect.fn("GitVcsDriver.checkpoints.removeCapture
   (effect) => Effect.ignore(effect),
 );
 
+/**
+ * The value Git uses for `key` in `git config --null --get-regexp` output: the last one, as local
+ * config follows global and system. Null marks a key written without a value.
+ */
+export const lastConfigValue = (stdout: string, key: string) => {
+  let value: string | null | undefined;
+  for (const record of stdout.split("\0")) {
+    const newline = record.indexOf("\n");
+    if ((newline === -1 ? record : record.slice(0, newline)) === key)
+      value = newline === -1 ? null : record.slice(newline + 1);
+  }
+  return value;
+};
+
+/** Git's boolean rules: a valueless key is true, an empty value false, any other integer true. */
+export const gitBool = (value: string | null) => {
+  if (value === null) return true;
+  if (/^(?:true|yes|on)$/i.test(value)) return true;
+  const integer = /^[+-]?(\d+)[kmg]?$/i.exec(value);
+  return integer !== null && /[1-9]/.test(integer[1]!);
+};
+
 const statSignature = (fileSystem: FileSystem.FileSystem, file: string) =>
   fileSystem.stat(file).pipe(
     Effect.map(
@@ -111,7 +133,7 @@ export const make = (
       readonly prefix: string;
       readonly hostEnv: NodeJS.ProcessEnv;
     }) {
-      const attributesFile = /(?:^|\0)core\.attributesfile\n([^\0]*)/.exec(input.config)?.[1];
+      const attributesFile = lastConfigValue(input.config, "core.attributesfile") ?? undefined;
       const home = input.hostEnv.HOME ?? "";
       const globalAttributes =
         attributesFile === undefined
@@ -257,6 +279,8 @@ export const make = (
             directories.add(entry.path.slice(0, end));
           }
         }
+        // A gitlink whose directory lost its repository is a plain folder that add -A descends into.
+        for (const entry of candidates) if (entry.mode === "160000") directories.add(entry.path);
         const repositories = new Set<string>();
         yield* Effect.forEach(
           directories,
@@ -279,7 +303,11 @@ export const make = (
           return false;
         };
         for (const entry of candidates) {
-          if (ignoredPaths.has(entry.path) || insideRepository(entry.path)) {
+          if (
+            ignoredPaths.has(entry.path) ||
+            insideRepository(entry.path) ||
+            (entry.mode === "160000" && !repositories.has(entry.path))
+          ) {
             updates.push(`0 ${entry.oid}\t${entry.path}`);
           } else if (entry.mode !== "160000") {
             kept.add(entry.oid);

@@ -1368,16 +1368,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "config",
             "--null",
             "--get-regexp",
-            "^(core\\.(sparsecheckout|autocrlf|eol|filemode|symlinks|ignorecase|precomposeunicode|checkstat|trustctime|attributesfile)|filter\\..*)$",
+            "^(core\\.(sparsecheckout|autocrlf|eol|filemode|symlinks|ignorecase|precomposeunicode|checkstat|trustctime|ignorestat|attributesfile|checkroundtripencoding)|filter\\..*)$",
           ],
           allowNonZeroExit: true,
         });
-        // The last value wins; a key without a value is true.
-        const sparseValue = [
-          ...`\0${config.stdout}`.matchAll(/\0core\.sparsecheckout(?:\n([^\0]*))?(?=\0)/g),
-        ].at(-1);
+        const sparseValue = CheckpointCaptureIndex.lastConfigValue(
+          config.stdout,
+          "core.sparsecheckout",
+        );
         let sparseCheckout =
-          sparseValue !== undefined && /^(?:true|yes|on|1|)$/i.test((sparseValue[1] ?? "").trim());
+          sparseValue !== undefined && CheckpointCaptureIndex.gitBool(sparseValue);
         if (sparseCheckout) {
           const help = yield* execute({
             operation,
@@ -1649,6 +1649,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
               "-c",
               "core.safecrlf=false",
+              // ignorestat would mark new entries assume-unchanged, and a kept index would hide their edits.
+              "-c",
+              "core.ignorestat=false",
               "add",
               // Unreadable files keep their indexed version and unreadable new files are left out.
               ...(ignoreErrors ? ["--ignore-errors"] : []),
