@@ -8377,6 +8377,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               };
             });
           }
+          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
+          // A locked flavor keeps its policy mode above every pick. Others let an explicit
+          // pick win, so the policy applies first and the selections below override it.
+          if (!modeLocked && policyMode !== undefined) {
+            yield* runtime.setMode(policyMode);
+          }
           const configOptions = yield* runtime.getConfigOptions;
           // A picked mode applies only when the flavor places it within the bound; an unknown mode
           // could be the agent's own skip-approval mode. Modes known to be permission levels are
@@ -8481,9 +8488,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!advertisedValues.includes(selection.value)) continue;
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
-          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
-          const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
-          if (policyMode !== undefined) {
+          if (modeLocked && policyMode !== undefined) {
             yield* runtime.setMode(policyMode);
           }
           const modeState = yield* runtime.getModeState;

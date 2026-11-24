@@ -183,7 +183,21 @@ function modelsFromDiscovery(
   );
   const sharedIds = new Set(shared.map((descriptor) => descriptor.id));
   const capabilitiesFor = ({ id: slug, reasoningEffort }: AcpRegistryProbeModel) => {
-    if (slug === discovery?.currentModelId) return capabilities;
+    if (slug === discovery?.currentModelId) {
+      // Droid advertises levels in `_meta` even when the session has no `thought_level` option.
+      if (
+        reasoningEffort === undefined ||
+        reasoningEffort === null ||
+        discovery.configOptions.some(
+          (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
+        )
+      ) {
+        return capabilities;
+      }
+      return createModelCapabilities({
+        optionDescriptors: [...discovery.configOptions, reasoningEffort],
+      });
+    }
     // The levels a model advertises replace the ones an earlier session reported.
     const own = (
       previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []

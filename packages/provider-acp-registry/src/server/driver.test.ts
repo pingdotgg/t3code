@@ -498,6 +498,135 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
   });
 
+  it("reads Droid's per-model reasoning levels from _meta.factory", () => {
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "factory-droid" }),
+      checkedAt: "2026-11-24T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "factory-droid",
+        version: "1.18.0",
+        distribution: "npx",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+    // Droid lists models in a `model` select and advertises each model's levels in `_meta`.
+    const droidSession = () =>
+      normalizeAcpRegistryLiveConfiguration(
+        [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-4-8",
+            options: [
+              {
+                value: "claude-opus-4-8",
+                name: "Opus 4.8",
+                _meta: {
+                  factory: {
+                    supportedReasoningEfforts: ["low", "high", "xhigh"],
+                    defaultReasoningEffort: "high",
+                  },
+                },
+              },
+              {
+                value: "mixed",
+                name: "Mixed",
+                _meta: {
+                  factory: {
+                    supportedReasoningEfforts: ["none", "low", "high"],
+                    defaultReasoningEffort: "low",
+                  },
+                },
+              },
+              {
+                value: "auto",
+                name: "Auto Model",
+                _meta: {
+                  factory: {
+                    supportedReasoningEfforts: ["none"],
+                    defaultReasoningEffort: "none",
+                  },
+                },
+              },
+              { value: "plain", name: "Plain" },
+            ],
+          },
+        ],
+        undefined,
+        undefined,
+      );
+    const configuration = droidSession();
+    expect(configuration.models).toEqual([
+      {
+        id: "claude-opus-4-8",
+        name: "Opus 4.8",
+        description: null,
+        reasoningEffort: {
+          id: "reasoning_effort",
+          label: "Reasoning Effort",
+          type: "select",
+          role: "reasoning",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+          ],
+          currentValue: "high",
+        },
+      },
+      {
+        id: "mixed",
+        name: "Mixed",
+        description: null,
+        reasoningEffort: {
+          id: "reasoning_effort",
+          label: "Reasoning Effort",
+          type: "select",
+          role: "reasoning",
+          options: [
+            { id: "none", label: "None" },
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+          currentValue: "low",
+        },
+      },
+      // A model that only offers `none` takes no reasoning level.
+      { id: "auto", name: "Auto Model", description: null, reasoningEffort: null },
+      { id: "plain", name: "Plain", description: null },
+    ]);
+    // Every model, not just the session's current one, keeps its advertised levels.
+    const descriptors = applyAcpRegistryLiveConfiguration(provider, configuration, []).models;
+    expect(
+      descriptors.map((model) => [
+        model.slug,
+        (model.capabilities?.optionDescriptors ?? []).map((option) => option.id),
+      ]),
+    ).toEqual([
+      ["claude-opus-4-8", ["reasoning_effort"]],
+      ["mixed", ["reasoning_effort"]],
+      ["auto", []],
+      ["plain", []],
+    ]);
+  });
+
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,

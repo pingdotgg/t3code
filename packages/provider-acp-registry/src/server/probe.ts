@@ -97,6 +97,55 @@ function advertisedReasoningEffort(
   );
 }
 
+const REASONING_LABELS: Record<string, string> = {
+  off: "Off",
+  none: "None",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Maximum",
+};
+
+const isFactoryMeta = Schema.is(
+  Schema.Struct({
+    factory: Schema.Struct({
+      supportedReasoningEfforts: Schema.Array(Schema.String),
+      defaultReasoningEffort: Schema.optionalKey(Schema.String),
+    }),
+  }),
+);
+
+/**
+ * The levels a model advertises in `_meta.factory`, the shape Droid uses. Its session only
+ * carries a `thought_level` option after a model has been written, so these are the only
+ * per-model levels available when the catalog is read. Null when the model takes none.
+ */
+function factoryReasoningEffort(
+  meta: Readonly<Record<string, unknown>> | null | undefined,
+): AcpRegistryProbeModel["reasoningEffort"] {
+  if (!isFactoryMeta(meta)) return undefined;
+  const { supportedReasoningEfforts, defaultReasoningEffort } = meta.factory;
+  if (!supportedReasoningEfforts.some((level) => level !== "none")) return null;
+  const options = supportedReasoningEfforts.map((level) => ({
+    id: level,
+    label: REASONING_LABELS[level] ?? level,
+  }));
+  const currentValue =
+    defaultReasoningEffort !== undefined &&
+    options.some((option) => option.id === defaultReasoningEffort)
+      ? defaultReasoningEffort
+      : undefined;
+  return {
+    id: "reasoning_effort",
+    label: "Reasoning Effort",
+    type: "select",
+    role: "reasoning",
+    options,
+    ...(currentValue === undefined ? {} : { currentValue }),
+  };
+}
+
 export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   if (value.length > 2_048 || !URL.canParse(value)) return undefined;
   const url = new URL(value);
@@ -232,12 +281,15 @@ export function normalizeAcpRegistryLiveConfiguration(
           id: model.modelId,
           name: model.name,
           description: model.description ?? null,
+          meta: model._meta,
         }))
       : flattenSelectChoices(modelOption.options).map((model) => ({
           id: model.value,
           name: model.name,
           description: model.description ?? null,
+          meta: model._meta,
         }));
+  const metaByModelId = new Map(candidates.map((model) => [model.id, model.meta]));
   const boundedCurrentModelId =
     currentModelId === undefined
       ? null
@@ -246,10 +298,11 @@ export function normalizeAcpRegistryLiveConfiguration(
     configOptions.find((option) => option.category === "thought_level") ??
     configOptions.find(isAcpThoughtLevelOption);
   const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
-    const reasoningEffort = advertisedReasoningEffort(
-      effortOption,
-      modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
-    );
+    const meta = metaByModelId.get(model.id);
+    // Droid names its levels in `_meta.factory`; its `thought_level` option only appears
+    // after a model is written, so the advertised levels are the only per-model source.
+    const advertised = advertisedReasoningEffort(effortOption, meta);
+    const reasoningEffort = advertised === undefined ? factoryReasoningEffort(meta) : advertised;
     return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
   });
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });

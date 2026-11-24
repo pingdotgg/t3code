@@ -9,7 +9,12 @@ import {
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
 } from "./devinAcp.ts";
-import { extractDroidElicitationForm } from "./droidAcp.ts";
+import {
+  droidRuntimeModeForSessionMode,
+  droidSessionMode,
+  extractDroidElicitationForm,
+  extractDroidSubagentUpdate,
+} from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
 import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
@@ -277,7 +282,16 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
     ...(isDroid
-      ? { extractElicitationForm: extractDroidElicitationForm }
+      ? {
+          extractElicitationForm: extractDroidElicitationForm,
+          // Droid's autonomy level is its approval mode, so a thread's permission mode
+          // picks the default; an explicit autonomy pick still overrides it.
+          sessionModeForPolicy: (policy) => droidSessionMode(policy.runtimeMode),
+          runtimeModeForSessionMode: droidRuntimeModeForSessionMode,
+          // Workers and subagents run as `Task` tool calls, which settle after the prompt
+          // that launched them; without this they render as plain tool calls.
+          extractSubagentUpdate: extractDroidSubagentUpdate,
+        }
       : isOmp
         ? { extractElicitationForm: extractOmpElicitationForm }
         : isOpenCode

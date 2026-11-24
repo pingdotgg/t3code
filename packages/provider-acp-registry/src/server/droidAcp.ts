@@ -1,7 +1,111 @@
-import { type OrchestrationV2UserInputQuestion, TrimmedNonEmptyString } from "@t3tools/contracts";
-import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
+import {
+  type OrchestrationV2UserInputQuestion,
+  type RuntimeMode,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
+import type {
+  AcpAdapterV2Flavor,
+  AcpAdapterV2SubagentUpdate,
+} from "@t3tools/provider-acp/server/adapter";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+
+// Droid's autonomy levels are its permission modes: `normal` only auto-approves reads,
+// `auto-low` adds file edits, and each higher level approves more of what T3 would ask about.
+const DROID_MODE_BY_RUNTIME_MODE: Record<RuntimeMode, string> = {
+  "approval-required": "normal",
+  "auto-accept-edits": "auto-low",
+  auto: "auto-medium",
+  "full-access": "auto-high",
+};
+
+export function droidSessionMode(runtimeMode: RuntimeMode): string {
+  return DROID_MODE_BY_RUNTIME_MODE[runtimeMode];
+}
+
+/** The runtime mode a Droid autonomy level grants; the inverse of `droidSessionMode`. */
+export function droidRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
+  switch (modeId) {
+    case "normal":
+    // `spec` builds a feature spec read-only, so it grants no more than asking first.
+    case "spec":
+      return "approval-required";
+    case "auto-low":
+      return "auto-accept-edits";
+    case "auto-medium":
+      return "auto";
+    case "auto-high":
+      return "full-access";
+    default:
+      return undefined;
+  }
+}
+
+const decodeDroidTaskInput = Schema.decodeUnknownOption(
+  Schema.Struct({
+    prompt: Schema.String,
+    description: Schema.optionalKey(Schema.String),
+    subagent_type: Schema.optionalKey(Schema.String),
+    model: Schema.optionalKey(Schema.String),
+  }),
+);
+
+function droidTaskOutputText(tool: AcpToolCallState): string | null {
+  const rawOutput = tool.data.rawOutput;
+  const text =
+    typeof rawOutput === "string"
+      ? rawOutput
+      : Predicate.isObject(rawOutput) && typeof rawOutput.text === "string"
+        ? rawOutput.text
+        : undefined;
+  return text === undefined || text.trim().length === 0 ? null : text;
+}
+
+/**
+ * Droid runs workers and subagents through its `Task` tool. The call reports
+ * `subagent_type` and the prompt up front, then settles to `completed` with the worker's
+ * result even after the prompt that launched it has ended.
+ */
+export function extractDroidSubagentUpdate(
+  tool: AcpToolCallState,
+): AcpAdapterV2SubagentUpdate | undefined {
+  if (tool.data.name !== "Task") return undefined;
+  const input = decodeDroidTaskInput(tool.data.rawInput);
+  const result = droidTaskOutputText(tool);
+  const status: AcpAdapterV2SubagentUpdate["status"] =
+    tool.status === "failed"
+      ? "failed"
+      : tool.status === "completed"
+        ? "completed"
+        : tool.status === undefined || tool.status === "pending"
+          ? "pending"
+          : "running";
+  if (Option.isNone(input)) {
+    // Droid's terminal Task update drops the input the launch reported; it still belongs
+    // to that worker, so only a settled call may match one without its prompt.
+    if (status !== "completed" && status !== "failed") return undefined;
+    return {
+      nativeTaskId: tool.toolCallId,
+      childSessionId: null,
+      prompt: "",
+      title: null,
+      model: null,
+      status,
+      result,
+    };
+  }
+  return {
+    nativeTaskId: tool.toolCallId,
+    childSessionId: null,
+    prompt: input.value.prompt,
+    title: input.value.description ?? input.value.subagent_type ?? null,
+    model: input.value.model ?? null,
+    status,
+    result,
+  };
+}
 
 const isDroidForm = Schema.is(
   Schema.Struct({

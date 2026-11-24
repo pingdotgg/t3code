@@ -688,6 +688,17 @@ describe("AcpRegistryAdapterV2", () => {
       currentValue,
       options: ["ask", "auto"].map((value) => ({ value, name: value })),
     });
+    const droidAutonomyOption = (currentValue: string) => ({
+      id: "autonomy_level",
+      name: "Autonomy",
+      category: "mode",
+      type: "select",
+      currentValue,
+      options: ["normal", "spec", "auto-low", "auto-medium", "auto-high"].map((value) => ({
+        value,
+        name: value,
+      })),
+    });
 
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
@@ -891,6 +902,86 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    // Droid starts every session at `auto-medium`; the thread's permission mode must pick
+    // its autonomy level or Supervised silently auto-approves edits.
+    it.effect("applies Droid's autonomy level for the thread's permission mode", () =>
+      openWithStoredPicks({
+        agentId: "factory-droid",
+        setup: {
+          modes: {
+            currentModeId: "auto-medium",
+            availableModes: ["normal", "spec", "auto-low", "auto-medium", "auto-high"].map(
+              (id) => ({ id, name: id }),
+            ),
+          },
+        },
+        pickFrames: [
+          outbound("session/set_mode", { sessionId: "agent-session", modeId: "normal" }),
+          answer("session/set_mode", {}),
+        ],
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect("keeps Droid's explicit autonomy pick over the thread's permission mode", () =>
+      openWithStoredPicks({
+        agentId: "factory-droid",
+        setup: {
+          modes: {
+            currentModeId: "auto-medium",
+            availableModes: ["normal", "spec", "auto-low", "auto-medium", "auto-high"].map(
+              (id) => ({ id, name: id }),
+            ),
+          },
+          configOptions: [droidAutonomyOption("auto-medium")],
+        },
+        storedOptions: [{ id: "autonomy_level", value: "spec" }],
+        pickFrames: [
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "autonomy_level",
+            value: "normal",
+          }),
+          answer("session/set_config_option", {
+            configOptions: [droidAutonomyOption("normal")],
+          }),
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "autonomy_level",
+            value: "spec",
+          }),
+          answer("session/set_config_option", {
+            configOptions: [droidAutonomyOption("spec")],
+          }),
+        ],
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect("does not let Droid's stored autonomy pick widen the thread's permission mode", () =>
+      openWithStoredPicks({
+        agentId: "factory-droid",
+        setup: {
+          modes: {
+            currentModeId: "auto-medium",
+            availableModes: ["normal", "spec", "auto-low", "auto-medium", "auto-high"].map(
+              (id) => ({ id, name: id }),
+            ),
+          },
+          configOptions: [droidAutonomyOption("auto-medium")],
+        },
+        storedOptions: [{ id: "autonomy_level", value: "auto-high" }],
+        pickFrames: [
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "autonomy_level",
+            value: "normal",
+          }),
+          answer("session/set_config_option", {
+            configOptions: [droidAutonomyOption("normal")],
+          }),
+        ],
       }).pipe(Effect.provide(layerTest)),
     );
 
@@ -1814,6 +1905,125 @@ describe("AcpRegistryAdapterV2", () => {
           }
         }
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Droid launches workers through a `Task` tool that settles after the prompt that started it,
+  // so a worker has to project as a subagent and still report its result once it finishes.
+  it.effect("projects Droid's background worker as a subagent", () =>
+    Effect.gen(function* () {
+      const { update, idle } = claudeFrames;
+      const gate = makeProviderReplayGate(["worker-completed"]);
+      const session = yield* openClaudeReplaySession(
+        [
+          // Droid speaks ACP v1: `agentCapabilities`, not v2's `capabilities`.
+          claudeFrames.open[0]!,
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "@factory/cli", title: "Factory Droid", version: "1.18.0" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          claudeFrames.open[2]!,
+          claudeFrames.open[3]!,
+          // Droid takes the thread's permission mode as its autonomy level on session open.
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/set_config_option", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/set_config_option",
+              result: { configOptions: [] },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_worker_1",
+            name: "Task",
+            kind: "other",
+            title: "Worker: Count 1 to 8",
+            status: "pending",
+            rawInput: {
+              subagent_type: "worker",
+              description: "Count 1 to 8",
+              prompt: "Count from 1 to 8, one number per second.",
+            },
+          }),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call_worker_1",
+            name: "Task",
+            status: "in_progress",
+            rawOutput: { text: "Running in background" },
+          }),
+          // The reply settles while the worker keeps running.
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { messageId: "user-1" },
+            },
+          },
+          idle("end_turn"),
+          {
+            ...update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "call_worker_1",
+              name: "Task",
+              status: "completed",
+              rawOutput: { text: "1\n2\n3\n4\n5\n6\n7\n8" },
+            }),
+            label: "worker-completed",
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        gate,
+        false,
+        { agentId: "factory-droid" },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.until((event) => event.type === "turn.terminal");
+      const running = events.find(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+      );
+      assert.isDefined(running, "the worker is visible while it runs");
+      gate.release("worker-completed");
+      events.push(
+        ...(yield* session.until(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+        )),
+      );
+      const completed = events.findLast((event) => event.type === "subagent.updated");
+      if (completed?.type !== "subagent.updated") throw new Error("Missing worker result");
+      assert.equal(completed.subagent.title, "Count 1 to 8");
+      assert.equal(completed.subagent.prompt, "Count from 1 to 8, one number per second.");
+      assert.equal(completed.subagent.result, "1\n2\n3\n4\n5\n6\n7\n8");
+      // The Task call must not also render as a generic tool.
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === "call_worker_1",
+        ),
+        "a projected worker never shows a duplicate generic tool",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
