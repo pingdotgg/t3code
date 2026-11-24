@@ -401,6 +401,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ?.capabilities?.optionDescriptors?.flatMap((descriptor) =>
             descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
           );
+      const capabilitiesOf = (provider: ServerProvider, slug: string) =>
+        provider.models.find((model) => model.slug === slug)?.capabilities;
 
       const before = yield* makeHarness();
       yield* before.initialize;
@@ -427,6 +429,21 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       const cleared = mergeProviderSnapshot(merged, yield* plain.provider.snapshot.getSnapshot);
       expect(choicesOf(cleared, "fast")).toEqual([]);
       expect(choicesOf(cleared, "deep")).toEqual(["low", "medium", "high", "xhigh"]);
+      expect(capabilitiesOf(cleared, "fast")).toEqual({ optionDescriptors: [] });
+
+      // A later unobserved snapshot retains the confirmed empty capabilities.
+      const unobserved = yield* makeHarness();
+      yield* unobserved.initialize;
+      yield* unobserved.provider.onSessionStarted(
+        selecting("deep", levels("low", ["low", "medium", "high", "xhigh"])),
+      );
+      const preservedEmpty = mergeProviderSnapshot(
+        cleared,
+        yield* unobserved.provider.snapshot.getSnapshot,
+      );
+      expect(capabilitiesOf(preservedEmpty, "fast")).toEqual({ optionDescriptors: [] });
+      expect(choicesOf(preservedEmpty, "fast")).toEqual([]);
+      expect(choicesOf(preservedEmpty, "deep")).toEqual(["low", "medium", "high", "xhigh"]);
     }),
   );
 

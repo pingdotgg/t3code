@@ -289,11 +289,19 @@ const mergeProviderModels = (
   }
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
-  // Antigravity sends null capabilities for a model it has not observed, which inherits the
-  // previous levels, and explicit empty capabilities for one observed without options, which clears them.
+  // Antigravity null means unobserved: retain previous non-null capabilities, even explicit empty.
+  // Explicit incoming capabilities replace them. Other providers keep the non-empty fallback below.
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
+    if (
+      isAntigravity &&
+      previousModel !== undefined &&
+      model.capabilities === null &&
+      previousModel.capabilities !== null
+    ) {
+      return { ...model, capabilities: previousModel.capabilities };
+    }
     if (
       !previousModel ||
       hasModelCapabilities(model) ||
