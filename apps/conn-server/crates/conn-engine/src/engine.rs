@@ -267,7 +267,7 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 impl SqliteEngine {
     /// Opens the store, adds the configured projects, and, with [`EngineConfig::recover_runs`],
     /// recovers the runs a previous process left active ([`Self::recover_runs`]).
-    pub fn open(config: EngineConfig) -> Result<Self, String> {
+    pub fn open(mut config: EngineConfig) -> Result<Self, String> {
         let home = config.home.clone().unwrap_or_else(|| {
             config
                 .database
@@ -278,6 +278,11 @@ impl SqliteEngine {
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
+        let providers = config
+            .provider_set
+            .take()
+            .unwrap_or_else(|| std::mem::take(&mut config.providers).into());
+        store.providers = providers.clone();
         let attention = config
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
@@ -297,9 +302,7 @@ impl SqliteEngine {
                 store: Arc::new(Mutex::new(store)),
                 attention,
                 notify: watch::Sender::new(high),
-                providers: config
-                    .provider_set
-                    .unwrap_or_else(|| config.providers.into()),
+                providers,
                 live: Mutex::new(HashMap::new()),
                 detached: Mutex::new(Vec::new()),
                 kept_tools: Mutex::new(HashMap::new()),

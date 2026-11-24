@@ -285,6 +285,8 @@ pub(crate) struct Store {
     clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
+    /// The provider instances, so a command can tell an instance's driver ([`Tx::driver`]).
+    pub(crate) providers: conn_provider::ProviderSet,
     /// Which runs' provider starts were accepted or abandoned. In memory: a restart starts
     /// every active run again, so nothing here outlives the process.
     starts: StartLedger,
@@ -347,6 +349,7 @@ impl Store {
             next_seq: high as u64 + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
+            providers: conn_provider::ProviderSet::default(),
             starts: StartLedger::default(),
             attention: None,
         })
@@ -398,6 +401,7 @@ impl Store {
             attention_written: false,
             now_ms,
             generates_titles,
+            providers: &self.providers,
             starts: &mut self.starts,
             starts_changed: None,
             tx: self.conn.transaction().map_err(err)?,
@@ -1151,6 +1155,7 @@ pub(crate) struct Tx<'a> {
     /// Threads whose shell row may have changed, with the last sequence that touched them.
     touched: Vec<(String, u64)>,
     pub(crate) generates_titles: bool,
+    providers: &'a conn_provider::ProviderSet,
     starts: &'a mut StartLedger,
     /// The ledger as this write changed it; it replaces the store's on commit only.
     starts_changed: Option<StartLedger>,
@@ -1239,6 +1244,13 @@ impl Tx<'_> {
             .map_err(err)?
             .flatten();
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
+    }
+
+    /// The driver of a provider instance, found as a turn start finds the instance.
+    pub(crate) fn driver(&self, instance: &str) -> Option<String> {
+        self.providers
+            .resolve(instance)
+            .map(|provider| provider.driver().to_owned())
     }
 
     pub(crate) fn now(&self) -> &str {

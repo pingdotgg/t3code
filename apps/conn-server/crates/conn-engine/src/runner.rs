@@ -890,10 +890,30 @@ impl Inner {
                         .run(Some(&rid))
                         .node(Some(&root_id))
                 };
-                if provider_thread_json["id"].is_string() {
+                let mut stored_row = None;
+                // `providerTurnOrdinal`: after every turn already on the provider thread, as a
+                // goal run Codex continued holds more turns than runs.
+                let turn_ordinal = match provider_thread_json["id"].as_str() {
+                    Some(id) => tx
+                        .entities_where(&tid, "providerTurns", "providerThreadId", id)?
+                        .iter()
+                        .filter_map(|turn| turn["ordinal"].as_u64())
+                        .max()
+                        .unwrap_or(0),
+                    None => 0,
+                } + 1;
+                if let Some(id) = provider_thread_json["id"].as_str() {
                     let mut running = provider_thread_json.clone();
                     running["updatedAt"] = json!(now);
-                    tx.append(Draft::new(&tid, "provider-thread.updated", running))?;
+                    // The session's cached row predates goal updates the provider reported since.
+                    if let Some(goal) = tx
+                        .entity(&tid, "providerThreads", id)?
+                        .and_then(|stored| stored.get("goal").cloned())
+                    {
+                        running["goal"] = goal;
+                    }
+                    tx.append(Draft::new(&tid, "provider-thread.updated", running.clone()))?;
+                    stored_row = Some(running);
                 }
                 if let Some(transfer) = &fork_transfer {
                     tx.append(
@@ -944,12 +964,22 @@ impl Inner {
                     node["providerThreadId"] = pt_id;
                     tx.append(draft("node.updated", node))?;
                 }
-                Ok(Some(scope))
+                Ok(Some((scope, stored_row, turn_ordinal)))
             })
             .await?;
-        let Some(scope) = started else {
+        let Some((scope, stored_row, turn_ordinal)) = started else {
             live.take_active();
             return Err(StartError::Abandoned);
+        };
+        // The turn, the live cache and the handoffs get the row just stored, goal included: a
+        // provider shows a goal change only against the row its turn started with.
+        let (provider_thread, running_json) = match stored_row {
+            Some(row) => {
+                let provider_thread = from_json(row.clone()).unwrap_or(provider_thread);
+                lock(&live.state).provider_thread = Some(provider_thread.clone());
+                (provider_thread, row)
+            }
+            None => (provider_thread, running_json),
         };
         // The baseline holds no change of this turn: the provider has not had the message.
         if let Some((scope_id, cwd)) = scope {
@@ -1007,7 +1037,7 @@ impl Inner {
             thread_id: thread_id.into(),
             run_id: run_id.into(),
             run_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
-            provider_turn_ordinal: context.run["ordinal"].as_u64().unwrap_or(1) as u32,
+            provider_turn_ordinal: u32::try_from(turn_ordinal).unwrap_or(u32::MAX),
             attempt_id: attempt_id.as_str().into(),
             root_node_id: root.as_str().into(),
             provider_thread,

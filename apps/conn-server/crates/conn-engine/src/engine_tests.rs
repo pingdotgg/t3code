@@ -628,6 +628,35 @@ async fn a_failed_turn_shows_its_error() {
     );
 }
 
+/// `activeProviderGoalForShell`: the shell shows the goal of the thread's active provider
+/// thread, as the GPUI thread list and the desktop goal banner read it.
+#[tokio::test(flavor = "current_thread")]
+async fn the_shell_shows_the_active_provider_threads_goal() {
+    let db = TempDb::new("goal");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    assert_eq!(
+        engine.shell_snapshot().await.unwrap()["threads"][0]["goal"],
+        Value::Null
+    );
+    dispatch(&engine, message("t1", "c2", "goal")).await;
+    until_run_ends(&mut thread).await;
+    let active = json!({"objective": "Ship the feature", "status": "active", "tokensUsed": 12,
+        "tokenBudget": null, "timeUsedSeconds": 3});
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["goal"], active);
+    // The next ordinary turn's running row keeps the stored goal.
+    dispatch(&engine, message("t1", "c3", "hello")).await;
+    until_run_ends(&mut thread).await;
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["goal"], active);
+}
+
 /// `RunExecutionService`'s provider stop reason: a turn a hook stopped ends completed, with
 /// the hook's reason kept as a "Stopped by the provider" warning on its run. The work log
 /// shows it after a reload; an ordinary completed turn gets none.
@@ -1374,6 +1403,349 @@ async fn a_steer_reaches_the_running_turn() {
         ]
     );
     assert_eq!(p["messages"][1]["runId"], "run:t1:1");
+}
+
+/// `dispatchMessage` and `goalCommandStopsActiveRun`: a native `/goal` never joins a running
+/// turn. One that changes no running goal waits in the queue; one that starts goal work
+/// stops the run and goes first.
+#[tokio::test(flavor = "current_thread")]
+async fn a_goal_command_never_steers_a_running_turn() {
+    let db = TempDb::new("goal-steer");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let steer = json!({"type": "steer_active", "targetRunId": "run:t1:1"});
+    dispatch(
+        &engine,
+        message_with("t1", "c3", "/goal clear", steer.clone(), None),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".to_owned(), "running".to_owned()),
+            ("run:t1:2".to_owned(), "queued".to_owned())
+        ]
+    );
+    assert!(
+        !local_item_texts(&p).iter().any(|t| t.contains("steer")),
+        "{:?}",
+        local_item_texts(&p)
+    );
+    // A queued goal stays its own run: it never becomes a steer once the turn runs.
+    assert!(
+        p["runs"][1]["steerWhenReadyRunId"].is_null(),
+        "{}",
+        p["runs"][1]
+    );
+    dispatch(
+        &engine,
+        message_with("t1", "c4", "/goal Ship the feature", steer, None),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let goal_run = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["userMessageId"] == "message:c4")
+        .unwrap()
+        .clone();
+    assert_eq!(goal_run["queuePosition"], 1, "{goal_run}");
+    // The goal stops the run it replaces.
+    loop {
+        let item = next(&mut thread).await;
+        let run = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated" && run["id"] == "run:t1:1" {
+            if run["status"] == "interrupted" {
+                break;
+            }
+            assert_eq!(run["status"], "running", "{run}");
+        }
+    }
+}
+
+/// Waits on the thread stream until `run` ends, and returns its final status.
+async fn until_run_status<E: serde::Serialize>(
+    stream: &mut Subscription<conn_contract::ThreadStreamItem, E>,
+    run: &str,
+) -> String {
+    loop {
+        let item = next(stream).await;
+        let payload = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated"
+            && payload["id"] == run
+            && ["completed", "interrupted", "failed", "cancelled"]
+                .contains(&payload["status"].as_str().unwrap_or_default())
+        {
+            return payload["status"].as_str().unwrap_or_default().to_owned();
+        }
+    }
+}
+
+/// `isNativeMaintenanceCommand` is only `/compact` and `/logout`: a running `/goal` turn is goal
+/// work, so a Clear sent into it while its goal is active stops it and goes first.
+#[tokio::test(flavor = "current_thread")]
+async fn a_goal_clear_stops_the_running_goal_turn() {
+    let db = TempDb::new("goal-clear-running");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "/goal Ship the feature")).await;
+    until_provider_turn(&mut thread).await;
+    // The goal row is stored before the Clear is decided.
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "provider-thread.updated"
+            && item["event"]["payload"]["goal"]["status"] == "active"
+        {
+            break;
+        }
+    }
+    dispatch(
+        &engine,
+        message_with(
+            "t1",
+            "c3",
+            "/goal clear",
+            json!({"type": "start_immediately"}),
+            Some("auto"),
+        ),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["queuePosition"], 1, "{}", p["runs"][1]);
+    assert_eq!(
+        until_run_status(&mut thread, "run:t1:1").await,
+        "interrupted"
+    );
+}
+
+/// `promotes a queued goal by stopping the running turn` (`SteeringCompletion`): the goal
+/// keeps its own run, goes first and stops the turn; it is never steered in as chat.
+#[tokio::test(flavor = "current_thread")]
+async fn promoting_a_queued_goal_stops_the_running_turn() {
+    let db = TempDb::new("goal-promote");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let queue = json!({"type": "queue_after_active"});
+    dispatch(
+        &engine,
+        message_with("t1", "c3", "queued", queue.clone(), None),
+    )
+    .await;
+    dispatch(
+        &engine,
+        message_with("t1", "c4", "/goal ship it", queue, None),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "queued-message.promote-to-steer", "commandId": "promote",
+            "threadId": "t1", "queuedRunId": "run:t1:3", "targetRunId": "run:t1:1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert!(
+        !local_item_texts(&p).iter().any(|t| t.contains("steer")),
+        "{:?}",
+        local_item_texts(&p)
+    );
+    assert_eq!(
+        until_run_status(&mut thread, "run:t1:1").await,
+        "interrupted"
+    );
+    // The goal starts next; the other queued message still waits.
+    loop {
+        let item = next(&mut thread).await;
+        let run = &item["event"]["payload"];
+        if item["event"]["type"] == "run.updated" && run["id"] == "run:t1:3" {
+            assert_ne!(run["status"], "cancelled", "{run}");
+            if run["status"] == "running" {
+                break;
+            }
+        }
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued", "{}", p["runs"][1]);
+}
+
+/// `providerTurnOrdinal`: a run's first provider turn follows the highest ordinal on its
+/// provider thread. A goal run Codex continued has two turns, so the next run's turn is the
+/// third, and a rollback to the goal's checkpoint counts it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_run_after_a_continued_goal_run_gets_the_next_turn_ordinal() {
+    let db = TempDb::new("goal-ordinals");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "goal-continued")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "hello")).await;
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    let mut ordinals: Vec<(String, Value)> = p["providerTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["id"].as_str().unwrap().to_owned(), t["ordinal"].clone()))
+        .collect();
+    ordinals.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        ordinals,
+        [
+            ("turn:run:t1:1".to_owned(), json!(1)),
+            ("turn:run:t1:1:2".to_owned(), json!(2)),
+            ("turn:run:t1:2".to_owned(), json!(3)),
+        ]
+    );
+}
+
+/// `runningProviderThread`: the turn gets the provider thread row the engine stores, goal and
+/// all. Codex shows a goal change only against that row, so a Clear after a Pause clears it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_goal_clear_after_a_pause_clears_the_goal_row() {
+    let db = TempDb::new("goal-pause-clear");
+    let (engine, _) = open_with(&db, FakeProvider::new("codex").with_driver("codex"));
+    let mut create = create("t1", "c1");
+    create["modelSelection"] = json!({"instanceId": "codex", "model": "gpt-5"});
+    dispatch(&engine, create).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "goal")).await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(shell_goal_status(&engine).await, "active");
+    dispatch(&engine, message("t1", "c3", "/goal pause")).await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(shell_goal_status(&engine).await, "paused");
+    dispatch(&engine, message("t1", "c4", "/goal clear")).await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(shell_goal_status(&engine).await, Value::Null);
+}
+
+async fn shell_goal_status(engine: &SqliteEngine) -> Value {
+    engine.shell_snapshot().await.unwrap()["threads"][0]["goal"]["status"].clone()
+}
+
+/// An engine with a running `hang` turn on t1, on the instance `instance`.
+async fn hanging_turn(
+    db: &TempDb,
+    providers: Vec<FakeProvider>,
+    instance: &str,
+) -> (
+    SqliteEngine,
+    Subscription<conn_contract::ThreadStreamItem, conn_contract::GetThreadProjectionError>,
+) {
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = providers
+        .into_iter()
+        .map(|p| Arc::new(p) as Arc<dyn conn_provider::Provider>)
+        .collect();
+    let engine = SqliteEngine::open(config).unwrap();
+    let mut create = create("t1", "c1");
+    create["modelSelection"] = json!({"instanceId": instance, "model": "m"});
+    dispatch(&engine, create).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    (engine, thread)
+}
+
+/// `goalDriverFor(command, modelSelection.instanceId)`: the message's own provider decides
+/// whether `/goal` is a goal. A Codex goal sent into another provider's turn stops it and goes
+/// first; it never steers in as chat.
+#[tokio::test(flavor = "current_thread")]
+async fn a_codex_goal_into_another_providers_turn_stops_it() {
+    let db = TempDb::new("goal-other-provider");
+    let (engine, mut thread) = hanging_turn(
+        &db,
+        vec![
+            FakeProvider::new("grok").with_driver("grok"),
+            FakeProvider::new("codex").with_driver("codex"),
+        ],
+        "grok",
+    )
+    .await;
+    let mut goal = message_with(
+        "t1",
+        "c3",
+        "/goal Ship the feature",
+        json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+        None,
+    );
+    goal["modelSelection"] = json!({"instanceId": "codex", "model": "gpt-5"});
+    dispatch(&engine, goal).await;
+    let p = projection(&engine, "t1").await;
+    assert!(
+        !local_item_texts(&p).iter().any(|t| t.contains("steer")),
+        "{:?}",
+        local_item_texts(&p)
+    );
+    assert_eq!(p["runs"][1]["queuePosition"], 1, "{}", p["runs"]);
+    assert_eq!(
+        until_run_status(&mut thread, "run:t1:1").await,
+        "interrupted"
+    );
+}
+
+/// `ensureGoalCommandSupported`: Claude goals cannot be paused or resumed. The send is refused
+/// before it can stop the running turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_claude_goal_resume_is_refused_before_it_stops_work() {
+    let db = TempDb::new("goal-claude-resume");
+    let (engine, _thread) =
+        hanging_turn(&db, vec![FakeProvider::new("claudeAgent")], "claudeAgent").await;
+    for (command, text) in [("c3", "/goal resume"), ("c4", "/goal pause")] {
+        let message = message_with(
+            "t1",
+            command,
+            text,
+            json!({"type": "steer_active", "targetRunId": "run:t1:1"}),
+            None,
+        );
+        assert_eq!(
+            refused(&engine, message).await,
+            "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal."
+        );
+    }
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        run_statuses(&p),
+        [("run:t1:1".to_owned(), "running".to_owned())]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
