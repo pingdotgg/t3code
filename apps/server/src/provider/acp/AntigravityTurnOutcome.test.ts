@@ -60,6 +60,13 @@ const STATUS_NOT_FOUND_ERROR = Buffer.concat([
     'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
   ),
 ]);
+// Antigravity 1.5 states the quota reset only as a Go duration in its message.
+const STATUS_QUOTA_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x6e]),
+  Buffer.from(
+    "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4m42s.",
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -121,6 +128,13 @@ describe("watchAntigravityPromptOutcome", () => {
           retryable: true,
           resetAt: "1970-01-01T01:00:00.000Z",
         }),
+      );
+      assert.deepInclude(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_QUOTA_ERROR],
+        ]))?.failure,
+        { class: "usage_limit", resetAt: "1970-01-01T00:04:42.000Z" },
       );
       // The earlier error step is outside this turn.
       assert.isUndefined(
