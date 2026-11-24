@@ -546,6 +546,52 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("gives the guest a failed edit without the text it tried to write", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const failedEdit = (id: string) =>
+      writeItem(id, {
+        type: "file_change",
+        status: "failed",
+        fileName: "src/auth.ts",
+        diffStr: "-const token = 1;\n+const token = 2;\n",
+      });
+    const before = yield* failedEdit("item:failed-before");
+
+    const events = yield* guestShares.stream(session);
+    const during = yield* failedEdit("item:failed-during");
+    const detail = (yield* guestShares.item(session, before)).item;
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-failed-edit"),
+      threadId,
+    });
+    const received = Array.from(yield* Stream.runCollect(events));
+    const changes = received.flatMap((event) => {
+      if (event.type !== "thread") return [];
+      if (event.item.kind === "snapshot") {
+        return [
+          ...event.item.projection.turnItems,
+          ...event.item.projection.visibleTurnItems.map((row) => row.item),
+        ];
+      }
+      return event.item.kind === "event" && event.item.event.type === "turn-item.updated"
+        ? [event.item.event.payload]
+        : [];
+    });
+    const failed = changes.filter((item) => item.type === "file_change");
+    assert.includeMembers(
+      failed.map((item) => item.id),
+      [before, during],
+    );
+    for (const change of [...failed, detail]) {
+      assert.deepInclude(change, { status: "failed", fileName: "src/auth.ts" });
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("gives a fork's guest the commands the fork shows from its source thread", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares } = yield* shareThread;
@@ -656,13 +702,19 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     });
     yield* eventSink.write({
       events: [
-        turnItem("item:old-image", 1, {
+        turnItem("item:old-edit", 1, {
+          type: "file_change",
+          status: "failed",
+          fileName: "src/auth.ts",
+          diffStr: "-const token = 1;\n+const token = 2;\n",
+        }),
+        turnItem("item:old-image", 2, {
           type: "assistant_message",
           text: `![Old](${shot})`,
           streaming: false,
         }),
         ...Array.from({ length: 30 }, (_, index) =>
-          turnItem(`item:ask-${index}`, index + 2, {
+          turnItem(`item:ask-${index}`, index + 3, {
             type: "user_message",
             text: `Ask ${index}`,
             createdBy: "user",
@@ -694,9 +746,10 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     while (cursor !== null) {
       const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
       older.push(...ids(page.items));
+      for (const { item } of page.items) assert.notProperty(item, "diffStr");
       cursor = page.hasMoreHistory ? page.nextCursor : null;
     }
-    assert.include(older, "item:old-image");
+    assert.includeMembers(older, ["item:old-image", "item:old-edit"]);
     assert.deepStrictEqual(yield* guestShares.media(session, shot), {
       path: shot,
       mimeType: "image/png",
