@@ -543,13 +543,31 @@ const make = Effect.gen(function* () {
                 })
                 .pipe(Effect.mapError(removalError));
               const moved: string[] = [];
-              const stage = (name: string) =>
-                fs
-                  .rename(NodePath.join(environmentThemesDir, name), NodePath.join(staging, name))
-                  .pipe(Effect.tap(() => Effect.sync(() => moved.push(name))));
-              const cleanup = fs
-                .remove(staging, { recursive: true })
-                .pipe(Effect.ignoreCause({ log: true }));
+              const stagedIsFile = (name: string) =>
+                Effect.try({
+                  try: () => NodeFS.lstatSync(NodePath.join(staging, name)).isFile(),
+                  catch: removalError,
+                });
+              // Another writer can swap a directory in after the scan, so each moved entry is
+              // checked and anything but a regular file is moved back.
+              const stage = Effect.fnUntraced(function* (name: string) {
+                yield* fs.rename(
+                  NodePath.join(environmentThemesDir, name),
+                  NodePath.join(staging, name),
+                );
+                moved.push(name);
+                if (!(yield* stagedIsFile(name))) {
+                  return yield* removalError(`${name} is not a regular file.`);
+                }
+              });
+              // Never recursive: rm refuses a directory, and rmdir only removes an empty one.
+              const removeStaging = Effect.try({
+                try: () => NodeFS.rmdirSync(staging),
+                catch: removalError,
+              }).pipe(Effect.ignoreCause({ log: true }));
+              const cleanup = Effect.forEach(moved, (name) =>
+                fs.remove(NodePath.join(staging, name)).pipe(Effect.ignoreCause({ log: true })),
+              ).pipe(Effect.andThen(removeStaging));
 
               const removal = yield* Effect.exit(
                 Effect.gen(function* () {
@@ -577,7 +595,7 @@ const make = Effect.gen(function* () {
                     ),
                 );
                 // Keep any file whose restore failed so it can still be recovered.
-                if (restored.every(Exit.isSuccess)) yield* cleanup;
+                if (restored.every(Exit.isSuccess)) yield* removeStaging;
                 return yield* removalError(removal.cause);
               }
               yield* cleanup;

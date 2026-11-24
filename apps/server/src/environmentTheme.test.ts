@@ -750,6 +750,47 @@ describe("environment theme", () => {
     ),
   );
 
+  it.effect("moves back a directory swapped in for the theme file and keeps its contents", () => {
+    let swapped = false;
+    return withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "png" },
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+
+        const refused = yield* themes.remove("look").pipe(Effect.flip);
+
+        assert.match(refused.message, /could not be removed/);
+        assert.equal(
+          yield* fs.readFileString(path.join(environmentThemesDir, "look.json", "keep.txt")),
+          "keep",
+        );
+        assert.deepEqual((yield* fs.readDirectory(environmentThemesDir)).toSorted(), [
+          "look.json",
+          "look.png",
+        ]);
+      }),
+      {
+        wrapFileSystem: (fs) => ({
+          ...fs,
+          rename: (source, destination) => {
+            if (swapped || !source.endsWith("look.json")) return fs.rename(source, destination);
+            swapped = true;
+            return fs
+              .remove(source)
+              .pipe(
+                Effect.andThen(fs.makeDirectory(source)),
+                Effect.andThen(fs.writeFileString(`${source}/keep.txt`, "keep")),
+                Effect.andThen(fs.rename(source, destination)),
+              );
+          },
+        }),
+      },
+    );
+  });
+
   it.effect("removes regular backgrounds beside a directory and refuses a stale edit", () =>
     withEnvironmentThemes(
       { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "png" },
