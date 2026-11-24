@@ -9,6 +9,7 @@ import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { serverEnvironment } from "./server";
+import { expectsPrimaryEnvironment } from "./shell";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
@@ -25,12 +26,23 @@ const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | 
   Atom.withLabel("web-environment-presentation:empty"),
 );
 
-/** The catalog has loaded without an enabled connection to the environment, so none of its data can load. */
+/** The catalog has loaded without a usable connection to the environment, so none of its data can load. */
 export const environmentUnreachableAtom = Atom.family((environmentId: EnvironmentId | null) =>
   Atom.make((get) => {
     if (environmentId === null) return false;
     const catalog = get(environmentCatalog.catalogValueAtom);
-    return catalog.isReady && catalog.entries.get(environmentId)?.enabled !== true;
+    if (!catalog.isReady) return false;
+    // The catalog is ready before primary discovery lands; until then it cannot prove absence.
+    if (
+      expectsPrimaryEnvironment() &&
+      !Array.from(catalog.entries.values()).some(
+        (entry) => entry.target._tag === "PrimaryConnectionTarget",
+      )
+    ) {
+      return false;
+    }
+    const entry = catalog.entries.get(environmentId);
+    return !entry?.enabled || entry.unsupportedReason !== undefined;
   }),
 );
 
