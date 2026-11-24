@@ -736,6 +736,10 @@ pub(crate) fn alpha(color: conn_theme::Rgba, a: f32) -> Hsla {
     to_hsla(color.with_alpha(a))
 }
 
+/// Paint order of full-window modals (Settings, the command palette). Popovers, menus and cards
+/// use deferred priorities 1 to 7; a modal must draw above all of them (Nick, #321).
+pub(crate) const MODAL_LAYER_PRIORITY: usize = 9;
+
 #[cfg(test)]
 mod tests {
     use conn_contract::IssueActor;

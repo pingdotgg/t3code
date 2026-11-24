@@ -82,6 +82,8 @@ pub struct ClaudeConfig {
     /// Runs the status probe. Off, the entry stays T3's pending one: checks that start a
     /// server set `CONN_CLAUDE_STATUS_PROBE=off`, so they never run this machine's `claude`.
     pub status_probe: bool,
+    /// The model manifest the server accepted last; the entry lists its Claude models.
+    pub model_manifest: conn_provider::LiveManifest,
 }
 
 /// T3's `DEFAULT_IDLE_TIMEOUT_MS`.
@@ -179,6 +181,7 @@ impl Default for ClaudeConfig {
             helper: HelperCommand::discover(),
             status_cwd: None,
             status_probe: true,
+            model_manifest: conn_provider::LiveManifest::default(),
         }
     }
 }

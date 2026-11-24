@@ -95,6 +95,42 @@ async fn local_status_counts_tracked_untracked_and_branch_changes() {
     assert!(!gone.is_repo);
 }
 
+/// T3's `reports net file counts from the empty tree`: before the first commit, a staged line
+/// replaced in the work tree counts once (+1/-0), as the commit sheet sums it; after the
+/// commit, the edit is +1/-1.
+#[tokio::test]
+async fn unborn_head_counts_net_changes_from_the_empty_tree() {
+    let dir = TempDir::new("unborn");
+    git(dir.path(), &["init", "-qb", "main"]);
+    write(dir.path(), "initial.ts", "first\n");
+    git(dir.path(), &["add", "initial.ts"]);
+    write(dir.path(), "initial.ts", "revised\n");
+    let counts = |local: &conn_contract::VcsStatusLocalResult| {
+        let files: Vec<_> = local
+            .working_tree
+            .files
+            .iter()
+            .map(|f| (f.path.clone(), f.insertions, f.deletions))
+            .collect();
+        (
+            files,
+            local.working_tree.insertions,
+            local.working_tree.deletions,
+        )
+    };
+    let before = status::local_status(dir.path()).await.unwrap();
+    assert_eq!(
+        counts(&before),
+        (vec![("initial.ts".to_owned(), 1, 0)], 1, 0)
+    );
+    git(dir.path(), &["commit", "-qm", "first"]);
+    let after = status::local_status(dir.path()).await.unwrap();
+    assert_eq!(
+        counts(&after),
+        (vec![("initial.ts".to_owned(), 1, 1)], 1, 1)
+    );
+}
+
 #[tokio::test]
 async fn remote_status_reads_divergence_after_fetch() {
     let fx = Fixture::new("remote");
@@ -292,6 +328,110 @@ async fn switch_create_pull_and_init() {
     );
 }
 
+/// A clone whose `main` is one commit behind `origin/main`, with `other` pushed at the new commit.
+fn behind_remote(label: &str) -> (Fixture, String) {
+    let fx = Fixture::new(label);
+    let other = fx.other_clone();
+    write(&other, "remote.txt", "remote change\n");
+    let remote_head = commit_all(&other, "upstream delta");
+    git(
+        &other,
+        &["push", "-q", "origin", "main", "HEAD:refs/heads/other"],
+    );
+    (fx, remote_head)
+}
+
+/// T3 "pulls past an unrelated lock with custom fetch mapping=false/true".
+#[tokio::test]
+async fn pull_passes_an_unrelated_ref_lock() {
+    for custom_mapping in [false, true] {
+        let (fx, remote_head) = behind_remote("pull-lock");
+        // A tag named like the branch must not make the upstream-only pull ambiguous.
+        git(&fx.work, &["tag", "main"]);
+        let prefix = if custom_mapping {
+            git(&fx.work, &["remote", "rename", "origin", "team/upstream"]);
+            git(
+                &fx.work,
+                &[
+                    "config",
+                    "remote.team/upstream.fetch",
+                    "+refs/heads/*:refs/remotes/team/upstream/mapped/*",
+                ],
+            );
+            git(
+                &fx.work,
+                &[
+                    "update-ref",
+                    "refs/remotes/team/upstream/mapped/main",
+                    "HEAD",
+                ],
+            );
+            "refs/remotes/team/upstream/mapped"
+        } else {
+            "refs/remotes/origin"
+        };
+        let lock = fx.work.join(format!(".git/{prefix}/other.lock"));
+        std::fs::write(&lock, "fixture lock").unwrap();
+
+        let pulled = refs::pull(&fx.work).await.unwrap();
+
+        assert_eq!(
+            pulled.status,
+            VcsPullResultStatus::Pulled,
+            "{custom_mapping}"
+        );
+        assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]).trim(), remote_head);
+        assert_eq!(
+            git(&fx.work, &["rev-parse", &format!("{prefix}/main")]).trim(),
+            remote_head
+        );
+        assert!(fx.work.join("remote.txt").exists());
+        assert_eq!(std::fs::read_to_string(&lock).unwrap(), "fixture lock");
+    }
+}
+
+/// T3 "reports an upstream lock after the fallback without removing it".
+#[tokio::test]
+async fn pull_reports_a_locked_upstream_and_keeps_the_lock() {
+    let (fx, _) = behind_remote("pull-upstream-lock");
+    let before = git(&fx.work, &["rev-parse", "HEAD"]);
+    let lock = fx.work.join(".git/refs/remotes/origin/main.lock");
+    std::fs::write(&lock, "fixture lock").unwrap();
+
+    assert!(refs::pull(&fx.work).await.is_err());
+
+    assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]), before);
+    assert!(!fx.work.join("remote.txt").exists());
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), "fixture lock");
+}
+
+/// The retry pulls only the upstream captured before the first attempt. Another client
+/// retargets the branch while the first fetch runs; the branch and HEAD stay put.
+#[tokio::test]
+async fn pull_does_not_retry_after_the_upstream_is_retargeted() {
+    let (fx, _) = behind_remote("pull-retarget");
+    git(
+        &fx.origin,
+        &["update-ref", "refs/heads/retarget", "refs/heads/main"],
+    );
+    let before = git(&fx.work, &["rev-parse", "HEAD"]);
+    let lock = fx.work.join(".git/refs/remotes/origin/other.lock");
+    std::fs::write(&lock, "fixture lock").unwrap();
+    // Git runs the upload-pack command for each fetch from the local remote.
+    let retarget = format!(
+        "git --git-dir={} config branch.main.merge refs/heads/retarget; git upload-pack",
+        fx.work.join(".git").display()
+    );
+    git(&fx.work, &["config", "remote.origin.uploadpack", &retarget]);
+
+    let error = refs::pull(&fx.work).await.unwrap_err();
+
+    assert!(format!("{error:?}").contains("origin/other"), "{error:?}");
+    assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]), before);
+    assert!(!fx.work.join("remote.txt").exists());
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), "fixture lock");
+}
+
 #[tokio::test]
 async fn worktrees_are_created_listed_and_removed() {
     let fx = Fixture::new("wt");
@@ -358,6 +498,401 @@ async fn worktrees_are_created_listed_and_removed() {
     worktree::delete_branch(&fx.work, "t3/abcd1234", Removal::Force)
         .await
         .unwrap();
+}
+
+/// A linked worktree at `<root>/annexed` whose `.git` file git-annex replaced with a symlink to
+/// its admin folder. The layout is built with git and a link; git-annex itself does not run.
+fn annexed_worktree(fx: &Fixture) -> (PathBuf, PathBuf) {
+    let path = fx.root.path().join("annexed");
+    git(
+        &fx.work,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/annexed",
+            path.to_str().unwrap(),
+            "main",
+        ],
+    );
+    let admin = PathBuf::from(git(&path, &["rev-parse", "--absolute-git-dir"]).trim());
+    let dot_git = path.join(".git");
+    std::fs::remove_file(&dot_git).unwrap();
+    std::os::unix::fs::symlink(&admin, &dot_git).unwrap();
+    (path, admin)
+}
+
+/// The `.git` entry itself, so a test sees whether removal replaced it.
+fn dot_git_inode(path: &std::path::Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path.join(".git")).unwrap().ino()
+}
+
+/// The checkout and its registration are both gone.
+fn assert_removed(fx: &Fixture, path: &std::path::Path, admin: &std::path::Path) {
+    assert!(std::fs::symlink_metadata(path).is_err(), "checkout kept");
+    assert!(!admin.exists(), "admin folder kept");
+    let listed = git(&fx.work, &["worktree", "list", "--porcelain"]);
+    assert!(!listed.contains("annexed"), "{listed}");
+}
+
+/// T3 "removes a worktree whose .git file git-annex replaced with a symlink". A link inside the
+/// checkout is unlinked, never followed.
+#[tokio::test]
+async fn removes_a_clean_git_annex_worktree() {
+    for removal in [Removal::Safe, Removal::Force] {
+        let fx = Fixture::new("annex");
+        let (path, admin) = annexed_worktree(&fx);
+        let outside = fx.root.path().join("outside");
+        write(&outside, "keep.txt", "keep\n");
+        if removal == Removal::Force {
+            std::os::unix::fs::symlink(&outside, path.join("escape")).unwrap();
+        }
+
+        worktree::remove_worktree(&fx.work, &path, removal)
+            .await
+            .unwrap();
+
+        assert_removed(&fx, &path, &admin);
+        assert_eq!(
+            std::fs::read_to_string(outside.join("keep.txt")).unwrap(),
+            "keep\n"
+        );
+    }
+}
+
+/// Safe removal refuses an annexed checkout with untracked, modified or staged files, or with
+/// submodules, as `git worktree remove` does, and keeps every file; force removes it.
+#[tokio::test]
+async fn safe_annex_removal_refuses_a_dirty_checkout() {
+    for case in ["untracked", "modified", "staged", "submodules"] {
+        let fx = Fixture::new("annex-dirty");
+        let (path, admin) = annexed_worktree(&fx);
+        match case {
+            "untracked" => write(&path, "notes.txt", "draft\n"),
+            "modified" => write(&path, "README.md", "draft\n"),
+            "staged" => {
+                write(&path, "notes.txt", "draft\n");
+                git(&path, &["add", "notes.txt"]);
+            }
+            _ => std::fs::create_dir_all(admin.join("modules/sub")).unwrap(),
+        }
+        let before = git(&path, &["status", "--porcelain", "--untracked-files=all"]);
+        let inode = dot_git_inode(&path);
+
+        let refused = worktree::remove_worktree(&fx.work, &path, Removal::Safe)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        let expected = if case == "submodules" {
+            "working trees containing submodules cannot be moved or removed".to_owned()
+        } else {
+            format!(
+                "'{}' contains modified or untracked files, use --force to delete it",
+                path.display()
+            )
+        };
+        assert!(refused.contains(&expected), "{case}: {refused}");
+        assert_eq!(dot_git_inode(&path), inode, "{case}");
+        assert_eq!(
+            git(&path, &["status", "--porcelain", "--untracked-files=all"]),
+            before,
+            "{case}"
+        );
+        assert!(admin.exists(), "{case}");
+
+        worktree::remove_worktree(&fx.work, &path, Removal::Force)
+            .await
+            .unwrap();
+        assert_removed(&fx, &path, &admin);
+    }
+}
+
+/// How a submodule's checkout is populated, if at all.
+#[derive(Clone, Copy, Debug)]
+enum Submodule {
+    /// Its own `.git` directory.
+    Cloned,
+    /// A `gitdir:` file naming a git directory whose path ends in a space.
+    GitFileTrailingSpace,
+    /// `HEAD` is a symlink (`core.preferSymlinkRefs`) to a branch `pack-refs` has packed.
+    SymlinkedPackedHead,
+    /// A cloned `.git` git cannot read (an empty `commondir`), behind a `skip-worktree`
+    /// gitlink so status stays clean. `rev-parse --resolve-git-dir` exits 128 here too.
+    UnreadableGitDir,
+    Unpopulated,
+}
+
+/// A populated submodule (its checkout has a `.git` git itself resolves) is refused like
+/// `<admin>/modules`, as git reads the worktree's index; an unpopulated one is not.
+#[tokio::test]
+async fn safe_annex_removal_refuses_a_populated_submodule() {
+    for layout in [
+        Submodule::Cloned,
+        Submodule::GitFileTrailingSpace,
+        Submodule::SymlinkedPackedHead,
+        Submodule::UnreadableGitDir,
+        Submodule::Unpopulated,
+    ] {
+        let populated = !matches!(layout, Submodule::Unpopulated);
+        let fx = Fixture::new("annex-submodule");
+        let (path, admin) = annexed_worktree(&fx);
+        let sub = fx.root.path().join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        git(&sub, &["init", "-q", "-b", "main"]);
+        write(&sub, "lib.txt", "lib\n");
+        let sha = commit_all(&sub, "lib");
+        match layout {
+            Submodule::Cloned => {
+                git(&path, &["clone", "-q", sub.to_str().unwrap(), "lib"]);
+            }
+            Submodule::GitFileTrailingSpace => {
+                let separate = fx.root.path().join("lib-git ");
+                git(
+                    &path,
+                    &[
+                        "clone",
+                        "-q",
+                        "--separate-git-dir",
+                        separate.to_str().unwrap(),
+                        sub.to_str().unwrap(),
+                        "lib",
+                    ],
+                );
+            }
+            Submodule::SymlinkedPackedHead => {
+                git(&path, &["clone", "-q", sub.to_str().unwrap(), "lib"]);
+                let lib = path.join("lib");
+                git(
+                    &lib,
+                    &[
+                        "-c",
+                        "core.preferSymlinkRefs=true",
+                        "symbolic-ref",
+                        "HEAD",
+                        "refs/heads/main",
+                    ],
+                );
+                git(&lib, &["pack-refs", "--all"]);
+                let head = lib.join(".git/HEAD");
+                assert!(head.is_symlink() && !head.is_file(), "{layout:?}");
+            }
+            Submodule::UnreadableGitDir => {
+                git(&path, &["clone", "-q", sub.to_str().unwrap(), "lib"]);
+                write(&path.join("lib"), "draft.txt", "unsaved\n");
+            }
+            Submodule::Unpopulated => {
+                std::fs::create_dir_all(path.join("lib")).unwrap();
+            }
+        }
+        git(
+            &path,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{},lib", sha.trim()),
+            ],
+        );
+        git(&path, &["commit", "-q", "-m", "submodule"]);
+        if matches!(layout, Submodule::UnreadableGitDir) {
+            git(&path, &["update-index", "--skip-worktree", "lib"]);
+            std::fs::write(path.join("lib/.git/commondir"), "").unwrap();
+        }
+        assert_eq!(git(&path, &["status", "--porcelain"]), "", "{layout:?}");
+
+        let result = worktree::remove_worktree(&fx.work, &path, Removal::Safe).await;
+
+        if !populated {
+            result.unwrap();
+            assert_removed(&fx, &path, &admin);
+            continue;
+        }
+        let refused = result.unwrap_err().to_string();
+        assert!(
+            refused.contains("working trees containing submodules cannot be moved or removed"),
+            "{refused}"
+        );
+        assert!(path.join("lib/lib.txt").exists(), "{layout:?}");
+        assert!(path.join("lib/.git").exists(), "{layout:?}");
+        assert!(admin.exists(), "{layout:?}");
+
+        worktree::remove_worktree(&fx.work, &path, Removal::Force)
+            .await
+            .unwrap();
+        assert_removed(&fx, &path, &admin);
+    }
+}
+
+/// The dirty check reads the linked checkout even when its `config.worktree` points
+/// `core.worktree` at the main checkout, as git sets `GIT_DIR` and `GIT_WORK_TREE`.
+#[tokio::test]
+async fn safe_annex_removal_checks_the_linked_checkout() {
+    let fx = Fixture::new("annex-core-worktree");
+    let (path, admin) = annexed_worktree(&fx);
+    git(&fx.work, &["config", "extensions.worktreeConfig", "true"]);
+    git(
+        &path,
+        &[
+            "config",
+            "--worktree",
+            "core.worktree",
+            fx.work.to_str().unwrap(),
+        ],
+    );
+    write(&path, "README.md", "draft\n");
+
+    let refused = worktree::remove_worktree(&fx.work, &path, Removal::Safe)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        refused.contains("contains modified or untracked files"),
+        "{refused}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(path.join("README.md")).unwrap(),
+        "draft\n"
+    );
+    assert!(admin.exists());
+
+    worktree::remove_worktree(&fx.work, &path, Removal::Force)
+        .await
+        .unwrap();
+    assert_removed(&fx, &path, &admin);
+}
+
+/// A locked annexed worktree is refused, forced or not, as `git worktree remove --force` does.
+#[tokio::test]
+async fn annex_removal_refuses_a_locked_worktree() {
+    let fx = Fixture::new("annex-locked");
+    let (path, admin) = annexed_worktree(&fx);
+    git(
+        &fx.work,
+        &["worktree", "lock", "--reason", "on a stick", "annexed"],
+    );
+
+    for removal in [Removal::Safe, Removal::Force] {
+        let refused = worktree::remove_worktree(&fx.work, &path, removal)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("cannot remove a locked working tree, lock reason: on a stick"),
+            "{refused}"
+        );
+        assert!(path.join("README.md").exists(), "{removal:?}");
+        assert!(admin.join("locked").exists(), "{removal:?}");
+    }
+
+    git(&fx.work, &["worktree", "unlock", "annexed"]);
+    worktree::remove_worktree(&fx.work, &path, Removal::Safe)
+        .await
+        .unwrap();
+    assert_removed(&fx, &path, &admin);
+}
+
+/// Removal reads an annexed checkout's metadata only from this repository's own
+/// `<common dir>/worktrees/<name>`, and refuses before touching the checkout otherwise.
+#[tokio::test]
+async fn annex_removal_refuses_a_link_outside_the_repository() {
+    let fx = Fixture::new("annex-outside");
+    let (path, admin) = annexed_worktree(&fx);
+    // A copy of the admin folder outside the repository, whose gitdir still points back.
+    let outside = fx.root.path().join("outside-admin");
+    git(
+        fx.root.path(),
+        &["init", "-q", "--bare", outside.to_str().unwrap()],
+    );
+    for file in ["gitdir", "HEAD"] {
+        std::fs::copy(admin.join(file), outside.join(file)).unwrap();
+    }
+    let dot_git = path.join(".git");
+    std::fs::remove_file(&dot_git).unwrap();
+    std::os::unix::fs::symlink(&outside, &dot_git).unwrap();
+    let inode = dot_git_inode(&path);
+
+    for removal in [Removal::Safe, Removal::Force] {
+        assert!(
+            worktree::remove_worktree(&fx.work, &path, removal)
+                .await
+                .is_err()
+        );
+        assert_eq!(dot_git_inode(&path), inode, "{removal:?}");
+        assert_eq!(std::fs::read_link(&dot_git).unwrap(), outside);
+        assert!(path.join("README.md").exists());
+        assert!(outside.join("HEAD").exists());
+        assert!(admin.exists());
+    }
+    assert!(git(&fx.work, &["worktree", "list"]).contains("annexed"));
+
+    // With the link pointing home again, the same checkout is removed.
+    std::fs::remove_file(&dot_git).unwrap();
+    std::os::unix::fs::symlink(&admin, &dot_git).unwrap();
+    worktree::remove_worktree(&fx.work, &path, Removal::Safe)
+        .await
+        .unwrap();
+    assert_removed(&fx, &path, &admin);
+}
+
+/// The admin folder's `gitdir` must name this checkout's `.git`, not another file in it.
+#[tokio::test]
+async fn annex_removal_refuses_a_backlink_to_another_file() {
+    let fx = Fixture::new("annex-backlink");
+    let (path, admin) = annexed_worktree(&fx);
+    let gitdir = std::fs::read_to_string(admin.join("gitdir")).unwrap();
+    std::fs::write(
+        admin.join("gitdir"),
+        format!("{}\n", path.join("README.md").display()),
+    )
+    .unwrap();
+    let inode = dot_git_inode(&path);
+
+    for removal in [Removal::Safe, Removal::Force] {
+        assert!(
+            worktree::remove_worktree(&fx.work, &path, removal)
+                .await
+                .is_err()
+        );
+        assert_eq!(dot_git_inode(&path), inode, "{removal:?}");
+        assert_eq!(std::fs::read_link(path.join(".git")).unwrap(), admin);
+        assert!(path.join("README.md").exists());
+        assert!(admin.exists());
+    }
+
+    std::fs::write(admin.join("gitdir"), gitdir).unwrap();
+    worktree::remove_worktree(&fx.work, &path, Removal::Safe)
+        .await
+        .unwrap();
+    assert_removed(&fx, &path, &admin);
+}
+
+/// A user's own `.git.conn-swap*` is an untracked file like any other: safe removal refuses the
+/// checkout and keeps it, and only force deletes it.
+#[tokio::test]
+async fn annex_removal_treats_a_swap_named_file_as_untracked() {
+    let fx = Fixture::new("annex-user-swap");
+    let (path, admin) = annexed_worktree(&fx);
+    write(&path, ".git.conn-swap-mine", "mine\n");
+
+    assert!(
+        worktree::remove_worktree(&fx.work, &path, Removal::Safe)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(path.join(".git.conn-swap-mine")).unwrap(),
+        "mine\n"
+    );
+    assert_eq!(std::fs::read_link(path.join(".git")).unwrap(), admin);
+
+    worktree::remove_worktree(&fx.work, &path, Removal::Force)
+        .await
+        .unwrap();
+    assert_removed(&fx, &path, &admin);
 }
 
 #[tokio::test]
@@ -553,6 +1088,100 @@ async fn file_contents_and_branch_commits() {
     assert_eq!(commits.commits[0].sha, sha);
     assert_eq!(commits.commits[0].subject, "two");
     assert!(commits.commits[0].committed_at.contains('T'));
+}
+
+/// T3 "compares a plain recorded base with the remote that base branch tracks".
+#[tokio::test]
+async fn a_plain_recorded_base_compares_with_the_remote_it_tracks() {
+    let fx = Fixture::new("tracked-base");
+    let upstream = fx.root.path().join("upstream.git");
+    git(
+        fx.root.path(),
+        &["init", "-q", "--bare", upstream.to_str().unwrap()],
+    );
+    git(
+        &fx.work,
+        &["remote", "add", "upstream", upstream.to_str().unwrap()],
+    );
+    write(&fx.work, "upstream.txt", "unrelated upstream work\n");
+    commit_all(&fx.work, "upstream work");
+    git(&fx.work, &["push", "-q", "-u", "upstream", "main"]);
+    git(
+        &fx.work,
+        &["checkout", "-q", "-b", "feature/from-local-main"],
+    );
+    git(
+        &fx.work,
+        &[
+            "config",
+            "branch.feature/from-local-main.t3-merge-base",
+            "main",
+        ],
+    );
+    write(&fx.work, "feature.txt", "intended branch change\n");
+    commit_all(&fx.work, "feature work");
+    write(&fx.work, "draft.txt", "draft\n");
+
+    let read = |base: Option<&str>| {
+        let cwd = fx.cwd();
+        let base = base.map(str::to_owned);
+        async move {
+            let mut input = preview_input(&cwd);
+            input.source_kind = Some(InputKind::BranchRange);
+            input.base_ref.clone_from(&base);
+            let preview = review::diff_preview(input).await.unwrap();
+            let range = preview
+                .sources
+                .into_iter()
+                .find(|s| s.kind == Kind::BranchRange)
+                .unwrap();
+            let mut files: Vec<_> = range.files.unwrap().into_iter().map(|f| f.path).collect();
+            files.sort();
+            let commits = review::branch_commits(ReviewBranchCommitsInput {
+                cwd,
+                base_ref: base,
+            })
+            .await
+            .unwrap();
+            let subjects: Vec<_> = commits.commits.into_iter().map(|c| c.subject).collect();
+            (range.base_ref.unwrap(), files, subjects)
+        }
+    };
+    let ours = (
+        "upstream/main".to_owned(),
+        vec!["draft.txt".to_owned(), "feature.txt".to_owned()],
+        vec!["feature work".to_owned()],
+    );
+    let theirs = (
+        "origin/main".to_owned(),
+        vec![
+            "draft.txt".to_owned(),
+            "feature.txt".to_owned(),
+            "upstream.txt".to_owned(),
+        ],
+        vec!["feature work".to_owned(), "upstream work".to_owned()],
+    );
+    assert_eq!(read(None).await, ours);
+    assert_eq!(read(Some("upstream/main")).await, ours);
+    assert_eq!(read(Some("origin/main")).await, theirs);
+    let local = status::local_status(&fx.work).await.unwrap();
+    let changes = local.branch_changes.unwrap();
+    assert_eq!(changes.base_ref.as_deref(), Some("upstream/main"));
+    assert_eq!(
+        status::remote_status(&fx.work)
+            .await
+            .unwrap()
+            .unwrap()
+            .ahead_count,
+        1
+    );
+
+    // Retargeting local main moves the implicit base with it.
+    git(
+        &fx.work,
+        &["branch", "-q", "--set-upstream-to=origin/main", "main"],
+    );
+    assert_eq!(read(None).await, theirs);
 }
 
 #[tokio::test]

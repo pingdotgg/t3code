@@ -249,6 +249,7 @@ fn render_device_stream(
 
     let mut viewport = div()
         .id("device-screen-viewport")
+        .a11y_group("panel.device.screen", "Device screen")
         .relative()
         .flex()
         .flex_1()
@@ -2035,6 +2036,7 @@ fn render_tools_panel(
         if log_open {
             let mut list = v_flex()
                 .id("device-tools-event-log-list")
+                .a11y_group("panel.device.event-log", "Device event log")
                 .max_h(px(256.0))
                 .overflow_y_scroll()
                 .px(px(12.0))
@@ -2095,6 +2097,7 @@ fn render_tools_panel(
         .child(
             div()
                 .id("device-tools-scroll")
+                .a11y_group("panel.device.tools", "Device tools")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()

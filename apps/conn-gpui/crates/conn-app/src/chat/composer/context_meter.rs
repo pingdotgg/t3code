@@ -5,6 +5,8 @@
 //! `muted-foreground/24`, the arc `muted-foreground/72`, or the error color past `90%`. Hovering
 //! opens a `side="top" align="end"` popover with the used/total tokens and percentage.
 
+use std::time::Duration;
+
 use conn_theme::Tokens;
 use gpui_kit::{
     AnyElement, Context, FontWeight, Hsla, InteractiveElement as _, IntoElement,
@@ -23,12 +25,202 @@ use crate::a11y::ConnA11yExt as _;
 const RING_RADIUS: f32 = 9.75;
 const RING_STROKE: f32 = 3.0;
 const RING_VIEWBOX: f32 = 24.0;
-/// Ring box size (`size-5`).
-const RING_SIZE_PX: f32 = 20.0;
+/// Ring box size: the microphone glyph's 16px, so the meter is no taller than its neighbour
+/// (Nick, #319; it was `size-5`, 20px).
+const RING_SIZE_PX: f32 = 16.0;
 /// Button size (`size-7`).
 const BUTTON_SIZE_PX: f32 = 28.0;
 /// Line segments used to approximate the ring.
 const RING_SEGMENTS: usize = 72;
+
+/// Web's `PopoverTrigger openOnHover delay={150}`: the popover opens after the pointer rests on the
+/// meter this long.
+pub(super) const OPEN_DELAY: Duration = Duration::from_millis(150);
+/// Web's `closeDelay={onCompact ? 150 : 0}`: with a Compact button the popover lingers this long so
+/// the pointer can travel into it; without one it closes at once.
+pub(super) const CLOSE_DELAY: Duration = Duration::from_millis(150);
+
+/// What the meter should do after a pointer or click event; the composer carries it out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MeterAction {
+    None,
+    /// Drop any pending open or close timer.
+    CancelTimer,
+    OpenNow,
+    CloseNow,
+    OpenAfter(Duration),
+    CloseAfter(Duration),
+}
+
+/// The hover and pin state of the context meter (`openOnHover`, plus a click that pins it).
+///
+/// The popover opens after [`OPEN_DELAY`] on the trigger, and closes when the pointer is off both
+/// the trigger and the popover, after the close delay. A click pins it open until another click, an
+/// outside click or Escape.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct MeterHover {
+    trigger: bool,
+    popover: bool,
+    pub(super) pinned: bool,
+}
+
+impl MeterHover {
+    pub(super) fn trigger_hover(
+        &mut self,
+        hovered: bool,
+        open: bool,
+        close_delay: Duration,
+    ) -> MeterAction {
+        self.trigger = hovered;
+        if hovered {
+            if open {
+                MeterAction::CancelTimer
+            } else {
+                MeterAction::OpenAfter(OPEN_DELAY)
+            }
+        } else {
+            self.leave(open, close_delay)
+        }
+    }
+
+    pub(super) fn popover_hover(
+        &mut self,
+        hovered: bool,
+        open: bool,
+        close_delay: Duration,
+    ) -> MeterAction {
+        self.popover = hovered;
+        if hovered {
+            MeterAction::CancelTimer
+        } else {
+            self.leave(open, close_delay)
+        }
+    }
+
+    /// The pointer left the trigger or the popover.
+    fn leave(&self, open: bool, close_delay: Duration) -> MeterAction {
+        if self.pinned || self.trigger || self.popover {
+            MeterAction::None
+        } else if !open {
+            // Left before the open delay ran out.
+            MeterAction::CancelTimer
+        } else if close_delay.is_zero() {
+            MeterAction::CloseNow
+        } else {
+            MeterAction::CloseAfter(close_delay)
+        }
+    }
+
+    /// A click on the trigger pins the popover open; a click while pinned closes it.
+    pub(super) fn click(&mut self, open: bool) -> MeterAction {
+        if open && self.pinned {
+            self.pinned = false;
+            MeterAction::CloseNow
+        } else {
+            self.pinned = true;
+            if open {
+                MeterAction::CancelTimer
+            } else {
+                MeterAction::OpenNow
+            }
+        }
+    }
+
+    /// A click outside the popover and trigger, or Escape.
+    pub(super) fn dismiss(&mut self) -> MeterAction {
+        self.pinned = false;
+        MeterAction::CloseNow
+    }
+
+    /// Whether the pointer is on the trigger (a click there is not an outside click).
+    pub(super) fn trigger_hovered(&self) -> bool {
+        self.trigger
+    }
+
+    /// The open timer ran out: open if the pointer is still on the trigger.
+    pub(super) fn should_open(&self, open: bool) -> bool {
+        !open && self.trigger
+    }
+
+    /// The close timer ran out: close if nothing holds the popover.
+    pub(super) fn should_close(&self, open: bool) -> bool {
+        open && !self.pinned && !self.trigger && !self.popover
+    }
+}
+
+impl Composer {
+    /// Carries out a [`MeterAction`]: opens or closes the popover now, or after a delay.
+    fn apply_meter_action(&mut self, action: MeterAction, cx: &mut Context<'_, Self>) {
+        match action {
+            MeterAction::None => {}
+            MeterAction::CancelTimer => self.meter_timer = None,
+            MeterAction::OpenNow => {
+                self.meter_timer = None;
+                self.set_context_meter_open(true, cx);
+            }
+            MeterAction::CloseNow => {
+                self.meter_timer = None;
+                self.set_context_meter_open(false, cx);
+            }
+            MeterAction::OpenAfter(delay) | MeterAction::CloseAfter(delay) => {
+                let opening = matches!(action, MeterAction::OpenAfter(_));
+                self.meter_timer = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(delay).await;
+                    let _ = this.update(cx, |composer, cx| {
+                        composer.meter_timer = None;
+                        let open = composer.context_meter_open;
+                        if opening && composer.meter.should_open(open) {
+                            composer.set_context_meter_open(true, cx);
+                        } else if !opening && composer.meter.should_close(open) {
+                            composer.set_context_meter_open(false, cx);
+                        }
+                    });
+                }));
+            }
+        }
+    }
+
+    pub(crate) fn meter_trigger_hover(
+        &mut self,
+        hovered: bool,
+        close_delay: Duration,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let open = self.context_meter_open;
+        let action = self.meter.trigger_hover(hovered, open, close_delay);
+        self.apply_meter_action(action, cx);
+    }
+
+    fn meter_popover_hover(
+        &mut self,
+        hovered: bool,
+        close_delay: Duration,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let open = self.context_meter_open;
+        let action = self.meter.popover_hover(hovered, open, close_delay);
+        self.apply_meter_action(action, cx);
+    }
+
+    pub(crate) fn meter_click(&mut self, cx: &mut Context<'_, Self>) {
+        let open = self.context_meter_open;
+        let action = self.meter.click(open);
+        self.apply_meter_action(action, cx);
+    }
+
+    /// A press outside the popover closes a pinned one; one on the trigger is a click, not outside.
+    fn meter_press_outside(&mut self, cx: &mut Context<'_, Self>) {
+        if self.context_meter_open && !self.meter.trigger_hovered() {
+            let action = self.meter.dismiss();
+            self.apply_meter_action(action, cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn context_meter_open_for_test(&self) -> bool {
+        self.context_meter_open
+    }
+}
 
 /// Context usage for the active thread (`ContextWindowSnapshot` subset the meter reads).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -193,6 +385,11 @@ pub(super) fn render_context_meter(
     )
     .size(px(RING_SIZE_PX));
 
+    let close_delay = if show_compact {
+        CLOSE_DELAY
+    } else {
+        Duration::ZERO
+    };
     let mut slot = div().relative().flex_none().child(
         div()
             .id("composer-context-meter")
@@ -201,41 +398,51 @@ pub(super) fn render_context_meter(
             .items_center()
             .justify_center()
             .size(px(BUTTON_SIZE_PX))
-            .rounded(px(8.0))
+            // Round on hover, like the microphone and the toolbars (Nick, #319).
+            .rounded_full()
             .cursor_pointer()
             .hover(move |s| s.bg(highlight))
-            // Hover opens (`openOnHover`). With a Compact button the popover stays open after
-            // the pointer leaves so it can be reached; click or Escape closes it.
+            // `openOnHover delay={150}`, closing when the pointer is off the trigger and the
+            // popover (Nick, #330). A click pins it open until a click, a press outside or Escape.
             .on_hover(cx.listener(move |composer, hovered: &bool, _, cx| {
-                if *hovered || !show_compact {
-                    composer.set_context_meter_open(*hovered, cx);
-                }
+                composer.meter_trigger_hover(*hovered, close_delay, cx);
             }))
-            .on_click(cx.listener(|composer, _, _, cx| {
-                let next = !composer.context_meter_open;
-                composer.set_context_meter_open(next, cx);
-            }))
+            .on_click(cx.listener(|composer, _, _, cx| composer.meter_click(cx)))
             .child(ring),
     );
 
     if open {
         slot = slot.child(
             deferred(
-                div().absolute().bottom_full().right_0().mb(px(6.0)).child(
-                    popover_surface("composer-context-meter-popup", tokens)
-                        .a11y_group("composer.context-meter.popover", "Context window details")
-                        .w(px(240.0))
-                        .child(render_popover_body(
-                            usage,
-                            model_display_name,
-                            show_compact,
-                            used_label.as_deref(),
-                            normalized,
-                            usage_color,
-                            tokens,
-                            cx,
-                        )),
-                ),
+                // The 6px gap is padding of the hover area, so the pointer can cross it from the
+                // trigger to the popover without leaving both.
+                div()
+                    .id("composer-context-meter-hover-area")
+                    .absolute()
+                    .bottom_full()
+                    .right_0()
+                    .pb(px(6.0))
+                    .on_hover(cx.listener(move |composer, hovered: &bool, _, cx| {
+                        composer.meter_popover_hover(*hovered, close_delay, cx);
+                    }))
+                    .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
+                        composer.meter_press_outside(cx);
+                    }))
+                    .child(
+                        popover_surface("composer-context-meter-popup", tokens)
+                            .a11y_group("composer.context-meter.popover", "Context window details")
+                            .w(px(240.0))
+                            .child(render_popover_body(
+                                usage,
+                                model_display_name,
+                                show_compact,
+                                used_label.as_deref(),
+                                normalized,
+                                usage_color,
+                                tokens,
+                                cx,
+                            )),
+                    ),
             )
             .with_priority(3),
         );
@@ -454,5 +661,68 @@ mod tests {
             compaction_message(None, None),
             "Context compacts automatically when needed."
         );
+    }
+
+    #[test]
+    fn hovering_opens_after_the_delay_and_leaving_both_closes() {
+        let mut meter = MeterHover::default();
+        // Rest on the trigger: open after 150ms, if still there.
+        assert_eq!(
+            meter.trigger_hover(true, false, CLOSE_DELAY),
+            MeterAction::OpenAfter(OPEN_DELAY)
+        );
+        assert!(meter.should_open(false));
+        // Open. Move onto the popover: the close timer is dropped.
+        assert_eq!(
+            meter.trigger_hover(false, true, CLOSE_DELAY),
+            MeterAction::CloseAfter(CLOSE_DELAY)
+        );
+        assert_eq!(
+            meter.popover_hover(true, true, CLOSE_DELAY),
+            MeterAction::CancelTimer
+        );
+        assert!(!meter.should_close(true), "the pointer is on the popover");
+        // Hover away from the popover too: it closes after the delay.
+        assert_eq!(
+            meter.popover_hover(false, true, CLOSE_DELAY),
+            MeterAction::CloseAfter(CLOSE_DELAY)
+        );
+        assert!(meter.should_close(true));
+    }
+
+    #[test]
+    fn a_pass_over_never_opens_and_no_compact_closes_at_once() {
+        let mut meter = MeterHover::default();
+        meter.trigger_hover(true, false, CLOSE_DELAY);
+        assert_eq!(
+            meter.trigger_hover(false, false, CLOSE_DELAY),
+            MeterAction::CancelTimer
+        );
+        assert!(!meter.should_open(false), "the pointer left before 150ms");
+        // Open, no Compact button (zero close delay): leaving closes now.
+        meter.trigger_hover(true, true, Duration::ZERO);
+        assert_eq!(
+            meter.trigger_hover(false, true, Duration::ZERO),
+            MeterAction::CloseNow
+        );
+    }
+
+    #[test]
+    fn a_click_pins_the_popover_until_clicked_again_or_dismissed() {
+        let mut meter = MeterHover::default();
+        assert_eq!(meter.click(false), MeterAction::OpenNow);
+        assert!(meter.pinned);
+        // Leaving does not close a pinned popover.
+        assert_eq!(
+            meter.trigger_hover(false, true, CLOSE_DELAY),
+            MeterAction::None
+        );
+        assert!(!meter.should_close(true));
+        assert_eq!(meter.click(true), MeterAction::CloseNow);
+        assert!(!meter.pinned);
+        // Pin again, then Escape or an outside press closes it.
+        meter.click(false);
+        assert_eq!(meter.dismiss(), MeterAction::CloseNow);
+        assert!(!meter.pinned);
     }
 }
