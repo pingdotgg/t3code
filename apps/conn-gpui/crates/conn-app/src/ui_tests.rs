@@ -3053,6 +3053,69 @@ fn opening_a_thread_the_project_filter_hides_widens_the_filter(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
+fn orbit_filing_filters_the_original_thread_and_tracks_refiling(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let mut shell = two_project_shell();
+    let id = "thread-failed";
+    for (project_id, slug) in [(85, "mini"), (84, "nick")] {
+        let thread = shell
+            .threads
+            .iter_mut()
+            .find(|t| t.id == id)
+            .expect("thread");
+        thread.orbit_project = Some(Some(conn_contract::OrbitProjectRef {
+            id: project_id,
+            slug: slug.to_owned(),
+        }));
+        let workspace = conn_desktop::orbit::OrbitWorkspace {
+            id: "machines".to_owned(),
+            name: "Machines".to_owned(),
+            color: "#000".to_owned(),
+            icon: None,
+            image: None,
+            project_refs: vec![],
+            project_keys: vec!["mini".to_owned()],
+        };
+        assert_eq!(
+            crate::sidebar::thread_list::thread_in_scope(
+                &shell,
+                &[workspace],
+                Some("machines"),
+                shell.find_thread(id).expect("thread")
+            ),
+            slug == "mini"
+        );
+        cx.update(|cx| app.update(cx, |app, cx| app.set_shell(shell.clone(), cx)));
+        render_twice(cx, window);
+        if slug == "nick" {
+            assert!(!labelled(cx, window, "Failed thread card"));
+        }
+        click_row(cx, window, "Filter by project", MouseButton::Left);
+        click_row(cx, window, &format!("Filter by {slug}"), MouseButton::Left);
+        assert!(labelled(cx, window, "Failed thread card"));
+        click_row(cx, window, "Failed thread card", MouseButton::Left);
+        assert_eq!(open_thread(cx, &app).as_deref(), Some(id));
+        assert_eq!(
+            cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+            Some(conn_state::orbit_filing_key(project_id))
+        );
+    }
+    let thread = shell
+        .threads
+        .iter_mut()
+        .find(|t| t.id == id)
+        .expect("thread");
+    thread.orbit_project = Some(None);
+    let original = thread.project_id.clone();
+    cx.update(|cx| app.update(cx, |app, cx| app.set_shell(shell, cx)));
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "Failed thread card"));
+    cx.update(|cx| app.update(cx, |app, cx| app.select_workspace(Some(original), cx)));
+    render_twice(cx, window);
+    assert!(labelled(cx, window, "Failed thread card"));
+}
+
+#[gpui_kit::test]
 fn files_dropped_on_a_thread_row_open_that_thread(cx: &mut TestAppContext) {
     let (window, app) = mount_kitchen_sink(cx);
     let file = std::env::temp_dir().join(format!("conn-row-drop-{}.png", std::process::id()));
@@ -5714,7 +5777,17 @@ fn remote_child_opens_from_its_parent_card_without_a_sidebar_row(cx: &mut TestAp
     let (window, app) = mount_app(cx);
     cx.update(|cx| {
         app.update(cx, |app, cx| {
-            app.set_shell(kitchen_sink_shell(), cx);
+            let mut shell = kitchen_sink_shell();
+            let thread = shell
+                .threads
+                .iter_mut()
+                .find(|t| t.id == "thread-selected")
+                .unwrap();
+            thread.orbit_project = Some(Some(conn_contract::OrbitProjectRef {
+                id: 85,
+                slug: "mini".to_owned(),
+            }));
+            app.set_shell(shell, cx);
             let mut mini = linked_mini_shell("/work/mini", "Mini diagnostics");
             mini.threads[0].delegated_from = Some(
                 from_json(json!({
@@ -5742,6 +5815,7 @@ fn remote_child_opens_from_its_parent_card_without_a_sidebar_row(cx: &mut TestAp
                 );
             }
             app.set_thread_for_test("thread-selected".to_owned(), parent, cx);
+            app.select_workspace(Some(conn_state::orbit_filing_key(85)), cx);
         });
     });
     cx.update_window(window, |_, w, cx| w.render_frame(cx))
@@ -5758,6 +5832,10 @@ fn remote_child_opens_from_its_parent_card_without_a_sidebar_row(cx: &mut TestAp
     })
     .unwrap();
     assert_eq!(open_thread(cx, &app).as_deref(), Some("thread-mini"));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some(conn_state::orbit_filing_key(85))
+    );
     assert_eq!(
         cx.read(|cx| app.read(cx).thread_environment_for_test("thread-mini")),
         Some("mini".to_owned())

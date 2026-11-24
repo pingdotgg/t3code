@@ -8045,6 +8045,8 @@ async fn older_settled_threads_page_and_trim() {
         )
         .await;
     }
+    let mini = json!({"id":85,"slug":"mini"});
+    dispatch(&engine, json!({"type":"thread.metadata.update","commandId":"file-s03","threadId":"s03","orbitProject":mini})).await;
     // A bounded shell keeps the newest 25 settled threads and counts the 5 older ones.
     let mut shell = engine
         .subscribe_shell(
@@ -8060,6 +8062,38 @@ async fn older_settled_threads_page_and_trim() {
     );
     assert_eq!(snapshot["olderSettled"]["counts"][0]["count"], 5);
 
+    assert_eq!(
+        snapshot["olderSettled"]["filedCounts"],
+        json!([{"projectId":project_id(),"orbitProject":mini,"count":1}])
+    );
+    for (physical, orbit, expected) in [
+        (json!([]), Some(json!([85])), vec!["s03"]),
+        (
+            json!([project_id()]),
+            Some(json!([])),
+            vec!["s04", "s02", "s01", "s00"],
+        ),
+        (
+            json!([project_id()]),
+            None,
+            vec!["s04", "s03", "s02", "s01", "s00"],
+        ),
+    ] {
+        let mut input = json!({"before":{"settledAt":snapshot["olderSettled"]["before"]},"projectIds":physical,"limit":10});
+        if let Some(ids) = orbit {
+            input["orbitProjectIds"] = ids;
+        }
+        let result = call(&engine, "orchestration.getOlderSettledThreads", input)
+            .await
+            .unwrap();
+        let ids: Vec<_> = result["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, expected);
+    }
     // The phone's HTTP reload trims as the socket does, and a current cursor keeps its rows.
     let query = |omit: bool, resume_from: Option<u64>| crate::HttpShellQuery {
         omit_idle_subagents: omit,

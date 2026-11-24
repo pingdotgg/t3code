@@ -162,13 +162,21 @@ impl ThreadMenuState {
         thread: &ThreadShell,
         active_scope: Option<&str>,
     ) -> Self {
-        let project_filter = shell
-            .project(&thread.project_id)
-            .filter(|p| p.archived_at.as_ref().is_none_or(Option::is_none))
-            .map(|p| ProjectFilterState {
-                label: p.title.clone(),
-                is_active: active_scope == Some(p.id.as_str()),
+        let label = thread
+            .orbit_project
+            .as_ref()
+            .and_then(Option::as_ref)
+            .map(|p| &p.slug)
+            .or_else(|| {
+                shell
+                    .project(&thread.project_id)
+                    .filter(|p| p.archived_at.as_ref().is_none_or(Option::is_none))
+                    .map(|p| &p.title)
             });
+        let project_filter = label.map(|label| ProjectFilterState {
+            label: label.clone(),
+            is_active: active_scope == Some(conn_state::sidebar_project_key(thread).as_ref()),
+        });
         Self {
             branch: thread.branch.clone().filter(|b| !b.is_empty()),
             project_filter,

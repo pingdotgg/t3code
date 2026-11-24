@@ -1969,6 +1969,13 @@ pub struct ModelSelection {
     pub options: Option<Option<Json>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitProjectRef {
+    pub id: i64,
+    pub slug: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OrchestrationGetWorkflowScriptErrorReason {
     #[serde(rename = "invalid-path")]
@@ -2387,6 +2394,12 @@ pub struct OrchestrationV2AppThread {
     pub interaction_mode: ProviderInteractionMode,
     pub branch: Option<String>,
     pub worktree_path: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub orbit_project: Option<Option<OrbitProjectRef>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -2862,6 +2875,12 @@ pub struct OrchestrationV2ThreadShell {
     pub interaction_mode: ProviderInteractionMode,
     pub branch: Option<String>,
     pub worktree_path: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub orbit_project: Option<Option<OrbitProjectRef>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -3548,6 +3567,12 @@ pub struct OrchestrationV2CommandThreadMetadataUpdate {
         with = "crate::support::double_option"
     )]
     pub limit_recovery: Option<Option<OrchestrationV2LimitRecoveryUpdate>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub orbit_project: Option<Option<OrbitProjectRef>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -8161,6 +8186,8 @@ pub struct OrchestrationV2OlderSettledCursor {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2GetOlderSettledThreadsInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbit_project_ids: Option<Vec<i64>>,
     pub before: OrchestrationV2OlderSettledCursor,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_ids: Option<Vec<String>>,
@@ -8262,7 +8289,17 @@ pub struct OrchestrationV2OlderSettledCount {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2OlderSettledThreadsFiledCountsItem {
+    pub project_id: String,
+    pub orbit_project: OrbitProjectRef,
+    pub count: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2OlderSettledThreads {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filed_counts: Option<Vec<OrchestrationV2OlderSettledThreadsFiledCountsItem>>,
     pub before: String,
     pub as_of_sequence: i64,
     pub counts: Vec<OrchestrationV2OlderSettledCount>,

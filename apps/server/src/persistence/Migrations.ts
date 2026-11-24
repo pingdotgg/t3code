@@ -118,6 +118,7 @@ import Migration0097 from "./Migrations/097_IssueTrackerBindings.ts";
 import Migration0098 from "./Migrations/098_ActiveShellIndexIndexes.ts";
 import Migration0099 from "./Migrations/099_BackgroundRecoveryIndexes.ts";
 import Migration0100 from "./Migrations/100_TurnItemOrbitTaskInline.ts";
+import Migration0101 from "./Migrations/101_ActiveShellOrbitProject.ts";
 
 /**
  * All migrations, keyed "{id}_{name}"; Migrator.fromRecord sorts them by id.
@@ -225,6 +226,7 @@ export const migrationEntries = [
   [98, "ActiveShellIndexIndexes", Migration0098],
   [99, "BackgroundRecoveryIndexes", Migration0099],
   [100, "TurnItemOrbitTaskInline", Migration0100],
+  [101, "ActiveShellOrbitProject", Migration0101],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

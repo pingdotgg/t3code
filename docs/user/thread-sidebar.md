@@ -46,6 +46,15 @@ moves and the agent keeps working in the same place. Other threads in that folde
 move with it. Rename the project in its settings, and use **Initialize Git** to
 get branch and diff controls.
 
+### File a General thread under an Orbit project
+
+In Conn GPUI, a General thread on the agent node can appear under an Orbit
+project in the sidebar. When the conversation identifies one project, the agent
+can file it there. For example, work on the Mini host belongs under its machine
+project. You can ask the agent to change the filing or return the thread to
+General. The thread keeps its working directory on the agent node. Open a
+delegated thread on another machine from its parent’s task card.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`

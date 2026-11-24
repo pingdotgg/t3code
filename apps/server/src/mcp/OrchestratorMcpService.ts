@@ -964,6 +964,7 @@ function listItemFromShell(
     model: shell.modelSelection.model,
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
+    ...(shell.orbitProject ? { orbitProject: shell.orbitProject } : {}),
     linkedPullRequest: shell.linkedPullRequest ?? null,
     ...threadPullRequests(shell.pullRequests),
     ...threadSettlement(shell),
@@ -1004,6 +1005,7 @@ function threadDetail(
     model: projection.thread.modelSelection.model,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    ...(projection.thread.orbitProject ? { orbitProject: projection.thread.orbitProject } : {}),
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
     ...threadPullRequests(projection.thread.pullRequests, firstPage),
     titleRegeneration:

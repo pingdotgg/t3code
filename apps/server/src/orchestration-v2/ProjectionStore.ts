@@ -489,6 +489,7 @@ export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
   | "id"
   | "projectId"
+  | "orbitProject"
   | "lineage"
   | "settledOverride"
   | "settledAt"
@@ -517,6 +518,7 @@ export type ActiveThreadListEntry = Pick<
 >;
 
 export interface OlderSettledThreadsQuery {
+  readonly orbitProjectIds?: ReadonlyArray<number>;
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
   readonly limit: number;
@@ -1968,6 +1970,7 @@ export function threadShellFromProjection(
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
+    ...(projection.thread.orbitProject ? { orbitProject: projection.thread.orbitProject } : {}),
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
@@ -2268,6 +2271,7 @@ function shellFromState(input: {
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
+    ...(input.state.thread.orbitProject ? { orbitProject: input.state.thread.orbitProject } : {}),
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
@@ -9261,7 +9265,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
-    // Migration 98 indexes these exact expressions, so the read takes them from the index instead
+    // Migration 101 indexes these exact expressions, so the read takes them from the index instead
     // of parsing every active thread's payload. Changing one here needs a matching index change.
     const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
       sql.literal(
@@ -9275,6 +9279,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const rows = yield* sql<{
         readonly thread_id: string;
         readonly project_id: string;
+        readonly orbit_id: number | null;
+        readonly orbit_slug: string | null;
         readonly relationship_to_parent: string | null;
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
@@ -9290,6 +9296,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT
           t.thread_id,
           t.project_id,
+          ${indexedField("$.orbitProject.id")} AS orbit_id,
+          ${indexedField("$.orbitProject.slug")} AS orbit_slug,
           ${indexedField("$.lineage.relationshipToParent")} AS relationship_to_parent,
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
@@ -9354,6 +9362,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows.map((row): ActiveShellIndexEntry => ({
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
+        ...(row.orbit_id != null && row.orbit_slug != null
+          ? { orbitProject: { id: row.orbit_id, slug: row.orbit_slug } }
+          : {}),
         lineage: shellIndexLineage(row),
         settledOverride:
           row.settled_override === "settled" || row.settled_override === "active"
@@ -9474,7 +9485,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
-    )(function* ({ before, projectIds, limit }) {
+    )(function* ({ before, projectIds, orbitProjectIds, limit }) {
       // ISO strings in one format, so string order is time order.
       const older = sql`
         SELECT t.thread_id, t.project_id,
@@ -9486,7 +9497,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
-            projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
+            orbitProjectIds === undefined
+              ? projectIds === undefined
+                ? sql``
+                : sql` AND t.project_id IN ${sql.in(projectIds)}`
+              : sql` AND ((json_extract(t.payload_json, '$.orbitProject.id') IS NULL ${projectIds === undefined ? sql`` : sql`AND t.project_id IN ${sql.in(projectIds)}`})
+                 OR json_extract(t.payload_json, '$.orbitProject.id') IN ${sql.in(orbitProjectIds)})`
           }
       `;
       const belowCursor =

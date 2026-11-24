@@ -188,6 +188,7 @@
 {"key":"ModelSelection","value":{"instanceId":"mJFF","model":";"}}
 {"key":"ModelSelection","value":{"instanceId":"O","model":"0E","options":[{"id":"G","value":"]'tK"},{"id":"_","value":true},{"id":"Z","value":"-1"},{"id":"�","value":"0"}]}}
 {"key":"ModelSelection","value":{"instanceId":"xe","model":"V2b)"}}
+{"key":"OrbitProjectRef","value":{"id":14,"slug":"\u0000"}}
 {"key":"OrchestrationGetWorkflowScriptError","value":{"_tag":"OrchestrationGetWorkflowScriptError","reason":"read-failed","scriptPath":"\n"}}
 {"key":"OrchestrationV2Actor","value":"user"}
 {"key":"OrchestrationV2Actor","value":"user"}
@@ -304,7 +305,7 @@
 {"key":"OrchestrationV2Command","value":{"type":"thread.mark-unread","commandId":"LG~R","threadId":"i?=m"}}
 {"key":"OrchestrationV2Command","value":{"type":"thread.mark-unread","commandId":"0","threadId":"�"}}
 {"key":"OrchestrationV2Command","value":{"type":"thread.metadata.update","commandId":"�","threadId":"~"}}
-{"key":"OrchestrationV2Command","value":{"type":"thread.metadata.update","commandId":"\u0000","threadId":"69K"}}
+{"key":"OrchestrationV2Command","value":{"type":"thread.metadata.update","commandId":"-1","threadId":"9","linkedPullRequest":null}}
 {"key":"OrchestrationV2Command","value":{"type":"thread.metadata.update","commandId":"-.","threadId":">"}}
 {"key":"OrchestrationV2Command","value":{"type":"thread.pull-request.link","commandId":"Ayvu","threadId":"r#F/","host":"=_l","repository":"😀","number":6,"url":"\u0000","source":"manual"}}
 {"key":"OrchestrationV2Command","value":{"type":"thread.pull-request.link","commandId":"�","threadId":"Yi=v","host":"\"","repository":"😀","number":13,"url":"😀","source":"manual"}}
@@ -837,9 +838,9 @@
 {"key":"OrchestrationV2OlderSettledCursor","value":{"settledAt":"ynVp","threadId":"-1"}}
 {"key":"OrchestrationV2OlderSettledCursor","value":{"settledAt":"\t","threadId":"1=6N"}}
 {"key":"OrchestrationV2OlderSettledCursor","value":{"settledAt":"","threadId":"�"}}
-{"key":"OrchestrationV2OlderSettledThreads","value":{"before":"�","asOfSequence":3,"counts":[{"projectId":"-1","count":12},{"projectId":"�","count":2}]}}
-{"key":"OrchestrationV2OlderSettledThreads","value":{"before":"k","asOfSequence":2,"counts":[]}}
-{"key":"OrchestrationV2OlderSettledThreads","value":{"before":"*<#t","asOfSequence":7,"counts":[{"projectId":"+","count":1},{"projectId":"😀","count":5}]}}
+{"key":"OrchestrationV2OlderSettledThreads","value":{"before":"_qK)","asOfSequence":16,"counts":[{"projectId":"N","count":3},{"projectId":"Ni","count":12}]}}
+{"key":"OrchestrationV2OlderSettledThreads","value":{"before":"","asOfSequence":2,"counts":[]}}
+{"key":"OrchestrationV2OlderSettledThreads","value":{"before":"\t","asOfSequence":11,"counts":[{"projectId":")e>I","count":10},{"projectId":"-1","count":0},{"projectId":"V","count":8}]}}
 {"key":"OrchestrationV2OlderSettledThreadsPage","value":{"snapshotSequence":4,"threads":[],"counts":[]}}
 {"key":"OrchestrationV2OlderSettledThreadsPage","value":{"snapshotSequence":2,"threads":[],"counts":[{"projectId":"�","count":12},{"projectId":"�","count":14},{"projectId":"0","count":16},{"projectId":"�","count":14}]}}
 {"key":"OrchestrationV2OlderSettledThreadsPage","value":{"snapshotSequence":4,"threads":[],"counts":[{"projectId":"G","count":6},{"projectId":"c","count":7},{"projectId":"e(_t","count":11},{"projectId":"C","count":11}]}}
@@ -1966,9 +1967,9 @@
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.mark-unread","commandId":"😀","threadId":"0"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.mark-unread","commandId":"0","threadId":"�"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.mark-unread","commandId":"Y&77","threadId":"E"}}
+{"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.metadata.update","commandId":"0","threadId":"0","regenerateTitle":true}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.metadata.update","commandId":"0","threadId":"?3~"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.metadata.update","commandId":"e","threadId":"5:mB"}}
-{"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.metadata.update","commandId":"_","threadId":"\u0000"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.pull-request.link","commandId":">","threadId":"\\","host":"b","repository":"n","number":15,"url":"#Qc'","source":"stack"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.pull-request.link","commandId":"V","threadId":"Vc6f","host":"T","repository":"\u0000","number":14,"url":"\u0000","source":"created"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.pull-request.link","commandId":"-1","threadId":"J_","host":"TDE]","repository":"6zb&","number":2,"url":"�","source":"stack-dismissed"}}
@@ -2137,9 +2138,9 @@
 {"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"5o9y","requiredScope":"relay:read"}}
 {"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"access:read"}}
 {"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"relay:write","requiredPermission":"}n("}}
-{"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"before":{"settledAt":"-1","threadId":"r>"},"limit":41}}
+{"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"orbitProjectIds":[4,15],"before":{"settledAt":"8r>~"},"limit":3}}
 {"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"before":{"settledAt":"/*)"},"limit":1}}
-{"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"before":{"settledAt":"\t"},"projectIds":[],"limit":3}}
+{"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"orbitProjectIds":[],"before":{"settledAt":"","threadId":",OQP"},"projectIds":[],"limit":0}}
 {"key":"rpc::orchestration::get_older_settled_threads::Success","value":{"snapshotSequence":15,"threads":[],"counts":[{"projectId":"�","count":4},{"projectId":"<X","count":1}]}}
 {"key":"rpc::orchestration::get_older_settled_threads::Success","value":{"snapshotSequence":4,"threads":[{"createdBy":"user","creationSource":"web","id":"1%GS","projectId":"�","title":"�","providerInstanceId":"j3an","modelSelection":{"instanceId":"d","model":"�","options":[{"id":"y<l","value":"bztr"},{"id":"&9p'","value":false},{"id":"f","value":"H"},{"id":",%","value":"V"}]},"runtimeMode":"approval-required","interactionMode":"default","branch":null,"worktreePath":null,"lineage":{"parentThreadId":"�","relationshipToParent":"subagent","rootThreadId":"\u0000","sideChat":false},"forkedFrom":null,"activeProviderThreadId":null,"latestRunId":null,"activeRunId":null,"status":"idle","pendingRuntimeRequest":null,"latestVisibleMessage":{"id":"P","role":"system","text":"\t","updatedAt":"1970-01-01T00:00:00.016Z"},"latestUserMessageAt":"1970-01-01T00:00:00.031Z","hasActionableProposedPlan":true,"itemCount":3,"visibleItemCount":15,"createdAt":"-171507-01-23T22:15:07.163Z","updatedAt":"1970-01-01T00:00:00.050Z","archivedAt":null,"settledOverride":null,"settledAt":"-061362-09-24T08:14:15.845Z","deletedAt":null}],"counts":[{"projectId":"N'Z8","count":0},{"projectId":"Y","count":14},{"projectId":"@@ae","count":0},{"projectId":"-1","count":4}]}}
 {"key":"rpc::orchestration::get_older_settled_threads::Success","value":{"snapshotSequence":6,"threads":[],"counts":[{"projectId":"Y","count":3},{"projectId":"~","count":2}]}}

@@ -1459,7 +1459,14 @@ async fn organize_writes_as_the_typescript_server() {
         .await;
     assert_eq!(code, "capability_denied");
     let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
-    for action in ["pin", "archive", "settle", "mark_unread"] {
+    for action in [
+        "pin",
+        "archive",
+        "settle",
+        "mark_unread",
+        "file_project",
+        "unfile_project",
+    ] {
         let (code, _) = agent
             .failure(
                 "conn_thread_organize",
@@ -1543,6 +1550,54 @@ async fn organize_writes_as_the_typescript_server() {
     // The own agent settles mid-turn: the answer says when, and the thread settles once the
     // turn completes (a steer completes the fake turn).
     let mut own = Client::open(&f.service, agent_of(&f, &narrow)).await;
+    let physical = thread_field(&f, &narrow, "projectId").await;
+    let cwd = thread_field(&f, &narrow, "worktreePath").await;
+    for project in [
+        json!({"id":85,"slug":"mini"}),
+        json!({"id":84,"slug":"nick"}),
+    ] {
+        own.ok(
+            "conn_thread_organize",
+            json!({"action":"file_project","orbitProject":project}),
+        )
+        .await;
+        let read = own.ok("conn_thread_read", json!({"threadId":narrow})).await;
+        assert_eq!(read["thread"]["orbitProject"], project);
+        assert_eq!(read["thread"]["projectId"], physical);
+        assert_eq!(read["thread"]["worktreePath"], cwd);
+        let list = swamp
+            .ok("conn_thread_list", json!({"allProjects":true}))
+            .await;
+        let row = list["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["threadId"] == narrow)
+            .unwrap();
+        assert_eq!(row["orbitProject"], project);
+    }
+    for invalid in [
+        json!({}),
+        json!({"id":0,"slug":"mini"}),
+        json!({"id":85,"slug":"  "}),
+        json!({"id":1,"slug":"s".repeat(256)}),
+    ] {
+        own.failure(
+            "conn_thread_organize",
+            json!({"action":"file_project","orbitProject":invalid}),
+        )
+        .await;
+    }
+    own.failure("conn_thread_organize", json!({"action":"file_project"}))
+        .await;
+    assert_eq!(thread_field(&f, &narrow, "orbitProject").await["id"], 84);
+    own.ok("conn_thread_organize", json!({"action":"unfile_project"}))
+        .await;
+    assert!(
+        own.ok("conn_thread_read", json!({"threadId":narrow})).await["thread"]
+            .get("orbitProject")
+            .is_none()
+    );
     let deferred = own
         .ok("conn_thread_organize", json!({"action": "settle"}))
         .await;

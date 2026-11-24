@@ -56,6 +56,25 @@ pub struct OlderSettledCut {
     pub before: String,
     pub before_ms: i64,
     pub counts: HashMap<String, i64>,
+    filings: Vec<conn_contract::OrbitProjectRef>,
+}
+
+#[must_use]
+pub fn orbit_filing_key(id: i64) -> String {
+    format!("orbit-project:{id}")
+}
+
+#[must_use]
+pub fn orbit_filing_id(key: &str) -> Option<i64> {
+    key.strip_prefix("orbit-project:")?.parse().ok()
+}
+
+#[must_use]
+pub fn sidebar_project_key(thread: &ThreadShell) -> std::borrow::Cow<'_, str> {
+    match thread.orbit_project.as_ref().and_then(Option::as_ref) {
+        Some(project) => orbit_filing_key(project.id).into(),
+        None => thread.project_id.as_str().into(),
+    }
 }
 
 /// How reading the next page of older settled threads went.
@@ -278,6 +297,32 @@ pub struct OlderPageRequest {
     pub before: SettledCursor,
     /// `None`: every project.
     pub project_ids: Option<Vec<String>>,
+}
+
+impl OlderPageRequest {
+    #[must_use]
+    pub fn payload(&self) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "before": {"settledAt": self.before.settled_at},
+            "limit": OLDER_SETTLED_PAGE_SIZE,
+        });
+        if let Some(id) = &self.before.thread_id {
+            value["before"]["threadId"] = serde_json::json!(id);
+        }
+        if let Some(keys) = &self.project_ids {
+            value["orbitProjectIds"] = serde_json::json!(
+                keys.iter()
+                    .filter_map(|key| orbit_filing_id(key))
+                    .collect::<Vec<_>>()
+            );
+            value["projectIds"] = serde_json::json!(
+                keys.iter()
+                    .filter(|key| orbit_filing_id(key).is_none())
+                    .collect::<Vec<_>>()
+            );
+        }
+        value
+    }
 }
 
 /// What the Settled shelf can tell about the older threads left out of the shell.
@@ -543,7 +588,7 @@ impl ShellState {
                 if is_older_settled(thread, cut.before_ms) {
                     *foreign
                         .held_by_project
-                        .entry(thread.project_id.clone())
+                        .entry(sidebar_project_key(thread).into_owned())
                         .or_default() += 1;
                 }
             }
@@ -861,7 +906,7 @@ impl ShellState {
             .chain(&self.archived_threads)
             .chain(&self.older.threads)
             .filter(|t| {
-                in_scope(&t.project_id)
+                in_scope(&sidebar_project_key(t))
                     && !self.foreign_of.contains_key(&t.id)
                     && is_older_settled(t, cut.before_ms)
             })
@@ -956,15 +1001,35 @@ impl ShellState {
         }
     }
 
+    pub fn older_orbit_projects(&self) -> impl Iterator<Item = &conn_contract::OrbitProjectRef> {
+        self.older
+            .cut
+            .iter()
+            .chain(self.foreign.iter().filter_map(|f| f.cut.as_ref()))
+            .flat_map(|cut| cut.filings.iter())
+    }
+
     fn reset_older(&mut self, cut: Option<&OlderSettledSnapshot>) {
-        self.older.cut = cut.map(|cut| OlderSettledCut {
-            before: cut.before.clone(),
-            before_ms: parse_iso8601_epoch_ms(&cut.before).unwrap_or(i64::MIN),
-            counts: cut
+        self.older.cut = cut.map(|cut| {
+            let mut counts: HashMap<String, i64> = cut
                 .counts
                 .iter()
-                .map(|count| (count.project_id.clone(), count.count))
-                .collect(),
+                .map(|c| (c.project_id.clone(), c.count))
+                .collect();
+            let mut filings = Vec::new();
+            for filed in cut.filed_counts.iter().flatten() {
+                *counts.entry(filed.project_id.clone()).or_default() -= filed.count;
+                *counts
+                    .entry(orbit_filing_key(filed.orbit_project.id))
+                    .or_default() += filed.count;
+                filings.push(filed.orbit_project.clone());
+            }
+            OlderSettledCut {
+                before: cut.before.clone(),
+                before_ms: parse_iso8601_epoch_ms(&cut.before).unwrap_or(i64::MIN),
+                counts,
+                filings,
+            }
         });
         self.older.threads.clear();
         self.older.frontier = self.older.cut.as_ref().map(|cut| SettledCursor {
@@ -1398,6 +1463,27 @@ mod tests {
         );
         assert_eq!(state.unloaded_older_settled(Some(&HashSet::new())), 0);
         assert_eq!(snapshot(vec![], None).unloaded_older_settled(None), 0);
+    }
+
+    #[test]
+    fn a_project_with_only_omitted_filings_has_an_older_page() {
+        let mut older = cut();
+        older["filedCounts"] =
+            json!([{"projectId":"p","orbitProject":{"id":85,"slug":"mini"},"count":2}]);
+        let mut state = snapshot(vec![], Some(older));
+        let key = orbit_filing_key(85);
+        assert_eq!(
+            state.unloaded_older_settled(Some(&HashSet::from([key.clone()]))),
+            2
+        );
+        assert_eq!(
+            state.unloaded_older_settled(Some(&HashSet::from(["p".to_owned()]))),
+            28
+        );
+        state.set_older_scope(Some(vec![key]));
+        let request = state.next_older_page(0, 10).expect("filed threads omitted");
+        assert_eq!(request.payload()["projectIds"], json!([]));
+        assert_eq!(request.payload()["orbitProjectIds"], json!([85]));
     }
 
     #[test]

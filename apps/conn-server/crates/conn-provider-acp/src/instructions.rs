@@ -25,6 +25,8 @@ When browser work was asked, `preview_*` is the browser you share with the user:
 
 Ordinary coding tasks need no Conn tools.
 
+In a top-level General thread, when the conversation first identifies one Orbit project, file the thread before answering. Use the ID and slug resolved in Orbit with `conn_thread_organize` (file_project). Host maintenance belongs to the machine project. App work belongs to the app project. Leave an ambiguous thread in General.
+
 - Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude `Agent`, `run_in_background:false`; Codex `spawn_agent`, then wait). Use `delegate_task` for another provider's model, user-asked settings, a separate checkout (`isolation:"worktree"`), or `delegate_task` by name. A native type on another provider's model counts too. Background agent: `delegate_task`, never a background `Agent`. Workflow only when asked.
 - Call `orchestrator_capabilities` once per thread, before the first `delegate_task`. Again only after an error or a user-named provider change. Settings go in `target.options`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in `task`.
 - Every new delegate review or re-check is a new `delegate_task` (brief, findings, objections), never a `conn_thread_send`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, `task_cancel` the extras. Start no replacement.
@@ -71,6 +73,8 @@ Never do those with `xcrun simctl`, `idb`, `adb`, ssh, or scripts that wrap them
 
 Ordinary coding tasks need no Conn tools.
 
+In a top-level General thread, when the conversation first identifies one Orbit project, file the thread before answering. Use the ID and slug resolved in Orbit with `conn_thread_organize` (file_project). Host maintenance belongs to the machine project. App work belongs to the app project. Leave an ambiguous thread in General.
+
 - Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude `Agent`, `run_in_background:false`; Codex `spawn_agent`, then wait). Use `delegate_task` for another provider's model, user-asked settings, a separate checkout (`isolation:"worktree"`), or `delegate_task` by name. A native type on another provider's model counts too. Background agent: `delegate_task`, never a background `Agent`. Workflow only when asked.
 - Call `orchestrator_capabilities` once per thread, before the first `delegate_task`. Again only after an error or a user-named provider change. Settings go in `target.options`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in `task`.
 - Every new delegate review or re-check is a new `delegate_task` (brief, findings, objections), never a `conn_thread_send`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, `task_cancel` the extras. Start no replacement.
@@ -115,6 +119,8 @@ When browser work was asked, `preview_*` is the browser you share with the user:
 ## Conn orchestration
 
 Ordinary coding tasks need no Conn tools.
+
+In a top-level General thread, when the conversation first identifies one Orbit project, file the thread before answering. Use the ID and slug resolved in Orbit with `conn_thread_organize` (file_project). Host maintenance belongs to the machine project. App work belongs to the app project. Leave an ambiguous thread in General.
 
 - Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude `Agent`, `run_in_background:false`; Codex `spawn_agent`, then wait). Use `delegate_task` for another provider's model, user-asked settings, a separate checkout (`isolation:"worktree"`), or `delegate_task` by name. A native type on another provider's model counts too. Background agent: `delegate_task`, never a background `Agent`. Workflow only when asked.
 - Call `orchestrator_capabilities` once per thread, before the first `delegate_task`. Again only after an error or a user-named provider change. Settings go in `target.options`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in `task`.
@@ -161,6 +167,8 @@ Never do those with `xcrun simctl`, `idb`, `adb`, ssh, or scripts that wrap them
 ## Conn orchestration
 
 Ordinary coding tasks need no Conn tools.
+
+In a top-level General thread, when the conversation first identifies one Orbit project, file the thread before answering. Use the ID and slug resolved in Orbit with `conn_thread_organize` (file_project). Host maintenance belongs to the machine project. App work belongs to the app project. Leave an ambiguous thread in General.
 
 - Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude `Agent`, `run_in_background:false`; Codex `spawn_agent`, then wait). Use `delegate_task` for another provider's model, user-asked settings, a separate checkout (`isolation:"worktree"`), or `delegate_task` by name. A native type on another provider's model counts too. Background agent: `delegate_task`, never a background `Agent`. Workflow only when asked.
 - Call `orchestrator_capabilities` once per thread, before the first `delegate_task`. Again only after an error or a user-named provider change. Settings go in `target.options`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in `task`.

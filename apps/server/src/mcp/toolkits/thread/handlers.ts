@@ -370,6 +370,20 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }
       let command: OrchestrationV2Command;
       switch (input.action) {
+        case "file_project":
+        case "unfile_project":
+          if (input.action === "file_project" && !input.orbitProject) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "file_project requires an Orbit Project id and slug.",
+            });
+          }
+          command = {
+            ...common,
+            type: "thread.metadata.update",
+            orbitProject: input.action === "file_project" ? input.orbitProject : null,
+          };
+          break;
         case "snooze":
           if (input.snoozedUntil === undefined) {
             return yield* new OrchestratorMcpFailure({

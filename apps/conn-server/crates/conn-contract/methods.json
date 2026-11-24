@@ -1,5 +1,5 @@
 {
-  "contractDigest": "716794a9c5db9b71fb6dee734c1790186ed19cce2ccb7da20a34018a3eec31ce",
+  "contractDigest": "2b83411d59ae2ebe82785dff6df71ee0bb57825e69ec7841c0018a5361ba47b8",
   "methods": [
     {
       "tag": "agentSessions.import",

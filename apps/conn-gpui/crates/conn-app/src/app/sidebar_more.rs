@@ -23,7 +23,7 @@ use conn_state::{
 use gpui_kit::{Context, Pixels, Point, px};
 
 use super::{ConnApp, ThreadUndoKind};
-use crate::sidebar::thread_list::{Excerpt, project_in_scope, settled_shelf, sidebar_lists};
+use crate::sidebar::thread_list::{Excerpt, older_project_scope, settled_shelf, sidebar_lists};
 
 /// How long a drop is held on screen for the server's shell to show it through.
 const DROP_HOLD_SECS: u64 = 10;
@@ -303,22 +303,12 @@ impl ConnApp {
 
     /// The project ids the Settled shelf pages for (`olderSettledScopes`); none for every project.
     pub(super) fn older_scope(&self) -> Option<Vec<String>> {
-        self.active_workspace.as_ref()?;
-        Some(
-            self.shell
-                .projects
-                .iter()
-                .filter(|project| {
-                    project_in_scope(
-                        &self.shell,
-                        &self.orbit.workspaces,
-                        self.active_workspace.as_deref(),
-                        &project.id,
-                    )
-                })
-                .map(|project| project.id.clone())
-                .collect(),
+        older_project_scope(
+            &self.shell,
+            &self.orbit.workspaces,
+            self.active_workspace.as_deref(),
         )
+        .map(|keys| keys.into_iter().collect())
     }
 
     /// Reads the next page of older settled threads when the open shelf lists fewer rows than it
@@ -327,7 +317,10 @@ impl ConnApp {
         // This environment pages its own projects; each linked one pages its own too.
         let scope = self.older_scope().map(|ids| {
             ids.into_iter()
-                .filter(|id| self.linked_environment_of_project(id).is_none())
+                .filter(|id| {
+                    conn_state::orbit_filing_id(id).is_some()
+                        || self.linked_environment_of_project(id).is_none()
+                })
                 .collect()
         });
         self.shell.set_older_scope(scope);
@@ -353,14 +346,7 @@ impl ConnApp {
             return;
         };
         self.shell.older_page_started(&request);
-        let payload = serde_json::json!({
-            "before": {
-                "settledAt": request.before.settled_at,
-                "threadId": request.before.thread_id,
-            },
-            "projectIds": request.project_ids,
-            "limit": conn_state::OLDER_SETTLED_PAGE_SIZE,
-        });
+        let payload = request.payload();
         cx.spawn(async move |this, cx| {
             let result = connection
                 .call::<_, conn_contract::OrchestrationV2OlderSettledThreadsPage>(

@@ -368,6 +368,7 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "branchPullRequest",
         "issues",
         "historyOrigin",
+        "orbitProject",
     ] {
         if let (Some(value), Some(map)) = (thread.get(key), row.as_object_mut()) {
             map.insert(key.into(), value.clone());

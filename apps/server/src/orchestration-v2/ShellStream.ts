@@ -179,7 +179,7 @@ function buildActiveShellSnapshot(input: {
 
 type ShellTrimRow = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
+  "id" | "projectId" | "orbitProject" | "lineage" | "settledOverride" | "settledAt"
 > & { readonly hasRemoteTasks?: boolean };
 
 /**
@@ -193,6 +193,7 @@ interface ShellTrimFacts {
   readonly remoteTaskParentIds: ReadonlySet<string>;
   /** Undefined when no thread is settled, so none is older. */
   readonly olderSettledBeforeMs: number | undefined;
+  readonly filedCounts: NonNullable<OrchestrationV2OlderSettledThreads["filedCounts"]>;
   readonly olderSettledCounts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
 }
 
@@ -220,9 +221,21 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   // With fewer than 25, the oldest one is the cut, so nothing is older.
   const olderSettledBeforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1);
   const counts = new Map<ProjectId, number>();
+  const filed = new Map<
+    string,
+    NonNullable<OrchestrationV2OlderSettledThreads["filedCounts"]>[number]
+  >();
   if (olderSettledBeforeMs !== undefined) {
     for (const row of rows) {
       if (isOlderSettledThreadShell(row, olderSettledBeforeMs)) {
+        if (row.orbitProject) {
+          const key = JSON.stringify([row.projectId, row.orbitProject.id]);
+          filed.set(key, {
+            projectId: row.projectId,
+            orbitProject: row.orbitProject,
+            count: (filed.get(key)?.count ?? 0) + 1,
+          });
+        }
         counts.set(row.projectId, (counts.get(row.projectId) ?? 0) + 1);
       }
     }
@@ -232,6 +245,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
     subagentThreadIds,
     remoteTaskParentIds,
     olderSettledBeforeMs,
+    filedCounts: [...filed.values()],
     olderSettledCounts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
   };
 }
@@ -269,7 +283,7 @@ function omitOlderSettledShellsWith(
   },
   facts: Pick<
     ShellTrimFacts,
-    "olderSettledBeforeMs" | "olderSettledCounts" | "remoteTaskParentIds"
+    "olderSettledBeforeMs" | "olderSettledCounts" | "filedCounts" | "remoteTaskParentIds"
   >,
 ): {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -293,6 +307,7 @@ function omitOlderSettledShellsWith(
       before: DateTime.formatIso(DateTime.makeUnsafe(beforeMs)),
       asOfSequence: input.snapshotSequence,
       counts: facts.olderSettledCounts,
+      ...(facts.filedCounts.length ? { filedCounts: facts.filedCounts } : {}),
     },
   };
 }

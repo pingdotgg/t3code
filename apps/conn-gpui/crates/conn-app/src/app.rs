@@ -3891,13 +3891,16 @@ impl ConnApp {
         self.thread_selection.set_anchor(&thread_id);
         // A thread the project filter hides widens the filter to every project, and its row
         // scrolls into view (`routeReveal`).
-        if let Some(project_id) = &project_id
-            && self.active_workspace.is_some()
-            && !crate::sidebar::thread_list::project_in_scope(
+        if self.active_workspace.is_some()
+            && let Some(listed) = self
+                .shell
+                .listed_ancestor(&thread_id)
+                .and_then(|id| self.shell.find_thread(id))
+            && !crate::sidebar::thread_list::thread_in_scope(
                 &self.shell,
                 &self.orbit.workspaces,
                 self.active_workspace.as_deref(),
-                project_id,
+                listed,
             )
         {
             self.active_workspace = None;
@@ -5149,8 +5152,9 @@ impl ConnApp {
                 cx,
             ),
             ThreadMenuAction::FilterByProject => {
-                let next = (self.active_workspace.as_deref() != Some(thread.project_id.as_str()))
-                    .then(|| thread.project_id.clone());
+                let key = conn_state::sidebar_project_key(&thread);
+                let next = (self.active_workspace.as_deref() != Some(key.as_ref()))
+                    .then(|| key.into_owned());
                 self.select_workspace(next, cx);
             }
             ThreadMenuAction::Copy => {}

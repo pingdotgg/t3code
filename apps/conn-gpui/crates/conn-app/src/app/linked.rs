@@ -881,7 +881,8 @@ impl ConnApp {
             let environment_scope: Option<Vec<String>> = scope.as_ref().map(|ids| {
                 ids.iter()
                     .filter(|id| {
-                        self.linked_environment_of_project(id) == Some(environment.as_str())
+                        conn_state::orbit_filing_id(id).is_some()
+                            || self.linked_environment_of_project(id) == Some(environment.as_str())
                     })
                     .cloned()
                     .collect()
@@ -928,14 +929,7 @@ impl ConnApp {
             self.linked
                 .shells
                 .older_page_started(&environment, &request);
-            let payload = serde_json::json!({
-                "before": {
-                    "settledAt": request.before.settled_at,
-                    "threadId": request.before.thread_id,
-                },
-                "projectIds": request.project_ids,
-                "limit": conn_state::OLDER_SETTLED_PAGE_SIZE,
-            });
+            let payload = request.payload();
             cx.spawn(async move |this, cx| {
                 let result = connection
                     .call::<_, conn_contract::OrchestrationV2OlderSettledThreadsPage>(

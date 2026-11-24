@@ -3297,8 +3297,19 @@ struct MetadataContinuation {
     text: String,
 }
 
-fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
+fn thread_metadata_update(tx: &mut Tx<'_>, mut command: Value) -> Outcome {
     let c: ThreadMetadataUpdate = decode(command.clone())?;
+    if let Some(value) = command.get_mut("orbitProject").filter(|v| !v.is_null()) {
+        let mut project: conn_contract::OrbitProjectRef = decode(value.clone())?;
+        project.slug = project.slug.trim().to_owned();
+        if !(1..=9_007_199_254_740_991).contains(&project.id)
+            || project.slug.is_empty()
+            || project.slug.encode_utf16().count() > 255
+        {
+            return reject("Invalid Orbit project id or slug.");
+        }
+        *value = json!(project);
+    }
     let old = live_thread(tx, &c.thread_id)?;
     for (expected, actual, label) in [
         ("expectedWorktreePath", "worktreePath", "worktree"),
@@ -3350,7 +3361,7 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
         // The claim's event names its command, so a replay can find the thread it claimed.
         expects_empty.then_some(command_id.as_str()),
         |t, now| {
-            for field in ["branch", "worktreePath"] {
+            for field in ["branch", "worktreePath", "orbitProject"] {
                 if let Some(value) = command.get(field) {
                     t[field] = value.clone();
                 }

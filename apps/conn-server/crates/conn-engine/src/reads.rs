@@ -399,7 +399,15 @@ impl Store {
                 })
                 .collect();
             let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+            let mut filed = BTreeMap::new();
             for row in rows.iter().filter(|r| older_settled(r, before)) {
+                if let (Some(id), Some(slug), Some(owner)) = (
+                    row["orbitProject"]["id"].as_i64(),
+                    row["orbitProject"]["slug"].as_str(),
+                    row["projectId"].as_str(),
+                ) {
+                    *filed.entry((owner, id, slug)).or_insert(0_u64) += 1;
+                }
                 *counts
                     .entry(row["projectId"].as_str().unwrap_or("").to_owned())
                     .or_default() += 1;
@@ -424,6 +432,11 @@ impl Store {
                 "asOfSequence": snapshot["snapshotSequence"],
                 "counts": counts,
             });
+            if !filed.is_empty() {
+                snapshot["olderSettled"]["filedCounts"] = Value::Array(filed.into_iter().map(|((project, id, slug), count)| {
+                    json!({"projectId": project, "orbitProject": {"id":id, "slug":slug}, "count":count})
+                }).collect());
+            }
         }
         snapshot["threads"] = json!(keep);
         Ok(snapshot)
@@ -528,6 +541,12 @@ impl Store {
             .into_iter()
             .filter(|row| row["archivedAt"].is_null() && listed(row))
             .filter(|row| {
+                if let (Some(ids), Some(id)) = (
+                    input["orbitProjectIds"].as_array(),
+                    row["orbitProject"].get("id"),
+                ) {
+                    return ids.contains(id);
+                }
                 projects
                     .as_ref()
                     .is_none_or(|ids| ids.contains(&row["projectId"].as_str().unwrap_or("")))

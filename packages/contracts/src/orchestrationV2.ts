@@ -467,6 +467,11 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   completedAt: Schema.DateTimeUtc,
 });
 
+export const OrbitProjectRef = Schema.Struct({
+  id: PositiveInt,
+  slug: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+});
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -478,6 +483,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  orbitProject: Schema.optional(Schema.NullOr(OrbitProjectRef)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2215,6 +2221,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  orbitProject: Schema.optional(Schema.NullOr(OrbitProjectRef)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2348,6 +2355,16 @@ export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettle
  * snapshot's own sequence: the counts are exact until a later change.
  */
 export const OrchestrationV2OlderSettledThreads = Schema.Struct({
+  /** Filed subset of the physical project counts, for clients that group by Orbit project. */
+  filedCounts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        projectId: ProjectId,
+        orbitProject: OrbitProjectRef,
+        count: NonNegativeInt,
+      }),
+    ),
+  ),
   before: IsoDateTime,
   asOfSequence: NonNegativeInt,
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
@@ -3274,6 +3291,7 @@ export const OrchestrationV2Command = Schema.Union([
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
+    orbitProject: Schema.optional(Schema.NullOr(OrbitProjectRef)),
     /** Link (object) or unlink (null) a pull request; absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   }),
@@ -4060,6 +4078,8 @@ export const OrchestrationV2OlderSettledCursor = Schema.Struct({
 export type OrchestrationV2OlderSettledCursor = typeof OrchestrationV2OlderSettledCursor.Type;
 
 export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
+  /** When supplied, projectIds matches only unfiled threads. Filed threads match these Orbit IDs instead. */
+  orbitProjectIds: Schema.optionalKey(Schema.Array(PositiveInt)),
   before: OrchestrationV2OlderSettledCursor,
   /** Every project when absent. */
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),

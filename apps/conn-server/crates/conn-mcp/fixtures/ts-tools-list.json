@@ -1589,6 +1589,31 @@
                       "plan"
                     ]
                   },
+                  "orbitProject": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "slug": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "slug"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "linkedPullRequest": {
                     "anyOf": [
                       {
@@ -2113,6 +2138,31 @@
                   "enum": [
                     "default",
                     "plan"
+                  ]
+                },
+                "orbitProject": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "slug": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "slug"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "linkedPullRequest": {
@@ -3625,7 +3675,7 @@
       {
         "name": "conn_thread_organize",
         "title": "Organize a thread",
-        "description": "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+        "description": "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. For file_project, pass orbitProject with the id and slug from Orbit; unfile_project clears it. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -3646,11 +3696,29 @@
                 "unsettle",
                 "archive",
                 "unarchive",
-                "mark_unread"
+                "mark_unread",
+                "file_project",
+                "unfile_project"
               ]
             },
             "snoozedUntil": {
               "type": "string"
+            },
+            "orbitProject": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "slug": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "slug"
+              ]
             }
           },
           "required": [

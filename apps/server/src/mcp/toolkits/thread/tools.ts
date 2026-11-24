@@ -1,5 +1,6 @@
 import {
   OrchestratorMcpEnvironmentTarget,
+  OrbitProjectRef,
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -32,7 +33,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("conn_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. For file_project, pass orbitProject with the id and slug from Orbit; unfile_project clears it. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -46,8 +47,11 @@ const ThreadOrganizeTool = Tool.make("conn_thread_organize", {
       "archive",
       "unarchive",
       "mark_unread",
+      "file_project",
+      "unfile_project",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    orbitProject: Schema.optional(OrbitProjectRef),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,

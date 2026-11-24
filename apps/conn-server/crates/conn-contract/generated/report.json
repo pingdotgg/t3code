@@ -1,8 +1,8 @@
 {
-  "roots": 1057,
-  "namedSchemas": 1866,
-  "references": 1534,
-  "rustItems": 1828,
+  "roots": 1058,
+  "namedSchemas": 1867,
+  "references": 1537,
+  "rustItems": 1830,
   "literalTypes": 514,
   "methods": 251,
   "methodsFullyTyped": 251,
@@ -66,8 +66,8 @@
     }
   ],
   "fixtures": {
-    "roots": 1053,
-    "samples": 3162,
+    "roots": 1054,
+    "samples": 3163,
     "sampleFailures": 4,
     "encodeForbidden": 6,
     "failed": [
@@ -76,7 +76,7 @@
       "rpc::attachments::create_upload_url::Success#0: SampleError",
       "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
     ],
-    "keys": 1056
+    "keys": 1057
   },
   "methodTypes": [
     {

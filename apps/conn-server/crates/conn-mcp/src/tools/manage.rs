@@ -50,6 +50,15 @@ pub(super) async fn organize(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let action = str_arg(args, "action").unwrap_or_default();
     let command_id = new_command_id();
     let command = match action {
+        "file_project" | "unfile_project" => {
+            let project = if action == "file_project" {
+                required(args, "orbitProject")?.clone()
+            } else {
+                Value::Null
+            };
+            json!({"type": "thread.metadata.update", "commandId": command_id, "threadId": id,
+                   "orbitProject": project})
+        }
         "settle" => {
             let by_own_agent = cx.caller_thread_id() == Some(id.as_str());
             if by_own_agent

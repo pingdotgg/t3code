@@ -109,7 +109,8 @@ pub use crate::settled_shelf::{
 pub use crate::shell::{
     ChildApprovalThread, OLDER_SETTLED_PAGE_SIZE, OlderPageRequest, OlderSettledCut,
     OlderSettledView, PageStatus, PendingSubagentRequest, SettledCursor, ShellChange, ShellState,
-    ThreadActivity, is_listed_lineage, is_older_settled,
+    ThreadActivity, is_listed_lineage, is_older_settled, orbit_filing_id, orbit_filing_key,
+    sidebar_project_key,
 };
 pub use crate::sidebar::{
     DRAFT_STATUS_LABEL, DraftRowKey, SidebarDraft, SidebarDraftRow, draft_has_content,

@@ -170,6 +170,7 @@ pub(crate) fn round_trip(
             go::<conn_contract::EnvironmentScopeRequiredError>(value)
         }
         "ModelSelection" => go::<conn_contract::ModelSelection>(value),
+        "OrbitProjectRef" => go::<conn_contract::OrbitProjectRef>(value),
         "OrchestrationGetWorkflowScriptError" => {
             go::<conn_contract::OrchestrationGetWorkflowScriptError>(value)
         }

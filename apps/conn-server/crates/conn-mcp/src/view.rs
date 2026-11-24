@@ -122,6 +122,9 @@ pub(crate) fn list_item(config: &McpConfig, caller: &Caller, shell: &Value, now:
         "createdAt": shell["createdAt"],
         "updatedAt": shell["updatedAt"],
     });
+    if shell["orbitProject"].is_object() {
+        item["orbitProject"] = shell["orbitProject"].clone();
+    }
     insert_pull_requests(&mut item, &shell["pullRequests"], true);
     item
 }
@@ -199,6 +202,9 @@ pub(crate) fn thread_detail(
         "createdAt": thread["createdAt"],
         "updatedAt": projection["updatedAt"],
     });
+    if thread["orbitProject"].is_object() {
+        detail["orbitProject"] = thread["orbitProject"].clone();
+    }
     insert_pull_requests(&mut detail, &thread["pullRequests"], page == Page::First);
     detail
 }

@@ -151,6 +151,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
       ProjectionStore.ActiveShellIndexEntry,
       | "id"
       | "projectId"
+      | "orbitProject"
       | "lineage"
       | "settledOverride"
       | "settledAt"
@@ -161,6 +162,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
   ) => ({
     id: row.id,
     projectId: row.projectId,
+    orbitProject: row.orbitProject ?? null,
     lineage: row.lineage,
     settledOverride: row.settledOverride,
     settledAt: iso(row.settledAt),
@@ -3190,6 +3192,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly name: string;
       readonly settledDay: number | null;
       readonly project?: string;
+      readonly orbitProject?: { id: number; slug: string };
       readonly subagent?: boolean;
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
@@ -3204,6 +3207,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
           creationSource: "web",
           id: id(input.name),
           projectId: ProjectId.make(input.project ?? "project:a"),
+          ...(input.orbitProject ? { orbitProject: input.orbitProject } : {}),
           title: input.name,
           providerInstanceId,
           modelSelection,
@@ -3230,7 +3234,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       });
     yield* createThread({ name: "a", settledDay: 5 });
     yield* createThread({ name: "b", settledDay: 4 });
-    yield* createThread({ name: "c", settledDay: 4 });
+    yield* createThread({ name: "c", settledDay: 4, orbitProject: { id: 85, slug: "mini" } });
     yield* createThread({ name: "d", settledDay: 3, project: "project:b" });
     yield* createThread({ name: "snoozed", settledDay: 2, snoozedUntilDay: 30 });
     yield* createThread({ name: "recent", settledDay: 20 });
@@ -3244,6 +3248,20 @@ it.effect("SQL list older settled threads below a cursor", () =>
       projectIds?: ReadonlyArray<ProjectId>,
     ) => store.listOlderSettledThreads({ before, projectIds, limit });
     const before = { settledAt: DateTime.formatIso(at(10)) };
+    const filed = yield* store.listOlderSettledThreads({
+      before,
+      projectIds: [],
+      orbitProjectIds: [85],
+      limit: 10,
+    });
+    assert.deepEqual(filed.threadIds, [id("c")]);
+    const unfiled = yield* store.listOlderSettledThreads({
+      before,
+      projectIds: [ProjectId.make("project:a")],
+      orbitProjectIds: [],
+      limit: 10,
+    });
+    assert.deepEqual(unfiled.threadIds, [id("a"), id("b"), id("snoozed")]);
     const first = yield* list(before, 2);
     assert.deepEqual(first, { threadIds: [id("a"), id("b")], counts: [] });
     assert.sameDeepMembers(

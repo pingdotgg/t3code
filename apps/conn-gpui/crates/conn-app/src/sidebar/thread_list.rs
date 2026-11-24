@@ -274,6 +274,7 @@ pub(crate) fn render_thread_sidebar(
                     app.toggle_sidebar_filter_menu(cx);
                 }),
             )
+            .test_support()
             .a11y_button("sidebar.filter-projects", "Filter by project")
             .aria_expanded(filter_menu_open)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -479,7 +480,9 @@ pub(crate) fn render_thread_sidebar(
             row_key,
             thread,
             project: shell.project(&thread.project_id),
-            project_label: project_labels.get(&thread.project_id).map(String::as_str),
+            project_label: filing(thread)
+                .map(|p| p.slug.as_str())
+                .or_else(|| project_labels.get(&thread.project_id).map(String::as_str)),
             selected,
             picked: marks.selection.contains(&thread.id),
             jump_hint: jump_hint_number(marks.jump_order, &thread.id).map(jump_hint_label),
@@ -874,6 +877,8 @@ fn render_project_filter_menu(
     menu = menu.child(
         div()
             .id("sidebar-filter-all")
+            .test_support()
+            .a11y_button("sidebar.filter.all", "All projects")
             .flex()
             .flex_row()
             .items_center()
@@ -898,12 +903,35 @@ fn render_project_filter_menu(
             }),
     );
 
-    for (idx, project) in shell.projects.iter().enumerate() {
-        let project_id = project.id.clone();
-        let is_active = active_workspace == Some(project.id.as_str());
+    let mut filed = std::collections::BTreeMap::new();
+    for thread in shell
+        .top_level_active_threads()
+        .chain(shell.all_settled_threads())
+    {
+        if let Some(project) = filing(thread) {
+            filed.insert(project.id, project.slug.as_str());
+        }
+    }
+    for project in shell.older_orbit_projects() {
+        filed.entry(project.id).or_insert(project.slug.as_str());
+    }
+    let local = shell
+        .projects
+        .iter()
+        .map(|p| (p.id.clone(), p.title.clone(), Some(p)));
+    let orbit = filed
+        .into_iter()
+        .map(|(id, slug)| (conn_state::orbit_filing_key(id), slug.to_owned(), None));
+    for (idx, (project_id, title, project)) in local.chain(orbit).enumerate() {
+        let is_active = active_workspace == Some(project_id.as_str());
         menu = menu.child(
             div()
                 .id(("sidebar-filter-project", idx))
+                .test_support()
+                .a11y_button(
+                    format!("sidebar.filter.{project_id}"),
+                    format!("Filter by {title}"),
+                )
                 .flex()
                 .flex_row()
                 .items_center()
@@ -920,14 +948,11 @@ fn render_project_filter_menu(
                     cx.stop_propagation();
                     app.select_workspace(Some(project_id.clone()), cx);
                 }))
-                .child(render_project_favicon(project, 14.0, tokens))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .child(project.title.clone()),
-                )
+                .child(project.map_or_else(
+                    || icons::concept("superhero/folder.svg", 14.0, muted).into_any_element(),
+                    |project| render_project_favicon(project, 14.0, tokens).into_any_element(),
+                ))
+                .child(div().flex_1().min_w_0().truncate().child(title))
                 .child(if is_active {
                     icons::concept("superhero/check.svg", 14.0, fg).into_any_element()
                 } else {
@@ -1726,7 +1751,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .h(px(TITLE_LINE_HEIGHT_PX))
         .min_w_0();
 
-    if let Some(project) = row.project {
+    if row.project.is_some() || filing(thread).is_some() {
         let (dot_ring, dot_hover_ring) =
             crate::panels::chrome::sidebar_status_dot_rings(tokens, row.lit());
         let favicon_badge = div()
@@ -1735,7 +1760,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .flex()
             .items_center()
             .flex_shrink_0()
-            .child(render_project_favicon(project, ROW_FAVICON_PX, tokens));
+            .child(thread_project_favicon(thread, row.project, tokens));
         #[cfg(test)]
         let mut favicon_badge = favicon_badge.test_support().a11y_group(
             SharedString::from(format!("test.sidebar.thread.{}.favicon", thread.id)),
@@ -1903,8 +1928,9 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .child(provider_mark);
 
     let mut project_width_px = 0.0_f32;
-    if let Some(project) = row.project
-        && let label = row.project_label.unwrap_or(project.title.as_str())
+    if let Some(label) = row
+        .project_label
+        .or_else(|| row.project.map(|p| p.title.as_str()))
         && !label.is_empty()
     {
         let project_max_w = (row.sidebar_width * 0.36).clamp(64.0, 128.0);
@@ -2066,10 +2092,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let active_bg = hsla(tokens.sidebar_row_active);
     let group = SharedString::from(format!("sidebar-row-{}", row.row_key));
 
-    let favicon = row.project.map_or_else(
-        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
-        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
-    );
+    let favicon = thread_project_favicon(thread, row.project, tokens);
     // GPUI has no grayscale filter; `opacity-40` carries the muted look and hover restores it.
     let favicon_slot = div()
         .flex()
@@ -2313,10 +2336,7 @@ fn render_search_result_row(
         .as_ref()
         .is_some_and(Option::is_some);
 
-    let favicon = row.project.map_or_else(
-        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
-        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
-    );
+    let favicon = thread_project_favicon(thread, row.project, tokens);
     // GPUI has no grayscale filter; `opacity-40` carries the muted look and hover restores it.
     let favicon_slot = div()
         .flex()
@@ -2369,12 +2389,14 @@ fn render_search_result_row(
     let drop_id = row.thread.id.clone();
     let drop_look = DropLook::new(tokens, lit);
     let bounds = std::rc::Rc::clone(&row.bounds);
-    let label = match row.project {
-        Some(project) if !project.title.is_empty() => {
-            format!("{}, {}", thread.title, project.title)
-        }
-        _ => thread.title.clone(),
-    };
+    let label = filing(thread)
+        .map(|p| p.slug.as_str())
+        .or_else(|| row.project.map(|p| p.title.as_str()))
+        .filter(|label| !label.is_empty())
+        .map_or_else(
+            || thread.title.clone(),
+            |label| format!("{}, {label}", thread.title),
+        );
     let mut result = div()
         .id(("thread-search-result", row.row_key))
         .a11y(
@@ -2596,6 +2618,67 @@ pub(crate) fn project_in_scope(
     }
 }
 
+fn thread_project_favicon(
+    thread: &ThreadShell,
+    project: Option<&ProjectShell>,
+    tokens: &Tokens,
+) -> gpui_kit::Div {
+    if let Some(project) = filing(thread) {
+        return render_project_monogram(&project.slug, ROW_FAVICON_PX, tokens);
+    }
+    project.map_or_else(
+        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
+        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
+    )
+}
+
+fn filing(thread: &ThreadShell) -> Option<&conn_contract::OrbitProjectRef> {
+    thread.orbit_project.as_ref().and_then(Option::as_ref)
+}
+
+pub(crate) fn thread_in_scope(
+    shell: &ShellState,
+    workspaces: &[OrbitWorkspace],
+    scope: Option<&str>,
+    thread: &ThreadShell,
+) -> bool {
+    let (Some(scope_id), Some(project)) = (scope, filing(thread)) else {
+        return project_in_scope(shell, workspaces, scope, &thread.project_id);
+    };
+    if let Some(workspace) = workspaces.iter().find(|ws| ws.id == scope_id) {
+        return workspace
+            .project_keys
+            .iter()
+            .any(|key| key == &project.slug);
+    }
+    conn_state::orbit_filing_id(scope_id) == Some(project.id)
+}
+
+pub(crate) fn older_project_scope(
+    shell: &ShellState,
+    workspaces: &[OrbitWorkspace],
+    scope: Option<&str>,
+) -> Option<HashSet<String>> {
+    let selected = scope?;
+    let mut keys: HashSet<String> = shell
+        .projects
+        .iter()
+        .filter(|p| project_in_scope(shell, workspaces, scope, &p.id))
+        .map(|p| p.id.clone())
+        .collect();
+    if conn_state::orbit_filing_id(selected).is_some() {
+        keys.insert(selected.to_owned());
+    } else if let Some(workspace) = workspaces.iter().find(|ws| ws.id == selected) {
+        keys.extend(
+            shell
+                .older_orbit_projects()
+                .filter(|p| workspace.project_keys.contains(&p.slug))
+                .map(|p| conn_state::orbit_filing_key(p.id)),
+        );
+    }
+    Some(keys)
+}
+
 /// Active thread ids in sidebar order: pinned (`pinOrderKey`) first, then active
 /// (`activeOrderKey`).
 #[must_use]
@@ -2741,9 +2824,8 @@ pub(crate) fn sidebar_lists<'a>(
     message_order: &[String],
     pending: PendingDropRef<'a>,
 ) -> SidebarLists<'a> {
-    let in_scope = |thread: &&ThreadShell| {
-        project_in_scope(shell, workspaces, active_workspace, &thread.project_id)
-    };
+    let in_scope =
+        |thread: &&ThreadShell| thread_in_scope(shell, workspaces, active_workspace, thread);
     let title_match = |thread: &&ThreadShell| {
         thread_matches_search(thread, shell.project(&thread.project_id), query)
     };
@@ -2851,14 +2933,7 @@ pub(crate) fn shelf_of(
     let ids = |threads: &[&ThreadShell]| -> Vec<String> {
         threads.iter().map(|t| t.id.clone()).collect()
     };
-    let scope: Option<HashSet<String>> = active_workspace.map(|_| {
-        shell
-            .projects
-            .iter()
-            .filter(|p| project_in_scope(shell, workspaces, active_workspace, &p.id))
-            .map(|p| p.id.clone())
-            .collect()
-    });
+    let scope = older_project_scope(shell, workspaces, active_workspace);
     shelf_view(&ShelfInput {
         listed: &ids(&lists.listed_settled),
         held: &ids(&lists.settled),
@@ -2902,7 +2977,9 @@ fn thread_matches_search(
 ) -> bool {
     thread_fields_match_search(
         &thread.title,
-        project.map(|p| p.title.as_str()),
+        filing(thread)
+            .map(|p| p.slug.as_str())
+            .or_else(|| project.map(|p| p.title.as_str())),
         thread.branch.as_deref(),
         query,
     )
