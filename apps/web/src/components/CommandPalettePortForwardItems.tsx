@@ -5,7 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { CableIcon, ClipboardCopyIcon, ExternalLinkIcon, SquareIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -21,6 +21,7 @@ import {
   stopPortForward,
   usePortForwards,
 } from "../state/portForwards";
+import { pinnedPortForwardsAtom } from "../state/pinnedPortForwards";
 import { environmentIdsKey } from "../state/environmentAtomList";
 import { useEnvironmentsWithScope } from "../state/session";
 import {
@@ -30,6 +31,7 @@ import {
   type CommandPaletteGroup,
   type CommandPaletteSubmenuItem,
 } from "./CommandPalette.logic";
+import { pinPortForwardAction, pinnedPortForwardGroup } from "./preview/PinnedPortForwardItems";
 import { toastManager } from "./ui/toast";
 
 /** Prefix of this submenu's group values; the palette rebuilds them live while it is open. */
@@ -51,7 +53,9 @@ export function useCommandPalettePortForwardItem(input: {
   readonly query: string;
 }): CommandPaletteSubmenuItem | null {
   const gt = useGT();
+  const messages = useMessages();
   const forwards = usePortForwards();
+  const pins = useAtomValue(pinnedPortForwardsAtom);
   const { environments } = useEnvironments();
   const reachable = environments.filter(
     (environment) => environment.connection.phase === "connected" && canForwardPorts(environment),
@@ -72,7 +76,7 @@ export function useCommandPalettePortForwardItem(input: {
     environmentId: threadEnvironmentId,
     threadId: threadEnvironmentId === null ? null : (input.activeThread?.id ?? null),
   });
-  if (forwards.length === 0 && sources.length === 0) return null;
+  if (forwards.length === 0 && sources.length === 0 && pins.length === 0) return null;
 
   const labelOf = (environmentId: EnvironmentId) =>
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
@@ -92,6 +96,9 @@ export function useCommandPalettePortForwardItem(input: {
   const forwardedItem = (forward: DesktopPortForward): CommandPaletteSubmenuItem => {
     const address = `localhost:${forward.localPort}`;
     const environment = labelOf(forward.environmentId);
+    const canPin =
+      !findPortForward(pins, forward.environmentId, forward.remotePort) &&
+      sources.some((source) => source.environmentId === forward.environmentId);
     return {
       kind: "submenu",
       value: `port-forward:${forward.environmentId}:${forward.remotePort}`,
@@ -125,6 +132,18 @@ export function useCommandPalettePortForwardItem(input: {
                 await writeTextToClipboard(forwardedUrl(forward));
               },
             },
+            ...(canPin
+              ? [
+                  pinPortForwardAction(
+                    {
+                      environmentId: forward.environmentId,
+                      remotePort: forward.remotePort,
+                      environmentLabel: environment,
+                    },
+                    gt("Always forward on this computer…"),
+                  ),
+                ]
+              : []),
             {
               kind: "action",
               value: "port-forward:stop",
@@ -158,30 +177,50 @@ export function useCommandPalettePortForwardItem(input: {
   if (typedPort !== null) {
     for (const environment of sources) {
       if (findPortForward(forwards, environment.environmentId, typedPort)) continue;
-      if (
-        startItems.some((item) => item.value.endsWith(`:${environment.environmentId}:${typedPort}`))
-      )
-        continue;
-      startItems.push({
-        kind: "action",
-        value: `port-forward:start:${environment.environmentId}:${typedPort}`,
-        title: gt("Forward port {port} from {environment}", {
-          port: typedPort,
-          environment: environment.label,
-        }),
-        searchTerms: [String(typedPort), "forward"],
-        icon: <CableIcon className={ITEM_ICON_CLASS} />,
-        run: () => start(environment.environmentId, typedPort),
-      });
+      const value = `port-forward:start:${environment.environmentId}:${typedPort}`;
+      if (!startItems.some((item) => item.value === value)) {
+        startItems.push({
+          kind: "action",
+          value,
+          title: gt("Forward port {port} from {environment}", {
+            port: typedPort,
+            environment: environment.label,
+          }),
+          searchTerms: [String(typedPort), "forward"],
+          icon: <CableIcon className={ITEM_ICON_CLASS} />,
+          run: () => start(environment.environmentId, typedPort),
+        });
+      }
+      if (!findPortForward(pins, environment.environmentId, typedPort)) {
+        startItems.push(
+          pinPortForwardAction(
+            {
+              environmentId: environment.environmentId,
+              remotePort: typedPort,
+              environmentLabel: environment.label,
+            },
+            gt("Always forward port {port} from {environment}…", {
+              port: typedPort,
+              environment: environment.label,
+            }),
+          ),
+        );
+      }
     }
   }
 
   const groups: CommandPaletteGroup[] = [];
-  if (forwards.length > 0) {
+  if (pins.length > 0) {
+    groups.push(
+      pinnedPortForwardGroup(`${PORT_FORWARD_GROUP_PREFIX}pinned`, pins, labelOf, messages),
+    );
+  }
+  const manualForwards = forwards.filter((forward) => !forward.pinned);
+  if (manualForwards.length > 0) {
     groups.push({
       value: `${PORT_FORWARD_GROUP_PREFIX}forwarded`,
       label: gt("Forwarded"),
-      items: forwards.map(forwardedItem),
+      items: manualForwards.map(forwardedItem),
     });
   }
   if (startItems.length === 0 && sources.length > 0) {

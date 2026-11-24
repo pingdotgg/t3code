@@ -2,6 +2,8 @@
 
 ## 2026-11-24
 
+- Recorded why [desktop auto-forwards](upstream-integration.md#desktop-auto-forward-boundary) use the preview tunnel and keep the original Portless port.
+
 - Updated the [OpenCode and remote Crit boundaries](upstream-integration.md) for upstream advisories and desktop port forwarding.
 
 ## 2026-11-23

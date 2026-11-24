@@ -7,6 +7,7 @@ import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import type {
   DesktopPortForward,
+  DesktopPortForwardOptions,
   DesktopPreviewTunnelAccessRequest,
   EnvironmentId,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import * as Socket from "effect/socket/Socket";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import { bindPinnedPort, type LoopbackTunnelPortInUseError } from "./PinnedPortForward.ts";
 
 const ACCESS_TIMEOUT = "15 seconds";
 const PROBE_TIMEOUT = "3 seconds";
@@ -273,6 +275,17 @@ export class LoopbackTunnelSameMachineError extends Schema.TaggedError<LoopbackT
   }
 }
 
+interface ForwardTarget {
+  readonly environmentId: EnvironmentId;
+  readonly remotePort: number;
+}
+
+interface ForwardListener {
+  forward: DesktopPortForward;
+  readonly scope: Scope.Closeable;
+  owner: string | undefined;
+}
+
 export class LoopbackTunnel extends Context.Service<
   LoopbackTunnel,
   {
@@ -286,20 +299,19 @@ export class LoopbackTunnel extends Context.Service<
       readonly requestId: string;
       readonly url: string | null;
     }) => Effect.Effect<void>;
-    /** Listens on this machine's loopback, on the same port when it is free. */
-    readonly forward: (input: {
-      readonly environmentId: EnvironmentId;
-      readonly remotePort: number;
-      readonly owner?: string | undefined;
-    }) => Effect.Effect<
+    /** Pinned forwards require the same port here; ordinary forwards can use a free port. */
+    readonly forward: (
+      input: ForwardTarget & DesktopPortForwardOptions,
+    ) => Effect.Effect<
       DesktopPortForward,
-      LoopbackTunnelForwardError | LoopbackTunnelSameMachineError | LoopbackTunnelUnavailableError
+      | LoopbackTunnelForwardError
+      | LoopbackTunnelPortInUseError
+      | LoopbackTunnelSameMachineError
+      | LoopbackTunnelUnavailableError
     >;
-    readonly stopForward: (input: {
-      readonly environmentId: EnvironmentId;
-      readonly remotePort: number;
-      readonly owner?: string | undefined;
-    }) => Effect.Effect<void>;
+    readonly stopForward: (
+      input: ForwardTarget & { readonly owner?: string | undefined },
+    ) => Effect.Effect<void>;
     readonly forwards: Effect.Effect<ReadonlyArray<DesktopPortForward>>;
     /** Whether the environment's loopback is this machine's, so forwarding would only loop. */
     readonly sharesLoopback: (
@@ -322,14 +334,7 @@ const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const routing = yield* Semaphore.make(1);
   const forwarding = yield* Semaphore.make(1);
-  const forwarded = new Map<
-    string,
-    {
-      readonly forward: DesktopPortForward;
-      readonly scope: Scope.Closeable;
-      owner: string | undefined;
-    }
-  >();
+  const forwarded = new Map<string, ForwardListener>();
   const forwardListeners = new Set<
     (forwards: ReadonlyArray<DesktopPortForward>) => Effect.Effect<void>
   >();
@@ -519,69 +524,94 @@ const make = Effect.gen(function* () {
       Effect.map((free) => free.includes(false)),
     );
 
+  const releaseWithRenderer = Effect.fn("LoopbackTunnel.releaseWithRenderer")(function* (
+    { environmentId, remotePort }: ForwardTarget,
+    scope: Scope.Closeable,
+  ) {
+    const window = yield* electronWindow.currentMainOrFirst;
+    if (Option.isNone(window) || window.value.isDestroyed()) {
+      return yield* new LoopbackTunnelForwardError({
+        environmentId,
+        port: remotePort,
+        cause: "The desktop window closed.",
+      });
+    }
+    const contents = window.value.webContents;
+    const key = forwardKey(environmentId, remotePort);
+    // The renderer may reload or crash before it can release its lease.
+    const release = () => {
+      const current = forwarded.get(key);
+      if (current?.scope === scope && current.owner !== undefined) {
+        runFork(stopForward({ environmentId, remotePort, owner: current.owner }));
+      }
+    };
+    contents.on("did-navigate", release);
+    contents.on("render-process-gone", release);
+    contents.once("destroyed", release);
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.sync(() => {
+        contents.removeListener("did-navigate", release);
+        contents.removeListener("render-process-gone", release);
+        contents.removeListener("destroyed", release);
+      }),
+    );
+  });
+
   const forward: LoopbackTunnel["Service"]["forward"] = Effect.fn("LoopbackTunnel.forward")(
-    function* ({ environmentId, remotePort, owner }) {
+    function* ({ environmentId, remotePort, owner, pinned = false }) {
       const key = forwardKey(environmentId, remotePort);
       const existing = forwarded.get(key);
-      if (existing) {
-        // A manually opened forward belongs to the user, even when a review borrows it.
-        if (existing.owner !== undefined) existing.owner = owner;
+      if (existing && (!pinned || existing.forward.localPort === remotePort)) {
+        if (pinned && !existing.forward.pinned) {
+          if (existing.owner === undefined && owner !== undefined) {
+            yield* releaseWithRenderer({ environmentId, remotePort }, existing.scope);
+          }
+          existing.owner = owner;
+          existing.forward = { ...existing.forward, pinned: true };
+          yield* announceForwards;
+        } else if (pinned || (!existing.forward.pinned && existing.owner !== undefined)) {
+          // Reviews can borrow a user's forward, but must not take ownership of it.
+          existing.owner = owner;
+        }
         return existing.forward;
       }
       if (yield* sharesLoopback(environmentId)) {
         // An SSH connection can lead back to this computer. The review already listens here.
-        if (owner !== undefined) return { environmentId, remotePort, localPort: remotePort };
+        if (!pinned && owner !== undefined)
+          return { environmentId, remotePort, localPort: remotePort };
         return yield* new LoopbackTunnelSameMachineError({ environmentId, port: remotePort });
       }
+      const ipv6Busy = yield* servedOverIpv6(remotePort);
       const scope = yield* Scope.fork(listenerScope);
       const bind = (port: number) =>
         NodeSocketServer.make({ port, host: "127.0.0.1" }).pipe(Scope.provide(scope));
-      const preferredPort = (yield* servedOverIpv6(remotePort)) ? 0 : remotePort;
-      const server = yield* bind(preferredPort).pipe(
-        // Taken here, or privileged: any free port still reaches the environment's.
-        Effect.catch(() => bind(0)),
-        Effect.onError(() => Scope.close(scope, Exit.void)),
-        Effect.mapError(
-          (cause) => new LoopbackTunnelForwardError({ environmentId, port: remotePort, cause }),
+      const binding = pinned
+        ? bindPinnedPort(remotePort, ipv6Busy, bind)
+        : bind(ipv6Busy ? 0 : remotePort).pipe(Effect.catch(() => bind(0)));
+      const server = yield* binding.pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "LoopbackTunnelPortInUseError"
+            ? cause
+            : new LoopbackTunnelForwardError({ environmentId, port: remotePort, cause }),
         ),
+        Effect.tap(() =>
+          owner === undefined
+            ? Effect.void
+            : releaseWithRenderer({ environmentId, remotePort }, scope),
+        ),
+        Effect.onError(() => Scope.close(scope, Exit.void)),
       );
       yield* server.run(serveForward(environmentId, remotePort)).pipe(Effect.forkIn(scope));
-      const forward = {
+      const forward: DesktopPortForward = {
         environmentId,
         remotePort,
         localPort: (server.address as NetAddress.InetAddress).port,
+        ...(pinned ? { pinned: true } : {}),
       };
-      if (owner !== undefined) {
-        const window = yield* electronWindow.currentMainOrFirst;
-        if (Option.isNone(window) || window.value.isDestroyed()) {
-          yield* Scope.close(scope, Exit.void);
-          return yield* new LoopbackTunnelForwardError({
-            environmentId,
-            port: remotePort,
-            cause: "The desktop window closed.",
-          });
-        }
-        const contents = window.value.webContents;
-        // Reloads and renderer crashes can prevent the review from sending its final IPC.
-        const release = () => {
-          const current = forwarded.get(key);
-          if (current?.scope === scope && current.owner !== undefined) {
-            runFork(stopForward({ environmentId, remotePort, owner: current.owner }));
-          }
-        };
-        contents.on("did-navigate", release);
-        contents.on("render-process-gone", release);
-        contents.once("destroyed", release);
-        yield* Scope.addFinalizer(
-          scope,
-          Effect.sync(() => {
-            contents.removeListener("did-navigate", release);
-            contents.removeListener("render-process-gone", release);
-            contents.removeListener("destroyed", release);
-          }),
-        );
-      }
       forwarded.set(key, { forward, scope, owner });
+      // Keep a manual fallback listening unless the pinned port could actually be bound.
+      if (existing) yield* Scope.close(existing.scope, Exit.void);
       yield* announceForwards;
       return forward;
     },
@@ -593,7 +623,8 @@ const make = Effect.gen(function* () {
   )(function* ({ environmentId, remotePort, owner }) {
     const key = forwardKey(environmentId, remotePort);
     const existing = forwarded.get(key);
-    if (!existing || (owner !== undefined && existing.owner !== owner)) return;
+    if (!existing) return;
+    if (owner !== undefined ? existing.owner !== owner : existing.forward.pinned) return;
     forwarded.delete(key);
     // Closing the scope also ends the connections it carries.
     yield* Scope.close(existing.scope, Exit.void);

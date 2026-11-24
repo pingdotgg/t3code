@@ -1011,6 +1011,7 @@ export const DesktopPortForwardSchema = Schema.Struct({
   remotePort: PortSchema,
   /** The same as `remotePort` unless that port was taken here. */
   localPort: PortSchema,
+  pinned: Schema.optionalKey(Schema.Literal(true)),
 });
 export type DesktopPortForward = typeof DesktopPortForwardSchema.Type;
 
@@ -1021,6 +1022,19 @@ export const DesktopPortForwardInputSchema = Schema.Struct({
   remotePort: PortSchema,
   owner: Schema.optional(Schema.String),
 });
+
+export const DesktopPortForwardStartInputSchema = Schema.Struct({
+  ...DesktopPortForwardInputSchema.fields,
+  pinned: Schema.optional(Schema.Boolean),
+}).check(
+  Schema.makeFilter(({ pinned, owner }) => !pinned || owner !== undefined, {
+    message: "A pinned port forward needs an owner.",
+  }),
+);
+export type DesktopPortForwardOptions = Omit<
+  typeof DesktopPortForwardStartInputSchema.Type,
+  "environmentId" | "remotePort"
+>;
 
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
@@ -1370,7 +1384,7 @@ export interface DesktopPreviewBridge {
   forwardPort: (
     environmentId: EnvironmentId,
     remotePort: number,
-    owner?: string,
+    options?: DesktopPortForwardOptions,
   ) => Promise<DesktopPortForward>;
   stopPortForward: (
     environmentId: EnvironmentId,

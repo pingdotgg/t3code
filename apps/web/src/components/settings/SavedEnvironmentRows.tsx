@@ -32,6 +32,7 @@ import { cn } from "../../lib/utils";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { EnvironmentPortForwards } from "./EnvironmentPortForwards";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { RenameEnvironmentDialog } from "./RenameEnvironmentDialog";
 import {
@@ -352,6 +353,10 @@ export function SavedBackendListRow({
               <ServerUpdateProgress state={serverUpdateState} />
             </div>
           ) : null}
+          <EnvironmentPortForwards
+            environmentId={environmentId}
+            environmentLabel={environment.label}
+          />
         </>
       }
       detail={

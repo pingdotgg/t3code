@@ -25,6 +25,7 @@ import {
   DesktopPreviewTunnelAccessResolutionInputSchema,
   DesktopPortForwardInputSchema,
   DesktopPortForwardSchema,
+  DesktopPortForwardStartInputSchema,
   DesktopSharesLoopbackInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
@@ -388,7 +389,7 @@ const resolveTunnelAccess = DesktopIpc.makeIpcMethod({
 
 const forwardPort = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PORT_FORWARD_START_CHANNEL,
-  payload: DesktopPortForwardInputSchema,
+  payload: DesktopPortForwardStartInputSchema,
   result: DesktopPortForwardSchema,
   handler: Effect.fn("desktop.ipc.preview.forwardPort")(function* (input) {
     const tunnel = yield* LoopbackTunnel.LoopbackTunnel;

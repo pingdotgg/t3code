@@ -10,7 +10,7 @@ vi.mock("./session", () => ({
   },
 }));
 
-const { forwardLocalitiesAtom } = await import("./portForwards");
+const { forwardLocalitiesAtom, forwardedUrl } = await import("./portForwards");
 
 afterEach(() => {
   vi.useRealTimers();
@@ -38,4 +38,15 @@ describe("forward locality", () => {
     expect(registry.get(atom)).toEqual(["remote"]);
     unmount();
   });
+});
+
+it("preserves a named loopback route when opening a forwarded URL", () => {
+  const port = 59_347;
+  const url = `https://app.web.localhost:${port}/dashboard?tab=all#details`;
+  expect(
+    forwardedUrl(
+      { environmentId: EnvironmentId.make("remote"), remotePort: port, localPort: port },
+      url,
+    ),
+  ).toBe(url);
 });

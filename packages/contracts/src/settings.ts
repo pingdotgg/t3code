@@ -17,6 +17,7 @@ import {
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
+  PortSchema,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -409,6 +410,13 @@ export const VoiceTranscriptionDestination = Schema.Union([
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
+const PinnedPortForward = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type PinnedPortForward = typeof PinnedPortForward.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -470,6 +478,9 @@ export const ClientSettingsSchema = Schema.Struct({
 
   browserDefaultProfileId: BrowserProfileId.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_PROFILE_ID)),
+  ),
+  pinnedPortForwards: Schema.Array(PinnedPortForward).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
 
   confirmQuit: QuitConfirmationModeSetting.pipe(
