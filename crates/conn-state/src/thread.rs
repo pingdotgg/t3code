@@ -1048,6 +1048,23 @@ impl ThreadState {
         prepended_count
     }
 
+    /// Attaches chronological cached messages before the current timeline. An overlap
+    /// marks the end of the prefix, so live entries keep their current contents.
+    pub fn prepend_cached_messages(&mut self, mut entries: Vec<TimelineEntry>) {
+        let current: HashSet<_> = self.entries.iter().map(TimelineEntry::id).collect();
+        if let Some(overlap) = entries
+            .iter()
+            .position(|entry| current.contains(entry.id()))
+        {
+            entries.truncate(overlap);
+        }
+        if !entries.is_empty() {
+            entries.append(&mut self.entries);
+            self.entries = entries;
+            self.revision = next_revision();
+        }
+    }
+
     /// Applies one `subscribeThread` stream item.
     ///
     /// Returns `true` when timeline entries, the `working` state or

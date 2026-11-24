@@ -529,6 +529,13 @@ impl Connection {
             .send(Command::SubscribeThread(thread_id.to_owned()));
     }
 
+    /// Requests a new bounded projection even when a previous stream can resume.
+    pub fn refresh_thread(&self, thread_id: &str) {
+        let _ = self
+            .cmd_tx
+            .send(Command::RefreshThread(thread_id.to_owned()));
+    }
+
     /// Interrupts and removes the thread subscription for `thread_id`.
     pub fn unsubscribe_thread(&self, thread_id: &str) {
         let _ = self
@@ -973,6 +980,11 @@ mod tests {
             json!(true),
             "resubscribe must keep acceptBoundedSnapshot=true"
         );
+
+        conn.refresh_thread("thread-1");
+        let fresh = sub_payloads_rx.recv().await.ok_or("missing refresh")?;
+        assert!(fresh.get("afterSequence").is_none());
+        assert_eq!(fresh["acceptBoundedSnapshot"], json!(true));
 
         // Typed orchestration.getTurnItem RPC.
         let item = conn
