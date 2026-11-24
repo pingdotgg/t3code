@@ -145,6 +145,11 @@ describe("pull request body segmentation", () => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
+    const captioned = '<video src="https://example.com/a.mp4"></video> Before the fix\n\nIt opens.';
+    expect(split(`${captioned}\n\n<video src="https://example.com/b.mp4"></video>`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: captioned, sourceOffset: 0 },
+      { id: "attachment:1", kind: "attachment", url: "https://example.com/b.mp4", media: "video" },
+    ]);
   });
 
   it("treats an info-string fence as a nested opener, not a close", () => {
@@ -193,6 +198,7 @@ describe("pull request body segmentation", () => {
   it.each([
     ["a whitespace run inside a line", `a${" ".repeat(1_000_000)}b`],
     ["a run of unclosed video tags", `${"<video ".repeat(150_000)}</video>`],
+    ["a run of backticks before a line separator", `${"`".repeat(100_000)}\u2028x`],
   ])("splits %s in one pass", (_case, body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },

@@ -2084,6 +2084,17 @@ code {
   vertical-align: -0.125em;
 }
 
+/* Firefox resolves a drag over the sprite icon's <use> to the shared <symbol> and collapses the
+   selection there, or snaps an unselectable icon's point into the text before it. Passing the
+   pointer to the chip lands the selection at its label. Chromium keeps triple-click line
+   selection only without user-select: none here. */
+@supports (-moz-appearance: none) {
+  .chat-markdown-file-link > svg {
+    pointer-events: none;
+    user-select: none;
+  }
+}
+
 .chat-markdown-file-link > [data-slot="context-chip-label"] {
   display: inline;
 }

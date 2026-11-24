@@ -647,6 +647,39 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("downloads again when the downloaded update file was deleted before install", () => {
+    const downloadedFile = "/cache/pending/T3-Code-1.2.4-arm64.zip";
+    let installedFileExists: boolean | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+      downloadUpdate: Effect.sync(() => {
+        harness.deletedFiles.delete(downloadedFile);
+        harness.emit("update-downloaded", { version: "1.2.4", downloadedFile });
+      }),
+      quitAndInstall: Effect.sync(() => {
+        installedFileExists = !harness.deletedFiles.has(downloadedFile);
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* updates.download;
+        yield* flushCallbacks;
+        assert.equal(harness.downloadCount(), 1);
+
+        harness.deletedFiles.add(downloadedFile);
+        const result = yield* updates.installPrepared("1.2.4");
+        assert.isTrue(result.accepted);
+        assert.equal(harness.downloadCount(), 2);
+        assert.equal(harness.quitAndInstalls(), 1);
+        assert.isTrue(installedFileExists);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("restores download state and permits retry after interruption", () =>
     Effect.gen(function* () {
       const actionStarted = yield* Deferred.make<void>();

@@ -2883,6 +2883,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.gen(function* () {
               runtimeRetired = true;
               const state = threadState;
+              // Pi ending while nothing is in flight is an idle exit, not a failure.
+              const idle =
+                state !== null &&
+                state.activeTurn === null &&
+                pendingWake === null &&
+                piAsyncRuns.size === 0 &&
+                pendingPrompts.size === 0 &&
+                !nativeCompacting &&
+                !registrationInProgress &&
+                rollbackBarrier === null &&
+                extensionStatusReset === null &&
+                pendingPromptResponsesDrained === null;
               closed = true;
               if (pendingPromptResponsesDrained !== null)
                 yield* Deferred.fail(
@@ -2916,7 +2928,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (unsolicitedActivityDetected) {
                 yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
                 yield* Queue.end(events);
-              } else if (stopRequested) {
+              } else if (stopRequested || idle) {
                 yield* updateProviderSession("stopped", null);
                 yield* Queue.end(events);
               } else {

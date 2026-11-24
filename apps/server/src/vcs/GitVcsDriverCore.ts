@@ -5443,6 +5443,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
 
+    const remoteNamesInGitOrder =
+      remoteNamesResult.exitCode === 0 ? parseRemoteNamesInGitOrder(remoteNamesResult.stdout) : [];
     const remoteNames =
       remoteNamesResult.exitCode === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
     if (remoteNamesResult.exitCode !== 0 && remoteNamesResult.stderr.trim().length > 0) {
@@ -5450,10 +5452,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `GitVcsDriver.listRefs: remote name lookup returned code ${remoteNamesResult.exitCode} for ${gitCommonDir}: ${remoteNamesResult.stderr.trim()}. Falling back to an empty remote name list.`,
       );
     }
-    const defaultBranch =
+    const originDefaultBranch =
       defaultRefResult.exitCode === 0
         ? parseDefaultBranchFromRemoteHeadRef(defaultRefResult.stdout, "origin")
         : null;
+    // Same fallback as resolvePrimaryDefaultBranchName: without an origin, the first remote is primary.
+    const [firstRemoteName] = remoteNamesInGitOrder;
+    const fallbackRemoteName =
+      originDefaultBranch === null &&
+      firstRemoteName !== undefined &&
+      !remoteNamesInGitOrder.includes("origin")
+        ? firstRemoteName
+        : null;
+    const defaultBranch =
+      fallbackRemoteName === null
+        ? originDefaultBranch
+        : yield* resolveDefaultBranchName(fetchCwd, fallbackRemoteName, gitDirArgs);
+    const defaultRemoteName = fallbackRemoteName ?? "origin";
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -5489,7 +5504,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         isRemote: true,
         isDefault:
           defaultBranch !== null &&
-          parsedRemoteRef?.remoteName === "origin" &&
+          parsedRemoteRef?.remoteName === defaultRemoteName &&
           parsedRemoteRef.branchName === defaultBranch,
         worktreePath: null,
         ...(parsedRemoteRef ? { remoteName: parsedRemoteRef.remoteName } : {}),

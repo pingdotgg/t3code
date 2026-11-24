@@ -201,7 +201,8 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   // Cut between characters, not inside an emoji's surrogate pair.
   if (isLowSurrogate(text.charCodeAt(start))) start++;
   // Collapsing whitespace shortens the text, so read more of it.
-  const rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
+  let rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
+  if (isLowSurrogate(text.charCodeAt(rawEnd))) rawEnd++;
   // Emphasis and code marks do not show in a thread either.
   const shown = text
     .slice(start, rawEnd)

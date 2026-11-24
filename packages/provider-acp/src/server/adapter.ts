@@ -9223,13 +9223,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageText: string,
           attachments: ReadonlyArray<ChatAttachment>,
         ) {
-          if (!supportsImagePrompts && attachments.some(isProviderNativeImageAttachment)) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver,
-              detail: "ACP driver did not negotiate image prompt support",
-            });
+          // Without image prompts the saved path already in the message text is how the agent
+          // reaches the image; a flavor's own builder checks the capabilities it is handed.
+          if (!flavor.buildAttachmentPrompt) {
+            return supportsImagePrompts ? yield* imageAttachmentBlocks(attachments) : [];
           }
-          if (!flavor.buildAttachmentPrompt) return yield* imageAttachmentBlocks(attachments);
           const setup = yield* Ref.get(activeSessionSetup);
           return yield* flavor
             .buildAttachmentPrompt({

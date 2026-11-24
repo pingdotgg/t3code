@@ -31,7 +31,8 @@ type PullRequestBodyTableCell = {
 };
 
 // `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)\r?$/u;
+// The marker is the whole run, so a line that is no fence is given up on in one pass.
+const FENCE_PATTERN = /^\s{0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -50,6 +51,7 @@ const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+const VIDEO_TAG_CLOSE_PATTERN = /<\/video>/iu;
 
 /** Bounded like `VIDEO_TAG_MAX_LINES`; room for a before/after table with several rows. */
 const TABLE_MAX_LINES = 64;
@@ -326,7 +328,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
     const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
     let cursor = index;
-    while (cursor < lastCandidate && !VIDEO_TAG_END_PATTERN.test(lines[cursor]!)) {
+    while (cursor < lastCandidate && !VIDEO_TAG_CLOSE_PATTERN.test(lines[cursor]!)) {
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
