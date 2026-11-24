@@ -5,17 +5,20 @@ struct InboxView: View {
     @Bindable var store: CoreStore
     let searchQuery: String
     @Binding var selectedProjectFilter: String?
-    let onSelectThread: (String) -> Void
+    let onSelectThread: (String, String) -> Void
 
     @Environment(\.connTheme) private var theme
     @State private var settledExpanded = false
+    @State private var renameOwner: CoreStore?
     @State private var renamingThread: FfiThreadSummary?
     @State private var renameDraft = ""
 
     var body: some View {
         Group {
-            if let shell = store.shell, shell.synchronized {
+            if let shell = store.shell {
                 inboxList(shell: shell)
+            } else if store.linked.values.contains(where: { $0.shell != nil }) {
+                inboxList(shell: FfiShellSnapshot(projects: [], threads: [], synchronized: false))
             } else {
                 loadingState
             }
@@ -38,7 +41,7 @@ struct InboxView: View {
                     let newTitle = renameDraft
                     renamingThread = nil
                     Task {
-                        await store.renameThread(threadId: target.id, title: newTitle)
+                        await (renameOwner ?? store).renameThread(threadId: target.id, title: newTitle)
                     }
                 }
             }
@@ -82,14 +85,14 @@ struct InboxView: View {
                 .listRowBackground(Color.clear)
             }
 
-            if active.isEmpty && settled.isEmpty {
+            if active.isEmpty && settled.isEmpty && store.linked.isEmpty {
                 emptyState
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
                     .listRowBackground(theme.background)
             } else {
                 ForEach(active, id: \.id) { thread in
-                    threadRow(thread, project: projectsById[thread.projectId], settled: false)
+                    threadRow(thread, owner: store, project: projectsById[thread.projectId], settled: false)
                 }
 
                 if !settled.isEmpty {
@@ -120,7 +123,17 @@ struct InboxView: View {
 
                     if settledExpanded {
                         ForEach(settled, id: \.id) { thread in
-                            threadRow(thread, project: projectsById[thread.projectId], settled: true)
+                            threadRow(thread, owner: store, project: projectsById[thread.projectId], settled: true)
+                        }
+                    }
+                }
+            }
+            ForEach(store.linked.keys.sorted(), id: \.self) { id in
+                if let owner = store.linked[id], let remote = owner.shell {
+                    let projects = Dictionary(uniqueKeysWithValues: remote.projects.map { ($0.id, $0) })
+                    Section(owner.serverURL.flatMap { URL(string: $0)?.host } ?? id) {
+                        ForEach(filteredThreads(in: remote, projectsById: projects), id: \.id) { thread in
+                            threadRow(thread, owner: owner, project: projects[thread.projectId], settled: thread.settled)
                         }
                     }
                 }
@@ -131,9 +144,9 @@ struct InboxView: View {
         .background(theme.background)
     }
 
-    private func threadRow(_ thread: FfiThreadSummary, project: FfiProject?, settled: Bool) -> some View {
+    private func threadRow(_ thread: FfiThreadSummary, owner: CoreStore, project: FfiProject?, settled: Bool) -> some View {
         Button {
-            onSelectThread(thread.id)
+            onSelectThread(thread.id, owner.scope)
         } label: {
             ThreadListV2RowView(
                 thread: thread,
@@ -149,7 +162,7 @@ struct InboxView: View {
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button {
                 Task {
-                    await store.settleThread(threadId: thread.id, settled: !settled)
+                    await owner.settleThread(threadId: thread.id, settled: !settled)
                 }
             } label: {
                 Label(settled ? "Un-settle" : "Settle", systemImage: settled ? "arrow.uturn.backward" : "checkmark")
@@ -158,7 +171,7 @@ struct InboxView: View {
 
             Button(role: .destructive) {
                 Task {
-                    await store.deleteThread(threadId: thread.id)
+                    await owner.deleteThread(threadId: thread.id)
                 }
             } label: {
                 Label("Delete", systemImage: "trash")
@@ -167,7 +180,7 @@ struct InboxView: View {
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             Button {
                 Task {
-                    await store.pinThread(threadId: thread.id, pinned: !thread.pinned)
+                    await owner.pinThread(threadId: thread.id, pinned: !thread.pinned)
                 }
             } label: {
                 Label(thread.pinned ? "Unpin" : "Pin", systemImage: thread.pinned ? "pin.slash" : "pin")
@@ -177,7 +190,7 @@ struct InboxView: View {
             if !thread.unread {
                 Button {
                     Task {
-                        await store.markThreadUnread(threadId: thread.id)
+                        await owner.markThreadUnread(threadId: thread.id)
                     }
                 } label: {
                     Label("Unread", systemImage: "envelope.badge")
@@ -188,7 +201,7 @@ struct InboxView: View {
         .contextMenu {
             Button {
                 Task {
-                    await store.pinThread(threadId: thread.id, pinned: !thread.pinned)
+                    await owner.pinThread(threadId: thread.id, pinned: !thread.pinned)
                 }
             } label: {
                 Label(thread.pinned ? "Unpin" : "Pin", systemImage: thread.pinned ? "pin.slash" : "pin")
@@ -196,7 +209,7 @@ struct InboxView: View {
 
             Button {
                 Task {
-                    await store.settleThread(threadId: thread.id, settled: !settled)
+                    await owner.settleThread(threadId: thread.id, settled: !settled)
                 }
             } label: {
                 Label(settled ? "Un-settle" : "Settle", systemImage: settled ? "arrow.uturn.backward" : "checkmark")
@@ -205,7 +218,7 @@ struct InboxView: View {
             if !thread.unread {
                 Button {
                     Task {
-                        await store.markThreadUnread(threadId: thread.id)
+                        await owner.markThreadUnread(threadId: thread.id)
                     }
                 } label: {
                     Label("Mark Unread", systemImage: "envelope.badge")
@@ -213,6 +226,7 @@ struct InboxView: View {
             }
 
             Button {
+                renameOwner = owner
                 renameDraft = thread.title
                 renamingThread = thread
             } label: {
@@ -223,7 +237,7 @@ struct InboxView: View {
 
             Button(role: .destructive) {
                 Task {
-                    await store.deleteThread(threadId: thread.id)
+                    await owner.deleteThread(threadId: thread.id)
                 }
             } label: {
                 Label("Delete", systemImage: "trash")
@@ -268,7 +282,7 @@ struct InboxView: View {
             result = result.filter { $0.projectId == projectFilter }
         }
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return result }
+        guard !q.isEmpty else { return result.filter { !$0.isSubagent } }
         return result.filter { thread in
             if thread.title.lowercased().contains(q) { return true }
             if let branch = thread.branch?.lowercased(), branch.contains(q) { return true }

@@ -57,6 +57,7 @@ struct LaunchDefaults {
 }
 
 enum PumpControl {
+    EnableOffline(Arc<crate::OfflineReader>),
     OpenThread(String),
     CloseThread(String),
     ResolveLaunchDefaults {
@@ -257,7 +258,7 @@ impl ConnCore {
             credential: credential.into(),
         };
         let (connection, events_rx) = Connection::start(config, &runtime_handle);
-        connection.subscribe_shell();
+        connection.subscribe_shell_with_idle_subagents();
 
         let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
         let thread_runs = Arc::new(RwLock::new(HashMap::new()));
@@ -285,6 +286,26 @@ impl ConnCore {
             status_watch,
             disconnected: AtomicBool::new(false),
         }))
+    }
+
+    /// Opens this pairing's cache on the connection runtime.
+    pub async fn prepare_offline(
+        &self,
+        directory: String,
+    ) -> Result<Arc<crate::OfflineReader>, FfiError> {
+        let reader = self
+            .runtime_handle
+            .spawn(crate::OfflineReader::open(
+                directory.into(),
+                self.server_url(),
+                self.connection.clone(),
+            ))
+            .await
+            .map_err(|_| FfiError::Closed)??;
+        self.ctrl_tx
+            .send(PumpControl::EnableOffline(reader.clone()))
+            .map_err(|_| FfiError::Closed)?;
+        Ok(reader)
     }
 
     /// Returns the normalized HTTP base URL this connection targets.
@@ -609,6 +630,7 @@ fn parse_server_url(raw: &str) -> Result<url::Url, FfiError> {
 }
 
 struct PumpState {
+    offline: Option<crate::offline::SyncState>,
     connection: Connection,
     listener: Arc<dyn CoreListener>,
     shell: ShellState,
@@ -697,6 +719,17 @@ impl PumpState {
 
     fn handle_control(&mut self, ctrl: PumpControl) -> bool {
         match ctrl {
+            PumpControl::EnableOffline(reader) => {
+                let mut sync = crate::offline::SyncState::new(reader);
+                if self.shell.synchronized {
+                    sync.shell(&self.shell, &self.open_threads);
+                    for state in self.threads.values() {
+                        sync.thread(state, state.sequence);
+                    }
+                }
+                self.offline = Some(sync);
+                true
+            }
             PumpControl::OpenThread(thread_id) => {
                 let is_newly_opened = self.open_threads.insert(thread_id.clone());
                 self.ended_threads.remove(&thread_id);
@@ -704,12 +737,22 @@ impl PumpState {
                 let cached_snapshot = self
                     .threads
                     .get(&thread_id)
+                    .filter(|_| {
+                        self.offline
+                            .as_ref()
+                            .is_none_or(|sync| sync.may_read(&thread_id))
+                    })
                     .filter(|state| state.synchronized || !state.entries.is_empty())
                     .map(|state| build_thread_snapshot(state, meta.as_ref()));
                 self.threads
                     .entry(thread_id.clone())
                     .or_insert_with(|| ThreadState::new(thread_id.clone()));
-                if is_newly_opened {
+                if is_newly_opened
+                    && !self
+                        .offline
+                        .as_ref()
+                        .is_some_and(|s| s.subscribed(&thread_id))
+                {
                     self.connection.subscribe_thread(&thread_id);
                 }
                 if let Some(snapshot) = cached_snapshot {
@@ -721,7 +764,12 @@ impl PumpState {
                 let was_open = self.open_threads.remove(&thread_id);
                 self.ended_threads.remove(&thread_id);
                 self.coalescer.cancel_thread(&thread_id);
-                if was_open {
+                if was_open
+                    && !self
+                        .offline
+                        .as_ref()
+                        .is_some_and(|s| s.subscribed(&thread_id))
+                {
                     self.connection.unsubscribe_thread(&thread_id);
                 }
                 true
@@ -780,12 +828,17 @@ impl PumpState {
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
                 self.sync_shell_run_meta();
+                if self.shell.synchronized
+                    && let Some(sync) = &mut self.offline
+                {
+                    sync.shell(&self.shell, &self.open_threads);
+                }
                 if !change.threads_changed.is_empty() {
                     self.resubscribe_ended_threads();
                 }
                 if change.snapshot_required {
                     self.shell_snapshot_required = true;
-                    self.connection.subscribe_shell();
+                    self.connection.subscribe_shell_with_idle_subagents();
                 }
                 let snapshot = build_shell_snapshot(&self.shell);
                 self.shell_watch.send_replace(Some(snapshot.clone()));
@@ -820,7 +873,14 @@ impl PumpState {
                     .threads
                     .entry(thread_id.clone())
                     .or_insert_with(|| ThreadState::new(thread_id.clone()));
+                let snapshot_sequence = match &item {
+                    OrchestrationV2ThreadStreamItem::Snapshot(s) => Some(s.snapshot_sequence),
+                    _ => None,
+                };
                 let changed = state.apply(item);
+                if changed && let Some(sync) = &mut self.offline {
+                    sync.thread(state, snapshot_sequence);
+                }
                 let working = state.working;
                 let active_run_id = state.active_run_id().map(str::to_owned);
                 let snapshot = if self.open_threads.contains(&thread_id) && (changed || force_emit)
@@ -850,9 +910,9 @@ impl PumpState {
                 if tag == TAG_SUBSCRIBE_SHELL {
                     if self.shell_snapshot_required || error.is_none() {
                         self.shell_snapshot_required = false;
-                        self.connection.subscribe_shell();
+                        self.connection.subscribe_shell_with_idle_subagents();
                     }
-                } else if tag == TAG_SUBSCRIBE_THREAD && self.open_threads.contains(&key) {
+                } else if tag == TAG_SUBSCRIBE_THREAD && self.subscribed(&key) {
                     self.ended_threads.insert(key);
                     if error.is_none() {
                         self.resubscribe_ended_threads();
@@ -866,11 +926,15 @@ impl PumpState {
         }
     }
 
+    fn subscribed(&self, id: &str) -> bool {
+        self.open_threads.contains(id) || self.offline.as_ref().is_some_and(|s| s.subscribed(id))
+    }
+
     fn resubscribe_ended_threads(&mut self) {
         let ready: Vec<String> = self
             .ended_threads
             .iter()
-            .filter(|id| self.open_threads.contains(*id) && self.shell.find_thread(id).is_some())
+            .filter(|id| self.subscribed(id) && self.shell.find_thread(id).is_some())
             .cloned()
             .collect();
         for id in ready {
@@ -912,6 +976,7 @@ async fn run_pump(
     status_watch: watch::Sender<FfiConnectionStatus>,
 ) {
     let mut state = PumpState {
+        offline: None,
         connection,
         listener,
         shell: ShellState::default(),

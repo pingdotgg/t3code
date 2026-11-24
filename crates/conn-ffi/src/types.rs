@@ -657,7 +657,12 @@ pub(crate) fn build_shell_snapshot(shell: &ShellState) -> FfiShellSnapshot {
         .top_level_settled_threads()
         .into_iter()
         .map(|thread| map_thread_summary(shell, thread, true));
-    let threads = active.chain(settled).collect();
+    let children = shell
+        .threads
+        .iter()
+        .filter(|t| ShellState::is_subagent(t) && t.deleted_at.is_none())
+        .map(|t| map_thread_summary(shell, t, ShellState::is_settled(t)));
+    let threads = active.chain(settled).chain(children).collect();
 
     FfiShellSnapshot {
         projects,
@@ -2040,8 +2045,9 @@ mod tests {
                 "t-archived",
                 "t-settled-new",
                 "t-settled-old",
+                "t-sub",
             ],
-            "active threads newest-first, then settled threads newest-first, excluding subagents"
+            "active and settled threads precede searchable children"
         );
         assert!(!snap.threads[0].settled);
         assert!(!snap.threads[0].pinned);
