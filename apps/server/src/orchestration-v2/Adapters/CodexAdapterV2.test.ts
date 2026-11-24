@@ -11252,6 +11252,115 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("a retried rollback leaves a Codex thread that already ends at the kept turn", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "retried-rollback-thread";
+      const thread = codexReplayThreadResult({ nativeThreadId, forkedFromId: null });
+      const exchange = (
+        id: number,
+        method: string,
+        params: unknown,
+        reply: { readonly result: unknown } | { readonly error: unknown },
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        { type: "expect_outbound", label: method, frame: { id, method, params } },
+        { type: "emit_inbound", label: method, frame: { id, ...reply } },
+      ];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-retried-rollback",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "native-turn-first",
+            prompt: "unused",
+          }).slice(0, 5),
+          ...exchange(
+            3,
+            "thread/read",
+            { threadId: nativeThreadId, includeTurns: false },
+            {
+              result: {
+                thread: { id: nativeThreadId, historyMode: "paginated", status: { type: "idle" } },
+              },
+            },
+          ),
+          // The first attempt already removed native-turn-second before a later step failed.
+          ...exchange(
+            4,
+            "thread/turns/list",
+            {
+              threadId: nativeThreadId,
+              cursor: null,
+              limit: 1,
+              sortDirection: "desc",
+              itemsView: "summary",
+            },
+            {
+              result: {
+                data: [{ id: "native-turn-first", items: [], status: "completed", error: null }],
+                nextCursor: null,
+              },
+            },
+          ),
+          ...exchange(
+            5,
+            "thread/revert",
+            { threadId: nativeThreadId, beforeTurnId: "native-turn-first" },
+            { result: thread },
+          ),
+        ],
+      });
+      const reverted: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/revert") reverted.push(params);
+          }),
+      );
+      const now = yield* DateTime.now;
+      const firstTurn = codexReplaySourceTurn({
+        id: "provider-turn-first",
+        ordinal: 1,
+        nativeId: "native-turn-first",
+        providerThreadId: harness.providerThread.id,
+        now,
+      });
+      const secondTurn = codexReplaySourceTurn({
+        id: "provider-turn-second",
+        ordinal: 2,
+        nativeId: "native-turn-second",
+        providerThreadId: harness.providerThread.id,
+        now,
+      });
+      // T3's records still list both turns: the rolled_back events were never written.
+      const rollback = {
+        providerThread: harness.providerThread,
+        target: {
+          type: "provider_turn" as const,
+          checkpointId: CheckpointId.make("checkpoint-retried-rollback"),
+          appRunOrdinal: 1,
+          providerTurn: firstTurn,
+        },
+        providerThreadTurns: [firstTurn, secondTurn],
+      };
+
+      yield* harness.runtime.rollbackThread(rollback).pipe(Effect.exit);
+
+      assert.deepEqual(reverted, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("unarchives an unloaded Codex thread before rolling it back", () =>
     Effect.gen(function* () {
       const nativeThreadId = "archived-rollback-thread";
