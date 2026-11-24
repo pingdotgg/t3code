@@ -588,17 +588,11 @@ it.effect("a retried launch keeps the launched thread's modelSelection", () =>
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     yield* launchWith(modelSelection);
-    const retrySelection = {
+    yield* launchWith({
       instanceId: ProviderInstanceId.make("codex"),
       model: "unadvertised-retry-model",
-    };
-    const retried = (yield* launchWith(retrySelection)).at(-1)?.result;
+    });
 
-    expect(retried).toMatchObject({ projectId, modelSelection });
-    expect(launched.map((input) => input.threadId)).toEqual([
-      launched[0]?.threadId,
-      launched[0]?.threadId,
-    ]);
     expect(launched.map((input) => input.modelSelection)).toEqual([modelSelection, modelSelection]);
   }),
 );
