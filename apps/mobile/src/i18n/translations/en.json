@@ -5622,8 +5622,8 @@
   "89bf40eb2503b6c5": "New device signed in to {environment}",
   "c94b5fe9ef372bc0": "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
   "bec67d0ed485f885": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
-  "51b7d1a9523f1dfc": "Helps the T3 Code team fix connection problems: timings and error types, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
   "18c30aa94d0a807f": "Connection diagnostics",
-  "e96031c3225d6a56": "When the app connects to a computer through {product}, it sends how long each step took and any error type to the T3 Code team. Traces never include your threads, prompts, or code.",
-  "eb287395a09cd288": "Send connection traces"
+  "eb287395a09cd288": "Send connection traces",
+  "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
+  "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code."
 }

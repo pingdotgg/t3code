@@ -219,7 +219,7 @@ function ConnectionTracesSetting() {
       </SettingsSection>
       <Text className="px-2 text-sm leading-normal text-foreground-muted">
         {gt(
-          "When the app connects to a computer through {product}, it sends how long each step took and any error type to the T3 Code team. Traces never include your threads, prompts, or code.",
+          "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
           { product: "T3 Connect" },
         )}
       </Text>

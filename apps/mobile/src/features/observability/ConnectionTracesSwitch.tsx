@@ -12,6 +12,26 @@ import { resolveTracingConfig } from "./tracing";
 /** False in builds without relay tracing configured, where there is nothing to turn off. */
 export const connectionTracesAvailable = resolveTracingConfig() !== null;
 
+// Shared by every switch, so a save that finishes after a newer change cannot turn sending back on.
+let latestChange = 0;
+
+/** Sending stops before the save and starts only after it, unless a newer change came since. */
+async function applyConnectionTracesChange(
+  value: boolean,
+  save: () => Promise<{ readonly _tag: string; readonly cause?: unknown }>,
+) {
+  const sequence = ++latestChange;
+  if (!value) setConnectionTracesEnabled(false);
+  const result = await save();
+  if (sequence !== latestChange) return;
+  if (result._tag === "Failure") {
+    console.warn("[diagnostics] could not save the connection traces setting", result.cause);
+    if (!value) setConnectionTracesEnabled(true);
+    return;
+  }
+  if (value) setConnectionTracesEnabled(true);
+}
+
 /** The phone's T3 Connect connection traces, separate from crash reports. */
 export function ConnectionTracesSwitch() {
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -26,18 +46,9 @@ export function ConnectionTracesSwitch() {
 
   const change = (value: boolean) => {
     setSaving(true);
-    // Sending stops before the save and starts only after it.
-    if (!value) setConnectionTracesEnabled(false);
-    void savePreferences({ connectionTracesEnabled: value })
-      .then((result) => {
-        if (result._tag === "Failure") {
-          console.warn("[diagnostics] could not save the connection traces setting", result.cause);
-          if (!value) setConnectionTracesEnabled(true);
-          return;
-        }
-        if (value) setConnectionTracesEnabled(true);
-      })
-      .finally(() => setSaving(false));
+    void applyConnectionTracesChange(value, () =>
+      savePreferences({ connectionTracesEnabled: value }),
+    ).finally(() => setSaving(false));
   };
 
   return (

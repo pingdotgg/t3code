@@ -5620,8 +5620,8 @@
   "89bf40eb2503b6c5": "Ny enhet inloggad på {environment}",
   "c94b5fe9ef372bc0": "{device} anslöt via {product}. Om det inte var du, ta bort den under Inställningar → Åtkomst i T3 Code på den datorn.",
   "bec67d0ed485f885": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Om det inte var du, ta bort dem under Inställningar → Åtkomst i T3 Code på den datorn.",
-  "51b7d1a9523f1dfc": "Hjälper T3 Code-teamet att åtgärda anslutningsproblem: tider och feltyper, aldrig dina trådar, prompter eller din kod. Du kan ändra det under Inställningar > Om T3 Code > Diagnostik.",
   "18c30aa94d0a807f": "Anslutningsdiagnostik",
-  "e96031c3225d6a56": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog och feltypen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod.",
-  "eb287395a09cd288": "Skicka anslutningsspårningar"
+  "eb287395a09cd288": "Skicka anslutningsspårningar",
+  "6787f93bbf6ce0b6": "Hjälper T3 Code-teamet att åtgärda anslutningsproblem. Spårningar innehåller tider, feltyper, ett ID för den här appsessionen och appversionen, aldrig dina trådar, prompter eller din kod. Du kan ändra det under Inställningar > Om T3 Code > Diagnostik.",
+  "0b1e4aecbd38e0cf": "När appen ansluter till en dator via {product} skickar den hur lång tid varje steg tog, feltypen, ett ID för den här appsessionen och appversionen till T3 Code-teamet. Spårningar innehåller aldrig dina trådar, prompter eller din kod."
 }
