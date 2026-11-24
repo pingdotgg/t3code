@@ -7033,26 +7033,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (current !== input.context) {
                 return false;
               }
-              if (input.stalledRetry !== undefined) {
-                // Checked under the permit so item/started cannot clear the retry mid-finalize.
-                const retries = yield* Ref.get(providerRetries);
-                if (
-                  retries.get(input.context.providerTurnId) !== input.stalledRetry.state ||
-                  (yield* Ref.get(interruptingNativeTurns)).has(input.nativeTurnId)
-                )
-                  return false;
-                input.context.latestProviderFailure ??= input.stalledRetry.failure;
+              if (
+                input.stalledRetry !== undefined &&
+                (yield* Ref.get(interruptingNativeTurns)).has(input.nativeTurnId)
+              ) {
+                return false;
               }
-              input.context.fileChangeKindsByItem.clear();
+              // Validate and clear stalledRetry in one atomic Ref update so a concurrent
+              // error notification (such as a capacity reconnect) cannot be deleted after checks.
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
                 const retry = current.get(input.context.providerTurnId);
                 if (retry === undefined) {
+                  return [undefined, current] as const;
+                }
+                if (input.stalledRetry !== undefined && retry !== input.stalledRetry.state) {
                   return [undefined, current] as const;
                 }
                 const updated = new Map(current);
                 updated.delete(input.context.providerTurnId);
                 return [retry, updated] as const;
               });
+              if (input.stalledRetry !== undefined) {
+                if (providerRetry === undefined) {
+                  return false;
+                }
+                input.context.latestProviderFailure ??= input.stalledRetry.failure;
+              }
+              input.context.fileChangeKindsByItem.clear();
               if (
                 providerRetry !== undefined &&
                 !input.continueRun &&
