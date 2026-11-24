@@ -562,6 +562,7 @@ export const make = Effect.gen(function* () {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
               tab.agentLedAt = performance.now();
+              // Painted before the command's own frame, which a hidden guest never draws.
               syncPainting(tab);
             } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
               tab.agentLedAt = Number.NEGATIVE_INFINITY;

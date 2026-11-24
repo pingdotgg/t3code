@@ -442,9 +442,9 @@ describe("DesktopBrowserHost", () => {
 
       // A command that outlasts its first prod is painted like a capture, which also unthrottles it.
       // A wait the agent's turn gave up on is no longer prodded.
+      painting.length = 0;
       yield* command(host, 5, "Runtime.evaluate");
       yield* settle;
-      painting.length = 0;
       yield* TestClock.adjust("250 millis");
       expect(debuggee.nativeCaptures()).toBe(7);
       expect(painting).toEqual([true]);
