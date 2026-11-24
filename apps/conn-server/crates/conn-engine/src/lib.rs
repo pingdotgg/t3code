@@ -51,6 +51,7 @@ mod families;
 mod fold;
 mod fork;
 mod fresh;
+mod history;
 mod html_cleanup;
 mod link_requests;
 mod outbox;
@@ -667,6 +668,19 @@ pub trait Engine: Send + Sync {
         unsupported("the thread transcript")
     }
 
+    /// `GET /api/orchestration/threads/:threadId/history`: the page before `cursor`
+    /// (`OrchestrationV2ThreadHistoryPage`), as T3's `getThreadHistoryPage` without work
+    /// folding. `conversation_only` is `view=conversation`.
+    fn thread_history_page(
+        &self,
+        _thread_id: ThreadId,
+        _cursor: String,
+        _through_entry_id: Option<String>,
+        _conversation_only: bool,
+    ) -> BoxFuture<'_, Result<ThreadHistory, EngineError<GetThreadProjectionError>>> {
+        unsupported("thread history pages")
+    }
+
     /// `ThreadManagementService.awaitBackgroundTasks`: the live session of the thread's
     /// active provider thread marks (`awaited`) or clears these background task ids. Answers
     /// the matched and unmatched ids; see [`BackgroundWaitError`] for the refusals.
@@ -689,6 +703,17 @@ pub enum ThreadTranscript {
     NotFound,
     /// The file would pass the limit (`thread_transcript_too_large`).
     TooLarge,
+}
+
+/// The outcome of [`Engine::thread_history_page`].
+#[derive(Debug, PartialEq)]
+pub enum ThreadHistory {
+    /// The page.
+    Page(Value),
+    /// No such thread, or it was deleted (`thread_not_found`).
+    NotFound,
+    /// The cursor does not decode (`invalid_history_cursor`).
+    InvalidCursor,
 }
 
 fn unsupported<T: Send + 'static, E: Send + 'static>(

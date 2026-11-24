@@ -14,7 +14,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use conn_engine::{Engine, EngineError, ThreadTranscript};
+use conn_engine::{Engine, EngineError, ThreadHistory, ThreadTranscript};
 
 use conn_support::time::iso_from_ms;
 
@@ -83,6 +83,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/orchestration/threads/{thread_id}/transcript",
             get(thread_transcript),
+        )
+        .route(
+            "/api/orchestration/threads/{thread_id}/history",
+            get(thread_history),
         )
         .route("/ws", get(ws))
         .merge(crate::routes::router())
@@ -669,6 +673,53 @@ async fn thread_transcript(
             "thread_transcript_too_large",
         ),
         Err(error) => snapshot_failed("orchestration_thread_snapshot_failed", error),
+    }
+}
+
+/// `GET /api/orchestration/threads/:threadId/history?cursor=` (`OrchestrationV2ThreadHistoryPage`):
+/// the page before a bounded snapshot's or an earlier page's cursor (T3's `threadHistoryPage`).
+/// `view=conversation` leaves work rows out. Work folding (`deferWork`, `view=work`) is not
+/// served: this server's snapshots fold no work.
+async fn thread_history(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let engine = match orchestration_access(&state, &headers) {
+        Ok(engine) => engine,
+        Err(response) => return *response,
+    };
+    let invalid = || {
+        error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "invalid_history_cursor",
+        )
+    };
+    let Some(cursor) = query.get("cursor").cloned() else {
+        return invalid();
+    };
+    let conversation_only = query.get("view").map(String::as_str) == Some("conversation");
+    match engine
+        .thread_history_page(
+            thread_id.into(),
+            cursor,
+            query.get("throughEntryId").cloned(),
+            conversation_only,
+        )
+        .await
+    {
+        Ok(ThreadHistory::Page(page)) => Json(page).into_response(),
+        Ok(ThreadHistory::NotFound) => error(
+            StatusCode::NOT_FOUND,
+            "EnvironmentResourceNotFoundError",
+            "not_found",
+            "thread_not_found",
+        ),
+        Ok(ThreadHistory::InvalidCursor) => invalid(),
+        Err(error) => snapshot_failed("orchestration_thread_history_failed", error),
     }
 }
 

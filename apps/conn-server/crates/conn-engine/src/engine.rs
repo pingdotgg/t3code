@@ -2483,6 +2483,35 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn thread_history_page(
+        &self,
+        thread_id: ThreadId,
+        cursor: String,
+        through_entry_id: Option<String>,
+        conversation_only: bool,
+    ) -> BoxFuture<'_, Result<crate::ThreadHistory, EngineError<GetThreadProjectionError>>> {
+        Box::pin(async move {
+            let Ok(cursor) = crate::history::decode_cursor(&cursor) else {
+                return Ok(crate::ThreadHistory::InvalidCursor);
+            };
+            self.inner
+                .db(move |store| {
+                    let high = store.high_water();
+                    Ok(store
+                        .history_page(
+                            thread_id.as_str(),
+                            high,
+                            &cursor,
+                            through_entry_id.as_deref(),
+                            conversation_only,
+                        )?
+                        .map_or(crate::ThreadHistory::NotFound, crate::ThreadHistory::Page))
+                })
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
     fn thread_snapshot(
         &self,
         thread_id: ThreadId,
