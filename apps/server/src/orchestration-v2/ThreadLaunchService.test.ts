@@ -3087,6 +3087,42 @@ it.live(
         );
         assert.isFalse(yield* fileSystem.exists(ran));
 
+        // A first message sent into an empty thread the link started names no link; the
+        // thread's own link still decides.
+        const emptyThreadId = ThreadId.make("thread:limited-empty");
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("launch:limited-empty:create"),
+          threadId: emptyThreadId,
+          projectId,
+          title: "Linked",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkOrigin: {
+            sessionId: "mcp-session:linked",
+            label: "Linked laptop",
+            access: "auto-accept-edits",
+          },
+        });
+        yield* launches.launch({
+          ...launchInput({
+            command: "launch:limited-empty",
+            thread: emptyThreadId,
+            message: "Start",
+            workspace: { type: "worktree", baseRef: "main", branch: "feature/limited-empty" },
+          }),
+          reuseExistingThread: true,
+        });
+        const reused = yield* preparationSettled(emptyThreadId);
+        assert.equal(reused.runs[0]?.status, "failed");
+        assert.isNull(reused.thread.worktreePath);
+        assert.isFalse(yield* fileSystem.exists(ran));
+
         const full = yield* launch("full", "full-access");
         assert.equal(full.runs[0]?.status, "starting");
         assert.equal(yield* fileSystem.readFileString(ran), "create\n");
