@@ -233,11 +233,12 @@ describe("ThemeEditorPanel", () => {
   });
 
   it("pauses draft editing while a published save is pending", async () => {
+    const onOpenChange = vi.fn();
     const pendingSave = Promise.withResolvers<boolean>();
     await using screen = await render(
       <ThemeEditorPanel
         open
-        onOpenChange={() => {}}
+        onOpenChange={onOpenChange}
         onSaved={() => true}
         onSaveToEnvironment={() => pendingSave.promise}
         editingTheme={publishedThemeDefinitions([LOOK])[0]!}
@@ -253,9 +254,20 @@ describe("ThemeEditorPanel", () => {
     (name.element() as HTMLElement).focus();
     await expect.element(name).not.toHaveFocus();
 
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const close = screen.getByRole("button", { name: "Close the theme editor" });
+    await expect.element(cancel).toBeDisabled();
+    await expect.element(close).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Minimize the theme editor" }));
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Expand the theme editor" }));
+
     pendingSave.resolve(false);
     await expect.element(name).toHaveValue("Draft");
     await expect.element(save).toBeEnabled();
+    await userEvent.click(cancel);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("keeps its left edge when resized after the window shrank", async () => {

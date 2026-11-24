@@ -1227,7 +1227,7 @@ export function ThemeEditorPanel({
         if (event.key !== "Escape" || event.defaultPrevented) return;
         if (!event.currentTarget.contains(event.target as Node)) return;
         event.stopPropagation();
-        onOpenChange(false);
+        if (!isSavingToEnvironment) onOpenChange(false);
       }}
       ref={panelRef}
       role="dialog"
@@ -1303,6 +1303,7 @@ export function ThemeEditorPanel({
         </Button>
         <Button
           aria-label={gt("Close the theme editor")}
+          disabled={isSavingToEnvironment}
           size="icon-xs"
           variant="ghost"
           onClick={() => onOpenChange(false)}
@@ -1353,7 +1354,12 @@ export function ThemeEditorPanel({
             </div>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button
+              disabled={isSavingToEnvironment}
+              size="sm"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
               <T>Cancel</T>
             </Button>
             <Button

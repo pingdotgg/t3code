@@ -22,11 +22,13 @@ export type ThemeEditorSessionInput = {
 
 export type ThemeEditorSession = ThemeEditorSessionInput & {
   id: number;
+  isSaving: boolean;
 };
 
 type ThemeEditorStore = {
   session: ThemeEditorSession | null;
   openThemeEditor: (session: ThemeEditorSessionInput) => void;
+  setThemeEditorSaving: (sessionId: number, isSaving: boolean) => void;
   closeThemeEditor: (sessionId: number) => void;
 };
 
@@ -34,9 +36,20 @@ let nextSessionId = 0;
 
 export const useThemeEditorStore = create<ThemeEditorStore>((set) => ({
   session: null,
-  openThemeEditor: (session) => set({ session: { ...session, id: ++nextSessionId } }),
+  openThemeEditor: (session) =>
+    set((store) =>
+      store.session?.isSaving
+        ? store
+        : { session: { ...session, id: ++nextSessionId, isSaving: false } },
+    ),
+  setThemeEditorSaving: (sessionId, isSaving) =>
+    set((store) =>
+      store.session?.id === sessionId ? { session: { ...store.session, isSaving } } : store,
+    ),
   closeThemeEditor: (sessionId) =>
-    set((store) => (store.session?.id === sessionId ? { session: null } : store)),
+    set((store) =>
+      store.session?.id === sessionId && !store.session.isSaving ? { session: null } : store,
+    ),
 }));
 
 export function toggleThemeEditorForTheme(input: {
