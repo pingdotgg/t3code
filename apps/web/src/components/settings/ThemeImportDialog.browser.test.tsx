@@ -165,6 +165,39 @@ function isolateThemes() {
   };
 }
 
+it.each([
+  {
+    source: "the theme name",
+    name: "Night Owl Night Owl Night Owl Night Owl Nig🌙",
+    fileName: "Night Owl Night Owl Night Owl Night Owl Nig🌙.json",
+    copy: "Night Owl Night Owl Night Owl Night Owl Nig (1)",
+  },
+  {
+    source: "the file name",
+    name: "Night Owl",
+    fileName: "Night Owl Night Owl Night Owl Night Owl Night O🌙.json",
+    copy: "Night Owl Night Owl Night Owl Night Owl Night O",
+  },
+])("keeps the last character whole when a copy is named after $source", async (input) => {
+  using _themes = isolateThemes();
+  installCustomTheme(parseThemeFile(theme(input.name)));
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  await userEvent.upload(
+    document.querySelector<HTMLInputElement>('input[type="file"]')!,
+    new File([JSON.stringify(theme(input.name))], input.fileName, { type: "application/json" }),
+  );
+  await page.getByRole("button", { name: "Add theme", exact: true }).click();
+  await page.getByRole("button", { name: "Keep both" }).click();
+  expect(getCustomThemes().map(({ label }) => label)).toEqual([input.name, input.copy]);
+});
+
 it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
   using _themes = isolateThemes();
   await using _screen = await render(

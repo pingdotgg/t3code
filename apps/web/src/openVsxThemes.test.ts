@@ -343,6 +343,14 @@ describe("Open VSX themes", () => {
     const renamedThemes = await importOpenVsxThemeExtension(extension);
     expect(renamedThemes.map((theme) => theme.id)).toEqual(themes.map((theme) => theme.id));
 
+    const longNameThemes = await importOpenVsxThemeExtension({
+      ...extension,
+      name: "Night Owl Night Owl Night Owl Night Owl Night O🌙",
+    });
+    expect(new Set(longNameThemes.map((theme) => theme.collection?.label))).toEqual(
+      new Set(["Night Owl Night Owl Night Owl Night Owl Night O"]),
+    );
+
     packagedManifest.contributes.themes.push({
       label: "Duplicate Demo",
       uiTheme: "vs-dark",

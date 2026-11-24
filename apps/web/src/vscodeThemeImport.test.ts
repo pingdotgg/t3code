@@ -166,6 +166,29 @@ describe("VS Code theme import", () => {
     );
   });
 
+  it("keeps the last character whole when a long VS Code theme name is cut", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Night Owl Night Owl Night Owl Night Owl Night O🌙",
+      type: "dark",
+      colors: { "editor.background": "#1e1e1e" },
+    });
+    expect(theme.label).toBe("Night Owl Night Owl Night Owl Night Owl Night O");
+  });
+
+  it("keeps the last character whole when a long file name replaces a duplicate name", () => {
+    const themes = resolveThemeLabelCollisions([
+      { theme: darkVsCodeTheme("Dracula", "#282a36"), sourceName: "dracula.json" },
+      {
+        theme: darkVsCodeTheme("Dracula", "#22232e"),
+        sourceName: "Dracula Soft Dracula Soft Dracula Soft Dracula 🌙.json",
+      },
+    ]);
+    expect(themes.map((theme) => theme.label)).toEqual([
+      "Dracula",
+      "Dracula Soft Dracula Soft Dracula Soft Dracula",
+    ]);
+  });
+
   it("moves reserved VS Code names to a non-reserved id", () => {
     const darkPlus = parseVsCodeThemeFile({
       name: "Dark+",
