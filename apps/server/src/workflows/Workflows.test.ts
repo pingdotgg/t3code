@@ -2079,6 +2079,35 @@ it.effect("a request to a hook starts a run, its retry is the same run, and a ba
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a hook starts sixty runs a minute; a retry of one it started still answers", () =>
+  Effect.gen(function* () {
+    const { boot, clock } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const [hook] = yield* workflows.hooks;
+        const [hookId, token] = hook!.path.split("/").slice(-2).map(decodeURIComponent);
+        const deliver = (delivery: string) =>
+          workflows.deliver({
+            hookId: hookId!,
+            token: token!,
+            request: { method: "POST", headers: { "x-delivery": delivery }, query: "", body: "hi" },
+          });
+        // Time stands still, so every request falls in the same minute.
+        yield* clock.close;
+        const first = Option.getOrThrow(yield* deliver("d0"));
+        for (let sent = 1; sent < 60; sent++) yield* deliver(`d${sent}`);
+        const refused = yield* deliver("d60").pipe(Effect.flip);
+        assert.equal(refused._tag, "WorkflowHookBusyError");
+        assert.deepStrictEqual(Option.getOrThrow(yield* deliver("d0")), first);
+        yield* TestClock.adjust("1 minute");
+        assert.isTrue(Option.isSome(yield* deliver("d60")));
+        yield* clock.open;
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a step finds runs by their key, wakes everyone at a key, and cancels another run", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();

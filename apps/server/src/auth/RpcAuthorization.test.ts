@@ -608,6 +608,66 @@ describe("settings mutation authorization", () => {
       }),
   );
 
+  it.effect("saving project scripts needs task operation as well as the settings grant", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-1");
+      const scripts = [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "pnpm install",
+          icon: "play" as const,
+          runOnWorktreeCreate: true,
+        },
+      ];
+      const update = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) => {
+        let handled = 0;
+        return RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+                Effect.sync(() => {
+                  handled++;
+                  return DEFAULT_SERVER_SETTINGS;
+                }),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+          Effect.map((client) => ({ client, handled: () => handled })),
+        );
+      };
+      const patches = [
+        { defaultProjectScripts: scripts },
+        { projectScriptOverrides: { [projectId]: scripts } },
+        { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } } },
+      ];
+
+      const settingsOnly = yield* update([AuthSettingsWriteScope]);
+      for (const patch of patches) {
+        expect(
+          yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+      }
+      expect(settingsOnly.handled()).toBe(0);
+      // Settings that carry no script stay with the settings grant alone.
+      yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({
+        patch: {
+          defaultAutoPull: true,
+          projectScriptOverrides: { [projectId]: null },
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+        },
+      });
+      expect(settingsOnly.handled()).toBe(1);
+
+      const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);
+      for (const patch of patches) {
+        yield* operator.client[WS_METHODS.serverUpdateSettings]({ patch });
+      }
+      expect(operator.handled()).toBe(patches.length);
+    }),
+  );
+
   it.effect("does not let a settings grant send a named secret to a gateway it picks", () =>
     Effect.gen(function* () {
       const group = WsRpcGroup.omit(
