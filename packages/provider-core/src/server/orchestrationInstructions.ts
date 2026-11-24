@@ -20,8 +20,8 @@ Ordinary coding tasks need no T3 tools.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
-- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
-- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass HTML (path or inline) to \`html_preview\`, then \`html_render\`. A screenshot on disk or prose doesn't show it. Never start a server for it. Page tools write only on user request, never to show results. To keep, post or send an image or HTML: a \`.png\`, or HTML with its own colors, background and width. Give its path; never \`html_render\` it or preview kept HTML.
+- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked, then preview tools only. Close tabs you opened before replying unless the user wants them.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
