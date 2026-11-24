@@ -182,6 +182,8 @@ class WorkerChild
   killed = false;
   spawned = false;
   exited = false;
+  /** Kill ends the whole tree, as Effect's spawner does on Windows. */
+  killsTree = false;
   readonly #writes = new Map<number, Array<(error?: Error | null) => void>>();
   readonly #finals = new Map<number, (error?: Error | null) => void>();
   readonly #paused = new Set<number>();
@@ -269,7 +271,8 @@ class WorkerChild
   kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
     if (this.exited) return false;
     this.killed = true;
-    this.worker.post({ type: "kill", id: this.id, signal });
+    if (this.killsTree && this.pid !== undefined) this.worker.pool.killTree(this.pid, () => {});
+    else this.worker.post({ type: "kill", id: this.id, signal });
     return true;
   }
 
@@ -542,15 +545,19 @@ export const spawnPiped = (
   command: string,
   args: ReadonlyArray<string>,
   options: Omit<NodeChildProcess.SpawnOptions, "stdio">,
-) =>
-  (sharedPool ??= new SpawnWorkerPool("win32")).spawn(command, args, {
+) => {
+  const child = (sharedPool ??= new SpawnWorkerPool("win32")).spawn(command, args, {
     ...options,
     stdio: ["pipe", "pipe", "pipe"],
-  }) as WorkerChild & {
+  });
+  // Windows has no process groups: ending only the CLI leaves its background shells running.
+  child.killsTree = true;
+  return child as WorkerChild & {
     readonly stdin: NodeStream.Writable;
     readonly stdout: NodeStream.Readable;
     readonly stderr: NodeStream.Readable;
   };
+};
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
