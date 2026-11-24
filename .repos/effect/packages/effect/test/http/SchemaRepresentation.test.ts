@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema, SchemaRepresentation } from "effect"
+import { assertSchemas, makeModule } from "../utils/schemaCodegen.ts"
 
 describe("HTTP schema representations", () => {
   it("generates code for declaration schemas", () => {
@@ -22,27 +23,16 @@ describe("HTTP schema representations", () => {
       ]
     )
 
-    const output = SchemaRepresentation.toCodeDocument(document)
-
-    assert.deepStrictEqual(output.codes, [
-      { runtime: `Schema.Headers.annotate({ "expected": "Headers" })`, Type: "Headers.Headers" },
-      { runtime: `Schema.Cookies.annotate({ "expected": "Cookies" })`, Type: "Cookies.Cookies" },
-      { runtime: `Schema.Cookie.annotate({ "expected": "Cookie" })`, Type: "Cookies.Cookie" },
-      { runtime: `Schema.UrlParams.annotate({ "expected": "UrlParams" })`, Type: "UrlParams.UrlParams" }
-    ])
-    assert.deepStrictEqual(output.artifacts, [
-      {
-        _tag: "Import",
-        importDeclaration: `import * as Headers from "effect/http/Headers"`
-      },
-      {
-        _tag: "Import",
-        importDeclaration: `import * as Cookies from "effect/http/Cookies"`
-      },
-      {
-        _tag: "Import",
-        importDeclaration: `import * as UrlParams from "effect/http/UrlParams"`
-      }
+    assertSchemas(makeModule(document), {
+      TestRoot0: { runtime: `Schema.Headers.annotate({ "expected": "Headers" })`, Type: "Headers.Headers" },
+      TestRoot1: { runtime: `Schema.Cookies.annotate({ "expected": "Cookies" })`, Type: "Cookies.Cookies" },
+      TestRoot2: { runtime: `Schema.Cookie.annotate({ "expected": "Cookie" })`, Type: "Cookies.Cookie" },
+      TestRoot3: { runtime: `Schema.UrlParams.annotate({ "expected": "UrlParams" })`, Type: "UrlParams.UrlParams" }
+    }, [
+      `import * as Schema from "effect/Schema"`,
+      `import * as Headers from "effect/http/Headers"`,
+      `import * as Cookies from "effect/http/Cookies"`,
+      `import * as UrlParams from "effect/http/UrlParams"`
     ])
   })
 })

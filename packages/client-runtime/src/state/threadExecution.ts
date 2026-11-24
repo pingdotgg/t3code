@@ -1,6 +1,7 @@
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  latestRootProviderFailureItem,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -15,6 +16,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderSession,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
@@ -29,12 +31,14 @@ import {
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
+  DEFAULT_VARIANT_CHOICE_ID,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionStatedValue,
   resolveSelectableModel,
   withLegacyUltracodeEffort,
 } from "@t3tools/shared/model";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -109,19 +113,46 @@ function latestMatchingRun(
   );
 }
 
+// Phases a provider can report while it prepares a turn; an unknown one keeps the plain label.
+function providerStartingPhase(phase: string | undefined, provider: string) {
+  switch (phase) {
+    case "plugins":
+      return msg("Loading {provider} plugins", { provider });
+    case "mcp":
+      return msg("Starting {provider} MCP servers", { provider });
+    case "hooks":
+      return msg("Loading {provider} hooks", { provider });
+    case "skills":
+      return msg("Loading {provider} rules and skills", { provider });
+    case "connecting":
+      return msg("Connecting to {provider}", { provider });
+    default:
+      return msg("Starting {provider}", { provider });
+  }
+}
+
 function providerStarting(
   projection: ThreadStructure,
   run: OrchestrationV2ThreadProjection["runs"][number],
-): Pick<ThreadRunSummary, "providerStartingLabel" | "providerStartingLabelMsg"> {
-  const driver = projection.providerSessions.findLast(
+): Pick<
+  ThreadRunSummary,
+  "providerStartingLabel" | "providerStartingLabelMsg" | "providerStarting"
+> {
+  const session = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === run.providerInstanceId,
-  )?.driver;
-  const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
+  );
+  const name = session === undefined ? undefined : PROVIDER_DISPLAY_NAMES[session.driver];
   const label =
     name === undefined
       ? msg("Starting", { $context: "a provider is launching" })
-      : msg("Starting {provider}", { provider: name });
-  return { providerStartingLabel: markedTextEnglish([label]), providerStartingLabelMsg: label };
+      : providerStartingPhase(session?.startupPhase, name);
+  return {
+    providerStartingLabel: markedTextEnglish([label]),
+    providerStartingLabelMsg: label,
+    ...(session === undefined
+      ? {}
+      : { providerStarting: { instanceId: run.providerInstanceId, driver: session.driver } }),
+  };
 }
 
 function summarizeThreadRun(
@@ -231,6 +262,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thought_level",
 ];
 
 export function formatModelSelectionEffort(
@@ -242,11 +274,21 @@ export function formatModelSelectionEffort(
   if (!caps) return null;
   const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
   const current = options ? { ...selection, options } : selection;
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
-    if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, current, reportedSelection);
-    if (value === undefined && id !== "variant") continue;
+  const selectDescriptors = (caps.optionDescriptors ?? []).filter(
+    (candidate) => candidate.type === "select",
+  );
+  const reasoningDescriptors = [
+    ...selectDescriptors.filter((candidate) => candidate.role === "reasoning"),
+    ...REASONING_EFFORT_OPTION_IDS.flatMap((id) => {
+      const descriptor = selectDescriptors.find(
+        (candidate) => candidate.id === id && candidate.role !== "reasoning",
+      );
+      return descriptor ? [descriptor] : [];
+    }),
+  ];
+  for (const descriptor of reasoningDescriptors) {
+    const value = getProviderOptionStatedValue(descriptor.id, current, reportedSelection);
+    if (value === undefined && descriptor.id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
@@ -274,10 +316,24 @@ export function formatSubagentEffort(input: {
   if (provider.models.some((model) => model.slug === modelSlug)) {
     return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
   }
+  return readSelectedEffortValue(selection);
+}
+
+/** The raw saved effort, preferring the option the model marks as its reasoning control. */
+export function readSelectedEffortValue(
+  selection: ModelSelection | undefined,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> = [],
+): string | null {
+  const ids = [
+    ...descriptors.flatMap((descriptor) =>
+      descriptor.type === "select" && descriptor.role === "reasoning" ? [descriptor.id] : [],
+    ),
+    ...REASONING_EFFORT_OPTION_IDS,
+  ];
   return (
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      Boolean,
-    ) ?? null
+    ids
+      .map((id) => getModelSelectionStringOptionValue(selection, id))
+      .find((value) => value && value !== DEFAULT_VARIANT_CHOICE_ID) ?? null
   );
 }
 
@@ -317,16 +373,41 @@ export function formatProviderSubagentStatus(
 
 /** The run a manual continuation resumes; the server holds the queue until it does. */
 export function deriveResumableRunId(
-  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  projection: Pick<
+    ThreadStructure,
+    "runs" | "turnItems" | "attempts" | "providerTurns" | "providerThreads" | "providerSessions"
+  >,
   runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
 ): RunId | null {
   const run = latestExecutedRun(projection.runs);
-  if (run?.status === "interrupted") return run.id;
-  return run?.status === "failed" &&
-    runtime?.lastErrorClass === "usage_limit" &&
-    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
-    ? run.id
-    : null;
+  const resumable =
+    run?.status === "interrupted" ||
+    (run?.status === "failed" &&
+      runtime?.lastErrorClass === "usage_limit" &&
+      latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit");
+  if (!resumable) return null;
+  // Without native resume the server can only resend a message the provider never received.
+  if (
+    runProviderSession(projection, run)?.capabilities.turns.supportsNativeResume === false &&
+    unsentManualContinuationSource({ manualContinuationOfRunId: run.id }, projection) === undefined
+  ) {
+    return null;
+  }
+  return run.id;
+}
+
+function runProviderSession(
+  projection: Pick<ThreadStructure, "providerThreads" | "providerSessions">,
+  run: ThreadStructure["runs"][number],
+) {
+  const sessionId = projection.providerThreads.find(
+    (thread) => thread.id === run.providerThreadId,
+  )?.providerSessionId;
+  return sessionId == null
+    ? projection.providerSessions.findLast(
+        (session) => session.providerInstanceId === run.providerInstanceId,
+      )
+    : projection.providerSessions.find((session) => session.id === sessionId);
 }
 
 /**
@@ -379,6 +460,8 @@ export function deriveThreadStructureRuntime(
   if (latestRun === null && !backgroundWorkHoldsRun) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const failureItem = latestRootProviderFailureItem(latestRunProjection, projection.turnItems);
+  const sessionError = providerSession?.lastError ?? null;
   return {
     status: usageLimitedRun
       ? "failed"
@@ -392,11 +475,44 @@ export function deriveThreadStructureRuntime(
         : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
-    ...threadErrorSummary(
-      latestRootProviderFailure(latestRunProjection, projection.turnItems),
-      providerSession?.lastError ?? null,
-    ),
+    ...threadErrorSummary(failureItem?.failure ?? null, sessionError),
+    lastErrorSource: threadErrorSource(failureItem, sessionError, projection),
   };
+}
+
+const isoOrEmpty = (at: DateTime.Utc | null) => (at === null ? "" : DateTime.formatIso(at));
+
+/**
+ * A session error belongs to the latest ended run, as that run's failure when the text matches.
+ * Session timestamps are not used: providers rewrite them on unrelated updates.
+ */
+function threadErrorSource(
+  failureItem: ReturnType<typeof latestRootProviderFailureItem>,
+  sessionError: string | null,
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+): string | null {
+  const itemSource = (item: NonNullable<typeof failureItem>) =>
+    `${item.id}@${isoOrEmpty(item.completedAt)}`;
+  if (
+    failureItem !== null &&
+    (sessionError === null || sessionError === failureItem.failure.message)
+  ) {
+    return itemSource(failureItem);
+  }
+  if (sessionError === null) return null;
+  let ended: ThreadStructure["runs"][number] | null = null;
+  for (const run of projection.runs) {
+    if (run.status !== "failed" && run.status !== "completed") continue;
+    if (ended === null || run.ordinal > ended.ordinal) ended = run;
+  }
+  if (ended === null) return null;
+  const endedFailure =
+    failureItem?.runId === ended.id
+      ? failureItem
+      : latestRootProviderFailureItem(ended, projection.turnItems);
+  return endedFailure?.failure.message === sessionError
+    ? itemSource(endedFailure)
+    : `${ended.id}@${isoOrEmpty(ended.completedAt)}`;
 }
 
 export interface UsageLimitNoticeRows {
