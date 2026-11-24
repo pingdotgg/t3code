@@ -41,6 +41,8 @@ export interface RunSummaryRow {
   readonly version: number | bigint;
   readonly engine_tag: string;
   readonly title: string;
+  /** The run's tags, as a JSON list of text. */
+  readonly tags_json: string;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
@@ -198,6 +200,8 @@ export class WorkflowStore extends Context.Service<
       result: Schema.Json,
     ) => Effect.Effect<boolean>;
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
+    /** The run's tags from now on, in place of any it had. */
+    readonly runTags: (runId: string, tags: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
       runId: string,
@@ -367,6 +371,10 @@ export class WorkflowStore extends Context.Service<
       readonly workflow?: string | undefined;
       readonly status?: WorkflowRunStatus | undefined;
       readonly keyPrefix?: string | undefined;
+      /** Runs with an open question of this kind. */
+      readonly kind?: string | undefined;
+      /** Runs tagged with this. */
+      readonly tag?: string | undefined;
     }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
@@ -397,7 +405,7 @@ export const make = Effect.gen(function* () {
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
   const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
-  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, started_at, updated_at, ended_at`;
+  const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, started_at, updated_at, ended_at`;
 
   const hub = yield* Effect.serviceOption(MilestoneHub.MilestoneHub);
   /** Tells the milestone hub of a transition this store just wrote, under an id stable for it. */
@@ -591,6 +599,12 @@ export const make = Effect.gen(function* () {
     runTitle: Effect.fn("WorkflowStore.runTitle")(function* (runId, title) {
       const kept = title.slice(0, splitsSurrogatePair(title, 200) ? 199 : 200);
       yield* write(runId, sql`UPDATE workflow_runs SET title = ${kept} WHERE run_id = ${runId}`);
+    }),
+    runTags: Effect.fn("WorkflowStore.runTags")(function* (runId, tags) {
+      yield* write(
+        runId,
+        sql`UPDATE workflow_runs SET tags_json = ${jsonText([...tags])} WHERE run_id = ${runId}`,
+      );
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
       const at = yield* now;
@@ -795,6 +809,7 @@ export const make = Effect.gen(function* () {
               ? [{ started_at: "\u{10FFFF}", id: 0 }]
               : yield* sql<{ started_at: string; id: number }>`
                   SELECT started_at, rowid AS id FROM workflow_runs
+                  INDEXED BY workflow_runs_skipped
                   WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
                   ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET ${kept - 1}
                 `;
@@ -1068,9 +1083,23 @@ export const make = Effect.gen(function* () {
         ...(prefix === null
           ? []
           : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix}\u{10FFFF}`}`]),
+        ...(filter.tag === undefined
+          ? []
+          : [
+              sql`EXISTS (SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${filter.tag})`,
+            ]),
+        ...(filter.kind === undefined
+          ? []
+          : [
+              sql`EXISTS (
+                SELECT 1 FROM workflow_waits w
+                WHERE w.run_id = r.run_id AND w.signalled_at IS NULL AND w.request_json IS NOT NULL
+                  AND json_extract(w.request_json, '$.kind') = ${filter.kind}
+              )`,
+            ]),
       ]);
       return yield* sql<RunSummaryRow>`
-        SELECT ${summaryColumns} FROM workflow_runs
+        SELECT ${summaryColumns} FROM workflow_runs r
         WHERE ${where}
         ORDER BY started_at DESC, rowid DESC LIMIT 500
       `.pipe(Effect.orDie);

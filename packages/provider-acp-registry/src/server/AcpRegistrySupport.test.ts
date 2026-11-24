@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -298,18 +299,46 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       }).pipe(Effect.provideService(HostProcess.Environment, environment));
       const resolved = yield* resolver.resolve(
-        decodeAcpRegistrySettings({ source: "local", commandPath }),
+        decodeAcpRegistrySettings({
+          source: "local",
+          commandPath: (yield* Path.Path).relative(process.cwd(), commandPath),
+        }),
         "/workspace",
       );
 
-      expect(resolved.spawn).toEqual({
-        command: commandPath,
+      expect(resolved.spawn).toMatchObject({
         args: [],
         cwd: "/workspace",
         env: environment,
         shell: false,
       });
+      expect((yield* Path.Path).isAbsolute(resolved.spawn.command)).toBe(true);
+      expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
+        yield* fileSystem.realPath(commandPath),
+      );
       expect(resolved.agent).toBeUndefined();
+
+      yield* fileSystem.makeDirectory(`${cacheDir}/target/nested`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${cacheDir}/target/dsh wrapper`,
+        "#!/bin/sh\necho target\n",
+      );
+      yield* fileSystem.chmod(`${cacheDir}/target/dsh wrapper`, 0o755);
+      yield* fileSystem.symlink(`${cacheDir}/target/nested`, `${cacheDir}/link`);
+      const symlinkCommand = `${cacheDir}/link/../dsh wrapper`;
+      for (const command of [
+        symlinkCommand,
+        `${(yield* Path.Path).relative(process.cwd(), cacheDir)}/link/../dsh wrapper`,
+      ]) {
+        const throughSymlink = yield* resolver.resolve(
+          decodeAcpRegistrySettings({ source: "local", commandPath: command }),
+          "/workspace",
+        );
+        expect((yield* Path.Path).isAbsolute(throughSymlink.spawn.command)).toBe(true);
+        expect(yield* fileSystem.readFileString(throughSymlink.spawn.command)).toBe(
+          "#!/bin/sh\necho target\n",
+        );
+      }
 
       for (const extension of [".cmd", ".BAT"]) {
         const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
@@ -351,6 +380,7 @@ describe("AcpRegistrySupport", () => {
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(SpawnExecutableResolution, () => executable),
+          Effect.provide(NodePath.layerWin32),
         );
 
       const bare = decodeAcpRegistrySettings({ source: "local", commandPath: "cmdc" });
@@ -358,6 +388,16 @@ describe("AcpRegistrySupport", () => {
       expect(
         yield* (yield* catalog("C:\\bin\\cmdc.exe")).resolve(bare, "/workspace"),
       ).toMatchObject({ spawn: { command: "C:\\bin\\cmdc.exe", shell: false } });
+      const windowsPath = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      for (const drive of ["C:", "D:"]) {
+        const command = `${drive}tools\\link\\..\\cmdc.exe`;
+        expect(yield* (yield* catalog(command)).resolve(bare, "/workspace")).toMatchObject({
+          spawn: {
+            command: `${windowsPath.resolve(drive)}\\tools\\link\\..\\cmdc.exe`,
+            shell: false,
+          },
+        });
+      }
       // A bare name that PATHEXT resolves to a batch shim never launches, so the transport it
       // selects cannot matter: there is no session to attach MCP servers to.
       expect(
