@@ -16,11 +16,12 @@ To avoid recurring merge conflicts in upstream's large workflow files (`.github/
   4. **Direct reuse of upstream's [`.github/workflows/release-desktop.yml`](../../.github/workflows/release-desktop.yml)** for all 6 platform targets (`macOS arm64`, `macOS x64`, `Linux x64`, `Linux arm64`, `Windows x64`, `Windows arm64`) on standard GitHub-hosted runners (`macos-15`, `ubuntu-24.04`, `ubuntu-24.04-arm`, `windows-2025`, `windows-11-arm`) with `relay_client_tracing: false`.
   5. `release` — publishes CLI archives (`t3-*.tar.gz` / `t3-*.zip`), `SHA256SUMS`, desktop installers (`.dmg`, `.AppImage`, `.deb`, `.exe`), and merged updater manifests (`latest*.yml` / `nightly*.yml`).
   6. `update_feed` — maintains the `update-feed` release (`nightly.json`) for nightly desktop auto-updates.
-  7. `finalize` *(optional)* — bumps package versions on `main` after a stable release.
+  7. `finalize` _(optional)_ — bumps package versions on `main` after a stable release.
 
 ### Disabling upstream-only workflows in GitHub Actions
 
 In the fork's GitHub UI (**Actions → Workflows**), disable upstream workflows that target `pingdotgg`'s private infrastructure or Blacksmith runners:
+
 - `ci.yml`, `release.yml`, `deploy-relay.yml`, `relay-preview*.yml`, `desktop-macos-preview*.yml`, `web-preview.yml`, `publish-aur.yml`, `pr-vouch.yml`, `issue-vouch.yml`, `pr-limits.yml`, `pr-size.yml`, `mobile-*.yml`.
 
 Because `teams-ci.yml` and `teams-release.yml` carry `github.repository != 'pingdotgg/t3code'`, they run exclusively on the fork.
@@ -33,13 +34,13 @@ Because `teams-ci.yml` and `teams-release.yml` carry `github.repository != 'ping
 
 However, the following places still default to `pingdotgg/t3code` and must be pointed at the fork's repository (e.g., via a shared build-time/runtime constant `T3CODE_RELEASE_REPOSITORY`) before cutting the first production release so servers do not self-update back to upstream:
 
-| File | What it controls |
-| --- | --- |
-| [`packages/shared/src/cliRelease.ts`](../../packages/shared/src/cliRelease.ts) | **Critical:** Server/CLI self-update archive URLs and GitHub Releases API checks |
-| [`apps/web/src/components/desktopUpdate.logic.ts`](../../apps/web/src/components/desktopUpdate.logic.ts) | Fallback release repository in the web update UI |
-| [`apps/desktop/src/app/DesktopStartupRecovery.ts`](../../apps/desktop/src/app/DesktopStartupRecovery.ts) | "Open releases" recovery link |
-| [`scripts/install.sh`](../../scripts/install.sh) & [`scripts/install.ps1`](../../scripts/install.ps1) | Curl/PowerShell CLI installer repository |
-| [`scripts/npm-launcher/t3.mjs`](../../scripts/npm-launcher/t3.mjs) & [`scripts/build-npm-launcher.ts`](../../scripts/build-npm-launcher.ts) | Only needed if publishing a scoped npm launcher (e.g. `@your-org/t3`) |
+| File                                                                                                                                        | What it controls                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [`packages/shared/src/cliRelease.ts`](../../packages/shared/src/cliRelease.ts)                                                              | **Critical:** Server/CLI self-update archive URLs and GitHub Releases API checks |
+| [`apps/web/src/components/desktopUpdate.logic.ts`](../../apps/web/src/components/desktopUpdate.logic.ts)                                    | Fallback release repository in the web update UI                                 |
+| [`apps/desktop/src/app/DesktopStartupRecovery.ts`](../../apps/desktop/src/app/DesktopStartupRecovery.ts)                                    | "Open releases" recovery link                                                    |
+| [`scripts/install.sh`](../../scripts/install.sh) & [`scripts/install.ps1`](../../scripts/install.ps1)                                       | Curl/PowerShell CLI installer repository                                         |
+| [`scripts/npm-launcher/t3.mjs`](../../scripts/npm-launcher/t3.mjs) & [`scripts/build-npm-launcher.ts`](../../scripts/build-npm-launcher.ts) | Only needed if publishing a scoped npm launcher (e.g. `@your-org/t3`)            |
 
 ---
 
@@ -48,6 +49,7 @@ However, the following places still default to `pingdotgg/t3code` and must be po
 ### Zero-secret bootstrap (works out of the box)
 
 No external secrets are required to cut working `preview`, `nightly`, or `stable` releases with `teams-release.yml` — only the built-in `GITHUB_TOKEN`.
+
 - **Linux** (AppImage, `.deb`, CLI archives, server self-update): works 100% with no signing certificates.
 - **macOS & Windows**: installers and CLI archives build and run, with ad-hoc/unsigned binaries (macOS Gatekeeper / Windows SmartScreen warnings apply, and macOS `electron-updater` requires a signed+notarized build to auto-install updates).
 
@@ -56,12 +58,14 @@ No external secrets are required to cut working `preview`, `nightly`, or `stable
 Because `teams-release.yml` forwards `secrets: inherit` to upstream's `release-desktop.yml`, adding these secrets activates full code signing with **zero workflow edits**:
 
 #### macOS (Apple Developer Program — $99/year)
+
 - **`CSC_LINK`**: Base64-encoded `.p12` **Developer ID Application** certificate exported from macOS Keychain. Used by `electron-builder` and macOS `codesign` to sign the `.app`, `.dmg`, and CLI binary so macOS trusts the publisher and `electron-updater` can apply updates automatically.
 - **`CSC_KEY_PASSWORD`**: Passphrase that unlocks the `.p12` file in `CSC_LINK`.
 - **`APPLE_API_KEY`**, **`APPLE_API_KEY_ID`**, **`APPLE_API_ISSUER`**: App Store Connect API key (`.p8` contents, Key ID, Issuer UUID) used for **Apple Notarization** (`notarytool`) so macOS Gatekeeper lets users open the `.dmg` without "damaged / unidentified developer" warnings.
-- **`MACOS_PROVISIONING_PROFILE`** *(optional)* & repo var **`APPLE_TEAM_ID`**: Only needed if enabling Apple Passkey / Associated Domains entitlements.
+- **`MACOS_PROVISIONING_PROFILE`** _(optional)_ & repo var **`APPLE_TEAM_ID`**: Only needed if enabling Apple Passkey / Associated Domains entitlements.
 
 #### Windows (Microsoft Azure Trusted Signing)
+
 - **`AZURE_TENANT_ID`**, **`AZURE_CLIENT_ID`**, **`AZURE_CLIENT_SECRET`**: Microsoft Entra ID service principal credentials authenticating CI to Azure.
 - **`AZURE_TRUSTED_SIGNING_ENDPOINT`**: Regional Trusted Signing endpoint URL (e.g., `https://eus.codesigning.azure.net`).
 - **`AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`**: Name of your Azure Trusted Signing account.
@@ -71,13 +75,13 @@ Because `teams-release.yml` forwards `secrets: inherit` to upstream's `release-d
 
 ### Optional Repository Variables
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ENABLE_NIGHTLY_SCHEDULE` | unset (`false`) | Set to `true` to enable daily scheduled nightlies (`03:18 UTC`). |
-| `PAUSE_NIGHTLY` | unset (`false`) | Set to `true` to temporarily pause scheduled nightlies. |
-| `ENABLE_VERSION_BUMP` | unset (`false`) | Set to `true` to let `finalize` commit stable version bumps to `main` via `GITHUB_TOKEN` (or configure `RELEASE_APP_ID` + `RELEASE_APP_PRIVATE_KEY` for protected branches). |
-| `T3CODE_RELAY_URL`, `CLERK_*` | `.env.example` | Override only if hosting your own T3 Connect relay & Clerk instance. |
-| `OPENAI_API_KEY` *(secret)* | unset | Optional AI-summarized release notes; falls back to GitHub's native generated release notes when unset. |
+| Variable                      | Default         | Purpose                                                                                                                                                                      |
+| ----------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ENABLE_NIGHTLY_SCHEDULE`     | unset (`false`) | Set to `true` to enable daily scheduled nightlies (`03:18 UTC`).                                                                                                             |
+| `PAUSE_NIGHTLY`               | unset (`false`) | Set to `true` to temporarily pause scheduled nightlies.                                                                                                                      |
+| `ENABLE_VERSION_BUMP`         | unset (`false`) | Set to `true` to let `finalize` commit stable version bumps to `main` via `GITHUB_TOKEN` (or configure `RELEASE_APP_ID` + `RELEASE_APP_PRIVATE_KEY` for protected branches). |
+| `T3CODE_RELAY_URL`, `CLERK_*` | `.env.example`  | Override only if hosting your own T3 Connect relay & Clerk instance.                                                                                                         |
+| `OPENAI_API_KEY` _(secret)_   | unset           | Optional AI-summarized release notes; falls back to GitHub's native generated release notes when unset.                                                                      |
 
 ---
 

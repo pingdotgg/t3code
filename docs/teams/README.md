@@ -17,17 +17,17 @@ The goal of this fork is to turn T3 Code into a **first-class multi-user ADE for
 
 ## Core concepts
 
-| Term | Meaning |
-| --- | --- |
-| **Team** | A named collaborative workspace owned and coordinated by a single remote `t3server` (the **Team Server**). |
+| Term                                       | Meaning                                                                                                                                                                                                                |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Team**                                   | A named collaborative workspace owned and coordinated by a single remote `t3server` (the **Team Server**).                                                                                                             |
 | **Team Server (Default Team Environment)** | The remote `t3server` that owns the team's durable state (members, roles, views, team projects, team providers, linked environments, follow subscriptions). It is also the default execution environment for the team. |
-| **Team Environment** | An execution environment attached to a team—either the default Team Server or an additional remote `t3server` linked by the Team Server. Access can be restricted by role or member whitelist. |
-| **Member & Pseudo** | An authenticated user belonging to a team, identified internally by an immutable `memberId` and displayed everywhere by their chosen `pseudo` (e.g., `alice: refactor billing`). |
-| **Role** | A hierarchical team permission level: `owner > admin > modo > regular`. Any role can assign its own role or any lower role. |
-| **View** | A server-enforced visibility and posting policy attached to team threads. Defines who can **see** threads in the view and who can **post** in them (by role and/or member whitelist). |
-| **Locked Thread** | A thread created or marked locked by an `owner` or `admin`. Only `owner` and `admin` members can post in a locked thread. |
-| **Followed Thread** | A colleague's thread that a member explicitly subscribes to so they receive notifications for its activity. |
-| **Per-Turn GitHub Forwarding** | Ephemeral injection of the *turn initiator's* GitHub credentials and git author identity into a shared environment for the duration of that turn only. |
+| **Team Environment**                       | An execution environment attached to a team—either the default Team Server or an additional remote `t3server` linked by the Team Server. Access can be restricted by role or member whitelist.                         |
+| **Member & Pseudo**                        | An authenticated user belonging to a team, identified internally by an immutable `memberId` and displayed everywhere by their chosen `pseudo` (e.g., `alice: refactor billing`).                                       |
+| **Role**                                   | A hierarchical team permission level: `owner > admin > modo > regular`. Any role can assign its own role or any lower role.                                                                                            |
+| **View**                                   | A server-enforced visibility and posting policy attached to team threads. Defines who can **see** threads in the view and who can **post** in them (by role and/or member whitelist).                                  |
+| **Locked Thread**                          | A thread created or marked locked by an `owner` or `admin`. Only `owner` and `admin` members can post in a locked thread.                                                                                              |
+| **Followed Thread**                        | A colleague's thread that a member explicitly subscribes to so they receive notifications for its activity.                                                                                                            |
+| **Per-Turn GitHub Forwarding**             | Ephemeral injection of the _turn initiator's_ GitHub credentials and git author identity into a shared environment for the duration of that turn only.                                                                 |
 
 ## Documents in this folder
 

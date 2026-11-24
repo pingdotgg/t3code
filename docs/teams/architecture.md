@@ -3,6 +3,7 @@
 This document specifies how team features integrate into T3 Code's existing architecture (`apps/server`, `packages/contracts`, `packages/client-runtime`, `apps/web`, `apps/desktop`, and `apps/mobile`).
 
 It builds directly on T3 Code's core invariants:
+
 - Execution stays in the environment that owns the workspace ([01_architecture.md](../internals/01_architecture.md)).
 - Every RPC and subscription is server-authorized ([04_environment-auth.md](../internals/04_environment-auth.md)).
 - Orchestration mutations flow through event-sourced commands, projections, and outbox effects (`apps/server/src/orchestration-v2`).
@@ -105,6 +106,7 @@ owner (4) > admin (3) > modo (2) > regular (1)
 ```
 
 #### Role assignment rules
+
 - Member invitation and role management start at `modo` (`regular` members cannot invite users or change roles).
 - A member with role $R \ge \text{modo}$ may assign any role $R' \le R$ to another member.
 - **Safety guardrails:**
@@ -114,25 +116,26 @@ owner (4) > admin (3) > modo (2) > regular (1)
 
 #### Capability matrix
 
-| Action | `regular` | `modo` | `admin` | `owner` |
-| --- | --- | --- | --- | --- |
-| Join team, manage own pseudo & GitHub token | Yes | Yes | Yes | Yes |
-| Invite members / assign role $\le$ own role | No | `regular`, `modo` | `regular`, `modo`, `admin` | All roles |
-| Create / edit / delete Views | No | No | Yes | Yes |
-| Change a thread's View | No | Yes | Yes | Yes |
-| Create locked thread / lock & unlock threads | No | No | Yes | Yes |
-| Steer another user's ongoing turn | No | No | Yes* | Yes* |
-| Configure team providers & remote environments | No | No | Yes | Yes |
-| Configure per-environment ACLs | No | No | Yes | Yes |
-| Delete team / transfer last owner | No | No | No | Yes |
+| Action                                         | `regular` | `modo`            | `admin`                    | `owner`   |
+| ---------------------------------------------- | --------- | ----------------- | -------------------------- | --------- |
+| Join team, manage own pseudo & GitHub token    | Yes       | Yes               | Yes                        | Yes       |
+| Invite members / assign role $\le$ own role    | No        | `regular`, `modo` | `regular`, `modo`, `admin` | All roles |
+| Create / edit / delete Views                   | No        | No                | Yes                        | Yes       |
+| Change a thread's View                         | No        | Yes               | Yes                        | Yes       |
+| Create locked thread / lock & unlock threads   | No        | No                | Yes                        | Yes       |
+| Steer another user's ongoing turn              | No        | No                | Yes*                       | Yes*      |
+| Configure team providers & remote environments | No        | No                | Yes                        | Yes       |
+| Configure per-environment ACLs                 | No        | No                | Yes                        | Yes       |
+| Delete team / transfer last owner              | No        | No                | No                         | Yes       |
 
-*\*See [Section 6](#6-per-turn-github-identity-forwarding--turn-isolation) for the exact security handling when an `owner`/`admin` intervenes in another user's ongoing turn.*
+_\*See [Section 6](#6-per-turn-github-identity-forwarding--turn-isolation) for the exact security handling when an `owner`/`admin` intervenes in another user's ongoing turn._
 
 ### Views (server-enforced read & post policies)
 
-> **Important distinction:** Upstream `packages/client-runtime/src/savedViews.ts` implements *client-side saved filter views*. Team **Views** are a distinct, **server-enforced authorization concept**—we should name them clearly in code (e.g., `TeamView` / `teamViewId`) to avoid confusion.
+> **Important distinction:** Upstream `packages/client-runtime/src/savedViews.ts` implements _client-side saved filter views_. Team **Views** are a distinct, **server-enforced authorization concept**—we should name them clearly in code (e.g., `TeamView` / `teamViewId`) to avoid confusion.
 
 Every team has at least one built-in **Default View** (`isDefault: true`, cannot be deleted):
+
 - **Default View read policy:** All team members can see threads in the Default View.
 - **Default View post policy:** All team members can post in each other's threads in the Default View by default (`owner`/`admin` can tighten this later if desired).
 
@@ -212,13 +215,13 @@ interface TeamView {
 
 ### Team Providers across all environments
 
-Requirement: *Settings allow configuring model providers per team, and all threads on a team-assigned project use the team's configured providers regardless of which environment (local or remote) the thread runs on.*
+Requirement: _Settings allow configuring model providers per team, and all threads on a team-assigned project use the team's configured providers regardless of which environment (local or remote) the thread runs on._
 
 This is one of the trickiest architectural pieces because in upstream T3 Code, providers are local to each environment. We should solve it cleanly by separating **Provider Configuration** from **Credential Execution**:
 
 1. **Team Provider Catalog (stored on the Team Server):**
    - `owner`/`admin` configure team provider instances in **Settings → Teams → \<Team\> → Providers** (model allowlists, default models, provider instances, API keys / endpoints).
-2. **How threads on *any* environment use Team Providers:**
+2. **How threads on _any_ environment use Team Providers:**
    - **API-backed providers (Anthropic, OpenAI, OpenRouter, custom OpenAI/Anthropic-compatible gateways, etc.):**
      - The Team Server exposes an authenticated **Team Model Proxy** (`/api/team/provider-proxy/:providerInstanceId/...`).
      - Any execution environment (the Team Server itself, an attached remote environment, or a member's **local** desktop environment) receives the team's provider catalog and routes inference requests through the Team Server's proxy using the member's session token.
@@ -235,6 +238,7 @@ This is one of the trickiest architectural pieces because in upstream T3 Code, p
 Following `AGENTS.md` ("Hit every surface"), every user-facing team feature must cover sidebar/chat, Settings, command palette, keybindings, and web/desktop/mobile clients via `packages/client-runtime`.
 
 ### Thread list & filtering
+
 - **Pseudo prefix:** Every team thread renders as `pseudo: <title>` (with subtle visual distinction for the pseudo badge/prefix so titles stay scannable).
 - **Default filter:** In team projects, the sidebar defaults to **"My threads"** (threads where `creatorMemberId === currentMemberId`, plus optionally threads the user follows).
 - **Show/Hide colleagues' threads toggle:** A prominent, persistent toggle in the sidebar header / project filter bar (plus command palette action & keyboard shortcut) switches between:
@@ -244,10 +248,11 @@ Following `AGENTS.md` ("Hit every surface"), every user-facing team feature must
 - **Thread metadata badges:** Show the thread's current **View** pill (clickable by `modo`/`admin`/`owner` to change view) and a **Lock** icon (clickable by `admin`/`owner` to lock/unlock).
 
 ### Notifications & Following
+
 - **Default rule:** A member receives desktop/web/mobile notifications for a team thread **only if**:
   1. They are the thread's creator (`creatorMemberId === currentMemberId`), **OR**
   2. They have explicitly **followed** the thread (`thread_follows` contains `(threadId, currentMemberId)`), **OR**
-  3. *(Recommended ergonomic default)* They posted the currently finishing turn in a colleague's thread (so you still get notified when *your* prompt finishes, without subscribing to all future turns unless you follow).
+  3. _(Recommended ergonomic default)_ They posted the currently finishing turn in a colleague's thread (so you still get notified when _your_ prompt finishes, without subscribing to all future turns unless you follow).
 - **Follow / Unfollow UI:**
   - Toggle button (bell icon) in the thread header, thread sidebar context menu, and command palette for any colleague's thread.
   - Stored server-side in `thread_follows` so follow state stays synced across desktop, web, and mobile push notifications.
@@ -258,12 +263,15 @@ Following `AGENTS.md` ("Hit every surface"), every user-facing team feature must
 ## 6. Per-Turn GitHub Identity Forwarding & Turn Isolation
 
 ### The problem to solve
+
 In a shared environment, a single OS user runs the `t3server` and agent processes. Previously, all git/GitHub operations used one shared account (`msl-agent`) with manual commit co-signing. We want:
+
 1. Every turn initiated by User A executes git/GitHub operations as **User A**.
 2. If User B later posts a turn in the same thread, that turn executes git/GitHub operations as **User B**—never User A.
 3. No other user can hijack an active turn's credentials via mid-turn steering.
 
 ### Credential storage & acquisition
+
 - **Phase 1 (initial implementation):** Per-user **encrypted fine-grained PAT** configured in Settings. This requires zero OAuth App / GitHub App registration for self-hosted teams and unlocks per-user attribution immediately.
 - **Phase 2 (follow-up):** **GitHub OAuth / GitHub App user-to-server tokens** for automatic short-lived token refresh and one-click sign-in.
 - Tokens are encrypted at rest in the Team Server's `ServerSecretStore`, keyed by `memberId`, and never exposed to any other member or read model.
@@ -278,7 +286,7 @@ To prevent this, we combine **two layers of defense**:
 1. **Dynamic Turn-Scoped Credential Broker (primary):**
    - The server exposes a local-only Unix socket or loopback broker endpoint authenticated with a per-session secret.
    - Provider child processes receive:
-     - `GIT_ASKPASS=/path/to/t3-git-askpass` (a tiny helper that asks the server broker for the credential bound to the thread's *currently active turn*).
+     - `GIT_ASKPASS=/path/to/t3-git-askpass` (a tiny helper that asks the server broker for the credential bound to the thread's _currently active turn_).
      - `GH_TOKEN` is **not** set as a static long-lived secret; instead, `gh` is configured via a wrapper / `GH_CONFIG_DIR` or credential helper backed by the same turn-scoped broker (or a turn-scoped ephemeral file rotated/deleted on turn start/end).
      - `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` set from the active turn author's GitHub profile (via per-turn git config / wrapper so `git commit` attributes commits natively to the real user—no more `msl-agent`!).
    - When no turn is active (or after the turn settles/cancels), the broker immediately returns **no credential**.
@@ -288,12 +296,14 @@ To prevent this, we combine **two layers of defense**:
    - T3 Code's `Session` model already supports stopping and resuming a provider session without losing thread history ([00_glossary.md](../internals/00_glossary.md)).
 
 ### Mid-turn steering isolation
+
 - While a turn initiated by User A is running:
-  - **Other `regular` and `modo` users cannot steer** the ongoing turn. The UI disables steering and only allows queueing a *new* turn (if they have post permission), which will run after Turn A finishes—triggering the author-switch session recycle and using User B's GitHub identity.
+  - **Other `regular` and `modo` users cannot steer** the ongoing turn. The UI disables steering and only allows queueing a _new_ turn (if they have post permission), which will run after Turn A finishes—triggering the author-switch session recycle and using User B's GitHub identity.
   - **`owner` and `admin` users** are permitted to intervene:
     - To preserve strict GitHub credential isolation even when an `owner`/`admin` intervenes, we should offer (and default to) **Interrupt & Start New Turn** (which immediately revokes User A's active turn lease and runs the admin's follow-up under the admin's own identity), and if true mid-turn steering is used by an `owner`/`admin`, immediately **revoke/freeze the original user's GitHub credential lease** for the remainder of that turn so an admin cannot push/act on GitHub using User A's token.
 
 ### Residual threat model note (shared OS user)
+
 - Because T3 Code's security boundary is the OS user running the environment ([04_environment-auth.md](../internals/04_environment-auth.md#the-environment-is-the-filesystem-boundary)), agents with shell access in the same OS user share the filesystem/worktree. Per-turn brokering + session recycling prevents accidental cross-user credential leakage and unauthorized steering, while true adversarial multi-tenant isolation would require per-user OS sandboxes/containers (out of scope for initial milestones, noted as a future hardening option).
 
 ---
@@ -357,7 +367,7 @@ We intend to **regularly port upstream changes from `pingdotgg/t3code`** into th
 The following decisions are locked in for implementation:
 
 1. **Member invites & role management start at `modo`** — `regular` members cannot invite users or change roles; `modo`, `admin`, and `owner` can invite/assign roles up to their own level.
-2. **Thread creator posting** — a thread's creator can always post in their own *unlocked* thread regardless of the View's `postRule`; locking a thread overrides even the creator unless they are `owner` or `admin`.
+2. **Thread creator posting** — a thread's creator can always post in their own _unlocked_ thread regardless of the View's `postRule`; locking a thread overrides even the creator unless they are `owner` or `admin`.
 3. **Local threads on team projects sync to the team thread list** — starting a team-project thread on a local environment syncs the thread into the Team Server's thread list; the distinction is where tool calls execute (local machine vs. remote team environment).
 4. **Phased GitHub authentication** — start with per-user encrypted fine-grained PATs (zero OAuth app setup for self-hosted teams), then add GitHub OAuth / GitHub App user-to-server tokens in a follow-up phase.
 5. **Default View posting policy** — the Default View allows all team members to read and post in each other's threads by default.

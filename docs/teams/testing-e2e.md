@@ -11,6 +11,7 @@ It extends upstream's scenario model ([15_testing.md](../internals/15_testing.md
 Upstream's [`scripts/e2e.config.ts`](../../scripts/e2e.config.ts) launches a single local app (one `t3server` + one Vite server) and one browser context. Even multi-server scenarios like [`scripts/scenarios/linked-thread-connects-before-fallback-timeout.e2e.ts`](../../scripts/scenarios/linked-thread-connects-before-fallback-timeout.e2e.ts) only test one human user talking to two environments.
 
 Team features require verifying **real multi-user interactions** across distinct origins, credentials, local environments, and live WebSocket subscriptions:
+
 - Member A creates a thread → Member B does **not** see it by default, sees it after toggling colleagues' threads, and receives **zero** notifications unless following.
 - Member A starts a thread on their **local environment** for a team project → tool calls run locally on Member A's machine, while the thread syncs into the Team Server's thread list and uses the Team Model Proxy.
 - Role / View / Lock changes propagate live to other connected browsers and are enforced on both RPC and UI layers.
@@ -72,8 +73,8 @@ await using topology = await startTeamTopology({
     { pseudo: "charlie", role: "modo" }, // optional
   ],
   extraRemoteEnvironments: 1, // optional (Milestone 4)
-  fakeTeamLlm: true,          // optional (Milestone 4)
-  fakeGitHub: true,           // optional (Milestone 5)
+  fakeTeamLlm: true, // optional (Milestone 4)
+  fakeGitHub: true, // optional (Milestone 5)
 });
 ```
 
@@ -98,10 +99,10 @@ Cleanup is guaranteed by `AsyncDisposableStack` (`await using`), tearing down al
 
 ## 4. Scenario Matrix by Milestone
 
-| Milestone | Scenario file (`scripts/scenarios/team/`) | What it proves across 2+ live apps |
-| --- | --- | --- |
-| **M1** | `join-and-pseudo-filtering.e2e.ts` | Deep-link invite with prefilled pseudo, `alice: <title>` prefix, default "My threads" filter hiding Alice's thread from Bob, live reveal via colleagues toggle. |
-| **M2** | `notifications-and-follow.e2e.ts` | Zero notifications for Bob on Alice's turns; Bob clicks **Follow** → receives notifications on Alice's next turn; **Unfollow** silences again. |
-| **M3** | `views-rbac-and-locking.e2e.ts` | `admin` creates restricted View; `modo` moves thread into it → disappears live from `regular` Bob's browser and direct RPC returns `403`; read-only View blocks posting; locked thread blocks even creator (`regular`). |
-| **M4** | `local-sync-envs-and-providers.e2e.ts` | Bob starts a thread on his **local environment** for a team project → tool calls run on Bob's local workspace, thread syncs into Alice's team thread list, inference routes through Team Model Proxy; restricted remote environment is hidden/blocked for Bob. |
-| **M5** | `github-per-turn-and-steering.e2e.ts` | Alice Turn 1 pushes with `PAT_ALICE` + Alice git author; Bob Turn 2 on same thread pushes with `PAT_BOB` + Bob git author; Bob blocked from steering Alice's active turn; admin intervention revokes Alice's lease. |
+| Milestone | Scenario file (`scripts/scenarios/team/`) | What it proves across 2+ live apps                                                                                                                                                                                                                             |
+| --------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M1**    | `join-and-pseudo-filtering.e2e.ts`        | Deep-link invite with prefilled pseudo, `alice: <title>` prefix, default "My threads" filter hiding Alice's thread from Bob, live reveal via colleagues toggle.                                                                                                |
+| **M2**    | `notifications-and-follow.e2e.ts`         | Zero notifications for Bob on Alice's turns; Bob clicks **Follow** → receives notifications on Alice's next turn; **Unfollow** silences again.                                                                                                                 |
+| **M3**    | `views-rbac-and-locking.e2e.ts`           | `admin` creates restricted View; `modo` moves thread into it → disappears live from `regular` Bob's browser and direct RPC returns `403`; read-only View blocks posting; locked thread blocks even creator (`regular`).                                        |
+| **M4**    | `local-sync-envs-and-providers.e2e.ts`    | Bob starts a thread on his **local environment** for a team project → tool calls run on Bob's local workspace, thread syncs into Alice's team thread list, inference routes through Team Model Proxy; restricted remote environment is hidden/blocked for Bob. |
+| **M5**    | `github-per-turn-and-steering.e2e.ts`     | Alice Turn 1 pushes with `PAT_ALICE` + Alice git author; Bob Turn 2 on same thread pushes with `PAT_BOB` + Bob git author; Bob blocked from steering Alice's active turn; admin intervention revokes Alice's lease.                                            |

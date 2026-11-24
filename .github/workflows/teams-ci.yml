@@ -469,18 +469,7 @@ jobs:
   check:
     name: Teams Check
     if: ${{ always() && github.repository != 'pingdotgg/t3code' }}
-    needs:
-      [
-        changes,
-        lint,
-        build,
-        test,
-        test_web,
-        test_server,
-        test_teams_e2e,
-        rust,
-        release_smoke,
-      ]
+    needs: [changes, lint, build, test, test_web, test_server, test_teams_e2e, rust, release_smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

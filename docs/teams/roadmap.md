@@ -9,6 +9,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 **Goal:** Replace anonymous shared-server access with named team members, deep-link onboarding, and automatic `pseudo:` thread attribution.
 
 ### Scope
+
 - **Contracts (`packages/contracts/src/team/`):**
   - Schemas for `Team`, `TeamMember`, `TeamRole`, `TeamInvite`, and member-scoped auth responses.
 - **Server (`apps/server/src/team/`):**
@@ -23,6 +24,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Default sidebar filter hiding colleagues' threads + one-click toggle to show/hide colleagues' threads (also in command palette & keybindings).
 
 ### Definition of Done
+
 - Two team members join the same remote `t3server` with distinct pseudos via deep link or Settings.
 - Threads created by Alice automatically show as `alice: <title>` without manual renaming.
 - By default, Alice sees only her own threads and can toggle to see Bob's threads.
@@ -34,6 +36,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 **Goal:** Eliminate notification spam on shared team servers.
 
 ### Scope
+
 - **Server:**
   - SQLite table `team_thread_follows (thread_id, member_id, created_at)`.
   - RPCs to follow/unfollow a thread and include `isFollowing` in thread/shell projections.
@@ -44,6 +47,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Optional sidebar filter pill for "Followed threads".
 
 ### Definition of Done
+
 - Bob running turns in his threads produces zero notifications for Alice.
 - Alice clicks **Follow** on one of Bob's threads and receives notifications for that thread until she clicks **Unfollow**.
 
@@ -54,6 +58,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 **Goal:** Enforce real multi-user permissions on the Team Server.
 
 ### Scope
+
 - **Roles (`owner > admin > modo > regular`):**
   - Role management UI in **Settings → Teams → Members**.
   - Server-enforced rule: member invites and role management start at `modo`; a member (`modo+`) can grant their own role or any lower role, cannot demote/modify higher roles, and cannot remove the last `owner`.
@@ -61,7 +66,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Built-in **Default View** (readable and postable by all team members by default).
   - `owner`/`admin` CRUD UI for Views with separate **Read** and **Post** rules (by role and/or member whitelist).
   - `owner`/`admin`/`modo` ability to change a thread's View.
-  - Any member with Read access to a View can create a thread in it, and a thread's creator can always post in their own *unlocked* thread.
+  - Any member with Read access to a View can create a thread in it, and a thread's creator can always post in their own _unlocked_ thread.
   - Server-side filtering of `subscribeShell`, `subscribeThread`, `searchThreads`, and thread RPCs based on `canReadThread`.
   - Server-side enforcement of `canPostInThread` (viewing never implies posting); read-only composer state in UI when posting is disallowed.
 - **Thread locking:**
@@ -69,6 +74,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Locked threads allow posting **only** by `owner` and `admin`.
 
 ### Definition of Done
+
 - A `regular` member cannot see threads in an `admin`-only view (verified at both RPC and UI layers).
 - A member with read-only access to a view can read threads and create their own thread, but cannot post in a colleague's thread.
 - Locking a thread immediately blocks `modo` and `regular` members (including the creator) from posting.
@@ -80,6 +86,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 **Goal:** Let teams share model providers and multiple execution environments seamlessly across local and remote machines.
 
 ### Scope
+
 - **Team Projects:**
   - Assign a project to a Team during creation or in Project Settings.
   - New-thread environment picker on team projects: choose **local environment** or any **remote team environment** (including the default Team Server) permitted by the member's ACL.
@@ -94,6 +101,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Clear UI capability indicator for CLI-subscription providers that can only execute on remote team environments.
 
 ### Definition of Done
+
 - A project assigned to Team X lets Alice start a thread locally or on an attached GPU server, using Team X's configured providers in both cases.
 - Restricting an environment to `admin` + Bob hides/blocks it for Alice.
 
@@ -104,6 +112,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 **Goal:** Eliminate shared bot accounts (`msl-agent`) and manual commit co-signing on shared environments safely.
 
 ### Scope
+
 - **Per-member GitHub credentials:**
   - Member GitHub connection in Settings (Phase 5a: encrypted fine-grained PAT per member; Phase 5b: GitHub OAuth / GitHub App user-to-server tokens).
   - Store `github_login`, `github_name`, `github_email` alongside encrypted credentials in `ServerSecretStore`.
@@ -117,6 +126,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Restrict mid-turn intervention to `owner`/`admin`, with immediate revocation of the original user's active GitHub credential lease on intervention.
 
 ### Definition of Done
+
 - Alice starts a thread on the shared server, asks the agent to commit and open a PR → commit author and PR author are **Alice**.
 - Bob posts a follow-up turn in the same thread asking for another commit and push → commit author and push credentials are **Bob**, with zero access to Alice's token.
 - While Alice's turn is running, Bob cannot steer it; an `admin` can interrupt/intervene without acting under Alice's GitHub credentials.
@@ -128,6 +138,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 **Goal:** Bring full team support to every T3 Code surface and lock down edge cases.
 
 ### Scope
+
 - **Mobile (`apps/mobile`):** Team switcher, deep-link join, pseudo prefixes, "My threads" default filter + toggle, follow/unfollow, View/Lock badges, and per-member push notification filtering.
 - **Translations (`i18n`):** Add and verify all new UI strings via `vp run i18n:generate` and `vp run i18n:check`.
 - **Testing & verification:**
