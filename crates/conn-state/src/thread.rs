@@ -494,6 +494,10 @@ pub struct ThreadState {
     pub working: bool,
     pub sequence: Option<i64>,
     pub synchronized: bool,
+    /// True once the stream reported `thread.deleted` (T3 `threads.ts` keeps such a thread as
+    /// `deleted` with no data), until a stream snapshot shows it again. Nothing of the thread is
+    /// cached meanwhile; holders evict it.
+    pub deleted: bool,
     /// Server request id of each approval entry, by entry id, for `runtime-request.respond`.
     pub approval_requests: HashMap<String, String>,
     /// What each approval entry asks, by entry id (see [`ThreadState::approval_details`]).
@@ -1056,6 +1060,8 @@ impl ThreadState {
                 false
             }
             ThreadStreamItem::Snapshot(snapshot) => {
+                // The stream's snapshot is the server's thread now, as when it was created again.
+                self.deleted = false;
                 self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
                 self.history_cursor = snapshot.history_cursor.flatten();
                 self.has_more_history = snapshot.has_more_history.unwrap_or(false);
@@ -1071,6 +1077,20 @@ impl ThreadState {
                 self.apply_fallback_event(&event_item.event.r#type, event_item.event.payload)
             }
         }
+    }
+
+    /// The thread was deleted: nothing of its cached projection stays to show or answer.
+    fn clear_deleted(&mut self) -> bool {
+        let changed = !self.deleted || !self.entries.is_empty() || self.working;
+        *self = Self {
+            thread_id: std::mem::take(&mut self.thread_id),
+            sequence: self.sequence,
+            synchronized: self.synchronized,
+            revision: self.revision,
+            deleted: true,
+            ..Self::default()
+        };
+        changed
     }
 
     fn advance_sequence(&mut self, seq: i64) {
@@ -1372,6 +1392,12 @@ impl ThreadState {
                     self.subagent_models.insert(ev.payload.id, model);
                 }
                 changed
+            }
+            DomainEvent::ThreadArchived(ev)
+                if ev.r#type
+                    == conn_contract::OrchestrationV2DomainEventThreadArchivedType::ThreadDeleted =>
+            {
+                self.clear_deleted()
             }
             // Projection metadata events that do not directly add or alter timeline entries.
             DomainEvent::ThreadCreated(_)

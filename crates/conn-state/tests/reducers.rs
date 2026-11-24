@@ -2866,3 +2866,193 @@ fn shell_enrichment_snapshot_preserves_threads_and_sequence() {
         Some("github.com/nckrtl/conn-demo")
     );
 }
+
+/// The item a resumed stream replays after a deletion (recorded from conn-engine) goes
+/// through the reducer: the cached timeline is gone and the thread reads as deleted, as T3's
+/// detail cache does (`threads.ts`).
+#[test]
+fn a_replayed_deletion_evicts_the_cached_thread() {
+    let mut state = ThreadState::new("t1");
+    let snapshot = json!({
+        "kind": "snapshot",
+        "snapshotSequence": 5,
+        "projection": {
+            "thread": {
+                "createdBy": "user",
+                "creationSource": "web",
+                "id": "t1",
+                "projectId": "proj-1",
+                "title": "Test thread",
+                "providerInstanceId": "claudeAgent",
+                "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                "runtimeMode": "full-access",
+                "interactionMode": "default",
+                "branch": null,
+                "worktreePath": null,
+                "lineage": { "rootThreadId": "t1", "parentThreadId": null, "relationshipToParent": null },
+                "forkedFrom": null,
+                "activeProviderThreadId": null,
+                "createdAt": "2026-11-13T09:00:00.000Z",
+                "updatedAt": "2026-11-13T09:00:10.000Z",
+                "archivedAt": null,
+                "settledOverride": null,
+                "settledAt": null,
+                "deletedAt": null
+            },
+            "runs": [
+                {
+                    "id": "run-1",
+                    "threadId": "t1",
+                    "ordinal": 1,
+                    "providerInstanceId": "claudeAgent",
+                    "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                    "providerThreadId": null,
+                    "userMessageId": "msg-u1",
+                    "rootNodeId": null,
+                    "activeAttemptId": null,
+                    "status": "completed",
+                    "requestedAt": "2026-11-13T09:00:00.000Z",
+                    "startedAt": "2026-11-13T09:00:01.000Z",
+                    "completedAt": "2026-11-13T09:00:10.000Z",
+                    "checkpointId": null,
+                    "contextHandoffId": null
+                }
+            ],
+            "attempts": [],
+            "nodes": [],
+            "subagents": [],
+            "providerSessions": [],
+            "providerThreads": [],
+            "providerTurns": [],
+            "runtimeRequests": [],
+            "messages": [],
+            "plans": [],
+            "turnItems": [],
+            "checkpointScopes": [],
+            "checkpoints": [{
+                "id": "cp-1",
+                "threadId": "t1",
+                "scopeId": "scope-1",
+                "runId": "run-1",
+                "nodeId": "node-1",
+                "parentCheckpointId": null,
+                "ordinalWithinScope": 1,
+                "appRunOrdinal": 1,
+                "ref": "refs/conn/cp-1",
+                "status": "ready",
+                "files": [{ "path": "README.md", "kind": "modified", "additions": 1, "deletions": 0 }],
+                "capturedAt": "2026-11-13T09:00:10.000Z"
+            }],
+            "contextHandoffs": [],
+            "contextTransfers": [],
+            "visibleTurnItems": [
+                {
+                    "position": 0,
+                    "visibility": "local",
+                    "sourceThreadId": "t1",
+                    "sourceItemId": "item-u1",
+                    "item": {
+                        "id": "item-u1",
+                        "threadId": "t1",
+                        "runId": "run-1",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 1,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-13T09:00:00.000Z",
+                        "completedAt": "2026-11-13T09:00:00.000Z",
+                        "updatedAt": "2026-11-13T09:00:00.000Z",
+                        "createdBy": "user",
+                        "creationSource": "web",
+                        "type": "user_message",
+                        "messageId": "msg-u1",
+                        "inputIntent": "turn_start",
+                        "text": "Run tests",
+                        "attachments": []
+                    }
+                },
+                {
+                    "position": 1,
+                    "visibility": "local",
+                    "sourceThreadId": "t1",
+                    "sourceItemId": "item-cmd1",
+                    "item": {
+                        "id": "item-cmd1",
+                        "threadId": "t1",
+                        "runId": "run-1",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 2,
+                        "status": "completed",
+                        "title": "cargo test",
+                        "startedAt": "2026-11-13T09:00:02.000Z",
+                        "completedAt": "2026-11-13T09:00:05.000Z",
+                        "updatedAt": "2026-11-13T09:00:05.000Z",
+                        "type": "command_execution",
+                        "input": "cargo test -p conn-state",
+                        "output": "ok",
+                        "exitCode": 0
+                    }
+                },
+                {
+                    "position": 2,
+                    "visibility": "local",
+                    "sourceThreadId": "t1",
+                    "sourceItemId": "item-a1",
+                    "item": {
+                        "id": "item-a1",
+                        "threadId": "t1",
+                        "runId": "run-1",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 3,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-13T09:00:06.000Z",
+                        "completedAt": "2026-11-13T09:00:10.000Z",
+                        "updatedAt": "2026-11-13T09:00:10.000Z",
+                        "type": "assistant_message",
+                        "messageId": "msg-a1",
+                        "text": "All tests passed.",
+                        "streaming": false
+                    }
+                }
+            ],
+            "updatedAt": "2026-11-13T09:00:10.000Z"
+        }
+    });
+    state.apply(decode_thread(snapshot.clone()));
+    assert!(!state.entries.is_empty());
+    assert_eq!(state.latest_run_id(), Some("run-1"));
+    assert!(state.checkpoint_for_run("run-1").is_some());
+    assert!(!state.deleted);
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/thread_deleted_replay.json"))
+        .expect("fixture is JSON");
+    assert!(state.apply(decode_thread(fixture["item"].clone())));
+    assert!(state.deleted);
+    assert!(state.entries.is_empty());
+    assert!(!state.working);
+    assert!(state.pending_requests.is_empty());
+    assert_eq!(state.latest_run_id(), None, "no cached run is left");
+    assert!(
+        state.checkpoint_for_run("run-1").is_none(),
+        "nor its checkpoint"
+    );
+    assert_eq!(state.active_run_id(), None);
+
+    // The thread created again under its ID: the stream's snapshot is authoritative.
+    state.apply(decode_thread(snapshot));
+    assert!(!state.deleted);
+    assert!(!state.entries.is_empty());
+    assert_eq!(state.latest_run_id(), Some("run-1"));
+}
