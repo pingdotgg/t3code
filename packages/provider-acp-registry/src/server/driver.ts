@@ -788,9 +788,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       );
       const liveSnapshot = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
       yield* observeLiveRevision(liveSnapshot.revision);
+      const base = yield* withAcceptedFallback(withCommands);
       const withConfiguration = Option.isSome(liveSnapshot.configuration)
-        ? yield* applyLiveConfiguration(withCommands, liveSnapshot.configuration.value)
-        : yield* withAcceptedFallback(withCommands);
+        ? yield* applyLiveConfiguration(base, liveSnapshot.configuration.value)
+        : base;
       return applyAcpRegistryUrlAuthAction(
         withConfiguration,
         yield* coordinator.getUrlAuthAction(instanceId),
@@ -898,6 +899,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         readonly fresh: boolean;
         readonly probeStartLiveRevision: number;
         readonly modelsFromModelSelect: boolean;
+        readonly runtimeChanged: boolean;
       }) => Effect.Effect<void>,
     ) {
       if (hasRegistryAgent) {
@@ -938,6 +940,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           fresh: false,
           probeStartLiveRevision: 0,
           modelsFromModelSelect: false,
+          runtimeChanged: false,
         };
       }
       const probeStartLiveRevision = Option.isSome(runtimeCoordinator)
@@ -985,13 +988,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 fresh: true,
                 probeStartLiveRevision,
                 modelsFromModelSelect: fromSelect,
+                runtimeChanged,
               }),
             ),
           ),
       );
-      if (runtimeChanged && enriched.status === "ready") {
-        yield* liveSnapshotSemaphore.withPermit(clearLiveState);
-      }
       yield* remember(enriched);
       return {
         provider: enriched,
@@ -999,6 +1000,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         fresh: true,
         probeStartLiveRevision,
         modelsFromModelSelect,
+        runtimeChanged,
       };
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
@@ -1029,10 +1031,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           const refreshed = yield* Option.isSome(runtimeCoordinator)
             ? runtimeCoordinator.value.runBackgroundProbe(effectiveConfig.agentId, refresh)
             : refresh.pipe(Effect.asSome);
-          if (Option.isNone(refreshed) || !refreshed.value) return;
+          if (Option.isNone(refreshed)) return;
           targetSnapshot = yield* checkProvider;
+          if (!targetSnapshot.installed) {
+            if (refreshed.value) {
+              yield* liveSnapshotSemaphore.withPermit(publishSnapshot(targetSnapshot));
+            }
+            return;
+          }
           yield* liveSnapshotSemaphore.withPermit(publishSnapshot(targetSnapshot));
-          if (!targetSnapshot.installed) return;
         }
         const publishEnriched = ({
           provider,
@@ -1040,24 +1047,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           fresh,
           probeStartLiveRevision,
           modelsFromModelSelect,
+          runtimeChanged,
         }: {
           readonly provider: ServerProvider;
           readonly generation: number;
           readonly fresh: boolean;
           readonly probeStartLiveRevision: number;
           readonly modelsFromModelSelect: boolean;
+          readonly runtimeChanged: boolean;
         }) =>
           liveSnapshotSemaphore.withPermit(
             Effect.gen(function* () {
               const current = yield* Ref.get(enrichmentCache);
               if (current.generation !== generation) return;
               if (fresh && provider.status === "ready") {
-                const probedBuiltIn = provider.models.filter(
-                  (model) => !model.isCustom && model.slug !== "default",
-                );
+                const probedBuiltIn = provider.models.filter((model) => !model.isCustom);
                 const authoritativeProbe =
                   probedBuiltIn.length > 1 || (probedBuiltIn.length === 1 && modelsFromModelSelect);
-                if (authoritativeProbe) {
+                if (runtimeChanged || authoritativeProbe) {
                   const cleared = Option.isSome(runtimeCoordinator)
                     ? yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(
                         instanceId,
@@ -1065,7 +1072,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       )
                     : true;
                   if (cleared) {
-                    yield* Ref.set(lastAcceptedCatalog, probedBuiltIn);
+                    if (runtimeChanged) {
+                      yield* clearLiveState;
+                    }
+                    if (authoritativeProbe) {
+                      yield* Ref.set(lastAcceptedCatalog, probedBuiltIn);
+                    }
                   }
                 }
               }
@@ -1113,34 +1125,43 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               instanceId,
               (configuration, revision) =>
                 liveSnapshotSemaphore.withPermit(
-                  observeLiveRevision(revision).pipe(
-                    Effect.andThen(getSnapshot),
-                    Effect.flatMap((current) => applyLiveConfiguration(current, configuration)),
-                    Effect.tap((updated) => {
-                      const builtIn = updated.models.filter(
-                        (model) => !model.isCustom && model.slug !== "default",
-                      );
-                      return builtIn.length > 1 ||
+                  Effect.gen(function* () {
+                    const live =
+                      yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId);
+                    if (live.revision !== revision) {
+                      const currentOptions = acpRegistryCurrentModelOptions(configuration);
+                      if (Option.isSome(live.configuration) && currentOptions !== undefined) {
+                        yield* learnedModelOptions.learn(
+                          currentOptions.modelId,
+                          currentOptions.options,
+                          "live",
+                        );
+                      }
+                      return;
+                    }
+                    yield* observeLiveRevision(revision);
+                    const current = yield* getSnapshot;
+                    const updated = yield* applyLiveConfiguration(current, configuration);
+                    if (configuration.models.length > 0) {
+                      const builtIn = updated.models.filter((model) => !model.isCustom);
+                      if (
+                        builtIn.length > 1 ||
                         (builtIn.length === 1 && configuration.modelsFromModelSelect === true)
-                        ? Ref.set(lastAcceptedCatalog, builtIn)
-                        : Effect.void;
-                    }),
-                    Effect.tap(() =>
-                      Clock.currentTimeMillis.pipe(
-                        Effect.flatMap((now) =>
-                          Ref.update(enrichmentCache, (cache) =>
-                            updateAcpRegistryEnrichmentCache({
-                              cache,
-                              configuration,
-                              customModels: effectiveConfig.customModels,
-                              now,
-                            }),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Effect.flatMap(publishSnapshot),
-                  ),
+                      ) {
+                        yield* Ref.set(lastAcceptedCatalog, builtIn);
+                      }
+                    }
+                    const now = yield* Clock.currentTimeMillis;
+                    yield* Ref.update(enrichmentCache, (cache) =>
+                      updateAcpRegistryEnrichmentCache({
+                        cache,
+                        configuration,
+                        customModels: effectiveConfig.customModels,
+                        now,
+                      }),
+                    );
+                    yield* publishSnapshot(updated);
+                  }),
                 ),
               { afterRevision },
             ),
