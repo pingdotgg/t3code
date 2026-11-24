@@ -24,7 +24,7 @@ export const Route = createFileRoute("/welcome")({
 function WelcomeRouteView() {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
-  // A ChatGPT sign-in returns here with the computer it set up.
+  // Names the computer to set up: Settings → About picks one, and a ChatGPT sign-in returns here.
   const resumeEnvironmentId = hash.startsWith("agents:")
     ? Option.getOrUndefined(decodeEnvironmentId(hash.slice("agents:".length)))
     : undefined;

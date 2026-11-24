@@ -88,6 +88,7 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -118,6 +119,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
+import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { nativeLanguageName, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
@@ -2530,6 +2532,11 @@ export function AboutSettingsPanel() {
   const primaryPolicy = usePrimaryManagedPolicy();
   // The Welcome page sets up this computer, so it needs one.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const navigate = useNavigate();
+  // Each environment keeps its own agent history, such as a WSL backend's.
+  const welcomeEnvironments = useEnvironments().environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
   const telemetryOff = managedTelemetryOffMessage(primaryPolicy, messages);
   return (
     <SettingsPageContainer>
@@ -2573,9 +2580,32 @@ export function AboutSettingsPanel() {
             {...setting("welcome-page")}
             description={gt("See your agents, import projects, and set up your phone.")}
             control={
-              <Button size="sm" variant="outline" render={<Link to="/welcome" />}>
-                <T context="verb, opens a page">Open</T>
-              </Button>
+              welcomeEnvironments.length > 1 ? (
+                <Menu>
+                  <MenuTrigger render={<Button size="sm" variant="outline" />}>
+                    <T context="verb, opens a page">Open</T>
+                  </MenuTrigger>
+                  <MenuPopup align="end">
+                    {welcomeEnvironments.map((environment) => (
+                      <MenuItem
+                        key={environment.environmentId}
+                        onClick={() =>
+                          void navigate({
+                            to: "/welcome",
+                            hash: `agents:${environment.environmentId}`,
+                          })
+                        }
+                      >
+                        {settingsScopeEnvironmentLabel(environment, welcomeEnvironments)}
+                      </MenuItem>
+                    ))}
+                  </MenuPopup>
+                </Menu>
+              ) : (
+                <Button size="sm" variant="outline" render={<Link to="/welcome" />}>
+                  <T context="verb, opens a page">Open</T>
+                </Button>
+              )
             }
           />
         )}
