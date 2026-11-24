@@ -1251,18 +1251,17 @@ const make = Effect.gen(function* () {
     const requestedAt = yield* DateTime.now;
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
-    // A steer or wake the agent took in after asking to settle starts a turn that decides again.
-    // Claude holds a steer pending until it reads it, so completedAt is when the agent saw it.
+    // A message steered in after the agent asked to settle starts a turn that decides again.
+    // A provider may hold a steer pending until it reads it; completedAt is when the agent saw it.
     const { turnItems } = yield* getProjectThreadRecords(input, ["turnItems"], {
-      turnItemTypes: ["user_message", "notification"],
+      turnItemTypes: ["user_message"],
       turnItemRunIds: [run.id],
     });
     if (
       turnItems.some(
         (item) =>
-          (item.type === "notification" ||
-            (item.type === "user_message" &&
-              (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer"))) &&
+          item.type === "user_message" &&
+          (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer") &&
           (item.completedAt === null || !DateTime.isLessThan(item.completedAt, requestedAt)),
       )
     ) {
