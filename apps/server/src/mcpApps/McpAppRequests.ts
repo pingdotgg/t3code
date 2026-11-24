@@ -11,7 +11,11 @@ import {
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
-import { mcpAppToolCallableByApp, type McpAppReference } from "@t3tools/shared/mcpApp";
+import {
+  mcpAppToolCallableByApp,
+  mcpAppToolIsAppOnly,
+  type McpAppReference,
+} from "@t3tools/shared/mcpApp";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -48,13 +52,23 @@ export class McpAppRequests extends Context.Service<
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8 = new TextEncoder();
 
-const readOnlyHint = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
-  Predicate.isObject(tool.annotations) && tool.annotations.readOnlyHint === true;
+const annotation = (tool: ProviderAdapter.ProviderAdapterV2McpTool, name: string) =>
+  Predicate.isObject(tool.annotations) ? tool.annotations[name] : undefined;
 
-const toolTitle = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
-  Predicate.isObject(tool.annotations) && typeof tool.annotations.title === "string"
-    ? tool.annotations.title
-    : undefined;
+/**
+ * Apps call tools without the user asking for each call, so T3 confirms side effects. Read-only tools
+ * and app-only tools not marked destructive run silently: the model cannot reach app-only tools, and
+ * apps call them for their own state, often on every render.
+ */
+const skipsApproval = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
+  tool.requiresApproval !== true &&
+  (annotation(tool, "readOnlyHint") === true ||
+    (mcpAppToolIsAppOnly(tool._meta) && annotation(tool, "destructiveHint") !== true));
+
+const toolTitle = (tool: ProviderAdapter.ProviderAdapterV2McpTool) => {
+  const title = annotation(tool, "title");
+  return typeof title === "string" ? title : undefined;
+};
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -125,12 +139,15 @@ const make = Effect.gen(function* () {
   const toolInfo = Effect.fn("McpAppRequests.toolInfo")(function* (input: McpAppToolInfoInput) {
     const resolved = yield* resolve(input);
     const tool = yield* findTool(input.threadId, resolved, input.name);
-    const title = tool === undefined ? undefined : toolTitle(tool);
+    if (tool === undefined) return { callable: false, readOnly: false } satisfies McpAppToolInfo;
+    const title = toolTitle(tool);
+    // `tool` becomes the app's `hostContext.toolInfo.tool`; T3's approval flag is not part of it.
+    const { requiresApproval: _, ...definition } = tool;
     return {
-      callable: tool !== undefined && mcpAppToolCallableByApp(tool._meta),
-      readOnly: tool !== undefined && readOnlyHint(tool),
+      callable: mcpAppToolCallableByApp(tool._meta),
+      readOnly: skipsApproval(tool),
       ...(title === undefined ? {} : { title }),
-      ...(tool === undefined ? {} : { tool }),
+      tool: definition,
     } satisfies McpAppToolInfo;
   });
 

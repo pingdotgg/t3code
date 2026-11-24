@@ -1152,19 +1152,15 @@ function claudeRulesMayCoverMcpTools(
 
 /**
  * Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names.
- * Card calls skip Claude's permission check, so `readOnlyHint`, which skips T3's prompt, needs readable
- * rules (null when not) with no ask or deny rule that may cover the tool.
+ * Card calls skip Claude's permission check, so T3 may skip its own prompt only with readable rules
+ * (null when not) and no ask or deny rule that may cover the tool.
  */
 function claudeMcpToolForApps(
   tool: NonNullable<ClaudeMcpServerStatus["tools"]>[number],
   rules: ReadonlyArray<ClaudePermissionRule> | null,
 ) {
   const annotations = tool.annotations ?? {};
-  const readOnlyHint =
-    annotations.readOnly !== true ||
-    (rules !== null && !claudeRulesMayCoverMcpTools(rules, ["ask", "deny"]))
-      ? annotations.readOnly
-      : undefined;
+  const requiresApproval = rules === null || claudeRulesMayCoverMcpTools(rules, ["ask", "deny"]);
   return {
     name: tool.name,
     ...(tool.description === undefined ? {} : { description: tool.description }),
@@ -1172,12 +1168,13 @@ function claudeMcpToolForApps(
     inputSchema: { type: "object" },
     ...(tool._meta === undefined ? {} : { _meta: tool._meta }),
     annotations: {
-      ...(readOnlyHint === undefined ? {} : { readOnlyHint }),
+      ...(annotations.readOnly === undefined ? {} : { readOnlyHint: annotations.readOnly }),
       ...(annotations.destructive === undefined
         ? {}
         : { destructiveHint: annotations.destructive }),
       ...(annotations.openWorld === undefined ? {} : { openWorldHint: annotations.openWorld }),
     },
+    ...(requiresApproval ? { requiresApproval } : {}),
   };
 }
 

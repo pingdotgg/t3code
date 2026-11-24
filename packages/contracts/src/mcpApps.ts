@@ -31,6 +31,7 @@ export type McpAppToolInfoInput = typeof McpAppToolInfoInput.Type;
 
 export const McpAppToolInfo = Schema.Struct({
   callable: Schema.Boolean,
+  /** Calls run without T3's approval prompt. */
   readOnly: Schema.Boolean,
   title: Schema.optional(Schema.String),
   tool: Schema.optional(Schema.Unknown),

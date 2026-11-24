@@ -164,6 +164,13 @@ export function mcpAppToolCallableByApp(meta: unknown): boolean {
   return !Array.isArray(visibility) || visibility.includes("app");
 }
 
+/** App-only tools are an app's own plumbing, such as saving its view state; the model cannot call them. */
+export function mcpAppToolIsAppOnly(meta: unknown): boolean {
+  const visibility =
+    Predicate.isObject(meta) && Predicate.isObject(meta.ui) ? meta.ui.visibility : undefined;
+  return Array.isArray(visibility) && visibility.includes("app") && !visibility.includes("model");
+}
+
 /** Block undeclared origins, including self, which would expose T3's API. */
 export function mcpAppContentSecurityPolicy(csp: McpAppCsp | undefined): string {
   const resources = csp?.resourceDomains?.join(" ") ?? "";

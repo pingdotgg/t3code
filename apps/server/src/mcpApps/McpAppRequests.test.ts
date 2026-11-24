@@ -134,6 +134,7 @@ const reason = <A, R>(effect: Effect.Effect<A, McpAppRequestError, R>) =>
   );
 
 describe("McpAppRequests", () => {
+  const appOnly = { ui: { visibility: ["app"] } };
   const calls: Array<{ server: string; tool: string }> = [];
   const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
     listTools: () =>
@@ -144,6 +145,20 @@ describe("McpAppRequests", () => {
           inputSchema: { type: "object" },
           _meta: { ui: { visibility: ["model"] } },
         },
+        { name: "save_view_state", inputSchema: { type: "object" }, _meta: appOnly },
+        {
+          name: "delete_view",
+          inputSchema: { type: "object" },
+          _meta: appOnly,
+          annotations: { destructiveHint: true },
+        },
+        {
+          name: "ruled_view_state",
+          inputSchema: { type: "object" },
+          _meta: appOnly,
+          requiresApproval: true,
+        },
+        { name: "send_email", inputSchema: { type: "object" } },
       ]),
     callTool: (input) =>
       Effect.sync(() => {
@@ -173,6 +188,20 @@ describe("McpAppRequests", () => {
           annotations: { readOnlyHint: true },
         },
       });
+    }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
+  );
+
+  it.effect("asks before app calls with side effects but not for app-only plumbing", () =>
+    Effect.gen(function* () {
+      const requests = yield* McpAppRequests.McpAppRequests;
+      const skipsApproval = (name: string) =>
+        requests.toolInfo({ threadId, itemId, name }).pipe(Effect.map((info) => info.readOnly));
+      assert.isTrue(yield* skipsApproval("save_view_state"));
+      assert.isFalse(yield* skipsApproval("delete_view"));
+      assert.isFalse(yield* skipsApproval("ruled_view_state"));
+      assert.isFalse(yield* skipsApproval("send_email"));
+      const ruled = yield* requests.toolInfo({ threadId, itemId, name: "ruled_view_state" });
+      assert.notProperty(ruled.tool, "requiresApproval");
     }).pipe(Effect.provide(makeLayer({ item: appItem({ t3McpApp: app }), mcpApps }))),
   );
 
