@@ -178,6 +178,26 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+// Fork: the effort picker keeps only options a model describes, so it would drop the `auto`
+// option of a task scheduled from an Auto thread and pin the task off Auto.
+describe("editing an Auto-routed scheduled task", () => {
+  it("opens the task on its Auto level", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const draft = taskToDraft({
+      ...legacyTask,
+      modelSelection: {
+        instanceId,
+        model: "claude-opus-5-5",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "auto", value: "medium" },
+        ],
+      },
+    });
+    expect(draft.modelSelection).toEqual({ instanceId, model: "auto-medium" });
+  });
+});
+
 describe("fixed-time scheduled tasks", () => {
   it("pads a stored single-digit hour so the time input shows it", () => {
     const draft = taskToDraft({

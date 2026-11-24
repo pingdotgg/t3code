@@ -24,6 +24,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { autoLevelSelection } from "@t3tools/shared/autoModel";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
 
@@ -342,7 +343,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       task.workspaceStrategy.type === "existing_worktree"
         ? task.workspaceStrategy.worktreePath
         : "",
-    modelSelection: task.modelSelection,
+    // An Auto-routed pick opens as its Auto level, as in the picker, so saving keeps it on Auto.
+    modelSelection: autoLevelSelection(task.modelSelection),
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
     ...(schedule.type === "webhook" && schedule.signature !== null
