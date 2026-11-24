@@ -483,7 +483,7 @@ function providerConstraints(
   return constraints;
 }
 
-/** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
+/** Older persisted selections or providers without descriptors can still hold options a model does not declare. */
 function knownOptions(
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
@@ -526,6 +526,26 @@ function invalidOptionSelections(
   }
   return problems;
 }
+
+/** Validate and normalize requested options against the model's advertised option descriptors. */
+export const validateModelOptions = (
+  provider: ServerProvider,
+  model: string,
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+): Effect.Effect<ReadonlyArray<ProviderOptionSelection> | undefined, OrchestratorMcpFailure> => {
+  const descriptors = advertisedModel(provider, model)?.capabilities?.optionDescriptors;
+  const normalized = withLegacyUltracodeEffort(descriptors, options);
+  if (normalized === undefined) return Effect.undefined;
+  const invalid = invalidOptionSelections(normalized, descriptors);
+  return invalid.length > 0
+    ? Effect.fail(
+        failure(
+          "invalid_request",
+          `Model ${model} on provider ${provider.instanceId} rejected options: ${invalid.join(" ")}`,
+        ),
+      )
+    : Effect.succeed(normalized);
+};
 
 function taskStatusForRun(
   run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork"> | undefined,
@@ -1784,16 +1804,7 @@ const make = Effect.gen(function* () {
     if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, model);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
-    const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
-    if (requestedOptions !== undefined) {
-      const invalid = invalidOptionSelections(requestedOptions, descriptors);
-      if (invalid.length > 0) {
-        return yield* failure(
-          "invalid_request",
-          `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
-        );
-      }
-    }
+    const requestedOptions = yield* validateModelOptions(provider, model, input.target?.options);
 
     const inheritsOptions =
       instanceId === inheritedSelection.instanceId &&
@@ -2700,7 +2711,6 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
-      yield* record("pending");
       // Only this call can hand the agent its ref, so the card must not
       // outlive it: a timeout, a failed wait or an aborted call closes it as
       // cancelled.
@@ -2710,54 +2720,57 @@ const make = Effect.gen(function* () {
         ),
       );
 
-      const answered = yield* Effect.gen(function* () {
-        while (true) {
-          const projection = yield* threadManagement
-            .getThreadRecords(threadId, ["runs", "turnItems"], {
-              turnItemTypes: ["secret_request"],
-              messageRoles: [],
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                failure(
-                  "orchestration_error",
-                  `Unable to read the secret request: ${errorMessage(error)}`,
+      const answered = yield* Effect.acquireUseRelease(
+        record("pending"),
+        () =>
+          Effect.gen(function* () {
+            while (true) {
+              const projection = yield* threadManagement
+                .getThreadRecords(threadId, ["runs", "turnItems"], {
+                  turnItemTypes: ["secret_request"],
+                  messageRoles: [],
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to read the secret request: ${errorMessage(error)}`,
+                    ),
+                  ),
+                );
+              const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
+              if (item?.type === "secret_request" && item.secretStatus !== "pending") {
+                return item.secretStatus;
+              }
+              const current = projection.runs.find((candidate) => candidate.id === runId);
+              if (
+                current === undefined ||
+                ThreadManagementService.isTerminalRunStatus(current.status)
+              ) {
+                yield* record("cancelled");
+                return "cancelled" as const;
+              }
+              // A steering restart replaced the run's root, so this request belonged to
+              // the superseded attempt: its card can never be answered into that attempt,
+              // and the call must stop blocking the agent's turn.
+              if (current.rootNodeId !== nodeId) {
+                yield* record("cancelled");
+                return "cancelled" as const;
+              }
+              yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
+            }
+          }).pipe(
+            Effect.timeoutOption(
+              Duration.millis(
+                Math.min(
+                  input.timeoutMs ?? DEFAULT_SECRET_REQUEST_TIMEOUT_MS,
+                  MAX_SECRET_REQUEST_TIMEOUT_MS,
                 ),
               ),
-            );
-          const item = projection.turnItems.find((candidate) => candidate.id === turnItemId);
-          if (item?.type === "secret_request" && item.secretStatus !== "pending") {
-            return item.secretStatus;
-          }
-          const current = projection.runs.find((candidate) => candidate.id === runId);
-          if (
-            current === undefined ||
-            ThreadManagementService.isTerminalRunStatus(current.status)
-          ) {
-            yield* record("cancelled");
-            return "cancelled" as const;
-          }
-          // A steering restart replaced the run's root, so this request belonged to
-          // the superseded attempt: its card can never be answered into that attempt,
-          // and the call must stop blocking the agent's turn.
-          if (current.rootNodeId !== nodeId) {
-            yield* record("cancelled");
-            return "cancelled" as const;
-          }
-          yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
-        }
-      }).pipe(
-        Effect.timeoutOption(
-          Duration.millis(
-            Math.min(
-              input.timeoutMs ?? DEFAULT_SECRET_REQUEST_TIMEOUT_MS,
-              MAX_SECRET_REQUEST_TIMEOUT_MS,
             ),
           ),
-        ),
-        Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
+        (_, exit) => (Exit.isSuccess(exit) && Option.isSome(exit.value) ? Effect.void : closeCard),
       );
-      if (Option.isNone(answered)) yield* closeCard;
       const status = Option.isSome(answered)
         ? answered.value
         : yield* threadManagement
@@ -2962,7 +2975,14 @@ const make = Effect.gen(function* () {
         input.interactionMode,
       );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
-      if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
+      if (
+        input.isolation === "worktree" &&
+        !isRetryOfAcceptedDelegation &&
+        (yield* threadLaunch.isNonGitProject(parent.thread.projectId))
+      ) {
+        // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
+        workspaceStrategy = { type: "worktree", baseRef: "HEAD" };
+      } else if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
         const base = yield* gitDriver
           .resolveCommit({

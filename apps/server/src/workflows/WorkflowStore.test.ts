@@ -2,31 +2,40 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import type * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(
-  use: Effect.Effect<A, E, WorkflowStore.WorkflowStore | MilestoneHub.MilestoneHub>,
+  use: Effect.Effect<
+    A,
+    E,
+    WorkflowStore.WorkflowStore | MilestoneHub.MilestoneHub | SqlClient.SqlClient
+  >,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-store-" });
     const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-    const migrated = Layer.effectDiscard(WorkflowsMigration);
+    const migrated = Layer.effectDiscard(
+      Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration),
+    );
     return yield* Effect.provide(
       use,
       WorkflowStore.layer.pipe(
         Layer.provideMerge(Layer.merge(migrated, MilestoneHub.layer)),
-        Layer.provide(database),
+        Layer.provideMerge(database),
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
@@ -116,6 +125,43 @@ it.effect("a key is taken by the first run started under it, whatever its versio
       }
       assert.isUndefined(yield* store.run("r2"));
       assert.equal((yield* store.runByKey("fix", "k"))?.run_id, "r1");
+    }),
+  ),
+);
+
+it.effect("lists of runs leave out what each run was started with", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const input = { payload: "x".repeat(20_000) };
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: "intake",
+        version: 1,
+        engineTag: "intake@1",
+        idempotencyKey: "k",
+        input,
+      });
+      const listed = [
+        ...(yield* store.runs(undefined)),
+        ...(yield* store.runs("running")),
+        ...(yield* store.runsWhere({ workflow: "intake" })),
+      ];
+      assert.deepStrictEqual(
+        listed.map((row) => [row.run_id, "input_json" in row]),
+        [
+          ["r1", false],
+          ["r1", false],
+          ["r1", false],
+        ],
+      );
+      const one = yield* store.run("r1");
+      assert.deepStrictEqual(
+        one?.input_json === null || one?.input_json === undefined
+          ? undefined
+          : WorkflowStore.jsonValue(one.input_json),
+        input,
+      );
     }),
   ),
 );
@@ -486,6 +532,163 @@ it.effect("tells the milestone hub of each run and question transition once", ()
           parentWorkflowRunId: null,
           ...news,
         })),
+      );
+    }),
+  ),
+);
+
+const started = (
+  store: WorkflowStore.WorkflowStore["Service"],
+  runId: string,
+  workflow = "intake",
+  parent?: WorkflowStore.RunParent,
+) =>
+  Effect.andThen(
+    TestClock.adjust("1 second"),
+    store.runStarted({
+      runId,
+      workflow,
+      version: 1,
+      engineTag: `${workflow}@1`,
+      idempotencyKey: runId,
+      input: { body: "a webhook payload" },
+      parent,
+    }),
+  );
+
+it.effect("a skipped top-level run drops the input it started with; other ends keep theirs", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* started(store, "skipped");
+      yield* started(store, "stopped");
+      yield* started(store, "child", "intake", { runId: "stopped", wait: "w" });
+      yield* store.runEnded("skipped", "skipped", "only a ping", null);
+      yield* store.runEnded("stopped", "stopped", "no need", null);
+      yield* store.runEnded("child", "skipped", "nothing to do", null);
+      const input = (runId: string) => Effect.map(store.run(runId), (run) => run?.input_json);
+      assert.isNull(yield* input("skipped"));
+      assert.isNotNull(yield* input("stopped"));
+      assert.isNotNull(yield* input("child"));
+    }),
+  ),
+);
+
+it.effect("keeps each workflow's latest skipped runs and deletes older ones with their steps", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const skipped = Effect.fnUntraced(function* (runId: string, workflow = "intake") {
+        yield* started(store, runId, workflow);
+        yield* store.stepStarted(runId, "look", "step");
+        yield* store.stepEnded(runId, "look", "completed", null);
+        yield* store.runEnded(runId, "skipped", "only a ping", null);
+        yield* store.enginePruned(runId);
+      });
+      for (const n of [1, 2, 3, 4]) yield* skipped(`old${n}`);
+      // Not deleted: it did something, its journal is still kept, or it invoked a run.
+      yield* started(store, "done");
+      yield* store.runEnded("done", "completed", null, null);
+      yield* store.enginePruned("done");
+      yield* started(store, "journaled");
+      yield* store.runEnded("journaled", "skipped", "only a ping", null);
+      yield* skipped("parent");
+      yield* started(store, "invoked", "intake", { runId: "parent", wait: "w" });
+      for (const n of [1, 2]) yield* skipped(`new${n}`);
+      yield* skipped("other", "sweep");
+
+      // A small batch leaves the rest to the next sweep.
+      assert.equal(yield* store.pruneSkipped(2, 3), 3);
+      assert.equal(yield* store.pruneSkipped(2, 100), 1);
+      assert.equal(yield* store.pruneSkipped(2, 100), 0);
+
+      const left = (yield* store.runs(undefined)).map((run) => run.run_id).toSorted();
+      assert.deepStrictEqual(left, [
+        "done",
+        "invoked",
+        "journaled",
+        "new1",
+        "new2",
+        "other",
+        "parent",
+      ]);
+      assert.deepStrictEqual(yield* store.steps("old1"), []);
+      assert.equal((yield* store.steps("new1")).length, 1);
+
+      // Keeping none deletes every skipped run the rules allow, in every workflow.
+      assert.equal(yield* store.pruneSkipped(0, 100), 3);
+      assert.deepStrictEqual((yield* store.runs(undefined)).map((run) => run.run_id).toSorted(), [
+        "done",
+        "invoked",
+        "journaled",
+        "parent",
+      ]);
+    }),
+  ),
+);
+
+it.effect("prunes past the kept number when runs share a start time, and tells watchers once", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      // A webhook burst: every run starts in the same instant.
+      for (const runId of ["a", "b", "c", "d"]) {
+        yield* store.runStarted({
+          runId,
+          workflow: "intake",
+          version: 1,
+          engineTag: "intake@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+        yield* store.runEnded(runId, "skipped", "only a ping", null);
+        yield* store.enginePruned(runId);
+      }
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          assert.equal(yield* store.pruneSkipped(2, 100), 2);
+          assert.equal(yield* PubSub.remaining(told), 1);
+          assert.equal(yield* store.pruneSkipped(2, 100), 0);
+          assert.equal(yield* PubSub.remaining(told), 1);
+        }),
+      );
+      assert.deepStrictEqual((yield* store.runs(undefined)).map((run) => run.run_id).toSorted(), [
+        "c",
+        "d",
+      ]);
+    }),
+  ),
+);
+
+it.effect("tells watchers of the deletions that committed when a later workflow's fails", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const sql = yield* SqlClient.SqlClient;
+      for (const [runId, workflow] of [
+        ["a1", "a"],
+        ["b1", "b"],
+      ] as const) {
+        yield* started(store, runId, workflow);
+        yield* store.runEnded(runId, "skipped", "only a ping", null);
+        yield* store.enginePruned(runId);
+      }
+      yield* sql`
+        CREATE TRIGGER refuse_b BEFORE DELETE ON workflow_runs WHEN OLD.workflow = 'b'
+        BEGIN SELECT RAISE(ABORT, 'refused'); END
+      `;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          const exit = yield* Effect.exit(store.pruneSkipped(0, 100));
+          assert.isTrue(Exit.isFailure(exit));
+          assert.equal(yield* PubSub.remaining(told), 1);
+        }),
+      );
+      assert.deepStrictEqual(
+        (yield* store.runs(undefined)).map((run) => run.run_id),
+        ["b1"],
       );
     }),
   ),

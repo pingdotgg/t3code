@@ -33,6 +33,12 @@ const startAnnotation = (): ShadowRoot => {
   // jsdom has no popover API.
   HTMLElement.prototype.showPopover ??= () => {};
   HTMLElement.prototype.hidePopover ??= () => {};
+  // jsdom has no adoptedStyleSheets.
+  for (const target of [Document.prototype, ShadowRoot.prototype]) {
+    if (!("adoptedStyleSheets" in target)) {
+      Object.defineProperty(target, "adoptedStyleSheets", { value: [], writable: true });
+    }
+  }
   using attachShadow = vi.spyOn(Element.prototype, "attachShadow");
   for (const listener of ipcListeners.get(START_PICK_CHANNEL) ?? []) listener({}, undefined, false);
   const shadowRoot = attachShadow.mock.results[0]?.value;
