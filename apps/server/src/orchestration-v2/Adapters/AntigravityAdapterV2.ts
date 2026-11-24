@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -106,6 +107,14 @@ export interface AntigravityAdapterV2Options {
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
 }
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+// agy refuses every prompt while an earlier one waits on a question or approval it never got.
+const isAntigravityPromptRefusedWhileWaiting = (error: unknown): boolean =>
+  isAcpRequestError(error) &&
+  error.method === "session/prompt" &&
+  error.errorMessage.includes("the running prompt is waiting for a permission or question answer");
 
 /**
  * Native subagent tools report no child session ids, so children stay read-only.
@@ -299,6 +308,7 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
+    promptRefusedWhileAgentWaits: isAntigravityPromptRefusedWhileWaiting,
     checksVersionAtHandshake: true,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",

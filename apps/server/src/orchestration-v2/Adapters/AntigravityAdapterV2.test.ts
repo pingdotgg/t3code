@@ -1332,6 +1332,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    /** The agent answers the first prompt with this error. */
+    readonly promptFailure?: EffectAcpErrors.AcpRequestError;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1406,6 +1408,9 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
               prompts.push({ prompt: payload.prompt, released: promptOptions?.released });
               if (promptOptions?.dispatched !== undefined) {
                 yield* Deferred.succeed(promptOptions.dispatched, undefined);
+              }
+              if (options?.promptFailure !== undefined && prompts.length === 1) {
+                return yield* options.promptFailure;
               }
               if (prompts.length > 1) {
                 yield* Deferred.succeed(steered, undefined);
@@ -2456,6 +2461,55 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
+  const refusal = (errorMessage: string) =>
+    new EffectAcpErrors.AcpRequestError({
+      code: -32603,
+      method: "session/prompt",
+      errorMessage,
+    });
+
+  it.effect.each([
+    {
+      name: "refused because an earlier prompt waits on an answer",
+      error: refusal(
+        "Can't add this prompt to session mock-session-1: the running prompt is waiting for a permission or question answer; answer it or send session/cancel, then send this prompt again",
+      ),
+      held: true,
+    },
+    { name: "failed for another reason", error: refusal("prompt failed"), held: false },
+  ])("lets Stop cancel the agent's prompt only when a prompt was $name", ({ error, held }) =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, undefined, {
+        promptFailure: error,
+      });
+      yield* opened.startTurn(1, false);
+      const seen = yield* opened.throughTerminal;
+      const terminal = seen.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+      const turn = seen.find((event) => event.type === "provider_turn.updated");
+      if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
+      const thread = seen.findLast((event) => event.type === "provider_thread.updated");
+      if (thread?.type !== "provider_thread.updated") return assert.fail("the thread must update");
+      // Background work keeps Stop on screen and routes it to this provider turn.
+      assert.deepEqual(
+        thread.providerThread.pendingBackgroundTasks?.map((task) => task.kind) ?? [],
+        held ? ["background_task"] : [],
+      );
+
+      const stop = opened.session.interruptTurn({
+        providerThread: thread.providerThread,
+        providerTurnId: turn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      yield* stop;
+      assert.equal(opened.cancels(), held ? 1 : 0);
+      yield* stop;
+      assert.equal(opened.cancels(), held ? 1 : 0, "a second Stop has nothing left to cancel");
+    }).pipe(Effect.provide(layerSession)),
   );
 });
 

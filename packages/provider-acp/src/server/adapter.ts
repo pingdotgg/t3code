@@ -735,6 +735,12 @@ export interface AcpAdapterV2Flavor {
   readonly restartRuntimeAfterInterrupt?: boolean;
   /** Prompt failures after which the agent process keeps failing until replaced. */
   readonly restartRuntimeAfterPromptError?: (error: unknown) => boolean;
+  /**
+   * A prompt the agent refused because an earlier prompt it still runs waits on an answer.
+   * The agent refuses every prompt until that one ends, and T3 no longer tracks it, so the
+   * thread shows it as background work and Stop sends session/cancel to end it.
+   */
+  readonly promptRefusedWhileAgentWaits?: (error: unknown) => boolean;
   readonly restartRuntimeOnEveryInterrupt?: boolean;
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
@@ -2315,6 +2321,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return created;
         };
         let pendingStopCloseTurn: ActiveAcpTurn | null = null;
+        // Native session whose agent refused a prompt while it still runs an untracked one.
+        let heldPromptSessionId: string | null = null;
         let followsAgentWorkState = false;
         let postSettleContinuationEnabled = false;
         let defersFinalizeForBackgroundWork = false;
@@ -8907,8 +8915,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: context.input.threadId,
             providerTurn: turn,
           });
+          if (settledStatus !== "failed" && heldPromptSessionId === context.nativeThreadId) {
+            heldPromptSessionId = null;
+          }
+          const heldPromptTaskId = `acp-held-prompt:${context.nativeThreadId}`;
+          const priorTasks = context.input.providerThread.pendingBackgroundTasks;
+          const heldPrompt =
+            settledStatus === "failed" && heldPromptSessionId === context.nativeThreadId;
           const updatedProviderThread: OrchestrationV2ProviderThread = {
             ...context.input.providerThread,
+            ...(heldPrompt || priorTasks?.some((task) => task.taskId === heldPromptTaskId)
+              ? {
+                  pendingBackgroundTasks: [
+                    ...(priorTasks ?? []).filter((task) => task.taskId !== heldPromptTaskId),
+                    ...(heldPrompt
+                      ? [
+                          {
+                            taskId: heldPromptTaskId,
+                            kind: "background_task" as const,
+                            description: "Earlier prompt still waiting on an answer",
+                          },
+                        ]
+                      : []),
+                  ],
+                }
+              : {}),
             providerSessionId: input.providerSessionId,
             status: threadDisposition === "broken" ? "error" : "active",
             lastRunOrdinal: context.input.runOrdinal,
@@ -9631,6 +9662,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
+                  if (!interrupted) {
+                    heldPromptSessionId =
+                      flavor.promptRefusedWhileAgentWaits?.(failure) === true
+                        ? context.nativeThreadId
+                        : null;
+                  }
                   // A resumed prompt stands in for an outcome failure, which always restarts.
                   if (
                     !interrupted &&
@@ -10758,6 +10795,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }
                       }
                       const context = interruptContext;
+                      if (
+                        context === null &&
+                        turnInput.requestRuntimeRestart === true &&
+                        heldPromptSessionId !== null &&
+                        heldPromptSessionId === (yield* Ref.get(activeSessionId))
+                      ) {
+                        heldPromptSessionId = null;
+                        yield* cancelPendingRuntimeRequests();
+                        // The agent ends a prompt it holds only on session/cancel.
+                        const cancelled = yield* restore(
+                          runtime.cancel.pipe(
+                            Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS),
+                            Effect.exit,
+                          ),
+                        );
+                        if (!Exit.isSuccess(cancelled) || Option.isNone(cancelled.value)) {
+                          yield* Ref.set(runtimeRestartRequired, true);
+                        }
+                        return undefined;
+                      }
                       if (context?.providerTurnId !== turnInput.providerTurnId) {
                         // Contain orphan runtimes on Stop; session-wide teardown must not touch another active turn.
                         const containOrphanRuntime =
