@@ -80,7 +80,7 @@ impl Connection {
         cursor: &str,
     ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
         let mut url = build_thread_history_url(&self.http_base_url, thread_id, cursor)?;
-        url.query_pairs_mut().append_pair("view", "conversation");
+        url.query_pairs_mut().append_pair("view", "messages");
         self.get_history_json(url).await
     }
 
