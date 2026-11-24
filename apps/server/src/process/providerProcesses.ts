@@ -127,7 +127,12 @@ const make = Effect.gen(function* () {
     hasOtherLiveOwner,
     register: (pid: number) => {
       const provider = identity(pid);
-      if (provider === undefined || provider.ppid !== process.pid) {
+      // On Linux the process launcher, itself a child of the server, forks piped commands.
+      const parent = provider && identity(provider.ppid);
+      if (
+        provider === undefined ||
+        (provider.ppid !== process.pid && parent?.ppid !== process.pid)
+      ) {
         throw new Error("Cannot identify spawned provider");
       }
       // A rename keeps startup from seeing a partial write. The child is gated
