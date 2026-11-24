@@ -1635,7 +1635,7 @@ export function PullRequestDetailPanel({
                     stackAutoMerge && can("enable-auto-merge") && allowedMergeMethods.length > 0
                   }
                   preferAutoMerge={checksState !== null && checksState !== "passing"}
-                  autoMergeArmed={autoMergeArmed}
+                  autoMergeArmed={stackAutoMerge && autoMergeArmed}
                   canCancelAutoMerge={stackAutoMerge && can("disable-auto-merge")}
                   onActed={() => {
                     refreshDetail();

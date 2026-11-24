@@ -186,7 +186,12 @@ export function PullRequestMergeControls(props: {
         ...(action !== "disable-auto-merge" && shownHeadSha
           ? { expectedHeadSha: shownHeadSha }
           : {}),
-        ...(action !== "merge" && stackAutoMerge && stack.stack
+        // A cancel needs no pinned heads, so it keeps the stack scope even while the stack refreshes.
+        ...(stack.stack &&
+        ((action === "enable-auto-merge" && stackAutoMerge) ||
+          (action === "disable-auto-merge" &&
+            stack.supportsStackActions &&
+            pr.capabilities.stackAutoMerge === true))
           ? { stackNumber: stack.stack.number }
           : {}),
         ...(action === "enable-auto-merge" && method && stackAutoMerge && scope
