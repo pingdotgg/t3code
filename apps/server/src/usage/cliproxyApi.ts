@@ -9,11 +9,20 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  Headers,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 import {
   GROK_USAGE_URL,
@@ -58,7 +67,13 @@ const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
 const AuthFileModels = Schema.Struct({
   models: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
-const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
+const ApiResponse = Schema.Struct({
+  status_code: Schema.Number,
+  body: Schema.String,
+  // The provider's response headers, each a list of values. Older hubs send none, and a header
+  // of another shape must not fail a response whose status and body are fine.
+  header: Schema.optional(Schema.Unknown),
+});
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
   reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -131,6 +146,34 @@ const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsa
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
+const refusalDetail = (status: number) => `The provider refused the hub request (HTTP ${status}).`;
+
+class HubUpstreamRefusal extends Schema.TaggedError<HubUpstreamRefusal>()("HubUpstreamRefusal", {
+  status: Schema.Number,
+  retryAtMs: Schema.optional(Schema.Number),
+}) {
+  override get message(): string {
+    return refusalDetail(this.status);
+  }
+}
+const isHubUpstreamRefusal = Schema.is(HubUpstreamRefusal);
+
+const RETRY_AFTER_DEFAULT_MS = 60_000;
+const RETRY_AFTER_MAX_MS = 60 * 60_000;
+
+function upstreamRetryAtMs(response: typeof ApiResponse.Type, now: number): number | undefined {
+  const values = Object.entries(Predicate.isObject(response.header) ? response.header : {}).find(
+    ([name]) => name.toLowerCase() === "retry-after",
+  )?.[1];
+  const value: unknown = Array.isArray(values) ? values[0] : values;
+  const retryAfter = Headers.parseRetryAfter(typeof value === "string" ? value : "");
+  const asked = Result.isSuccess(retryAfter)
+    ? Duration.toMillis(Headers.retryAfterDelay(retryAfter.success, now))
+    : 0;
+  const wait = asked > 0 ? asked : response.status_code === 429 ? RETRY_AFTER_DEFAULT_MS : 0;
+  return wait > 0 ? now + Math.min(wait, RETRY_AFTER_MAX_MS) : undefined;
+}
+
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
 const UNTRUSTED_CERTIFICATE_CODES = new Set([
   "DEPTH_ZERO_SELF_SIGNED_CERT",
@@ -198,11 +241,9 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 });
 
 type AuthFile = typeof AuthFile.Type;
+type HubCallError = UsageLimitSourceError | HubUpstreamRefusal | Schema.SchemaError;
 /** Sends one upstream request with the account's token, as GET or as a JSON POST of `data`. */
-type HubCall = (
-  url: string,
-  data?: unknown,
-) => Effect.Effect<string, UsageLimitSourceError | Schema.SchemaError>;
+type HubCall = (url: string, data?: unknown) => Effect.Effect<string, HubCallError>;
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
@@ -215,7 +256,7 @@ interface HubProvider {
     readonly account: AuthFile;
     readonly call: HubCall;
     readonly checkedAt: string;
-  }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError, Digest.Digest>;
+  }) => Effect.Effect<HubReading, HubCallError, Digest.Digest>;
 }
 
 const listedIdentity = (account: AuthFile) => ({
@@ -408,6 +449,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
 
+  const waits = new Map<string, { readonly until: number; readonly status: number }>();
+
   const management = Effect.fn("CliproxyApi.management")(function* (
     hub: CliproxyHub,
     path: string,
@@ -473,8 +516,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     });
     const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
-      return yield* new UsageLimitSourceError({
-        detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
+      const retryAtMs = upstreamRetryAtMs(response, DateTime.toEpochMillis(yield* DateTime.now));
+      return yield* new HubUpstreamRefusal({
+        status: response.status_code,
+        ...(retryAtMs === undefined ? {} : { retryAtMs }),
       });
     }
     return response.body;
@@ -486,21 +531,51 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    // The listed login is part of the key: an auth file can be given another account, which the
+    // provider has not told to wait.
+    const waitKey = [
+      hub.url,
+      account.auth_index,
+      account.email?.toLowerCase(),
+      account.id_token?.chatgpt_account_id,
+    ].join("\n");
+    // Checked before every request, so a read already under way also stops once another read of
+    // the same login is told to wait.
     const call: HubCall = (url, data) =>
-      apiCall(hub, account, provider.header(account, platform, architecture), url, data);
+      Effect.flatMap(DateTime.now, (now) => {
+        const wait = waits.get(waitKey);
+        if (wait && wait.until > DateTime.toEpochMillis(now)) {
+          return Effect.fail(
+            new HubUpstreamRefusal({ status: wait.status, retryAtMs: wait.until }),
+          );
+        }
+        waits.delete(waitKey);
+        return apiCall(hub, account, provider.header(account, platform, architecture), url, data);
+      });
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.catch((error) =>
-        Effect.succeed({
-          ...listedIdentity(account),
-          usageLimits: makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            // Source-error details are already credential-free (status codes only).
-            message: isUsageLimitSourceError(error)
-              ? error.detail
-              : "The hub could not read this account's usage.",
-          }),
+        Effect.sync(() => {
+          // Two sources may name one hub and answer out of order; neither shortens the wait.
+          if (
+            isHubUpstreamRefusal(error) &&
+            error.retryAtMs !== undefined &&
+            error.retryAtMs > (waits.get(waitKey)?.until ?? 0)
+          ) {
+            waits.set(waitKey, { until: error.retryAtMs, status: error.status });
+          }
+          return {
+            ...listedIdentity(account),
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              // Source-error details are already credential-free (status codes only).
+              message:
+                isUsageLimitSourceError(error) || isHubUpstreamRefusal(error)
+                  ? error.message
+                  : "The hub could not read this account's usage.",
+            }),
+          };
         }),
       ),
     );
@@ -599,7 +674,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
         isUsageLimitSourceError(error)
           ? error
           : new UsageLimitSourceError({
-              detail: "The hub returned an unexpected reset-credit response.",
+              detail: isHubUpstreamRefusal(error)
+                ? refusalDetail(error.status)
+                : "The hub returned an unexpected reset-credit response.",
             }),
       ),
     );

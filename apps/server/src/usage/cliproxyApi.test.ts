@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -58,7 +59,11 @@ function fixture(
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    upstream?: (request: RequestBody) => {
+      status: number;
+      body: unknown;
+      header?: unknown;
+    };
     cooldownStatus?: number;
     models?: (name: string) => Response;
   } = {},
@@ -117,7 +122,11 @@ function fixture(
       };
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        Response.json({
+          status_code: upstream.status,
+          ...(upstream.header ? { header: upstream.header } : {}),
+          body: encodeJson(upstream.body),
+        }),
       );
     }),
   );
@@ -365,6 +374,88 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(encodeJson(result)).not.toContain("do-not-publish");
+    }),
+  );
+
+  it.effect("sends a refused account no quota read until its Retry-After passes", () =>
+    Effect.gen(function* () {
+      let refused = true;
+      const test = fixture({
+        accounts: [
+          { id: "a.json", auth_index: "a", provider: "claude", email: "a@example.com" },
+          { id: "b.json", auth_index: "b", provider: "claude", email: "b@example.com" },
+        ],
+        upstream: (request) =>
+          refused && request.auth_index === "a"
+            ? { status: 429, header: { "Retry-After": ["89"] }, body: {} }
+            : // A header the hub sends in another shape must not cost a good reading.
+              {
+                status: 200,
+                header: [],
+                body: { five_hour: { utilization: 12, resets_at: null } },
+              },
+      });
+      const api = yield* test.api;
+      const read = Effect.gen(function* () {
+        const sent = test.requests.length;
+        const result = yield* api.readAccounts(config);
+        return {
+          unavailable: result.map((account) => account.usageLimits.unavailable?.message),
+          upstream: test.requests
+            .slice(sent)
+            .flatMap(({ body }) => body?.auth_index ?? [])
+            .toSorted(),
+        };
+      });
+      const refusal = "The provider refused the hub request (HTTP 429).";
+      expect(yield* read).toEqual({ unavailable: [refusal, undefined], upstream: ["a", "b"] });
+      refused = false;
+      yield* TestClock.adjust("88 seconds");
+      expect(yield* read).toEqual({ unavailable: [refusal, undefined], upstream: ["b"] });
+      yield* TestClock.adjust("1 second");
+      expect(yield* read).toEqual({ unavailable: [undefined, undefined], upstream: ["a", "b"] });
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "until an HTTP-date",
+      status: 429,
+      header: { "retry-after": ["Tue, 24 Nov 2026 09:02:00 GMT"] },
+      seconds: 120,
+    },
+    {
+      name: "until an asctime date, which is UTC",
+      status: 429,
+      header: { "Retry-After": ["Tue Nov 24 09:02:00 2026"] },
+      seconds: 120,
+    },
+    { name: "a minute after a 429 that names no wait", status: 429, seconds: 60 },
+    {
+      name: "at most an hour",
+      status: 503,
+      header: { "Retry-After": ["86400"] },
+      seconds: 3600,
+    },
+    { name: "not at all after a refusal that names no wait", status: 401, seconds: 0 },
+  ])("waits $name", ({ status, header, seconds }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-24T09:00:00.000Z"));
+      const test = fixture({
+        accounts: [{ id: "a.json", auth_index: "a", provider: "claude", email: "a@example.com" }],
+        upstream: () => ({ status, body: {}, ...(header ? { header } : {}) }),
+      });
+      const api = yield* test.api;
+      const quotaReads = Effect.gen(function* () {
+        const sent = test.requests.length;
+        yield* api.readAccounts(config);
+        return test.requests.slice(sent).filter((request) => request.body).length;
+      });
+      expect(yield* quotaReads).toBe(1);
+      yield* TestClock.adjust(Duration.seconds(Math.max(0, seconds - 1)));
+      expect(yield* quotaReads).toBe(seconds === 0 ? 1 : 0);
+      yield* TestClock.adjust("1 second");
+      expect(yield* quotaReads).toBe(1);
     }),
   );
 
