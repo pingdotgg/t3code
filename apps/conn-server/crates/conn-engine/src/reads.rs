@@ -12,6 +12,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::store::{Store, StoreResult};
 use crate::time::millis_from_iso;
+use crate::transcript::RowSink;
 
 /// `NEWEST_SETTLED_KEPT` in `ShellStream.ts`: the settled threads a bounded shell keeps.
 const NEWEST_SETTLED_KEPT: usize = 25;
@@ -696,7 +697,9 @@ impl Store {
                 continue;
             }
             let message = &hit["message"];
-            let text = link_labels(message["text"].as_str().unwrap_or_default());
+            let stored = message["text"].as_str().unwrap_or_default();
+            let readable = crate::store::readable_search_text(stored);
+            let text = link_labels(readable.as_deref().unwrap_or(stored));
             let Some(at) = search.accept(&text) else {
                 continue;
             };
@@ -713,8 +716,9 @@ impl Store {
         Ok(json!({"matches": matches}))
     }
 
-    /// In-thread find (`ThreadFind.ts`): occurrences of the query in the thread's user and
-    /// assistant messages and plans, in transcript order.
+    /// In-thread find (`ThreadFind.ts`): occurrences of the query in the shown text of the
+    /// user and assistant messages and plans of the thread's visible timeline, a run fork's
+    /// inherited rows first. Each row is counted as it is read.
     pub(crate) fn search_thread(&self, input: &Value) -> StoreResult<Value> {
         let thread_id = input["threadId"].as_str().unwrap_or_default();
         let needle = input["query"]
@@ -722,32 +726,14 @@ impl Store {
             .unwrap_or_default()
             .trim()
             .to_lowercase();
-        let mut items = self.query_json(
-            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
-             AND json_extract(body, '$.type') IN ('user_message', 'assistant_message', 'proposed_plan')
-             ORDER BY ordinal",
-            [thread_id],
-        )?;
-        items.retain(|item| item["status"] != "pending");
-        let documents: Vec<(Value, Value, u64)> = items
-            .iter()
-            .map(|item| {
-                let text = item["text"]
-                    .as_str()
-                    .or(item["markdown"].as_str())
-                    .unwrap_or("");
-                let entry = if item["type"] == "proposed_plan" {
-                    item["id"].clone()
-                } else {
-                    item["messageId"].clone()
-                };
-                (
-                    entry,
-                    item["runId"].clone(),
-                    count_occurrences(text, &needle),
-                )
-            })
-            .collect();
+        let mut found = FindCounts {
+            needle,
+            documents: Vec::new(),
+        };
+        if let Some((thread, _)) = self.live_thread(thread_id)? {
+            self.visible_rows(&thread, &mut found)?;
+        }
+        let documents = found.documents;
         let total: u64 = documents.iter().map(|d| d.2).sum();
         let mut requested = input["index"].as_u64().unwrap_or(0);
         if input.get("index").is_none()
@@ -809,6 +795,35 @@ impl Store {
             "navigation": navigation,
             "match": selected.map(|(entry, run, _)| json!({"entryId": entry, "runId": run, "occurrence": occurrence})),
         }))
+    }
+}
+
+/// The Find documents of a visible timeline, `(entry id, run id, occurrences)` in order.
+struct FindCounts {
+    needle: String,
+    documents: Vec<(Value, Value, u64)>,
+}
+
+impl RowSink for FindCounts {
+    fn has_room(&self, _bytes: u64) -> bool {
+        true
+    }
+
+    fn push(&mut self, _: &str, _: Value, _: Value, item: Value) -> Result<bool, String> {
+        let entry = match item["type"].as_str() {
+            Some("user_message" | "assistant_message") => &item["messageId"],
+            Some("proposed_plan") => &item["id"],
+            _ => return Ok(true),
+        };
+        if item["status"] != "pending" {
+            let count = crate::thread_find::segments(&item)
+                .iter()
+                .map(|segment| count_occurrences(segment, &self.needle))
+                .sum();
+            self.documents
+                .push((entry.clone(), item["runId"].clone(), count));
+        }
+        Ok(true)
     }
 }
 

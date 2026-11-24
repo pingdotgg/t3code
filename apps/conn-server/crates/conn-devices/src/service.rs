@@ -938,13 +938,19 @@ impl Devices {
             .collect()
     }
 
-    /// Closes every device session of a deleted thread, one at a time.
-    pub async fn cleanup_thread(&self, thread_id: &str) {
+    /// Closes every device session of a closed thread, one at a time. Each is tried whatever
+    /// the others did; the first failure comes back, so the caller tries again.
+    pub async fn cleanup_thread(&self, thread_id: &str) -> Result<(), DeviceError> {
+        let mut failed = None;
         for session in self.sessions_for_thread(thread_id) {
-            let _ = self
+            let closed = self
                 .close(&json!({ "threadId": thread_id, "hostId": session.host_id, "deviceId": session.device_id }))
                 .await;
+            if let Err(error) = closed {
+                failed.get_or_insert(error);
+            }
         }
+        failed.map_or(Ok(()), Err)
     }
 
     /// `agentTarget`: the agent-device flags that reach the device.
@@ -1539,6 +1545,25 @@ mod tests {
             matches!(started, Ok(Ok(Ok(false)))),
             "started agent tools after the disable: {started:?}"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A closed thread's device on an SSH host that is reconnecting cannot be released: the
+    /// cleanup says so, so the effect that asked tries again, and the session stays.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_thread_cleanup_reports_a_device_it_could_not_close() {
+        let (devices, _settings, dir) = devices_with_saved_host("cleanup", false);
+        devices.loaded().await;
+        devices.publish(|s| s.sessions.push(session("thread-1")));
+        let Err(error) = devices.cleanup_thread("thread-1").await else {
+            panic!("a device that stayed open was reported closed");
+        };
+        assert!(
+            error.message().contains("reconnecting"),
+            "{}",
+            error.message()
+        );
+        assert_eq!(devices.sessions_for_thread("thread-1").len(), 1);
         let _ = std::fs::remove_dir_all(dir);
     }
 

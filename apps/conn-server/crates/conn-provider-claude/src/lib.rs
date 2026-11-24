@@ -300,14 +300,15 @@ impl Provider for ClaudeProvider {
     }
 }
 
-/// `ClaudeProviderCapabilitiesV2`, with what this crate does not do switched off: handoff and
-/// context injection, queued messages, dynamic tool callbacks, nested checkpoint scopes.
+/// `ClaudeProviderCapabilitiesV2`, with what this crate does not do switched off: system,
+/// developer and summary context, queued messages, dynamic tool callbacks, nested checkpoint
+/// scopes. Provider switches carry the history inline (the engine's `provider_handoff.rs`).
 pub fn capabilities() -> Value {
     json!({
         "sessions": {
             "supportsMultipleProviderThreadsPerSession": false,
             "supportsModelSwitchInSession": true,
-            "supportsProviderSwitchingViaHandoff": false,
+            "supportsProviderSwitchingViaHandoff": true,
             "supportsRuntimeModeSwitchInSession": false,
             "pendingRequestsSurviveRestart": false,
         },
@@ -373,11 +374,11 @@ pub fn capabilities() -> Value {
         "context": {
             "acceptsSystemContext": false,
             "acceptsDeveloperContext": false,
-            "acceptsSyntheticUserContext": false,
+            "acceptsSyntheticUserContext": true,
             "canGenerateSummaries": false,
-            "canConsumeHandoffSummaries": false,
-            "supportsDeltaHandoff": false,
-            "supportsFullThreadHandoff": false,
+            "canConsumeHandoffSummaries": true,
+            "supportsDeltaHandoff": true,
+            "supportsFullThreadHandoff": true,
             "maxRecommendedHandoffChars": null,
         },
         "checkpointing": {

@@ -13,6 +13,7 @@ use conn_contract::{
     ThreadStreamItem, from_json, to_json,
 };
 use conn_provider::Provider;
+use conn_vcs::setup::MissingBase;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
@@ -48,6 +49,10 @@ pub struct EngineConfig {
     /// How long background work (a background subagent) may keep an idle session open past
     /// `idle_session`. Default 4 hours, as T3.
     pub idle_max_hold: Duration,
+    /// How long shutdown lets an admitted launch commit or clean up after it cancels the
+    /// launch's preparation. A launch still running then is left; the next start removes the
+    /// worktree it made. Default 10 seconds.
+    pub launch_grace: Duration,
     /// The server's services: agent tools, attachments, worktrees, thread close.
     pub host: Option<Arc<dyn crate::EngineHost>>,
     /// Generates thread titles. Without one, a new thread keeps the title the client sent.
@@ -69,15 +74,21 @@ pub struct EngineConfig {
     /// The zone a command time without one is read in, as V8 reads the host's zone once at
     /// start. Default: the system's.
     pub zone: jiff::tz::TimeZone,
-    /// Recover the runs and rollbacks a previous process left active at open
-    /// ([`SqliteEngine::recover_runs`]), as the T3 server does at start. Default on. The server
-    /// turns it off and recovers once `/mcp` listens. An inert rehearsal copy
-    /// (`CONN_SERVER_INERT`) never recovers: its runs stay as imported, so nothing continues or
-    /// touches a workspace the original still owns.
+    /// Recover the runs and rollbacks a previous process left active (`restart.rs`), as the
+    /// T3 server does at start. Default on. Off for an inert rehearsal copy
+    /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
+    /// workspace the original still owns. The server holds the effects they replay until
+    /// `/mcp` listens ([`Self::hold_effects`]).
     pub recover_runs: bool,
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
     pub attention: bool,
+    /// Effects wait in the outbox until [`SqliteEngine::start_effects`]: a server whose host
+    /// services start after the engine sets it, so an effect a restart replays finds them
+    /// ready (T3 starts its worker once its layers are built).
+    pub hold_effects: bool,
+    /// `continueThreadsAfterServerUpdate`, resolved per project by the server.
+    pub restart_policy: crate::RestartPolicy,
     /// Test hook: [`SqliteEngine::open`] stops before it takes the store's lease.
     #[cfg(test)]
     pub(crate) open_pause: Option<OpenPause>,
@@ -141,6 +152,7 @@ impl EngineConfig {
             provider_set: None,
             idle_session: Some(DEFAULT_IDLE_SESSION),
             idle_max_hold: Duration::from_secs(4 * 60 * 60),
+            launch_grace: Duration::from_secs(10),
             host: None,
             title_generator: None,
             turn_observer: None,
@@ -151,6 +163,8 @@ impl EngineConfig {
             zone: jiff::tz::TimeZone::system(),
             recover_runs: true,
             attention: false,
+            hold_effects: false,
+            restart_policy: crate::RestartPolicy::default(),
             #[cfg(test)]
             open_pause: None,
         }
@@ -163,6 +177,9 @@ pub struct SqliteEngine {
     /// lives, and a task that changes the workspace holds it too ([`Inner::store_lock`]).
     _lock: Arc<std::fs::File>,
 }
+
+/// T3's `maxAttempts` for an effect, here for the host's cleanup of a closed thread.
+const CLOSE_ATTEMPTS: u32 = 5;
 
 /// What a second open of a store that a live engine holds gets.
 pub const STORE_IN_USE: &str = "store in use: another engine has this database open";
@@ -242,6 +259,19 @@ impl Drop for SqliteEngine {
     }
 }
 
+/// What worktree cleanup reads in one pass ([`SqliteEngine::cleanup_threads`]): thread shell
+/// JSON as clients see it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CleanupThreads {
+    /// Live and archived threads, with the fields cleanup reads.
+    pub threads: Vec<Value>,
+    /// Deleted threads that had a worktree and a branch, with their project's
+    /// `workspaceRoot`.
+    pub deleted: Vec<Value>,
+    /// The live projects (`OrchestrationV2ProjectShell`).
+    pub projects: Vec<Value>,
+}
+
 impl std::fmt::Debug for SqliteEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteEngine").finish_non_exhaustive()
@@ -270,12 +300,16 @@ pub(crate) struct Inner {
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
     pub(crate) host: Option<Arc<dyn crate::EngineHost>>,
     pub(crate) idle_max_hold: Duration,
+    /// [`EngineConfig::launch_grace`].
+    launch_grace: Duration,
+    /// Threads whose launch is making a worktree now; shutdown cancels their setup.
+    preparing: Mutex<std::collections::HashSet<String>>,
     /// Live output of running commands for `subscribeCommandOutput`; bounded, never stored.
     pub(crate) command_output: crate::output::CommandOutputHub,
     /// Set when shutdown begins; no provider session opens after it.
     pub(crate) shutting_down: std::sync::atomic::AtomicBool,
     /// Git checkpoints per turn (`checkpoint.rs`); `None` when off.
-    pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
+    pub(crate) checkpoints: Option<Arc<crate::checkpoint::Checkpoints>>,
     /// [`EngineConfig::runtime_policy_override`].
     pub(crate) policy_override: Option<RuntimePolicyOverride>,
     /// [`EngineConfig::command_output_tap`].
@@ -288,6 +322,8 @@ pub(crate) struct Inner {
     pub(crate) effects_wake: Arc<tokio::sync::Notify>,
     /// The effect worker started ([`Inner::ensure_effect_worker`]).
     pub(crate) effect_worker: std::sync::atomic::AtomicBool,
+    /// [`EngineConfig::hold_effects`], until [`SqliteEngine::start_effects`].
+    pub(crate) effects_held: std::sync::atomic::AtomicBool,
     /// The [`SqliteEngine`] was dropped: the worker stops, and the store refuses its writes.
     pub(crate) engine_dropped: Arc<std::sync::atomic::AtomicBool>,
     /// The store's lock while the engine lives. A task that changes the workspace upgrades it
@@ -302,6 +338,20 @@ pub(crate) struct Inner {
     #[cfg(test)]
     pub(crate) worker_hooks: Mutex<crate::effect_worker::TestHooks>,
     thread_gates: crate::thread_locks::ThreadLocks,
+    /// Each running launch holds a read guard; shutdown takes the write side, so it waits
+    /// (up to `launch_grace`) for admitted launches to commit or remove what they made.
+    launches: tokio::sync::RwLock<()>,
+    /// Points where a test holds a launch (`SqliteEngine::test_pause_at`).
+    #[cfg(test)]
+    pub(crate) pauses: Mutex<HashMap<&'static str, Arc<TestPause>>>,
+}
+
+/// A launch held at a named point until the test resumes it.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestPause {
+    pub(crate) reached: tokio::sync::Notify,
+    pub(crate) resume: tokio::sync::Notify,
 }
 
 /// A delegated child's checkout, made before its command commits.
@@ -332,7 +382,8 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 
 impl SqliteEngine {
     /// Opens the store, adds the configured projects, and, with [`EngineConfig::recover_runs`],
-    /// recovers the runs a previous process left active ([`Self::recover_runs`]).
+    /// recovers every run a previous process left active (see `restart.rs`): a turn the
+    /// provider had continues in a new run.
     pub fn open(config: EngineConfig) -> Result<Self, String> {
         Self::open_unless(config, None)
     }
@@ -379,10 +430,20 @@ impl SqliteEngine {
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
-        // What the previous process left unsettled is cancelled; the recovery below decides
-        // again from the stored runs and rollbacks.
-        store.cancel_unsettled_effects()?;
+        // T3's `reconcileAfterProcessLoss`: what the previous process left unsettled is
+        // cancelled when it was process-bound and runs again when it is replay-safe. An inert
+        // copy cancels everything.
+        store.reconcile_after_process_loss(config.recover_runs)?;
         let effects_wake = store.effects_wake.clone();
+        let (unfinished, pending_rollbacks, orphaned) = if config.recover_runs {
+            (
+                store.unfinished_runs()?,
+                store.unsettled_rollbacks()?,
+                store.threads_with_live_native_subagents()?,
+            )
+        } else {
+            Default::default()
+        };
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(
@@ -391,6 +452,56 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
+        // A rollback a previous process left unsettled keeps its row, ahead of what the
+        // restart writes below, so it still runs before the thread's next turn.
+        for pending in &pending_rollbacks {
+            crate::rollback::recover_pending(
+                &mut tx,
+                &pending.thread_id,
+                &pending.command_id,
+                &pending.phase,
+                pending.snapshot.as_ref(),
+            )?;
+        }
+        // No provider process survives a restart: open native subagents never report an end.
+        for thread_id in &orphaned {
+            crate::families::end_orphaned_native_subagents(&mut tx, thread_id, "cancelled", None)?;
+        }
+        let mut effects = vec![];
+        // T3 holds the prompts queued in a thread the previous process left unfinished, also
+        // one whose only unfinished run is queued: the user decides when they go. Before any
+        // replayed effect runs, so a replayed capture cannot start one. A buffered provider
+        // notification is cancelled instead: its output went with the old process.
+        let mut held = std::collections::HashSet::new();
+        for (thread_id, _) in &unfinished {
+            if held.insert(thread_id.as_str()) {
+                commands::cancel_buffered_notifications(&mut tx, thread_id)?;
+                commands::hold_queue(&mut tx, thread_id)?;
+            }
+        }
+        for (thread_id, run) in unfinished
+            .iter()
+            .filter(|(_, run)| commands::is_active(run))
+        {
+            effects.extend(crate::restart::recover(
+                &mut tx,
+                thread_id,
+                run,
+                &config.restart_policy,
+            )?);
+        }
+        // `recoverDelegatedTasks`: once recovery decided which runs continue, a delegated
+        // child's tasks whose work ended with a cancelled run are published. So are those an
+        // orphaned native subagent held: it was just cancelled, though no run is unfinished.
+        let recovered: std::collections::BTreeSet<&str> = unfinished
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .chain(orphaned.iter().map(String::as_str))
+            .collect();
+        for thread_id in recovered {
+            effects.extend(crate::families::finalize_tasks(&mut tx, thread_id)?);
+        }
+        tx.enqueue(None, &effects)?;
         tx.commit(None)?;
         let notify = store.published.clone();
         let engine = Self {
@@ -410,21 +521,27 @@ impl SqliteEngine {
                 observer: config.turn_observer.clone(),
                 host: config.host.clone(),
                 idle_max_hold: config.idle_max_hold,
+                launch_grace: config.launch_grace,
+                preparing: Mutex::new(std::collections::HashSet::new()),
                 checkpoints: config
                     .checkpoints
-                    .then(crate::checkpoint::Checkpoints::default),
+                    .then(Arc::<crate::checkpoint::Checkpoints>::default),
                 policy_override: config.runtime_policy_override.clone(),
                 output_tap: config.command_output_tap.clone(),
                 clock: config.clock.clone(),
                 idle_session: config.idle_session,
                 effects_wake,
                 effect_worker: std::sync::atomic::AtomicBool::new(false),
+                effects_held: std::sync::atomic::AtomicBool::new(config.hold_effects),
                 engine_dropped,
                 store_lock: Arc::downgrade(&lock),
                 #[cfg(test)]
                 commit_pause: Mutex::new(None),
                 #[cfg(test)]
                 worker_hooks: Mutex::default(),
+                launches: tokio::sync::RwLock::new(()),
+                #[cfg(test)]
+                pauses: Mutex::new(HashMap::new()),
             }),
             _lock: lock,
         };
@@ -443,43 +560,8 @@ impl SqliteEngine {
                 }
             });
         }
-        if config.recover_runs {
-            engine.recover_runs()?;
-        }
         engine.inner.ensure_effect_worker();
         Ok(engine)
-    }
-
-    /// Recovers every run and rollback a previous process left active (see `restart.rs`): a
-    /// turn the provider had continues in a new run. Call it once, before clients reach the
-    /// engine, and once agents can reach `/mcp`: a resumed session keeps the tools it opens with.
-    pub fn recover_runs(&self) -> Result<(), String> {
-        let mut store = crate::lock(&self.inner.store);
-        let unfinished = store.unfinished_runs()?;
-        let pending_rollbacks = store.pending_rollbacks()?;
-        let mut tx = store.tx()?;
-        // A rollback a previous process left pending goes first: it was admitted before the
-        // restart, and its lane holds the thread's next turn until it ends.
-        let mut effects = vec![];
-        for pending in pending_rollbacks {
-            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
-        }
-        for (thread_id, run) in unfinished
-            .iter()
-            .filter(|(_, run)| commands::is_active(run))
-        {
-            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
-        }
-        tx.enqueue(None, &effects)?;
-        tx.commit(None)?;
-        drop(store);
-        // Continuations start on the caller's runtime.
-        if tokio::runtime::Handle::try_current().is_ok() {
-            self.inner.ensure_effect_worker();
-        } else if !effects.is_empty() {
-            eprintln!("conn-engine: no runtime, so restarted turns do not continue");
-        }
-        Ok(())
     }
 
     /// [`Self::open`] for a caller on the runtime: the store is opened, migrated and recovered
@@ -584,10 +666,86 @@ impl SqliteEngine {
             .collect()
     }
 
+    /// Starts the effect worker of an engine opened with [`EngineConfig::hold_effects`], on the
+    /// caller's runtime.
+    pub fn start_effects(&self) {
+        self.inner
+            .effects_held
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.inner.ensure_effect_worker();
+    }
+
     /// Raised after each commit that wrote an attention event; `None` when they are off
     /// ([`EngineConfig::attention`]).
     pub fn attention_signal(&self) -> Option<Arc<tokio::sync::Notify>> {
         self.inner.attention.clone()
+    }
+
+    /// Every live thread's stored worktree path, `(thread id, path)`, with the live projects:
+    /// what worktree cleanup reads again before a removal, without parsing every shell.
+    pub async fn worktree_bindings(&self) -> Result<(Vec<(String, String)>, Vec<Value>), String> {
+        self.inner
+            .db(|store| Ok((store.worktree_bindings()?, store.projects_snapshot()?)))
+            .await
+    }
+
+    /// The shells of `ids`, as [`CleanupThreads::threads`] holds them.
+    pub async fn cleanup_shells(&self, ids: Vec<String>) -> Result<Vec<Value>, String> {
+        self.inner.db(move |store| store.cleanup_shells(&ids)).await
+    }
+
+    /// The threads worktree cleanup weighs, with the live projects (see [`CleanupThreads`]).
+    pub async fn cleanup_threads(&self) -> Result<CleanupThreads, String> {
+        self.inner
+            .db(|store| {
+                let (threads, deleted) = store.cleanup_threads()?;
+                let projects = store.projects_snapshot()?;
+                Ok(CleanupThreads {
+                    threads,
+                    deleted,
+                    projects,
+                })
+            })
+            .await
+    }
+
+    /// The folders open provider sessions work in. A session can outlive its run, so a
+    /// worktree it works in is still in use (`ProviderSessionManager.isLive`).
+    pub async fn open_session_cwds(&self) -> Result<Vec<String>, String> {
+        let threads: Vec<String> = crate::lock(&self.inner.live).keys().cloned().collect();
+        // A session a fresh run moved aside still runs in its folder (T3 checks each provider
+        // session, `storageCleanup.ts`). Its folder comes from memory: archiving deletes the
+        // thread's session rows and closes only the current session.
+        let detached: Vec<String> = crate::lock(&self.inner.detached)
+            .iter()
+            .filter_map(|(_, live)| live.cwd.clone())
+            .collect();
+        if threads.is_empty() {
+            return Ok(detached);
+        }
+        self.inner
+            .db(move |store| {
+                let mut cwds = detached;
+                for thread in threads {
+                    let tx = store.tx()?;
+                    let sessions = tx.entities(&thread, "providerSessions");
+                    tx.rollback();
+                    cwds.extend(sessions?.into_iter().filter_map(|session| {
+                        (session["status"] != "stopped")
+                            .then(|| session["cwd"].as_str().map(str::to_owned))
+                            .flatten()
+                    }));
+                }
+                Ok(cwds)
+            })
+            .await
+    }
+
+    /// The per-checkout lease (T3's `withWorkspaceLease`): turn starts, checkpoint captures and
+    /// rollbacks take it, and so do terminal starts and worktree removal. `None` when
+    /// checkpoints are off.
+    pub fn workspace_locks(&self) -> Option<Arc<conn_vcs::locks::WorkspaceLocks>> {
+        self.inner.checkpoints.clone()
     }
 
     /// Now, by the engine's clock, in milliseconds since the epoch.
@@ -746,6 +904,7 @@ impl Inner {
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
+        let command = self.target_capabilities(command).await?;
         let (command, worktree) = match self.delegated_worktree(command).await {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -761,7 +920,10 @@ impl Inner {
         // value, with no copy of its body.
         if commit_gate.is_none() {
             let result = self.dispatch_claimed(command, guard, None).await;
-            if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
+            // A refusal or a replay keeps none of this attempt's copies.
+            if let (Err(_) | Ok((_, true)), Some(claimed), Some(host)) =
+                (&result, claimed, &self.host)
+            {
                 host.release_attachments(claimed).await;
             }
             self.settle_delegated_worktree(worktree, &result).await;
@@ -784,7 +946,8 @@ impl Inner {
                 _ => break result,
             }
         };
-        if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
+        if let (Err(_) | Ok((_, true)), Some(claimed), Some(host)) = (&result, claimed, &self.host)
+        {
             host.release_attachments(claimed).await;
         }
         self.settle_delegated_worktree(worktree, &result).await;
@@ -810,34 +973,38 @@ impl Inner {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let parent_run_id = command["parentRunId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let id = command_id.clone();
-        let (seen, root) = self
-            .db(move |store| -> Result<(bool, Option<String>), String> {
-                let seen = store.receipt(&id)?.is_some();
-                let tx = store.tx()?;
-                let root = match tx.thread(&parent_id) {
-                    Ok(Some(parent)) => parent["projectId"]
-                        .as_str()
-                        .map(|project| tx.project(project))
-                        .transpose()
-                        .map(|project| {
-                            project
-                                .flatten()
-                                .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned))
-                        }),
-                    Ok(None) => Ok(None),
-                    Err(e) => Err(e),
-                };
-                tx.rollback();
-                Ok((seen, root?))
-            })
+        let (seen, found) = self
+            .db(
+                move |store| -> Result<(bool, Option<ChildCheckout>), String> {
+                    let seen = store.receipt(&id)?.is_some();
+                    let tx = store.tx()?;
+                    let found = child_checkout(&tx, &parent_id, &parent_run_id);
+                    tx.rollback();
+                    Ok((seen, found?))
+                },
+            )
             .await
             .map_err(DispatchError::Internal)?;
         if seen {
             return Ok((command, None));
         }
-        // No parent or project: the handler refuses the command.
-        let Some(root) = root else {
+        // The handler's refusals that need no write are checked first, so a command it would
+        // refuse runs no setup script: no parent, project or running parent run, or no task.
+        // It checks them again when it commits.
+        let task_given = command["task"]
+            .as_str()
+            .is_some_and(|t| !t.trim().is_empty());
+        let Some(ChildCheckout {
+            project_id,
+            root,
+            link_origin,
+        }) = found.filter(|_| task_given)
+        else {
             return Ok((command, None));
         };
         let Some(host) = &self.host else {
@@ -850,10 +1017,13 @@ impl Inner {
         let made = host
             .provision_worktree(crate::WorktreeRequest {
                 thread_id: thread_id.clone(),
+                project_id: Some(project_id),
+                link_origin,
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
                 start_from_origin: strategy["startFromOrigin"] == true,
+                missing_base: MissingBase::Fail,
             })
             .await
             .map_err(DispatchError::Rejected)?;
@@ -886,8 +1056,15 @@ impl Inner {
                 Some(message.clone())
             }
         };
-        host.discard_worktree(made.thread_id, made.project_root, made.worktree, refused)
-            .await;
+        let (thread_id, path) = (made.thread_id.clone(), made.worktree.path.clone());
+        if let Err(error) = host
+            .discard_worktree(made.thread_id, made.project_root, made.worktree, refused)
+            .await
+        {
+            eprintln!(
+                "conn-engine: the worktree {path} that thread {thread_id} made stays: {error}"
+            );
+        }
     }
 
     /// `ProviderSwitchService.plan` for a model change on the thread's instance: the provider
@@ -997,6 +1174,45 @@ impl Inner {
         Ok(command)
     }
 
+    /// A message's run may switch providers; the handler checks that the run's instance takes
+    /// the history (`ensureContextHandoff`), as T3 asks `getCapabilities` of the target adapter.
+    async fn target_capabilities(&self, mut command: Value) -> Result<Value, DispatchError> {
+        if command["type"] != "message.dispatch" {
+            return Ok(command);
+        }
+        let instance = match command["modelSelection"]["instanceId"].as_str() {
+            Some(instance) => instance.to_owned(),
+            None => {
+                let tid = command["threadId"].as_str().unwrap_or_default().to_owned();
+                let instance = self
+                    .db(move |store| -> Result<Option<String>, String> {
+                        let tx = store.tx()?;
+                        let thread = tx.thread(&tid)?;
+                        tx.rollback();
+                        Ok(thread.and_then(|t| {
+                            t["modelSelection"]["instanceId"]
+                                .as_str()
+                                .map(str::to_owned)
+                        }))
+                    })
+                    .await
+                    .map_err(DispatchError::Internal)?;
+                // No thread: the handler refuses the command.
+                let Some(instance) = instance else {
+                    return Ok(command);
+                };
+                instance
+            }
+        };
+        // An instance this server does not serve fails at the turn start, as before.
+        if let Some(provider) = self.providers.resolve(&instance)
+            && let Ok(capabilities) = provider.capabilities().await
+        {
+            command["targetCapabilities"] = to_json(&capabilities);
+        }
+        Ok(command)
+    }
+
     /// A new message's pending uploads become the thread's files before the message is
     /// written (`AttachmentStore` claim). A retried command keeps what it claimed first.
     async fn claim_attachments(
@@ -1031,16 +1247,35 @@ impl Inner {
         } else {
             command["attachments"].take()
         };
+        let named: Vec<String> = attachments
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["id"].as_str().map(str::to_owned))
+            .collect();
         let claimed = host
             .claim_attachments(thread_id, attachments)
             .await
             .map_err(DispatchError::Rejected)?;
+        // Only the copies this claim made are released on a refusal. An attachment named by a
+        // stable id (already a thread's file) passed the claim unchanged and stays.
+        let made: Vec<Value> = claimed
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| {
+                a["id"]
+                    .as_str()
+                    .is_some_and(|id| !named.iter().any(|n| n == id))
+            })
+            .cloned()
+            .collect();
         if initial {
-            command["initialMessage"]["attachments"] = claimed.clone();
+            command["initialMessage"]["attachments"] = claimed;
         } else {
-            command["attachments"] = claimed.clone();
+            command["attachments"] = claimed;
         }
-        Ok((command, Some(claimed)))
+        Ok((command, (!made.is_empty()).then_some(Value::Array(made))))
     }
 
     async fn dispatch_claimed(
@@ -1068,6 +1303,8 @@ impl Inner {
             Some(crate::families::remote_complete as commands::Handler)
         } else if command_type == "delegated_task.remote.stop" {
             Some(crate::families::remote_stop as commands::Handler)
+        } else if command_type == "delegated_task.cancel" {
+            Some(crate::families::cancel_task as commands::Handler)
         } else if command_type == "thread.pull-request-watch.sync" {
             Some(commands::pull_request_watch_sync as commands::Handler)
         } else if command_type == "thread.pull-request-watch.checks-reopen" {
@@ -1116,6 +1353,12 @@ impl Inner {
                 if let Some(guard) = &guard
                     && let Err(error) = crate::guard::check(&tx, guard, &command)
                 {
+                    tx.rollback();
+                    return Err(error);
+                }
+                // A launch's admission, under the thread lock and before the decision: its
+                // refusal is not recorded, so the launch id stays usable.
+                if let Err(error) = commands::admit_launch(&tx, &command) {
                     tx.rollback();
                     return Err(error);
                 }
@@ -1210,7 +1453,9 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) {
+    /// Runs one effect. An error is the effect's own failure, which its row records; most
+    /// effects record their failures on the thread and return `Ok`.
+    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) -> Result<(), String> {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
             Effect::Rollback(request) => self.rollback(request).await,
@@ -1257,15 +1502,39 @@ impl Inner {
                 ) {
                     self.drop_kept_tools(|thread, _| thread == thread_id);
                 }
-                if let Some(host) = &self.host {
-                    host.thread_closed(&thread_id, reason);
-                }
+                return self.close_on_host(&thread_id, reason).await;
             }
             Effect::GenerateTitle {
                 thread_id,
                 request_id,
                 regenerate,
             } => self.generate_title(thread_id, request_id, regenerate).await,
+        }
+        Ok(())
+    }
+
+    /// The host's cleanup of a closed thread, tried again with T3's effect backoff (100 ms,
+    /// doubling) up to [`CLOSE_ATTEMPTS`] times (`maxAttempts`); the last error is the
+    /// effect's.
+    async fn close_on_host(
+        &self,
+        thread_id: &str,
+        reason: crate::ThreadClose,
+    ) -> Result<(), String> {
+        let Some(host) = &self.host else {
+            return Ok(());
+        };
+        let mut attempt = 1;
+        loop {
+            match host.thread_closed(thread_id, reason.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < CLOSE_ATTEMPTS => {
+                    eprintln!("conn-engine: closing {thread_id} on the host failed: {e}");
+                    tokio::time::sleep(Duration::from_millis(100 << (attempt - 1))).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -1290,7 +1559,8 @@ impl Inner {
         &self,
         thread_id: &str,
         input: &Value,
-    ) -> Result<crate::ProvisionedWorktree, (String, bool)> {
+        missing_base: MissingBase,
+    ) -> Result<DelegatedWorktree, (String, bool)> {
         let Some(host) = &self.host else {
             return Err(("This server cannot create worktrees.".into(), false));
         };
@@ -1306,23 +1576,114 @@ impl Inner {
             .map_err(|e| (e, true))?
             .ok_or_else(|| ("The project does not exist.".to_owned(), false))?;
         let strategy = &input["workspaceStrategy"];
-        host.provision_worktree(crate::WorktreeRequest {
+        // Shutdown cancels the setup of every thread listed here. One listed after shutdown
+        // began sees the flag instead; the setup starts in this same step, so no cancel falls
+        // between the two.
+        crate::lock(&self.preparing).insert(thread_id.to_owned());
+        let made = if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("The server is shutting down.".to_owned())
+        } else {
+            host.provision_worktree(crate::WorktreeRequest {
+                thread_id: thread_id.to_owned(),
+                project_id: Some(input["projectId"].as_str().unwrap_or_default().to_owned()),
+                // The origin `thread.create` stamps on the thread (`launch`).
+                link_origin: input.get("linkOrigin").filter(|o| o.is_object()).cloned(),
+                project_root: root.clone(),
+                base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
+                branch: strategy["branch"].as_str().map(str::to_owned),
+                start_from_origin: strategy["startFromOrigin"] == true,
+                missing_base,
+            })
+            .await
+        };
+        crate::lock(&self.preparing).remove(thread_id);
+        let worktree = made.map_err(|e| (e, false))?;
+        Ok(DelegatedWorktree {
             thread_id: thread_id.to_owned(),
             project_root: root,
-            base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
-            branch: strategy["branch"].as_str().map(str::to_owned),
-            start_from_origin: strategy["startFromOrigin"] == true,
+            worktree,
         })
-        .await
-        .map_err(|e| (e, false))
     }
 
-    async fn launch(self: &Arc<Self>, input: Value) -> Result<Value, (String, bool)> {
+    /// T3's `replayCommandReceipt`, before the launch makes anything: a receipt proves
+    /// execution only for the thread it was recorded against.
+    async fn refuse_receipt_for_other_thread(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+    ) -> Result<(), (String, bool)> {
+        let id = command_id.to_owned();
+        let receipt = self
+            .db(move |store| store.outcome(&id))
+            .await
+            .map_err(|e| (e, true))?;
+        let key = ReceiptKey {
+            command_id,
+            command_type: "",
+            owner: ReceiptOwner::Thread(thread_id),
+        };
+        match receipt {
+            Some(receipt) => replay(&key, receipt, false).map(drop).map_err(|e| match e {
+                CommandError::Rejected(message) => (message, false),
+                CommandError::Store(message) => (message, true),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    async fn launch(
+        self: &Arc<Self>,
+        input: Value,
+        missing_base: MissingBase,
+    ) -> Result<Value, (String, bool)> {
         let command_id = input["commandId"].as_str().unwrap_or_default().to_owned();
         let thread_id = input["threadId"]
             .as_str()
             .map_or_else(|| format!("thread:{command_id}"), str::to_owned);
+        let message_command_id = format!("{command_id}:initial-message");
+        // `assertProviderInstanceEnabled` before anything is made. It passes a launch already
+        // accepted, so a replay never depends on the provider's state now; an older build's
+        // reuse left only its message's receipt.
+        // The settings read behind `provider_instance_enabled` is blocking I/O: it runs with
+        // the receipt lookup, off the runtime thread.
+        let ids = (
+            command_id.clone(),
+            message_command_id.clone(),
+            thread_id.clone(),
+        );
+        let host = self.host.clone();
+        let target = (
+            input["projectId"].as_str().map(str::to_owned),
+            input["modelSelection"]["instanceId"]
+                .as_str()
+                .map(str::to_owned),
+        );
+        let disabled = self
+            .db(move |store| -> Result<Option<String>, String> {
+                let accepted = store.receipt(&ids.0)?.is_some()
+                    || store.accepted_first_message(&ids.1, &ids.2)?;
+                Ok(match (accepted, host, target) {
+                    (false, Some(host), (Some(project), Some(instance)))
+                        if !host.provider_instance_enabled(Some(&project), &instance) =>
+                    {
+                        Some(format!(
+                            "Provider instance \"{instance}\" is disabled for project {project}."
+                        ))
+                    }
+                    _ => None,
+                })
+            })
+            .await
+            .map_err(|e| (e, true))?;
+        if let Some(refusal) = disabled {
+            return Err((refusal, false));
+        }
+        // T3 reads the `:initial-message` receipt only when the claim needs a separate first
+        // message; its own dispatch replays it then.
+        self.refuse_receipt_for_other_thread(&command_id, &thread_id)
+            .await?;
         let strategy = &input["workspaceStrategy"];
+        let mut provisioned = None;
         let (branch, worktree_path) = match strategy["type"].as_str() {
             // `launchBranch`: a project-folder launch that names no branch records the
             // folder's checkout, as the composer does.
@@ -1346,8 +1707,12 @@ impl Inner {
                     // `thread.create` answers from its receipt; these values are not read.
                     (Value::Null, Value::Null)
                 } else {
-                    let made = self.provision_worktree(&thread_id, &input).await?;
-                    (json!(made.branch), json!(made.path))
+                    let made = self
+                        .provision_worktree(&thread_id, &input, missing_base)
+                        .await?;
+                    let values = (json!(made.worktree.branch), json!(made.worktree.path));
+                    provisioned = Some(made);
+                    values
                 }
             }
             other => {
@@ -1360,6 +1725,7 @@ impl Inner {
                 ));
             }
         };
+        let made_worktree = provisioned.is_some();
         let creation_source = input["creationSource"].as_str().unwrap_or("web").to_owned();
         // `ThreadLaunchService` records the launch's own actor (a scheduled task's creator).
         let created_by = input["createdBy"].as_str().unwrap_or("user").to_owned();
@@ -1367,15 +1733,70 @@ impl Inner {
             DispatchError::Rejected(message) => (message, false),
             DispatchError::Internal(message) => (message, true),
         };
-        let mut resumed = false;
-        if input["reuseExistingThread"] == true {
-            let id = thread_id.clone();
-            let exists = self
-                .db(move |store| store.thread_exists(&id))
+        let first_message = input
+            .get("initialMessage")
+            .filter(|m| m.is_object())
+            .map(|message| {
+                let mut first = json!({
+                    "messageId": message["messageId"].as_str().map_or_else(|| format!("message:{command_id}"), str::to_owned),
+                    "text": message["text"],
+                    "attachments": message["attachments"],
+                    "modelSelection": input["modelSelection"],
+                });
+                if let Some(task) = message["scheduledTaskId"].as_str() {
+                    first["scheduledTaskId"] = json!(task);
+                }
+                if message["context"].is_object() {
+                    first["context"] = message["context"].clone();
+                }
+                if input["generateTitle"] == true {
+                    first["titleSeed"] = input["title"].clone();
+                }
+                first
+            });
+        let reuse = input["reuseExistingThread"] == true;
+        let resumed;
+        let mut sequence = None;
+        // A new thread's claim carries its first message (`ThreadLaunchService`). A reused
+        // thread, or a replayed claim that carried none, takes it in a command of its own.
+        let mut separate_message = reuse;
+        if reuse {
+            let ids = (
+                command_id.clone(),
+                message_command_id.clone(),
+                thread_id.clone(),
+            );
+            let (claimed_before, sent_before) = self
+                .db(move |store| -> Result<(bool, bool), String> {
+                    // Only an accepted first message of this thread, with its run, is a send.
+                    let sent = store.accepted_first_message(&ids.1, &ids.2)?;
+                    Ok((store.receipt(&ids.0)?.is_some(), sent))
+                })
                 .await
                 .map_err(|e| (e, true))?;
-            if !exists {
-                return Err((format!("Thread {thread_id} does not exist."), false));
+            #[cfg(test)]
+            self.test_pause("launch.receipts-read").await;
+            if sent_before && !claimed_before {
+                // An older build sent a reused thread's first message without a claim.
+                resumed = true;
+            } else {
+                // `validateReusableThread` runs in the claim's own write, after its receipt
+                // check: an identical retry that finished first makes this one replay, and a
+                // thread archived or filled since is not claimed.
+                let claim = json!({
+                    "type": "thread.metadata.update",
+                    "commandId": command_id,
+                    "threadId": thread_id,
+                    "expectedEmpty": true,
+                    "reuseProjectId": input["projectId"],
+                    // The launch's checkout, as T3 records it on the reused thread.
+                    "branch": if branch.is_string() { branch.clone() } else { Value::Null },
+                    "worktreePath": worktree_path.clone(),
+                });
+                #[cfg(test)]
+                self.test_pause("launch.before-claim").await;
+                let (_, replayed) = self.dispatch_value(claim).await.map_err(to_err)?;
+                resumed = replayed;
             }
         } else {
             let mut create = json!({
@@ -1399,43 +1820,140 @@ impl Inner {
                     create["delegatedFrom"] = from.clone();
                 }
             }
-            let (_, replayed) = self.dispatch_value(create).await.map_err(to_err)?;
+            if let Some(first) = &first_message {
+                create["initialMessage"] = first.clone();
+            }
+            let created = self.dispatch_value(create).await;
+            // T3 removes a worktree that no thread recorded.
+            self.settle_delegated_worktree(provisioned, &created).await;
+            let (seq, replayed) = created.map_err(to_err)?;
+            if replayed {
+                // The id's receipt must be a launch's own `thread.create`, or its run is no
+                // launch's first message.
+                let id = command_id.clone();
+                let kind = self
+                    .db(move |store| store.outcome(&id))
+                    .await
+                    .map_err(|e| (e, true))?
+                    .map(|receipt| receipt.command_type)
+                    .unwrap_or_default();
+                if kind != "thread.create" {
+                    return Err((
+                        format!(
+                            "Command {command_id} was already handled as {kind} and cannot be replayed as a launch."
+                        ),
+                        false,
+                    ));
+                }
+            }
             resumed = replayed;
+            if first_message.is_some() {
+                sequence = Some(seq);
+                if replayed {
+                    // An older build wrote the first message as its own command; finish
+                    // that launch, or replay its message.
+                    let id = command_id.clone();
+                    separate_message = self
+                        .db(move |store| store.created_run_status(&id))
+                        .await
+                        .map_err(|e| (e, true))?
+                        .is_none();
+                }
+            }
         }
-        let mut sequence = None;
-        if let Some(message) = input.get("initialMessage").filter(|m| m.is_object()) {
-            let message_command = format!("{command_id}:initial-message");
-            let mut command = json!({
-                "type": "message.dispatch",
-                "commandId": message_command,
-                "threadId": thread_id,
-                "messageId": message["messageId"].as_str().map_or_else(|| format!("message:{command_id}"), str::to_owned),
-                "text": message["text"],
-                "attachments": message["attachments"],
-                "modelSelection": input["modelSelection"],
-                "dispatchMode": {"type": "start_immediately"},
-                "createdBy": created_by,
-                "creationSource": creation_source,
-            });
-            if let Some(task) = message["scheduledTaskId"].as_str() {
-                command["scheduledTaskId"] = json!(task);
+        // The claimed thread must be the launch's project before its first message is sent.
+        let id = thread_id.clone();
+        let claimed_project = self
+            .db(move |store| -> Result<Option<Value>, String> {
+                let tx = store.tx()?;
+                let thread = tx.thread(&id);
+                tx.rollback();
+                Ok(thread?.map(|t| t["projectId"].clone()))
+            })
+            .await
+            .map_err(|e| (e, true))?;
+        if claimed_project.as_ref() != Some(&input["projectId"]) {
+            return Err(("Project identity changed.".into(), false));
+        }
+        let mut resumed = resumed;
+        if let Some(mut command) = first_message.filter(|_| separate_message) {
+            command["type"] = json!("message.dispatch");
+            command["commandId"] = json!(message_command_id);
+            command["threadId"] = json!(thread_id);
+            command["dispatchMode"] = json!({"type": "start_immediately"});
+            command["createdBy"] = json!(created_by);
+            command["creationSource"] = json!(creation_source);
+            // The project check above, again in the message's own write.
+            command["launchProjectId"] = input["projectId"].clone();
+            if reuse {
+                command["reuseProjectId"] = input["projectId"].clone();
             }
-            if message["context"].is_object() {
-                command["context"] = message["context"].clone();
+            // The checkout the claim recorded, from the claim's own event: T3 carries the
+            // workspace with the accepted message.
+            // A message already accepted replays from its receipt and needs none.
+            let ids = (
+                command_id.clone(),
+                message_command_id.clone(),
+                thread_id.clone(),
+            );
+            let (checkout, sent) = self
+                .db(move |store| -> Result<(Option<Value>, bool), String> {
+                    Ok((
+                        store.claimed_checkout(&ids.0, &ids.2)?,
+                        store.accepted_first_message(&ids.1, &ids.2)?,
+                    ))
+                })
+                .await
+                .map_err(|e| (e, true))?;
+            match checkout {
+                Some(path) => command["launchCheckout"] = json!({"worktreePath": path}),
+                None if !sent => {
+                    return Err((
+                        "The launch's checkout cannot be recovered.".to_owned(),
+                        false,
+                    ));
+                }
+                None => {}
             }
-            if input["generateTitle"] == true {
-                command["titleSeed"] = input["title"].clone();
+            // T3 limits an agent's message to the modes it launched with: a thread a replay
+            // or another launch made with broader modes refuses it.
+            if created_by == "agent" {
+                command["modeLimit"] = json!({
+                    "runtimeMode": input["runtimeMode"],
+                    "interactionMode": input["interactionMode"],
+                });
             }
             let (seq, replayed) = self.dispatch_value(command).await.map_err(to_err)?;
+            let ids = (message_command_id.clone(), thread_id.clone());
+            let ran = self
+                .db(move |store| store.accepted_first_message(&ids.0, &ids.1))
+                .await
+                .map_err(|e| (e, true))?;
+            if !ran {
+                return Err((
+                    "Initial message was accepted without a durable run.".into(),
+                    false,
+                ));
+            }
             sequence = Some(seq);
             resumed = replayed;
         }
+        // The first run is handed off (or there is none): setup's agent stage is done.
+        if let (true, false, Some(host)) = (made_worktree, resumed, &self.host) {
+            host.launch_committed(&thread_id);
+        }
+        #[cfg(test)]
+        self.test_pause("launch.before-projection").await;
         let id = thread_id.clone();
         let projection = self
             .db(move |store| store.thread_projection(&id))
             .await
             .map_err(|e| (e, true))?
             .ok_or_else(|| (format!("Thread {thread_id} does not exist."), false))?;
+        // The answer is for the launch's project; a thread moved since is not its thread.
+        if projection["thread"]["projectId"] != input["projectId"] {
+            return Err(("Project identity changed.".into(), false));
+        }
         let mut result = json!({
             "threadId": thread_id,
             "projection": projection,
@@ -1446,6 +1964,42 @@ impl Inner {
         }
         Ok(result)
     }
+}
+
+/// What a `worktree` delegate's child checkout is made from.
+struct ChildCheckout {
+    project_id: String,
+    root: String,
+    /// The parent's `linkOrigin`, which the child thread inherits.
+    link_origin: Option<Value>,
+}
+
+/// The parent's project and origin, when the parent and its run are there and running.
+fn child_checkout(
+    tx: &Tx<'_>,
+    parent_id: &str,
+    parent_run_id: &str,
+) -> Result<Option<ChildCheckout>, String> {
+    let Some(parent) = tx.thread(parent_id)? else {
+        return Ok(None);
+    };
+    if !tx
+        .entity(parent_id, "runs", parent_run_id)?
+        .is_some_and(|run| commands::is_active(&run))
+    {
+        return Ok(None);
+    }
+    let Some(project_id) = parent["projectId"].as_str() else {
+        return Ok(None);
+    };
+    let root = tx
+        .project(project_id)?
+        .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned));
+    Ok(root.map(|root| ChildCheckout {
+        project_id: project_id.to_owned(),
+        root,
+        link_origin: parent.get("linkOrigin").filter(|o| o.is_object()).cloned(),
+    }))
 }
 
 /// A contract error the engine builds. When the contract no longer accepts its shape, the
@@ -1563,12 +2117,72 @@ fn projection_error(
 }
 
 impl Engine for SqliteEngine {
+    fn thread_worktree(
+        &self,
+        thread_id: &str,
+    ) -> BoxFuture<'_, Result<Option<crate::ThreadWorktree>, String>> {
+        let id = thread_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> StoreResult<Option<crate::ThreadWorktree>> {
+                    let tx = store.tx()?;
+                    let read = (|| {
+                        let Some(thread) = tx.thread(&id)? else {
+                            return Ok(None);
+                        };
+                        let Some(worktree_path) = thread["worktreePath"].as_str() else {
+                            return Ok(None);
+                        };
+                        let project_root = match thread["projectId"].as_str() {
+                            Some(project) => tx
+                                .project(project)?
+                                .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned)),
+                            None => None,
+                        };
+                        Ok(Some(crate::ThreadWorktree {
+                            worktree_path: worktree_path.to_owned(),
+                            branch: thread["branch"].as_str().map(str::to_owned),
+                            project_root,
+                        }))
+                    })();
+                    tx.rollback();
+                    read
+                })
+                .await
+        })
+    }
+
+    fn workspace_lease<'a>(
+        &'a self,
+        root: &'a str,
+    ) -> BoxFuture<'a, Option<conn_vcs::locks::WorkspaceLock<'a>>> {
+        Box::pin(async move {
+            match &self.inner.checkpoints {
+                Some(locks) => Some(locks.workspace(root).await),
+                None => None,
+            }
+        })
+    }
+
     fn provider_instance_enabled(&self, project_id: &str, instance_id: &str) -> bool {
         self.inner
             .host
             .as_ref()
             .is_none_or(|host| host.provider_instance_enabled(Some(project_id), instance_id))
     }
+    fn claim_settle_script<'a>(
+        &'a self,
+        thread_id: &'a str,
+        settled_at: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        let (thread_id, settled_at) = (thread_id.to_owned(), settled_at.to_owned());
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.claim_settle_script(&thread_id, &settled_at))
+                .await
+        })
+    }
+
     fn has_receipt<'a>(&'a self, command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         let command_id = command_id.to_owned();
         Box::pin(async move {
@@ -1640,6 +2254,31 @@ impl Engine for SqliteEngine {
                 .map(|_| ())
                 .map_err(|e| match e {
                     DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
+                })
+        })
+    }
+
+    fn cancel_delegated_task(
+        &self,
+        mut command: Value,
+    ) -> BoxFuture<'_, Result<(), EngineError<Value>>> {
+        Box::pin(async move {
+            command["type"] = json!("delegated_task.cancel");
+            self.inner
+                .dispatch_value(command)
+                .await
+                .map(|_| ())
+                .map_err(|e| match e {
+                    DispatchError::Rejected(message) => {
+                        let refusal = crate::families::MODE_REFUSALS.iter().find_map(|code| {
+                            let text = message.strip_prefix(code)?.strip_prefix(": ")?;
+                            Some(json!({"code": code, "message": text}))
+                        });
+                        EngineError::Rejected(
+                            refusal.unwrap_or_else(|| json!({"code": null, "message": message})),
+                        )
+                    }
+                    DispatchError::Internal(message) => EngineError::Internal(message),
                 })
         })
     }
@@ -1792,6 +2431,12 @@ impl Engine for SqliteEngine {
         ))
     }
 
+    fn subscribe_command_events(
+        &self,
+    ) -> BoxFuture<'_, Result<tokio::sync::mpsc::Receiver<(String, Value)>, String>> {
+        Box::pin(streams::subscribe_command_events(self.inner.clone()))
+    }
+
     fn subscribe_thread(
         &self,
         input: SubscribeThreadInput,
@@ -1808,44 +2453,46 @@ impl Engine for SqliteEngine {
         ))
     }
 
-    fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+    fn launch_thread_with(
+        &self,
+        input: Value,
+        missing_base: MissingBase,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         Box::pin(async move {
-            // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
-            // thread, so a refused launch leaves no thread behind.
+            // A failed settings load is retried before admission; the provider check runs in
+            // the launch's own write, so a replay still succeeds after the provider is off.
             if let Some(host) = &self.inner.host {
                 host.refresh_settings().await;
             }
-            if let Some(host) = &self.inner.host
-                && let (Some(project), Some(instance)) = (
-                    input["projectId"].as_str(),
-                    input["modelSelection"]["instanceId"].as_str(),
-                )
-                && !host.provider_instance_enabled(Some(project), instance)
-            {
-                return Err(EngineError::Rejected(json!({
-                    "_tag": "OrchestrationV2ThreadLaunchError",
-                    "commandId": input["commandId"],
-                    "projectId": input["projectId"],
-                    "message": format!(
-                        "Provider instance \"{instance}\" is disabled for project {project}."
-                    ),
-                })));
-            }
-            self.inner
-                .launch(input.clone())
-                .await
-                .map_err(|(message, internal)| {
-                    if internal {
-                        EngineError::Internal(message)
-                    } else {
-                        EngineError::Rejected(json!({
-                            "_tag": "OrchestrationV2ThreadLaunchError",
-                            "commandId": input["commandId"],
-                            "projectId": input["projectId"],
-                            "message": message,
-                        }))
-                    }
-                })
+            // The launch runs on its own task, as a worktree delegate's dispatch does: once it
+            // made a worktree or began a claim, a caller that goes away cannot skip its commit
+            // or its cleanup (T3 runs those parts uninterruptibly).
+            let inner = self.inner.clone();
+            let detached = input.clone();
+            tokio::spawn(async move {
+                let _admitted = inner.launches.read().await;
+                if inner
+                    .shutting_down
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Err(("The server is shutting down.".to_owned(), false));
+                }
+                inner.launch(detached, missing_base).await
+            })
+            .await
+            .unwrap_or_else(|e| Err((format!("launch ended: {e}"), true)))
+            .map_err(|(message, internal)| {
+                if internal {
+                    EngineError::Internal(message)
+                } else {
+                    EngineError::Rejected(json!({
+                        "_tag": "OrchestrationV2ThreadLaunchError",
+                        "commandId": input["commandId"],
+                        "projectId": input["projectId"],
+                        "message": message,
+                    }))
+                }
+            })
         })
     }
 
@@ -1871,7 +2518,31 @@ impl Engine for SqliteEngine {
     }
 
     fn shutdown(&self) -> BoxFuture<'_, ()> {
-        Box::pin(self.inner.close_all_sessions())
+        Box::pin(async move {
+            self.inner
+                .shutting_down
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            // No launch starts after the flag. Admitted ones get their worktree setup
+            // cancelled (conn-vcs removes what it made) and a grace to commit or clean up, as
+            // T3 closes its preparation scope. A worktree a crash leaves stays on disk, as
+            // with T3.
+            let preparing: Vec<String> =
+                crate::lock(&self.inner.preparing).iter().cloned().collect();
+            if let Some(host) = &self.inner.host {
+                for thread_id in &preparing {
+                    host.cancel_preparation(thread_id);
+                }
+            }
+            if tokio::time::timeout(self.inner.launch_grace, self.inner.launches.write())
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "conn-engine: a launch was still running when shutdown's grace ended; its worktree may stay"
+                );
+            }
+            self.inner.close_all_sessions().await;
+        })
     }
 
     fn begin_shutdown(&self) {
@@ -1976,6 +2647,35 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn thread_history_page(
+        &self,
+        thread_id: ThreadId,
+        cursor: String,
+        through_entry_id: Option<String>,
+        conversation_only: bool,
+    ) -> BoxFuture<'_, Result<crate::ThreadHistory, EngineError<GetThreadProjectionError>>> {
+        Box::pin(async move {
+            let Ok(cursor) = crate::history::decode_cursor(&cursor) else {
+                return Ok(crate::ThreadHistory::InvalidCursor);
+            };
+            self.inner
+                .db(move |store| {
+                    let high = store.high_water();
+                    Ok(store
+                        .history_page(
+                            thread_id.as_str(),
+                            high,
+                            &cursor,
+                            through_entry_id.as_deref(),
+                            conversation_only,
+                        )?
+                        .map_or(crate::ThreadHistory::NotFound, crate::ThreadHistory::Page))
+                })
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
     fn thread_snapshot(
         &self,
         thread_id: ThreadId,
@@ -1997,10 +2697,17 @@ impl Engine for SqliteEngine {
 /// The project and provider instance a command would start work on (T3's
 /// `assertDispatchTargetEnabled`), or `None` when it starts none or names no known thread.
 fn dispatch_target(
-    tx: &crate::store::Tx<'_>,
+    tx: &Tx<'_>,
     command: &Value,
 ) -> crate::store::StoreResult<Option<(Option<String>, String)>> {
     let text = |v: &Value| v.as_str().map(str::to_owned);
+    // A launch's thread and first message: the run starts in this commit, on the project the
+    // command names (the thread does not exist yet).
+    if command["type"] == "thread.create" && command["initialMessage"].is_object() {
+        let instance = text(&command["initialMessage"]["modelSelection"]["instanceId"])
+            .or_else(|| text(&command["modelSelection"]["instanceId"]));
+        return Ok(instance.map(|instance| (text(&command["projectId"]), instance)));
+    }
     let thread_id = match command["type"].as_str().unwrap_or("") {
         "delegated_task.request" => &command["parentThreadId"],
         "thread.metadata.update" if command.get("continuation").is_none() => return Ok(None),
@@ -2061,12 +2768,30 @@ impl Inner {
     pub(crate) fn live_count(&self) -> usize {
         crate::lock(&self.live).len()
     }
+
+    /// Holds the first launch or event pump that reaches `point` until the test resumes it.
+    pub(crate) async fn test_pause(&self, point: &'static str) {
+        let pause = crate::lock(&self.pauses).remove(point);
+        if let Some(pause) = pause {
+            pause.reached.notify_one();
+            pause.resume.notified().await;
+        }
+    }
 }
 
 #[cfg(test)]
 impl SqliteEngine {
     pub(crate) fn inner(&self) -> &Arc<Inner> {
         &self.inner
+    }
+
+    /// Holds the next launch or pump that reaches `point`: `launch.receipts-read`,
+    /// `launch.before-claim`, `launch.before-projection`, or `pump.event` (an event received,
+    /// not stored yet).
+    pub(crate) fn test_pause_at(&self, point: &'static str) -> Arc<TestPause> {
+        let pause = Arc::new(TestPause::default());
+        crate::lock(&self.inner.pauses).insert(point, pause.clone());
+        pause
     }
 }
 

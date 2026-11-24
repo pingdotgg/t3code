@@ -420,8 +420,9 @@ client send `omit*` shell flags and call methods we would then need.
   `event {sequence, event}` with a per-thread sequence. Clients always send
   `requestCompletionMarker` and `acceptDedupedBodies`, and send `acceptBoundedSnapshot`,
   `acceptDeferredWork`, `acceptCompactTurnItems`, `acceptCompactIds` whenever they have an HTTP
-  client, whatever the server advertises. All of these may be ignored: full bodies, plain ids,
-  no `idTable`, no history cursor. Without a history cursor the client never calls `/history`.
+  client, whatever the server advertises. `acceptBoundedSnapshot` is served: the newest window
+  and a `historyCursor`, which the client pages back through `/history`. The others may be
+  ignored: full bodies, plain ids, no `idTable`.
 - **Also emit `thread.updated` on the shell** as a turn runs, so the sidebar status moves.
 
 ### HTTP orchestration routes
@@ -432,15 +433,18 @@ client send `omit*` shell flags and call methods we would then need.
 is a plain 404, never `EnvironmentResourceNotFoundError`, which would make the client mark the
 thread deleted. `/transcript` is served as T3 serves it: the whole visible turn items, the
 same header and bearer, `thread_transcript_too_large` past `PROVIDER_SEND_TURN_MAX_FILE_BYTES`,
-and T3's structured `thread_not_found`. `/bounded` and `/history` are not routed; the client
-falls back to the socket.
+and T3's structured `thread_not_found`. `/history` is served for a bounded snapshot's cursor
+(T3's `invalid_history_cursor` and `thread_not_found`; no work folding). `/bounded` is not
+routed; the client falls back to the socket.
 
 ### Opt-in flags
 
 - **Thread stream:** the client sends `acceptBoundedSnapshot`, `acceptDeferredWork`,
   `acceptCompactTurnItems` and `acceptCompactIds` whenever it has an HTTP client and a history
   controller (`state/threads.ts`), whatever the server advertises. So it sends them to this
-  server too. The engine ignores them: full bodies, plain ids, never an `idTable`.
+  server too. The engine serves `acceptBoundedSnapshot`, `acceptDedupedBodies` and, outside a
+  bounded snapshot, `acceptCompactTurnItems`. It ignores the rest: no deferred work, plain ids,
+  never an `idTable`.
 - **Shell stream:** `omitIdleSubagents` and `omitOlderSettled` are sent only when the descriptor
   advertises `shellThreadFamilies` / `shellOlderSettled` (`state/shell.ts`). This server
   advertises both (`environment::capabilities`, the one place for capabilities), and the

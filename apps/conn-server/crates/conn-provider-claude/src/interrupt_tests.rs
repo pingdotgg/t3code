@@ -33,6 +33,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "input":
       log("input");
       fs.appendFileSync(LOG + ".inputs", `${JSON.stringify(cmd.message)}\n`);
+      // The turn completes, then the SDK refuses the steer that raced it.
+      if (JSON.stringify(cmd.message).includes("refuse after done")) {
+        write({ch:"sdk",t:"msg",...sessions.get(cmd.sessionId),m:{type:"result",subtype:"success",is_error:false,result:"done",duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{},modelUsage:{},session_id:cmd.message.session_id}});
+        setTimeout(() => write({ ch: "reply", id: cmd.id, ok: false, error: { message: "the turn ended" } }), 100);
+        break;
+      }
+      // A full prompt queue: the SDK refuses the message.
+      if (JSON.stringify(cmd.message).includes("refuse me")) {
+        write({ ch: "reply", id: cmd.id, ok: false, error: { message: "prompt queue is full" } });
+        break;
+      }
       reply(cmd.id, null);
       if (["workflow", "workflow-background"].includes(cmd.message.message.content)) {
         write({ch:"sdk", t:"msg", ...sessions.get(cmd.sessionId), m:{type:"system",subtype:"task_started",task_id:"wf1",tool_use_id:"run1",task_type:"local_workflow",workflow_name:"Review",description:"Review",prompt:"workflow()"}});
@@ -57,6 +68,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       }
       if (cmd.method === "initializationResult" && !HANG_INIT) reply(cmd.id, {});
       else if (cmd.method === "mcpServerStatus") reply(cmd.id, fs.existsSync(LOG + ".servers") ? JSON.parse(fs.readFileSync(LOG + ".servers","utf8")) : [{name:"weather",status:"connected",tools:[{name:"show",_meta:{ui:{resourceUri:"ui://weather"}},annotations:{readOnly:true}}]}]);
+      else if (cmd.method === "setMcpServers" && fs.existsSync(LOG + ".mcp")) reply(cmd.id, JSON.parse(fs.readFileSync(LOG + ".mcp","utf8")));
       else if (cmd.method === "listPermissionRules") reply(cmd.id, fs.existsSync(LOG + ".rules") ? JSON.parse(fs.readFileSync(LOG + ".rules","utf8")) : []);
       else if (cmd.method === "callMcpTool") reply(cmd.id, {content:[{type:"text",text:"sunny"}],_meta:{stub:true}});
       else if (cmd.method === "readMcpResource") reply(cmd.id, {contents:[{uri:cmd.args[1],mimeType:"text/html;profile=mcp-app",text:"<h1>Weather</h1>"}]});
@@ -359,6 +371,7 @@ async fn a_steer_during_a_cold_start_waits_for_the_query() {
                         attachments: vec![],
                     },
                     model_selection: None,
+                    app_context: vec![],
                 })
                 .await
         },
@@ -929,12 +942,167 @@ async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
     );
 
     // Compaction dropped it from the history, so it goes again.
+    set_frames(serde_json::json!([]));
     session
         .start_turn(with_note(4, "After compaction?"))
         .await
         .unwrap();
     assert!(last_input().to_string().contains("PROJ-42"));
+    let turn_id = running_turn_id(&mut events).await;
+
+    // A steer sends what the running turn has not offered, once (T3's steer path).
+    let steer = |text: &str, note: &str| conn_provider::SteerInput {
+        thread_id: "thread-live".into(),
+        run_id: "run-4".into(),
+        provider_thread: thread.clone(),
+        provider_turn_id: turn_id.as_str().into(),
+        message: conn_provider::TurnMessage {
+            created_by: conn_contract::OrchestrationV2Actor::User,
+            creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
+            message_id: format!("steer-{text}").as_str().into(),
+            text: text.into(),
+            attachments: vec![],
+        },
+        model_selection: None,
+        app_context: vec![conn_provider::AppContextEntry {
+            key: "mcp_app_item-1".into(),
+            text: note.into(),
+        }],
+    };
+    session
+        .steer_turn(steer("same", "Created Jira issue PROJ-42"))
+        .await
+        .unwrap();
+    assert_eq!(last_input()["message"]["content"], "same");
+    session
+        .steer_turn(steer("new", "Created Jira issue PROJ-44"))
+        .await
+        .unwrap();
+    assert!(last_input().to_string().contains("PROJ-44"));
+    session
+        .steer_turn(steer("again", "Created Jira issue PROJ-44"))
+        .await
+        .unwrap();
+    assert_eq!(last_input()["message"]["content"], "again");
+    // A steer the SDK refused offered nothing: its retry carries the note again.
+    assert!(
+        session
+            .steer_turn(steer("refuse me", "Created Jira issue PROJ-46"))
+            .await
+            .is_err()
+    );
+    session
+        .steer_turn(steer("retry", "Created Jira issue PROJ-46"))
+        .await
+        .unwrap();
+    assert!(
+        last_input().to_string().contains("PROJ-46"),
+        "{}",
+        last_input()
+    );
+
+    // Pass-4 gate finding 5: the app removed note 1. A steer that carries note 2 replaces the
+    // turn's offer with the app's notes, so note 1 coming back is sent again (T3's
+    // `commitOffer`).
+    let mut only_two = steer("drop one", "unused");
+    only_two.app_context = vec![conn_provider::AppContextEntry {
+        key: "mcp_app_item-2".into(),
+        text: "Opened PR #9".into(),
+    }];
+    session.steer_turn(only_two.clone()).await.unwrap();
+    assert!(last_input().to_string().contains("Opened PR #9"));
+    let mut both = steer("both", "Created Jira issue PROJ-46");
+    both.app_context.extend(only_two.app_context);
+    session.steer_turn(both).await.unwrap();
+    let sent = last_input().to_string();
+    assert!(
+        sent.contains("PROJ-46") && !sent.contains("Opened PR #9"),
+        "{sent}"
+    );
+
+    // Round-2 gate finding 6: the turn completes, then the SDK refuses a steer it raced. The
+    // refused note never reached Claude, so the next turn sends it.
+    assert!(
+        session
+            .steer_turn(steer("refuse after done", "Created Jira issue PROJ-47"))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        until(&mut events, is_terminal).await.last().unwrap()["status"],
+        "completed"
+    );
+    let mut next = with_note(5, "After the refusal?");
+    next.app_context[0].text = "Created Jira issue PROJ-47".into();
+    session.start_turn(next).await.unwrap();
+    assert!(
+        last_input().to_string().contains("PROJ-47"),
+        "{}",
+        last_input()
+    );
     session.close().await;
+}
+
+/// Claude reports `conn` unavailable at registration (a session resumed before `/mcp` was
+/// ready): the session asks the SDK to reconnect it once, and not again on later turns.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unavailable_conn_server_is_reconnected_once() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("mcp-reconnect");
+    let (helper, log) = fake_host(&scratch.0, true);
+    std::fs::write(
+        log.with_extension("log.mcp"),
+        r#"{"added":["conn"],"removed":[],"errors":{"conn":"connection refused"}}"#,
+    )
+    .unwrap();
+    // Each turn ends, so the second one reuses the query.
+    std::fs::write(
+        log.with_extension("log.frames"),
+        r#"[{"type":"result","subtype":"success","is_error":false,"result":"ok","duration_ms":1,"duration_api_ms":1,"num_turns":1,"total_cost_usd":0,"usage":{},"modelUsage":{}}]"#,
+    )
+    .unwrap();
+    let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let session = ClaudeSession::open(
+        "provider-session-reconnect".into(),
+        "claudeAgent",
+        no_home_config(),
+        helper.clone(),
+        tx,
+        vec![conn_provider::McpServer {
+            device_tools: false,
+            name: crate::launch::T3_MCP_SERVER.into(),
+            url: "http://127.0.0.1:9/mcp".into(),
+            headers: vec![],
+        }],
+        Default::default(),
+    );
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    for (n, text) in [(1, "one"), (2, "two")] {
+        session
+            .start_turn(turn(n, &thread, text, "full-access", &cwd))
+            .await
+            .unwrap();
+        until(&mut events, is_terminal).await;
+    }
+    let lines = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(lines.matches("open ").count(), 1, "{lines}");
+    let calls: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with("call ") && l.contains("Mcp"))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        calls,
+        ["call setMcpServers", "call reconnectMcpServer"],
+        "one registration, one reconnect, nothing on the reused query"
+    );
 }
 
 fn api_error() -> serde_json::Value {

@@ -42,7 +42,7 @@ pub(crate) fn boundary(runs: &[Value], user_items: &[Value]) -> u64 {
 }
 
 /// `providerThreadPredatesBoundary`.
-fn predates(provider_thread: &Value, boundary: u64) -> bool {
+pub(crate) fn predates(provider_thread: &Value, boundary: u64) -> bool {
     boundary > 0
         && provider_thread["firstRunOrdinal"]
             .as_u64()

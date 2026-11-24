@@ -503,7 +503,9 @@ if (!oldCommands || !newCommands || !handled) {
 // ---- HTTP routes -------------------------------------------------------------------------
 
 const ROUTES = "tools/upkeep/http-routes.json";
-const routeKey = (method, path) => `${method} ${path.replace(/\{\*[^}]+\}/g, ":*").replace(/\{([^}]+)\}/g, ":$1")}`;
+// axum writes `{*rest}` and `{id}`; HttpRouter.add writes a trailing `/*` and `:id`.
+const routeKey = (method, path) =>
+  `${method} ${path.replace(/\{\*[^}]+\}/g, ":*").replace(/\{([^}]+)\}/g, ":$1").replace(/\/\*$/, "/:*")}`;
 // Compare paths with every parameter name dropped.
 const routeShape = (key) => key.replace(/:\*|:\w+/g, ":");
 /** The argument text of each `.route(...)` call, matched by bracket depth. */
@@ -555,7 +557,17 @@ if (!newRoutes) {
   line(`## HTTP routes: no ${ROUTES} (gen-upstream did not run or failed)`);
 } else {
   const servedHttp = servedRoutes();
-  const isServed = (key) => servedHttp.has(routeShape(key));
+  // A `*` method (HttpRouter.add("*", ...)) counts as served when any method is.
+  // A trailing `/*` there matches any rest of the path, so any served route under it counts.
+  const servesOne = (key) => {
+    if (!key.endsWith("/:*")) return servedHttp.has(routeShape(key));
+    const prefix = routeShape(key).slice(0, -1);
+    return [...servedHttp].some((served) => served.startsWith(prefix));
+  };
+  const isServed = (key) =>
+    key.startsWith("* ")
+      ? ["GET", "POST", "PUT", "PATCH", "DELETE"].some((m) => servesOne(`${m}${key.slice(1)}`))
+      : servesOne(key);
   const mark = (key) => (isServed(key) ? `${key}*` : key);
   const unserved = newRoutes.filter((k) => !isServed(k));
   line(`## HTTP routes: ${oldRoutes?.length ?? "?"} → ${newRoutes.length} in the T3 server, ${newRoutes.length - unserved.length} served (* = served)`);

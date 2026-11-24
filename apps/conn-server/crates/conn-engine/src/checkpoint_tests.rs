@@ -435,6 +435,112 @@ async fn a_restart_finishes_a_run_left_waiting_for_its_checkpoint() {
     let p = projection(&engine, "t1").await;
     assert_eq!(p["runs"][0]["status"], "completed", "{}", p["runs"]);
     assert!(p["runs"][0]["checkpointId"].is_string(), "{}", p["runs"]);
+    // The #268 gate's probe: the waiting path also ends the previous process's sessions.
+    let sessions = p["providerSessions"].as_array().unwrap();
+    assert!(
+        sessions.iter().all(|s| s["status"] == "stopped"),
+        "{sessions:?}"
+    );
+}
+
+/// A parent thread in `repo` whose run hangs, with delegated child `d1` running `task`.
+async fn parent_with_child(db: &TempDb, repo: &Repo, task: &str) -> (SqliteEngine, String, String) {
+    let (engine, _) = open_repo(db, repo);
+    dispatch(&engine, create_in(repo, "t1", "c1")).await;
+    let mut parent = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut parent).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut parent).await;
+    dispatch(&engine, super::delegate("d1", task, Some("always"))).await;
+    let child = "thread:delegated-task:d1".to_owned();
+    let child_run = format!("run:{child}:1");
+    (engine, child, child_run)
+}
+
+fn parent_wakes(p: &Value) -> usize {
+    p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| {
+            m["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("Delegated task"))
+        })
+        .count()
+}
+
+/// The #268 gate's probe: a capture row an older build (#261) committed but did not settle has
+/// no mark. Run again after a reopen, it must not wake the parent a second time.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unmarked_capture_row_replayed_wakes_the_parent_once() {
+    let db = TempDb::new("capture-unmarked");
+    let repo = Repo::new("capture-unmarked");
+    {
+        let (engine, child, child_run) = parent_with_child(&db, &repo, "look").await;
+        super::run_to_end(&engine, &child, &child_run).await;
+        let p = until(&engine, |p| parent_wakes(p) > 0).await;
+        assert_eq!(parent_wakes(&p), 1);
+        let run = child_run.clone();
+        engine
+            .inner()
+            .db(move |store| {
+                store
+                    .raw()
+                    .execute(
+                        "UPDATE effect_outbox SET status = 'running', progress = NULL
+                         WHERE effect_type = 'checkpoint.capture'
+                           AND json_extract(payload, '$.runId') = ?1",
+                        [run],
+                    )
+                    .unwrap()
+            })
+            .await;
+    }
+    let (engine, _) = open_repo(&db, &repo);
+    super::settled_statuses(&db, "checkpoint.capture").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(parent_wakes(&projection(&engine, "t1").await), 1);
+}
+
+/// The #268 gate's probe: a delegated child whose project opted out of continuing ends at the
+/// restart, and its parent hears of it (T3 commits the family completion).
+#[tokio::test(flavor = "current_thread")]
+async fn an_opted_out_child_ends_for_its_parent_at_a_restart() {
+    let db = TempDb::new("child-opt-out");
+    let repo = Repo::new("child-opt-out");
+    {
+        let (engine, child, _) = parent_with_child(&db, &repo, "hang").await;
+        let mut stream = engine
+            .subscribe_thread(from_json(json!({"threadId": child})).unwrap())
+            .await
+            .unwrap();
+        next(&mut stream).await;
+        until_provider_turn(&mut stream).await;
+        super::settled_statuses(&db, "provider-turn.start").await;
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: repo.root(),
+    }];
+    config.providers = vec![provider];
+    config.checkpoints = true;
+    config.restart_policy = crate::RestartPolicy {
+        continue_by_default: false,
+        projects: Default::default(),
+    };
+    let engine = SqliteEngine::open(config).unwrap();
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["subagents"][0]["status"], "cancelled",
+        "{}",
+        p["subagents"]
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -491,8 +597,29 @@ async fn with_turns(
     thread: Value,
     texts: &[&str],
 ) -> (SqliteEngine, Arc<FakeProvider>) {
+    with_turns_on(
+        db,
+        repo,
+        provider,
+        thread,
+        texts,
+        Arc::new(crate::SystemClock),
+    )
+    .await
+}
+
+/// [`with_turns`] on a given clock, so a test can order timestamps.
+async fn with_turns_on(
+    db: &TempDb,
+    repo: &Repo,
+    provider: FakeProvider,
+    thread: Value,
+    texts: &[&str],
+    clock: Arc<dyn crate::Clock>,
+) -> (SqliteEngine, Arc<FakeProvider>) {
     let provider = Arc::new(provider);
     let mut config = EngineConfig::new(db.path());
+    config.clock = clock;
     config.projects = vec![ProjectConfig {
         title: "Project".into(),
         workspace_root: repo.root(),
@@ -668,6 +795,76 @@ async fn a_turn_sent_during_a_rollback_starts_after_it() {
         rolled_back < started,
         "the rollback commits before the next turn starts"
     );
+}
+
+/// The gate's probe: the rollback's result commit frees the thread's lane, so a queued turn
+/// may start at once. It must start from the rolled-back conversation, never the old head.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_queued_behind_a_rollback_starts_from_the_rolled_back_head() {
+    let db = TempDb::new("rollback-head");
+    let repo = Repo::new("rollback-head");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&engine.inner().worker_hooks).rollback_committed = Some((paused_tx, release_rx));
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), paused_rx)
+        .await
+        .expect("the rollback committed")
+        .unwrap();
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    until(&engine, |p| p["runs"][2]["status"] == "completed").await;
+    assert_eq!(
+        provider.heads.lock().unwrap().last().map(String::as_str),
+        Some("rolled-back:turn 1")
+    );
+    release_tx.send(()).unwrap();
+}
+
+/// The gate's probe: the write that records a rollback's failure fails once. The rollback's
+/// own result write settles its row `failed`, so it tries again and the client hears of the
+/// failure; the worker does not settle the row as if it had succeeded.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_rollback_result_write_is_written_again() {
+    let db = TempDb::new("rollback-result-fault");
+    let repo = Repo::new("rollback-result-fault");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_failing_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    crate::lock(&engine.inner().worker_hooks).rollback_result_faults = 1;
+    let p = projection(&engine, "t1").await;
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(p["thread"]["rollbackFailure"]["requestId"], "rb-1");
+    let status: String = engine
+        .inner()
+        .db(|store| {
+            store.raw().query_row(
+                "SELECT status FROM effect_outbox WHERE effect_type = 'provider-thread.rollback'",
+                [],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(status, "failed");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -964,6 +1161,97 @@ async fn a_failed_restore_leaves_the_live_session_on_its_thread() {
 /// `phase` is what the store then says: `admitted` (sent nothing), `provider` (sent it, no
 /// answer), `provider_done` (its answer kept). A restart finishes the first and the last, as
 /// T3 requeues the effect, and records a failure for the middle one.
+/// The #268 gate's probe: a child with a checkpoint scope that is interrupted (or cancelled)
+/// ends before its capture, which then finds it terminal. Its parent still hears of it, once.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_child_with_a_checkpoint_wakes_its_parent_once() {
+    let db = TempDb::new("child-interrupted-wake");
+    let repo = Repo::new("child-interrupted-wake");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &[],
+    )
+    .await;
+    let mut parent = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut parent).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut parent).await;
+    dispatch(&engine, super::delegate("d1", "hang", Some("always"))).await;
+    let child = "thread:delegated-task:d1";
+    let child_run = format!("run:{child}:1");
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": child})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    until_provider_turn(&mut stream).await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "i1", "threadId": child, "runId": child_run}),
+    )
+    .await;
+    let wakes = |p: &Value| {
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| {
+                m["text"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("Delegated task"))
+            })
+            .count()
+    };
+    let p = until(&engine, |p| wakes(p) > 0).await;
+    assert_eq!(wakes(&p), 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(wakes(&projection(&engine, "t1").await), 1);
+}
+
+/// The #269 gate's probe: the write that records a rollback's failure keeps failing, and
+/// another engine takes the store. The write stops trying: the new engine owns the row.
+#[tokio::test(flavor = "current_thread")]
+async fn a_rollback_failure_write_stops_once_another_engine_owns_the_store() {
+    let db = TempDb::new("rb-failure-owner");
+    let repo = Repo::new("rb-failure-owner");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_failing_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    crate::lock(&engine.inner().worker_hooks).rollback_result_faults = u32::MAX;
+    let p = projection(&engine, "t1").await;
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let faults = || crate::lock(&engine.inner().worker_hooks).rollback_result_faults;
+    for _ in 0..500 {
+        if faults() < u32::MAX {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(faults() < u32::MAX, "the failure write failed once");
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE meta SET value = value + 1 WHERE key = 'engine_epoch'",
+            [],
+        )
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let first = faults();
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert_eq!(faults(), first, "no failure write after the owner changed");
+}
+
 /// The round-3 gate's probe: an engine is replaced while its provider rollback is in flight.
 /// The new engine records the rollback as interrupted. The old engine, when the provider
 /// answers, is fenced: it must touch no file and delete no ref.
@@ -973,7 +1261,12 @@ async fn a_replaced_engine_s_rollback_touches_no_files() {
     let repo = Repo::new("rb-fenced-files");
     let pending = || -> Vec<String> {
         let conn = rusqlite::Connection::open(db.path()).unwrap();
-        let mut stmt = conn.prepare("SELECT phase FROM pending_rollbacks").unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(json_extract(progress, '$.phase'), 'admitted') FROM effect_outbox
+                 WHERE effect_type = 'provider-thread.rollback' AND status IN ('pending', 'running')",
+            )
+            .unwrap();
         stmt.query_map([], |row| row.get(0))
             .unwrap()
             .map(Result::unwrap)
@@ -1023,6 +1316,74 @@ async fn a_replaced_engine_s_rollback_touches_no_files() {
     assert!(repo.git(&["show-ref"]).contains(&stale), "refs untouched");
 }
 
+/// The #268 round-5 gate's probe: run A was interrupted with prompt B queued, and the store
+/// was copied after A ended but before its checkpoint capture committed. In a project that
+/// opted out of restart continuation, the replayed capture must not start B: it stays held.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replayed_capture_does_not_start_a_queued_prompt() {
+    let db = TempDb::new("capture-replay-queued");
+    let copy = TempDb::new("capture-replay-queued-copy");
+    let repo = Repo::new("capture-replay-queued");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &[],
+    )
+    .await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    let cwd = p["checkpointScopes"][0]["cwd"].as_str().unwrap().to_owned();
+    {
+        let _held = engine.test_hold_workspace(&cwd).await;
+        dispatch(
+            &engine,
+            json!({"type": "run.interrupt", "commandId": "c4", "threadId": "t1", "runId": "run:t1:1"}),
+        )
+        .await;
+        until(&engine, |p| p["runs"][0]["status"] == "interrupted").await;
+        assert_eq!(outbox_statuses(&db, "checkpoint.capture"), ["running"]);
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .execute("VACUUM INTO ?1", [copy.path().to_str().unwrap()])
+            .unwrap();
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(copy.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: repo.root(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.checkpoints = true;
+    config.restart_policy = crate::RestartPolicy {
+        continue_by_default: true,
+        projects: [(SqliteEngine::project_id_for(&repo.root()), false)].into(),
+    };
+    let restarted = SqliteEngine::open(config).unwrap();
+    assert_eq!(
+        settled_statuses(&copy, "checkpoint.capture").await,
+        ["succeeded"]
+    );
+    let p = projection(&restarted, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    assert_eq!(run_of(&p, "run:t1:2")["queueHeld"], true);
+    assert!(
+        crate::lock(&provider.calls)
+            .iter()
+            .all(|c| c != "start run:t1:2")
+    );
+}
+
 /// The round-5 gate's probe: an engine dropped while its rollback restores files keeps the
 /// store locked until the restore ends, so no replacement opens beside it.
 #[tokio::test(flavor = "current_thread")]
@@ -1066,7 +1427,11 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         let pending = || -> Vec<(String, String)> {
             let conn = rusqlite::Connection::open(db.path()).unwrap();
             let mut stmt = conn
-                .prepare("SELECT command_id, phase FROM pending_rollbacks")
+                .prepare(
+                    "SELECT command_id, COALESCE(json_extract(progress, '$.phase'), 'admitted')
+                     FROM effect_outbox WHERE effect_type = 'provider-thread.rollback'
+                       AND status IN ('pending', 'running')",
+                )
                 .unwrap();
             stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
                 .unwrap()
@@ -1095,7 +1460,9 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         };
         let conn = rusqlite::Connection::open(db.path()).unwrap();
         conn.execute(
-            "UPDATE pending_rollbacks SET phase = ?1, snapshot = ?2",
+            "UPDATE effect_outbox SET progress = CASE WHEN ?1 = 'admitted' THEN NULL
+               ELSE json_object('phase', ?1, 'snapshot', json(?2)) END
+             WHERE effect_type = 'provider-thread.rollback'",
             rusqlite::params![
                 phase,
                 (phase == "provider_done").then(|| provider_thread.to_string())
@@ -1110,6 +1477,28 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         })
         .await;
         assert!(pending().is_empty(), "{phase}: the row goes");
+        let (status, error): (String, Option<String>) = rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT status, last_error FROM effect_outbox
+                 WHERE effect_type = 'provider-thread.rollback'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        // An interrupted rollback stays on record as failed: a succeeded row is pruned.
+        if phase == "provider" {
+            assert_eq!(
+                (status.as_str(), error.as_deref()),
+                (
+                    "failed",
+                    Some(crate::rollback::ROLLBACK_INTERRUPTED_MESSAGE)
+                ),
+                "{phase}"
+            );
+        } else {
+            assert_eq!(status, "succeeded", "{phase}");
+        }
         let statuses: Vec<_> = p["runs"]
             .as_array()
             .unwrap()
@@ -1309,6 +1698,414 @@ async fn a_rollback_session_gets_the_runtime_policy_override() {
     let policies = provider.opened_policies.lock().unwrap().clone();
     assert_eq!(policies.len(), 1, "{policies:?}");
     assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
+}
+
+fn fork_to(command: &str, target: &str) -> Value {
+    let mut c = fork(command, json!({"type": "latest_stable"}));
+    c["targetThreadId"] = json!(target);
+    c
+}
+
+fn side_chat(command: &str, target: &str) -> Value {
+    let mut c = fork_to(command, target);
+    c["sideChat"] = json!(true);
+    c
+}
+
+/// T3 `Orchestrator.ts` `thread.delete` with `onlyIfUnused`: the clients close a side chat this
+/// way, and a side chat that holds a conversation stays. An unused one goes.
+#[tokio::test(flavor = "current_thread")]
+async fn closing_a_side_chat_keeps_it_once_used() {
+    let db = TempDb::new("side-chat-close");
+    let repo = Repo::new("side-chat-close");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, side_chat("f2", "t3")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t2", "m", "a real side conversation")).await;
+    until_run_ends(&mut stream).await;
+    for (id, target) in [("close", "t2"), ("close-unused", "t3")] {
+        dispatch(
+            &engine,
+            json!({"type":"thread.delete","commandId":id,"threadId":target,"onlyIfUnused":true}),
+        )
+        .await;
+    }
+    assert!(projection(&engine, "t2").await["thread"]["deletedAt"].is_null());
+    assert!(engine.get_thread_projection("t3".into()).await.is_err());
+
+    // A first send racing the close: whichever commits first decides, and an accepted send
+    // always keeps its chat.
+    dispatch(&engine, side_chat("f3", "t4")).await;
+    let send = engine.dispatch(from_json(message("t4", "race", "first words")).unwrap());
+    let close = engine.dispatch(
+        from_json(
+            json!({"type": "thread.delete", "commandId": "close-race", "threadId": "t4",
+            "onlyIfUnused": true}),
+        )
+        .unwrap(),
+    );
+    let (sent, closed) = tokio::join!(send, close);
+    assert!(closed.is_ok());
+    let kept = engine.get_thread_projection("t4".into()).await.is_ok();
+    assert_eq!(sent.is_ok(), kept, "an accepted send keeps the chat");
+}
+
+/// T3 `Orchestrator.ts` `thread.archive`/`unarchive`/`delete`: side chats live inside their
+/// parent. Archive takes the active ones, except one waiting on delegated tasks; unarchive
+/// restores only those it took; delete takes all.
+#[tokio::test(flavor = "current_thread")]
+async fn side_chats_follow_their_parent() {
+    let db = TempDb::new("side-chat-parent");
+    let repo = Repo::new("side-chat-parent");
+    let clock = Arc::new(crate::ManualClock::at(1_800_000_000_000));
+    let (engine, _) = with_turns_on(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+        clock.clone(),
+    )
+    .await;
+    let tick = || clock.advance(std::time::Duration::from_secs(1));
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, side_chat("f2", "t3")).await;
+    dispatch(&engine, fork_to("f3", "t4")).await;
+    // A side chat whose own turn waits on a running delegated task.
+    dispatch(&engine, side_chat("f5", "t5")).await;
+    dispatch(&engine, message("t5", "busy", "hang")).await;
+    let mut task = super::delegate("task", "hang", None);
+    task["parentThreadId"] = json!("t5");
+    task["parentRunId"] = json!("run:t5:1");
+    task["parentNodeId"] = json!("node:run:t5:1:root");
+    dispatch(&engine, task).await;
+    // A delegated child of the parent: not a side chat, so the cascade leaves it alone.
+    dispatch(&engine, message("t1", "busy-parent", "hang")).await;
+    let mut child_task = super::delegate("parent-task", "child work", None);
+    child_task["parentRunId"] = json!("run:t1:2");
+    child_task["parentNodeId"] = json!("node:run:t1:2:root");
+    dispatch(&engine, child_task).await;
+    let child = "thread:delegated-task:parent-task";
+    super::run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    // A client with the side chat open hears each transition.
+    let mut view = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut view).await;
+    let archive = |id: &str, thread: &str, kind: &str| json!({"type": kind, "commandId": id, "threadId": thread});
+    dispatch(&engine, archive("early", "t3", "thread.archive")).await;
+    tick();
+    dispatch(&engine, archive("archive", "t1", "thread.archive")).await;
+    let archived = |p: Value| p["thread"]["archivedAt"].is_string();
+    assert!(archived(projection(&engine, "t2").await));
+    until_event(&mut view, "thread.archived").await;
+    assert!(
+        !archived(projection(&engine, child).await),
+        "a delegated child stays"
+    );
+    assert!(
+        !archived(projection(&engine, "t4").await),
+        "a plain fork stays"
+    );
+    assert!(
+        !archived(projection(&engine, "t5").await),
+        "a side chat waiting on delegated tasks stays"
+    );
+    tick();
+    dispatch(&engine, archive("restore", "t1", "thread.unarchive")).await;
+    assert!(!archived(projection(&engine, "t2").await));
+    until_event(&mut view, "thread.unarchived").await;
+    assert!(
+        archived(projection(&engine, "t3").await),
+        "archived before its parent"
+    );
+    tick();
+    dispatch(&engine, archive("delete", "t1", "thread.delete")).await;
+    for gone in ["t1", "t2", "t3", "t5"] {
+        assert!(
+            engine.get_thread_projection(gone.into()).await.is_err(),
+            "{gone}"
+        );
+    }
+    until_event(&mut view, "thread.deleted").await;
+    assert!(projection(&engine, "t4").await["thread"]["deletedAt"].is_null());
+    assert!(projection(&engine, child).await["thread"]["deletedAt"].is_null());
+}
+
+/// Reads a thread view until an event of `kind` for that thread arrives.
+async fn until_event<T: serde::Serialize, E: serde::Serialize>(
+    view: &mut Subscription<T, E>,
+    kind: &str,
+) {
+    loop {
+        let item = next(view).await;
+        if item["kind"] == "event" && item["event"]["type"] == kind {
+            return;
+        }
+    }
+}
+
+/// T3 refuses to archive an archived thread (`Orchestrator.ts` "is already archived") before
+/// either thread changes, so a restore still brings the side chat back. Unarchiving a thread
+/// that is not archived is refused the same way.
+#[tokio::test(flavor = "current_thread")]
+async fn archiving_an_archived_parent_is_refused_and_restore_brings_its_side_chat_back() {
+    let db = TempDb::new("side-chat-archive-twice");
+    let repo = Repo::new("side-chat-archive-twice");
+    let clock = Arc::new(crate::ManualClock::at(1_800_000_000_000));
+    let (engine, _) = with_turns_on(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+        clock.clone(),
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    let command = |id: &str, kind: &str| json!({"type": kind, "commandId": id, "threadId": "t1"});
+    dispatch(&engine, command("a1", "thread.archive")).await;
+    clock.advance(std::time::Duration::from_secs(1));
+    let refusal = |result: Result<
+        _,
+        EngineError<conn_contract::OrchestrationV2DispatchCommandError>,
+    >| match result {
+        Err(EngineError::Rejected(e)) => to_json(&e).to_string(),
+        _ => panic!("expected a refusal"),
+    };
+    let again = engine
+        .dispatch(from_json(command("a2", "thread.archive")).unwrap())
+        .await;
+    assert!(refusal(again).contains("Thread t1 is already archived."));
+    dispatch(&engine, command("u1", "thread.unarchive")).await;
+    assert!(projection(&engine, "t2").await["thread"]["archivedAt"].is_null());
+    let again = engine
+        .dispatch(from_json(command("u2", "thread.unarchive")).unwrap())
+        .await;
+    assert!(refusal(again).contains("Thread t1 is not archived."));
+}
+
+/// T3's archive (`Orchestrator.ts` `thread.archive`): each archived thread, a side chat too,
+/// cancels its queued work and detaches its live provider session.
+#[tokio::test(flavor = "current_thread")]
+async fn archiving_ends_a_side_chats_queued_work_and_session() {
+    let db = TempDb::new("side-chat-archive-busy");
+    let repo = Repo::new("side-chat-archive-busy");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    let mut view = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut view).await;
+    dispatch(&engine, message("t2", "busy", "hang")).await;
+    until_event(&mut view, "provider-session.updated").await;
+    dispatch(&engine, message("t2", "later", "waits in the queue")).await;
+    let busy = projection(&engine, "t2").await;
+    assert_eq!(busy["runs"][1]["status"], "queued");
+    assert!(!busy["providerSessions"].as_array().unwrap().is_empty());
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "archive", "threadId": "t1"}),
+    )
+    .await;
+    let archived = projection(&engine, "t2").await;
+    assert!(archived["thread"]["archivedAt"].is_string());
+    assert_eq!(archived["runs"][1]["status"], "cancelled");
+    assert!(
+        archived["providerSessions"].as_array().unwrap().is_empty(),
+        "the live session is detached: {}",
+        archived["providerSessions"]
+    );
+}
+
+/// T3 refuses to archive a thread with running delegated tasks, before any side chat moves.
+#[tokio::test(flavor = "current_thread")]
+async fn a_parent_with_a_running_delegate_is_not_archived() {
+    let db = TempDb::new("side-chat-busy-parent");
+    let repo = Repo::new("side-chat-busy-parent");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, message("t1", "busy", "hang")).await;
+    let mut task = super::delegate("task", "hang", None);
+    task["parentRunId"] = json!("run:t1:2");
+    task["parentNodeId"] = json!("node:run:t1:2:root");
+    dispatch(&engine, task).await;
+    let refused = engine
+        .dispatch(
+            from_json(json!({"type": "thread.archive", "commandId": "archive", "threadId": "t1"}))
+                .unwrap(),
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string()
+            .contains("Thread t1 has running delegated tasks. Wait for them or cancel them before archiving.")),
+        "{refused:?}"
+    );
+    for thread in ["t1", "t2"] {
+        assert!(projection(&engine, thread).await["thread"]["archivedAt"].is_null());
+    }
+}
+
+/// The lease a terminal holds while it restores a worktree (`Engine::workspace_lease`) is the
+/// lock checkpoint capture and turn preparation take: a capture waits for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_workspace_lease_holds_off_checkpoint_capture() {
+    let db = TempDb::new("lease");
+    let repo = Repo::new("lease");
+    let (engine, _) = open_repo(&db, &repo);
+    let root = repo.root();
+    let lease = engine
+        .workspace_lease(&root)
+        .await
+        .expect("checkpoints take locks");
+    let waiting = tokio::time::timeout(
+        Duration::from_millis(200),
+        engine.test_hold_workspace(&root),
+    )
+    .await;
+    assert!(waiting.is_err(), "the capture lock waits for the lease");
+    drop(lease);
+    let _capture = tokio::time::timeout(Duration::from_secs(5), engine.test_hold_workspace(&root))
+        .await
+        .expect("the capture lock follows the lease");
+}
+
+/// Audit 1.5, T3's `decideForkExecution`: a fork whose first message goes to another
+/// provider cannot fork natively, so the history it inherits through its fork point travels
+/// as a full handoff (`portable_context`). Later source turns stay out. On the source's own
+/// provider the fork is native, and a target that cannot take a handoff is refused.
+#[tokio::test(flavor = "current_thread")]
+async fn a_fork_on_another_provider_carries_its_history() {
+    let engine_with = |db: &TempDb, repo: &Repo, codex: FakeProvider| {
+        let claude = Arc::new(FakeProvider::new("claudeAgent"));
+        let codex = Arc::new(codex);
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: repo.root(),
+        }];
+        config.providers = vec![claude.clone(), codex.clone()];
+        config.checkpoints = true;
+        (SqliteEngine::open(config).unwrap(), claude, codex)
+    };
+    async fn history(engine: &SqliteEngine) {
+        for (id, text, run) in [
+            ("c2", "remember the marker blue-17", "run:t1:1"),
+            ("c3", "a later turn green-9", "run:t1:2"),
+        ] {
+            dispatch(engine, message("t1", id, text)).await;
+            run_to_end(engine, "t1", run).await;
+        }
+        dispatch(
+            engine,
+            fork("f", json!({"type": "run", "runId": "run:t1:1"})),
+        )
+        .await;
+        dispatch(
+            engine,
+            json!({"type": "thread.model-selection.set", "threadId": "t2",
+                "commandId": "to-codex", "modelSelection": {"instanceId": "codex", "model": "m"}}),
+        )
+        .await;
+    }
+
+    let db = TempDb::new("fork-portable");
+    let repo = Repo::new("fork-portable");
+    let (engine, claude, codex) = engine_with(
+        &db,
+        &repo,
+        FakeProvider::new("codex").with_history_injection(),
+    );
+    dispatch(&engine, create_in(&repo, "t1", "c1")).await;
+    history(&engine).await;
+    dispatch(&engine, message("t2", "send", "continue")).await;
+    let p = run_to_end(&engine, "t2", "run:t2:1").await;
+    assert_eq!(p["runs"][0]["status"], "completed");
+    let injected = crate::lock(&codex.injected).clone();
+    assert_eq!(injected.len(), 1);
+    let received = injected[0].1.to_string();
+    assert!(received.contains("blue-17"), "{received}");
+    assert!(
+        !received.contains("green-9"),
+        "a later source turn: {received}"
+    );
+    assert_eq!(*crate::lock(&codex.prompts), ["continue"]);
+    let transfer = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["type"] == "fork")
+        .unwrap();
+    assert_eq!(transfer["status"], "consumed");
+    assert_eq!(transfer["resolution"]["strategy"], "portable_context");
+    assert_eq!(transfer["targetProviderInstanceId"], "codex");
+    assert!(crate::lock(&claude.forks).is_empty());
+
+    // On the source's own provider, a fork of a finished turn is native.
+    dispatch(
+        &engine,
+        json!({"type": "thread.fork", "commandId": "f-native", "sourceThreadId": "t1",
+            "targetThreadId": "t3", "sourcePoint": {"type": "run", "runId": "run:t1:2"},
+            "createdBy": "user", "creationSource": "web"}),
+    )
+    .await;
+    dispatch(&engine, message("t3", "go", "native")).await;
+    let p = run_to_end(&engine, "t3", "run:t3:1").await;
+    assert_eq!(p["runs"][0]["contextHandoffId"], Value::Null);
+    assert_eq!(crate::lock(&claude.forks).len(), 1);
+
+    // A target that cannot take a handoff refuses the send, and the fork keeps no run.
+    let db = TempDb::new("fork-unsupported");
+    let repo = Repo::new("fork-unsupported");
+    let (engine, _, _) = engine_with(
+        &db,
+        &repo,
+        FakeProvider::new("codex").without_context_handoff(),
+    );
+    dispatch(&engine, create_in(&repo, "t1", "c1")).await;
+    history(&engine).await;
+    let refused = engine
+        .dispatch(from_json(message("t2", "send", "continue")).unwrap())
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string()
+            .contains("codex cannot satisfy context_handoff for command send")),
+        "{refused:?}"
+    );
+    assert!(
+        projection(&engine, "t2").await["runs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// A thread in worktree `repo` that ran `first` there, then moved to a sibling worktree of the

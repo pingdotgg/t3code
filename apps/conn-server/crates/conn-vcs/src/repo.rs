@@ -42,9 +42,43 @@ pub(crate) async fn optional_text(command: GitCommand) -> VcsResult<Option<Strin
     }
 }
 
+/// `Path::is_dir` off the runtime thread: a stat can block on a slow or hung mount.
+async fn is_dir(path: &Path) -> bool {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || path.is_dir())
+        .await
+        .unwrap_or(false)
+}
+
+/// `isNonGitProject` for a folder: Git finds no work tree there, and no `.git` entry sits in
+/// it or a folder above it. A repository Git cannot read (a bad config, unreadable metadata)
+/// is not "no repository": Git calls an unreadable `.git` "not a git repository" too.
+///
+/// The walk follows the physical path, as Git's discovery does, up to and including the
+/// filesystem root. Only `NotFound` shows that a folder holds no `.git`.
+pub async fn is_plain_folder(cwd: &Path) -> bool {
+    if !matches!(crate::checkpoint::is_repository(cwd).await, Ok(false)) {
+        return false;
+    }
+    let cwd = cwd.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let Ok(physical) = std::fs::canonicalize(&cwd) else {
+            return false;
+        };
+        physical.ancestors().all(|dir| {
+            matches!(
+                std::fs::symlink_metadata(dir.join(".git")),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound
+            )
+        })
+    })
+    .await
+    .unwrap_or(false)
+}
+
 /// The work tree root, or `None` for a folder outside a repository (or a missing folder).
 pub async fn toplevel(cwd: &Path) -> VcsResult<Option<PathBuf>> {
-    if !cwd.is_dir() {
+    if !is_dir(cwd).await {
         return Ok(None);
     }
     let root = optional_text(
@@ -61,7 +95,7 @@ pub async fn toplevel(cwd: &Path) -> VcsResult<Option<PathBuf>> {
 
 /// The checked-out branch name, `None` when HEAD is detached or the folder is no checkout.
 pub async fn current_branch(cwd: &Path) -> VcsResult<Option<String>> {
-    if !cwd.is_dir() {
+    if !is_dir(cwd).await {
         return Ok(None);
     }
     let head = optional_text(
@@ -78,7 +112,7 @@ pub async fn current_branch(cwd: &Path) -> VcsResult<Option<String>> {
 
 /// The `HEAD` file of the checkout (for a linked worktree, inside its own git folder).
 pub async fn head_path(cwd: &Path) -> VcsResult<Option<PathBuf>> {
-    if !cwd.is_dir() {
+    if !is_dir(cwd).await {
         return Ok(None);
     }
     let path = optional_text(
@@ -117,7 +151,7 @@ pub async fn has_head_commit(cwd: &Path) -> VcsResult<bool> {
 /// `GitVcsDriver.resolveCommit`: the commit `revision` names in `cwd`, or `None` when it names
 /// none or `cwd` is no checkout.
 pub async fn resolve_commit(cwd: &Path, revision: &str) -> VcsResult<Option<String>> {
-    if !cwd.is_dir() {
+    if !is_dir(cwd).await {
         return Ok(None);
     }
     Ok(optional_text(
@@ -287,18 +321,27 @@ pub async fn primary_remote(cwd: &Path) -> VcsResult<Option<String>> {
 }
 
 /// The default branch of `remote` from `refs/remotes/<remote>/HEAD`, without the prefix.
+/// `None` when that HEAD names a tracking ref this clone does not have: unlike `symbolic-ref`,
+/// `rev-parse` refuses a dangling HEAD (`resolveDefaultBranchName`).
 pub async fn remote_default_branch(cwd: &Path, remote: &str) -> VcsResult<Option<String>> {
     let head = optional_text(git(
-        "GitVcsDriver.remoteDefaultBranch",
+        "GitVcsDriver.resolveDefaultBranchName",
         cwd,
         [
-            "symbolic-ref".to_owned(),
+            "rev-parse".to_owned(),
+            "--verify".to_owned(),
+            "--quiet".to_owned(),
+            "--symbolic-full-name".to_owned(),
             format!("refs/remotes/{remote}/HEAD"),
         ],
     ))
     .await?;
     let prefix = format!("refs/remotes/{remote}/");
-    Ok(head.and_then(|h| h.strip_prefix(&prefix).map(str::to_owned)))
+    Ok(head.and_then(|h| {
+        h.strip_prefix(&prefix)
+            .filter(|branch| !branch.is_empty() && *branch != "HEAD")
+            .map(str::to_owned)
+    }))
 }
 
 /// The remote names, the primary remote and its default branch: what the default-branch and
@@ -313,7 +356,7 @@ pub struct Remotes {
 }
 
 impl Remotes {
-    /// `git remote`, then `symbolic-ref` for the primary remote's HEAD when there is one: the
+    /// `git remote`, then `rev-parse` for the primary remote's HEAD when there is one: the
     /// same calls [`primary_remote`] and [`remote_default_branch`] make.
     pub async fn load(cwd: &Path) -> VcsResult<Self> {
         let names = remote_names(cwd).await?;
@@ -339,23 +382,17 @@ impl Remotes {
 pub async fn default_branch(cwd: &Path) -> VcsResult<Option<String>> {
     // Boxed: the nested git calls make a large future.
     Box::pin(async {
-        let remotes = Remotes::load(cwd).await?;
-        default_branch_with(cwd, &remotes).await
+        if let Some(branch) = Remotes::load(cwd).await?.primary_default {
+            return Ok(Some(branch));
+        }
+        for name in ["main", "master"] {
+            if ref_exists(cwd, &format!("refs/heads/{name}")).await? {
+                return Ok(Some(name.into()));
+            }
+        }
+        Ok(None)
     })
     .await
-}
-
-/// [`default_branch`] with the remotes already read.
-pub async fn default_branch_with(cwd: &Path, remotes: &Remotes) -> VcsResult<Option<String>> {
-    if let Some(branch) = &remotes.primary_default {
-        return Ok(Some(branch.clone()));
-    }
-    for name in ["main", "master"] {
-        if ref_exists(cwd, &format!("refs/heads/{name}")).await? {
-            return Ok(Some(name.into()));
-        }
-    }
-    Ok(None)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

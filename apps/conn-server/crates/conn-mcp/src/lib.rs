@@ -343,6 +343,19 @@ impl std::fmt::Debug for McpService {
     }
 }
 
+/// A launch's started setup script ([`McpService::start_launch_setup`]).
+#[derive(Debug)]
+pub struct LaunchSetup {
+    pub name: String,
+    pub command: String,
+    pub terminal_id: String,
+    /// The script's `async` flag (`script.async !== false`): the agent starts without
+    /// waiting for it.
+    pub background: bool,
+    /// The exit code, or `None` when the terminal ended first.
+    pub completion: tokio::sync::oneshot::Receiver<Option<i64>>,
+}
+
 impl McpService {
     pub async fn run_worktree_setup(
         &self,
@@ -355,6 +368,87 @@ impl McpService {
         };
         tools::worktree::setup(config, thread, project, path).await?;
         Ok(())
+    }
+
+    /// A worktree launch's setup script, as T3's launch preparation runs it
+    /// (`ThreadLaunchService.prepareInBackground` → `runForThread` with `observeCompletion`):
+    /// the project's `runOnWorktreeCreate` script in terminal `setup-<id>`, followed to its
+    /// end, its output lines handed to `on_line`. `None` when the project has no such script,
+    /// or when `link_origin` is fenced (`skipped-for-link`): the script is the user's own
+    /// code, and a link below full access grants only Conn's tools.
+    pub async fn start_launch_setup(
+        &self,
+        thread: &str,
+        project_id: &str,
+        link_origin: Option<&Value>,
+        path: &str,
+        on_line: Box<dyn FnMut(String) + Send>,
+    ) -> Result<Option<LaunchSetup>, String> {
+        let Some(config) = &self.config.worktrees else {
+            return Ok(None);
+        };
+        if link_origin.is_some_and(peers::link_origin_is_fenced) {
+            return Ok(None);
+        }
+        let shell = self
+            .config
+            .engine
+            .shell_snapshot()
+            .await
+            .map_err(|_| "The project list could not be read.".to_owned())?;
+        let project = shell["projects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["id"] == project_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Project was not found for setup script execution for thread '{thread}' in '{path}'."
+                )
+            })?;
+        let run = tools::worktree::start_project_script(
+            config,
+            thread,
+            &project,
+            path,
+            tools::worktree::ScriptTrigger::Setup,
+            Some(tools::worktree::Observe {
+                on_line: Some(on_line),
+            }),
+        )
+        .await?;
+        let (Some(completion), "started") = (
+            run.completion,
+            run.started["status"].as_str().unwrap_or_default(),
+        ) else {
+            return Ok(None);
+        };
+        let text = |key: &str| run.started[key].as_str().unwrap_or_default().to_owned();
+        Ok(Some(LaunchSetup {
+            name: text("scriptName"),
+            terminal_id: text("terminalId"),
+            command: run.command,
+            background: run.is_async,
+            completion,
+        }))
+    }
+
+    /// Closes a launch's setup terminal when its launch failed or was cancelled: no thread
+    /// is left to show it.
+    pub fn discard_launch_setup(&self, thread: &str, terminal_id: &str) {
+        if let Some(terminals) = self
+            .config
+            .worktrees
+            .as_ref()
+            .and_then(|c| c.terminals.clone())
+        {
+            terminals.close(conn_contract::TerminalCloseInput {
+                thread_id: thread.to_owned(),
+                terminal_id: Some(terminal_id.to_owned()),
+                delete_history: Some(true),
+            });
+        }
     }
 
     /// The live thread, while the settlement named by `settled_at` (its committed `settledAt`)
@@ -371,6 +465,20 @@ impl McpService {
             && thread["settledOverride"] == "settled"
             && thread["settledAt"] == settled_at)
             .then(|| thread.clone())
+    }
+
+    /// The committed `settledAt` of a live, settled thread.
+    pub async fn current_settlement(&self, thread_id: &str) -> Option<String> {
+        let projection = self
+            .config
+            .engine
+            .get_thread_projection(thread_id.into())
+            .await
+            .ok()?;
+        let thread = &projection["thread"];
+        let settled_at = thread["settledAt"].as_str()?;
+        (thread["deletedAt"].is_null() && thread["settledOverride"] == "settled")
+            .then(|| settled_at.to_owned())
     }
 
     /// Whether `settled_at` still names the thread's settlement (`cleanUpSettledThread`'s
@@ -411,6 +519,16 @@ impl McpService {
             .iter()
             .find(|p| p["id"] == thread["projectId"] && p["deletedAt"].is_null())?
             .clone();
+        // A restart runs a settle close again when its row had not settled: the record of
+        // this settlement's start keeps the script to one run.
+        match engine.claim_settle_script(thread_id, settled_at).await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(error) => {
+                eprintln!("settle script for {thread_id}: {error}");
+                return None;
+            }
+        }
         let run = tools::worktree::run_project_script(
             config,
             thread_id,

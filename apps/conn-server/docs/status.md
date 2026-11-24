@@ -18,13 +18,30 @@ tests from T3's `FoundationPersistence.test.ts`. Each commit publishes its own s
 aborted caller cannot hide it from clients. An engine takes an `engine_epoch` lease at open;
 every write checks it in its transaction, so a dropped or replaced engine never writes again. A
 settlement retries while the store is locked and otherwise settles the row `failed`, so its
-lane frees without running the effect again. Pruning lets the store go between batches. Left: T3's process-loss split (replay-safe
-effects run again; today every unsettled row is cancelled at start), folding
-`pending_rollbacks` into the outbox, and T3's worker retries.
+lane frees without running the effect again. Pruning lets the store go between batches. A
+restart follows T3's process-loss split: process-bound effects are cancelled and replay-safe
+ones run again, in place, so a rollback keeps its place ahead of later work and goes on by the
+phase its row recorded (`pending_rollbacks` is folded into the outbox; an old table migrates).
+A run whose start never returned (its `provider-turn.start` row did not settle) is not
+continued and not sent again on its own: a user's prompt waits at the head of the held queue,
+unattended work is sent again at most 3 times and never to a resting thread, and anything else
+is cancelled (T3's `reconcileProjection`). Both follow `continueThreadsAfterServerUpdate` per
+project. A replayed capture wakes a parent once, and the server starts the worker after its
+host services. Proof: engine tests for each case, failing without the change. Left: T3's worker
+retries (a planned follow-up).
 
 **Input validators (2026-11-17):** RPC limits and MCP input decode share
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
+
+**Side chats follow their parent (2026-11-23):** as T3's `Orchestrator.ts`, `thread.delete`
+with `onlyIfUnused` keeps a thread that has a message or a run. Archive refuses a thread that is
+already archived or has running delegated tasks, then takes the parent's active side chats (found
+by lineage, so one with no fork run too), except one waiting on delegated tasks. Each archived
+thread cancels its queued and preparing runs and detaches its live provider sessions. Unarchive
+refuses a thread that is not archived and restores only the side chats archived with or after
+the parent. Delete takes them all. Proof: five `checkpoint_tests.rs` tests and
+`t3_import::tests::an_imported_side_chat_without_a_fork_run_follows_its_parent`.
 
 **Undo of a settle and thread times (2026-11-23):** `thread.unsettle` reads
 `restoreUnsettledAt`, as T3's `Orchestrator.ts`: a time restores the Active anchor the settle
@@ -50,7 +67,7 @@ thread already active keeps its anchor and `updatedAt` but still records `thread
   answers only for its owner (`owner_kind` thread or project, `owner_id`; T3's
   `commandThreadId`, so a fork's and a merge-back's is the target thread). Receipts from
   before owners (main's schema 4) keep none, so a retry of a command from before the upgrade
-  is refused, never run twice. The upgrade runs in one transaction. A project command takes
+  is refused, never run twice. The upgrade adds only the columns a store lacks. A store a pre-merge build of readable search wrote at 6 (with `message_keys.search_text`) drops that column and opens at 5; the search index then holds each message's readable text, folded (fold mark 4). A project command takes
   its id inside its write (insert-if-absent; a receipt is never replaced), records its project
   and T3's command type (`project.update` is `project.meta.update`), and records a refusal
   from planning, which a retry gets again (T3's `commitRejectedProjectCommand`).
@@ -71,7 +88,7 @@ Proof: `a_fork_receipt_belongs_to_its_target_thread`,
 `a_replayed_queue_resume_starts_what_waits`, `auto_settle_rechecks_the_thread_against_its_snapshot`,
 `a_settle_for_a_stale_run_is_refused`,
 `a_delayed_visit_keeps_the_later_time`, `a_merge_back_first_message_names_its_instance`,
-`the_receipt_high_water_reads_an_index`, `the_receipt_upgrade_is_all_or_nothing`, `a_v4_store_upgrades_and_refuses_its_old_retries`,
+`the_receipt_high_water_reads_an_index`, `a_partial_receipt_upgrade_finishes_on_open`, `a_version_6_store_without_receipt_owners_gets_them`, `a_v4_store_upgrades_and_refuses_its_old_retries`,
 `a_command_id_keeps_its_outcome_across_a_reopen` (audit 1.6, 1.7),
 `a_planned_project_refusal_is_replayed`, `a_project_replay_without_its_row_is_a_read_error`,
 `a_receipt_is_never_replaced`, `the_queue_starts_on_the_effective_selection`,
@@ -119,9 +136,44 @@ over the accepted manifest, proven equal to T3's output on the bundled one).
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left
 out, the child bound to it; a refused or replayed command removes it. Proof: four `conn-mcp`
 tests (`tests/delegate_worktree.rs`) and live Claude and Codex children on a scratch server.
-Left: T3's generated branch name and waiting for the setup script (both also open for a
-worktree launch). One difference by design: when the checkout fails, the call is
+Left: T3's generated branch name (also open for a worktree launch). One difference by design: when the checkout fails, the call is
 refused and no child is made; T3 makes the child and fails its run in preparation.
+
+**Setup script on worktree launch (2026-11-23):** a thread launched into a new worktree, and a
+`delegate_task` worktree child, run the project's `runOnWorktreeCreate` script in terminal
+`setup-<id>`, as T3's launch preparation does. A script with `async: false` holds the launch
+(and the delegate) until it exits; a non-zero exit fails it and removes the worktree. Any
+other script is async, as in T3 (`script.async !== false`): the launch answers at once, and
+the setup ends when both the agent and the script are done; a launch with no first message
+ends its agent stage when it commits. The setup card's tail gets the script's output lines.
+A thread a link below full access starts, and a delegate of such a thread, runs no script
+(`linkOriginIsFenced`). Proof: `conn-vcs` provision tests and `conn-server`
+`a_worktree_launch_runs_the_setup_script_through_the_host` (it failed with the old
+`setup_script: None`). Left: shutdown does not yet cancel a delegate held in its setup
+script, and a concurrent retry of one delegate prepares a second checkout; both wait for
+#262's launch registry (ignored tests in `conn-mcp` `tests/delegate_worktree.rs`). One difference by design: a failed blocking script refuses the launch
+and leaves no thread; T3 keeps the thread with a failed run.
+
+**Worktree cleanup (2026-11-23):** the `storageCleanup` worktree rules and the per-project
+`worktreeCleanup` override now remove managed worktrees, as T3's `StorageCleanup` does: after N
+days without activity, N days after settling, a merged pull request, a deleted thread, or a
+finished thread with nothing beyond the default branch. Every rule is off by default. A sweep
+runs at start, hourly, on a rule change, on a thread delete, and when a session stops while a
+deleted thread's worktree waits. T3's keep reasons hold: running or pending threads, open
+terminals and sessions, shared or unowned checkouts, symlinked or unmanaged folders, project
+checkouts, nested repositories, a changed branch, local and hidden changes (the executable bit
+too), and submodule commits on no remote. Two keep reasons go beyond T3, which loses the data:
+a locked worktree (found before any file changes; there is no `git clean` first), and commits
+only the worktree's HEAD log holds. The checks, the nested-repository walk included, repeat
+under the checkout's lease (the checkpoint workspace lock) before `git worktree remove`, which
+keeps the branch. Turn starts and terminal starts take the same lease, as in T3. A dev home in a
+git worktree manages only its own `worktrees` folder. The server stops cleanup before it drains
+terminals and sessions. Proof: `conn-vcs/tests/cleanup.rs` (14) and `conn-server`
+`worktree_cleanup` (30). Not ported: the cleanup report and its RPCs
+(`server.runStorageCleanup`, `getStorageCleanupReport`, still unserved), orphan folder reports,
+scratch folders, browser artifact and log retention, checkpoint ref pruning, and following a
+branch switched while idle (the worktree is kept instead). A thread whose worktree was removed
+does not get its checkout back on the next turn yet.
 
 **Known difference, stop in progress (2026-11-18):** with the provider's reply to
 `turn/interrupt` held, T3 reported the run interrupted on one slow CI run (cause not proven).
@@ -140,6 +192,59 @@ idle, 5 probes 60 s apart, about Linux's 15 min write give-up). T3 sets no keepa
 because a silent dead socket would otherwise hold its session forever. Proof: session tests
 `a_suspended_client_stays_connected` (failed with 1001 before), `disconnect_stops_every_stream`,
 `a_dead_peer_is_cleaned_up_on_a_failed_write`, `accepted_sockets_get_keepalive`.
+
+## Provider switch handoff (2026-11-22)
+
+**Forks on another provider (2026-11-23):** as T3's `decideForkExecution`, a fork's first
+message forks natively when it can, and otherwise carries the history the fork inherits through
+its fork point as a full handoff (`portable_context`); later source turns stay out. The target
+must take a handoff (`ensureContextHandoff`). A side chat still forks natively or is refused: T3
+gives it a side-chat handoff, which this server does not build. Proof:
+`a_fork_on_another_provider_carries_its_history` (audit 1.5).
+
+A thread can move between Claude, Codex, Grok and Antigravity mid-thread, and the new provider
+gets the conversation. Before, every provider said
+`supportsProviderSwitchingViaHandoff: false`, so clients locked the model picker to the
+thread's provider, and a switch made another way started the new provider with no history.
+
+- **What runs** (`conn-engine/src/provider_handoff.rs`, T3's `dispatchMessage` and
+  `startNextQueuedRun`). A run on another instance than the conversation's gets a consumed
+  `provider_handoff` transfer, a context handoff (`handoff::prepare_provider_handoff`, T3's
+  `prepareProviderHandoff`), `contextHandoffId` and a "Provider handoff" item. The first run on
+  a provider with no native thread of this conversation gets the whole history
+  (`full_thread_summary`); a return to a provider gets what happened since its thread last took
+  part (`delta_since_target_last_seen`). The turn start delivers it as merge-back does:
+  injected into Codex's thread, inline for Claude, Grok and Antigravity.
+- **Capabilities.** Claude, Codex, Grok and Antigravity now say
+  `supportsProviderSwitchingViaHandoff: true` (T3 says `true` for all four) and
+  `acceptsSyntheticUserContext`, `canConsumeHandoffSummaries`, `supportsDeltaHandoff`,
+  `supportsFullThreadHandoff: true`, which the switch checks (`ensureContextHandoff`). They
+  still say `false` for `acceptsSystemContext`, `acceptsDeveloperContext` and
+  `canGenerateSummaries`, where T3 says `true` for Claude and Codex (and for summaries, ACP):
+  nothing in T3 or here reads them, and this server does not serve them.
+- **Fix found on the way:** when a delivery's coverage is too long, the condensed text names
+  the provider thread's app thread for `conn_thread_read`, as T3 does; it named the first
+  handoff's thread.
+- **Proof:** `cargo test -p conn-engine`: `a_provider_switch_hands_the_history_to_the_new_provider`
+  (Claude to Codex in full and injected, back to Claude as a delta inline),
+  `a_queued_run_on_another_provider_carries_the_history`,
+  `a_switch_to_a_provider_without_handoff_is_refused`; the first two fail on the commit before.
+  `gen-handoff-cases.mjs`: 90 cases (was 81), with T3's own `prepareProviderHandoff` for both
+  strategies, run statuses, a source thread and no transfer, and four deliveries of provider
+  handoffs. `client-check`: a switch through the client's reducers, with the client's own
+  `threadSupportsProviderHandoff` true on the live session (the picker opens).
+- **Not proven:** T3's `ProviderSwitch.integration.test.ts` runs on T3's in-process harness
+  (its own adapters and event sink), so it does not run on this engine; the switch rules here
+  come from reading `Orchestrator.ts`. No live provider was switched.
+- **Steer on another provider:** the running turn stops and the message restarts on the new
+  instance with a handoff (`a_steer_to_another_provider_restarts_there`). After `/clear`, a
+  return to a provider starts a new native thread, never the cleared one.
+- **Not built** (T3 has them): the v1-import recovery handoff (`prepareLegacyImport`) for an
+  imported thread with no completed run; the turn start's resume-fallback and missed-run retry
+  handoffs; resume across instances that share
+  native history (here every instance change hands off); the capability check for a queued
+  run (all four providers pass it); the provider thread's `handoffIds`. The budget still
+  knows no model window and no native estimate (as for merge-back).
 
 ## Unserved methods: triage (2026-11-21)
 
@@ -378,8 +483,7 @@ back" work. Before, the engine refused it ("Conn Server cannot merge a fork back
   first run, or after a provider switch) names a provisional one until delivery.
 - **Known differences:** the budget does not estimate native context without provider usage
   (T3 counts the delivered history) and knows no model window; `/goal` is matched by its
-  prefix, not T3's parser; the provider capabilities still say
-  `canConsumeHandoffSummaries: false` (nothing reads them here); a fork's first user message
+  prefix, not T3's parser; a fork's first user message
   has no `providerThreadId`, so its history line says `provider-thread=none`.
 
 ## `pull_request_create` (2026-11-20)
@@ -929,9 +1033,8 @@ Conn stops the app-server on close, so its handoff revokes; T3 keeps its shared 
   keeps its cached empty view: the client resumes it from its last sequence, and no event
   follows.
 - **Known differences:** the shell's `visibleItemCount` stays the thread's own item count
-  (T3 adds the inherited rows and the marker); clients only test it for zero. No bounded
-  snapshots or `/history` paging yet (listed below), so the fork's rows load whole, as every
-  thread view here does.
+  (T3 adds the inherited rows and the marker); clients only test it for zero. A bounded
+  snapshot (2026-11-23) cuts the fork's rows like any other thread's.
 
 ## Thread transcript route (2026-11-19)
 
@@ -1009,8 +1112,11 @@ tools), and the engine commands `thread.pull-request.watch` and the server-only
   `queue_after_active`, `createdBy: agent`, `creationSource: server`. Checks, approvals,
   remarks (review-thread pages included), conflicts, rebases, merge-queue removals, "no checks
   after 15 minutes", 10 comment-only wakes, closed and merged PRs, and 8 failed reads all
-  follow T3. Watches live on the thread's links, so they survive a restart. Archive, settle
-  and Stop end them. New watches that overflow the loop's queue ask for one more full pass.
+  follow T3. A merge or close wakes the thread with the base branch, merger and commit, except
+  one the watching thread's own agent ran: the engine's command feed and `close_commands.rs`
+  (T3's `agentEnds` and host close commands, generated) end that watch quietly. A merged link
+  the host cannot read ends from its snapshot. Watches live on the thread's links, so they
+  survive a restart. Archive, settle and Stop end them. New watches that overflow the loop's queue ask for one more full pass.
 - **Queued wakes are checked when they start** (`startNextQueuedRun`): a wake whose watches
   all ended or moved is cancelled; a wake for several PRs is narrowed to the current ones.
 - **A push reopens checks.** When an agent's push command finishes (`isPushCommand`, ported

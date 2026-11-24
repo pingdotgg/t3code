@@ -233,6 +233,78 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
     (items, fork_items, shell["threads"].clone(), merge_items)
 }
 
+/// A provider switch: a turn on Claude, the thread moved to Codex (which takes injected
+/// history), then a turn there. Returns the thread's items from a snapshot before the switch.
+async fn switch_scenario(dir: &std::path::Path) -> Vec<Value> {
+    let mut config = EngineConfig::new(dir.join("switch.sqlite"));
+    config.projects = vec![ProjectConfig {
+        title: "Switch".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![
+        Arc::new(FakeProvider::new("claudeAgent")),
+        Arc::new(FakeProvider::new("codex").with_history_injection()),
+    ];
+    let engine = SqliteEngine::open(config).expect("open engine");
+    let message = |command: &str, text: &str| {
+        json!({
+            "type": "message.dispatch", "commandId": command, "threadId": "thread-sw",
+            "messageId": format!("message:{command}"), "text": text, "attachments": [],
+            "dispatchMode": {"type": "start_immediately"}, "createdBy": "user", "creationSource": "web",
+        })
+    };
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "thread.create", "commandId": "sw-create", "threadId": "thread-sw",
+                "projectId": SqliteEngine::project_id_for(ROOT), "title": "Switch",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+                "runtimeMode": "full-access", "interactionMode": "default",
+                "branch": null, "worktreePath": null, "createdBy": "user", "creationSource": "web",
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut items = vec![];
+    let mut follow = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-sw", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, |item| {
+        item["kind"] == "synchronized"
+    })
+    .await;
+    engine
+        .dispatch(from_json(message("sw-1", "remember blue-17")).unwrap())
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, run_ended).await;
+    drain(&mut follow, &mut items).await;
+    engine
+        .dispatch(
+            from_json(json!({
+                "type": "thread.model-selection.set", "commandId": "sw-select", "threadId": "thread-sw",
+                "modelSelection": {"instanceId": "codex", "model": "gpt-5"},
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    engine
+        .dispatch(from_json(message("sw-2", "what was the marker?")).unwrap())
+        .await
+        .unwrap();
+    read(&mut follow, &mut items, |item| {
+        run_ended(item) && item["event"]["payload"]["id"] == "run:thread-sw:2"
+    })
+    .await;
+    drain(&mut follow, &mut items).await;
+    items
+}
+
 /// Reads items until `done` holds for one. A slow runner can pause longer than any quiet
 /// window mid-turn, so this waits on the event itself and fails loudly after 30 s.
 async fn read<T: serde::Serialize, E: serde::Serialize>(
@@ -752,7 +824,10 @@ async fn main() {
         .unwrap()
         .unwrap();
 
+    let switch_items = switch_scenario(&dir).await;
+
     let export = json!({
+        "providerSwitchItems": switch_items,
         "createdThreadItems":created_items,
         "createdThreadSnapshot":created_child,
         "checkpointItems": checkpoint_items,

@@ -334,6 +334,211 @@ fn writes_only_inside_known_workspaces_and_outside_git() {
         fs::read_to_string(f.outside.join("secret.txt")).unwrap(),
         "outside"
     );
+
+    // A worktree of the project in a managed folder, before a thread names it (T3
+    // `KnownWorkspaces.contains`); a plain folder there, or a foreign repository, is not one.
+    let managed = f.outside.join("managed");
+    git(
+        &f.project,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    );
+    let worktree = managed.join("project/probe-0123");
+    git(
+        &f.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "probe",
+            &worktree.to_string_lossy(),
+        ],
+    );
+    fs::create_dir_all(managed.join("project/plain")).unwrap();
+    let foreign = managed.join("other/repo");
+    fs::create_dir_all(&foreign).unwrap();
+    git(&foreign, &["init", "-q"]);
+    let with_managed =
+        KnownWorkspaces::new(&projects, &[]).with_managed(std::slice::from_ref(&managed));
+    let save = |cwd: &Path, known: &KnownWorkspaces| {
+        let input = ProjectWriteFileInput {
+            cwd: cwd.to_string_lossy().into_owned(),
+            relative_path: "audit.txt".into(),
+            contents: "probe".into(),
+        };
+        workspace::write_file(&input, &|real| known.contains(real)).map_err(|e| e.failure)
+    };
+    assert_eq!(
+        save(&worktree, &known).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
+    assert_eq!(
+        save(&worktree, &with_managed).unwrap().relative_path,
+        "audit.txt"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("audit.txt")).unwrap(),
+        "probe"
+    );
+    // A worktree of a repository nested in the project, as `vcs.createWorktree` makes from
+    // that folder, saves too.
+    let nested = f.project.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    git(&nested, &["init", "-q"]);
+    git(
+        &nested,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    );
+    let nested_worktree = managed.join("nested/probe-4567");
+    git(
+        &nested,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "probe",
+            &nested_worktree.to_string_lossy(),
+        ],
+    );
+    assert_eq!(
+        save(&nested_worktree, &with_managed).unwrap().relative_path,
+        "audit.txt"
+    );
+    // A link in the worktree cannot carry the save out of it.
+    symlink(&f.outside, worktree.join("escape")).unwrap();
+    assert_eq!(
+        save(&worktree.join("escape"), &with_managed).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
+    assert!(!f.outside.join("audit.txt").exists());
+    // A project that is itself a linked worktree: a managed checkout its repository lists
+    // saves, though that repository lies outside the project.
+    let linked = f.outside.join("linked");
+    git(
+        &f.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            &linked.to_string_lossy(),
+        ],
+    );
+    let from_linked = managed.join("linked/probe-89ab");
+    git(
+        &linked,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "from-linked",
+            &from_linked.to_string_lossy(),
+        ],
+    );
+    let linked_projects = [linked.to_string_lossy().into_owned()];
+    let linked_known =
+        KnownWorkspaces::new(&linked_projects, &[]).with_managed(std::slice::from_ref(&managed));
+    assert_eq!(
+        save(&from_linked, &linked_known).unwrap().relative_path,
+        "audit.txt"
+    );
+    assert_eq!(
+        save(&nested_worktree, &linked_known).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
+    // A linked project of a bare repository: its managed checkouts save, a sibling bare
+    // repository's do not.
+    let bare = f.outside.join("bare/app.git");
+    let sibling = f.outside.join("bare/other.git");
+    for repo in [&bare, &sibling] {
+        git(
+            &f.outside,
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                &f.project.to_string_lossy(),
+                &repo.to_string_lossy(),
+            ],
+        );
+    }
+    let bare_linked = f.outside.join("bare-linked");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "bl",
+            &bare_linked.to_string_lossy(),
+        ],
+    );
+    let from_bare = managed.join("bare-linked/probe-cdef");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "fb",
+            &from_bare.to_string_lossy(),
+        ],
+    );
+    let from_sibling = managed.join("bare-linked/probe-sib");
+    git(
+        &sibling,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "fs",
+            &from_sibling.to_string_lossy(),
+        ],
+    );
+    let bare_known = KnownWorkspaces::new(&[bare_linked.to_string_lossy().into_owned()], &[])
+        .with_managed(std::slice::from_ref(&managed));
+    assert_eq!(
+        save(&from_bare, &bare_known).unwrap().relative_path,
+        "audit.txt"
+    );
+    assert_eq!(
+        save(&from_sibling, &bare_known).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
+    for elsewhere in [managed.join("project/plain"), foreign] {
+        assert_eq!(
+            save(&elsewhere, &with_managed).unwrap_err(),
+            Failure::WorkspacePathOutsideRoot,
+            "{}",
+            elsewhere.display()
+        );
+    }
 }
 
 #[test]
@@ -917,7 +1122,7 @@ fn uploads_claims_and_deletes_attachments() {
     let before = fs::read_dir(store.dir()).unwrap().count();
     assert!(
         store
-            .claim_all("Thread 1", &[attachment.clone(), missing])
+            .claim_all("Thread 1", &[attachment.clone(), missing.clone()])
             .unwrap_err()
             .contains("not found")
     );
@@ -925,6 +1130,23 @@ fn uploads_claims_and_deletes_attachments() {
         fs::read_dir(store.dir()).unwrap().count(),
         before,
         "failed batch must release its claimed copies"
+    );
+    // An attachment already a thread's file passes the claim unchanged; a failed batch keeps it.
+    let ChatAttachment::Image(existing) = store.claim("Thread 1", &attachment).unwrap() else {
+        panic!()
+    };
+    let existing = ChatAttachment::Image(existing);
+    assert!(
+        store
+            .claim_all("Thread 1", &[existing.clone(), missing])
+            .is_err()
+    );
+    let ChatAttachment::Image(kept_file) = &existing else {
+        unreachable!()
+    };
+    assert!(
+        store.resolve(&kept_file.id).is_some(),
+        "a failed batch must keep files it did not claim"
     );
 
     // Delete removes pending uploads only.

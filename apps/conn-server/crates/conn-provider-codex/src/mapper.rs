@@ -40,6 +40,9 @@ use subagents::{Selection, Sub};
 /// Native turns that ended other than completed, remembered so a late child of one is
 /// stopped (`terminalizedNonCompletedNativeTurns`).
 const STOPPED_TURNS_KEPT: usize = 64;
+/// Turns whose processes a settling Stop still has to terminate. A Stop takes them as soon as
+/// it settles, so only Stops that never settle (their session closed) leave entries behind.
+const STOP_PROCESS_TURNS_KEPT: usize = 16;
 
 pub const DRIVER: &str = "codex";
 
@@ -283,6 +286,18 @@ pub struct Mapper<E: Env> {
     /// Completed turns whose background commands still run (`settledTurns`), oldest first; at
     /// most [`SETTLED_TURNS_KEPT`].
     settled: VecDeque<Settled>,
+    /// Interrupted root turns' terminals that wait for their running descendants
+    /// (`deferredRootTerminals`), by the root's lineage roots (provider turn ids), oldest
+    /// first. Each entry has a running child turn, so the mapper's bounded turns bound it; the
+    /// process's exit empties it.
+    deferred_terminals: VecDeque<(Vec<String>, Value)>,
+    /// The session began to close: a root turn ending from now on ends by the close
+    /// (`TerminalCause::SessionClosed`).
+    closing: bool,
+    /// Background processes of turns a Stop was settling when they ended, by native turn, oldest
+    /// first; at most [`STOP_PROCESS_TURNS_KEPT`]. The Stop terminates them (T3 reads
+    /// `runningCommandItemsByTurn` when it settles the lineage).
+    stop_processes: VecDeque<(String, Vec<String>)>,
     goals: goals::Goals,
 }
 
@@ -425,6 +440,9 @@ impl<E: Env> Mapper<E> {
             abandoned: None,
             abandoned_seq: 0,
             settled: VecDeque::new(),
+            deferred_terminals: VecDeque::new(),
+            closing: false,
+            stop_processes: VecDeque::new(),
             goals: goals::Goals::default(),
         }
     }
@@ -457,6 +475,8 @@ impl<E: Env> Mapper<E> {
             ("ended", self.ended.len()),
             ("abandoned", usize::from(self.abandoned.is_some())),
             ("settled", self.settled.len()),
+            ("deferred_terminals", self.deferred_terminals.len()),
+            ("stop_processes", self.stop_processes.len()),
             ("goals", self.goals.sizes().iter().sum()),
         ]
     }
@@ -779,6 +799,74 @@ impl<E: Env> Mapper<E> {
             .unwrap_or_default()
     }
 
+    /// The session began to close: the root turns that end from now on end by the close.
+    pub fn begin_close(&mut self) {
+        self.closing = true;
+    }
+
+    /// The background processes a Stop of `native_turn` still has to terminate: those of the
+    /// turn while it runs, and those it had when it ended during the Stop.
+    pub fn take_stop_processes(&mut self, native_turn: &str) -> Vec<String> {
+        let mut processes = self.running_processes(native_turn);
+        if let Some(at) = self
+            .stop_processes
+            .iter()
+            .position(|(t, _)| t == native_turn)
+            && let Some((_, ended)) = self.stop_processes.remove(at)
+        {
+            processes.extend(ended);
+        }
+        processes
+    }
+
+    /// The session closed. `shared`: the app-server keeps running for other sessions, so
+    /// this session's subagents may still run there. Their child turns stay open and end with
+    /// their own `turn/completed` or the process's exit; only the root turns end now. Otherwise
+    /// the process ended with the session, and every open turn ends.
+    pub fn on_close(&mut self, shared: bool) -> Vec<Out> {
+        if !shared {
+            return self.on_exit(true, "The session closed.");
+        }
+        self.pending_turns.clear();
+        self.abandoned = None;
+        self.settled.clear();
+        let mut out = Vec::new();
+        // A run held between goal turns settles: its last turn did complete.
+        self.settle_goal_holds(&mut out);
+        let roots: Vec<String> = self
+            .turns
+            .iter()
+            .filter(|(_, turn)| turn.subagent.is_none())
+            .map(|(native, _)| native.clone())
+            .collect();
+        self.requests.retain(|_, request| {
+            self.turns.values().any(|turn| {
+                turn.subagent.is_some() && turn.native_thread_id == request.native_thread_id
+            })
+        });
+        for native in roots {
+            let now = self.env.now();
+            self.finalize(&native, "interrupted", now, None, None, &mut out);
+        }
+        out
+    }
+
+    /// The native threads of subagents still open: a running child turn, or a subagent Codex
+    /// announced and has not settled (its first `turn/started` may come later). After a shared
+    /// close they keep their route until they end.
+    pub fn open_child_threads(&self) -> Vec<String> {
+        let mut threads: Vec<String> = self
+            .turns
+            .values()
+            .filter(|turn| turn.subagent.is_some())
+            .map(|turn| turn.native_thread_id.clone())
+            .chain(self.unsettled_children().cloned())
+            .collect();
+        threads.sort();
+        threads.dedup();
+        threads
+    }
+
     /// Background terminals that completed turns in the lineage of `roots` (provider turn ids)
     /// left running (`settledTurns` in a Stop's lineage), as (native thread, process id).
     pub fn settled_processes(&self, roots: &[String]) -> Vec<(String, String)> {
@@ -798,6 +886,15 @@ impl<E: Env> Mapper<E> {
 
     /// The app-server is gone: every open turn ends. `expected` (a close) ends them as
     /// interrupted, a crash as failed.
+    /// The running subagent turns: (native thread, native turn).
+    pub fn open_child_turns(&self) -> Vec<(String, String)> {
+        self.turns
+            .values()
+            .filter(|turn| turn.subagent.is_some())
+            .map(|turn| (turn.native_thread_id.clone(), turn.native_turn_id.clone()))
+            .collect()
+    }
+
     pub fn on_exit(&mut self, expected: bool, detail: &str) -> Vec<Out> {
         let mut out = Vec::new();
         self.pending_turns.clear();
@@ -827,6 +924,16 @@ impl<E: Env> Mapper<E> {
                 }
                 self.finalize(&native, "failed", now, Some(detail), None, &mut out);
             }
+        }
+        // No subagent outlives the process: an announced child whose first turn never came
+        // ends too, then the roots that waited for them.
+        let status = if expected { "interrupted" } else { "failed" };
+        let announced: Vec<String> = self.unsettled_children().cloned().collect();
+        for child in announced {
+            out.extend(self.end_idle_child(&child, status));
+        }
+        for (_, terminal) in std::mem::take(&mut self.deferred_terminals) {
+            push_event(&mut out, terminal);
         }
         out
     }
@@ -1784,6 +1891,21 @@ impl<E: Env> Mapper<E> {
         let Some(mut turn) = self.turns.remove(native) else {
             return;
         };
+        // A Stop settling this turn still terminates the processes it leaves running.
+        if self.interrupting.contains(native) {
+            let processes: Vec<String> = turn
+                .running_commands
+                .iter()
+                .filter_map(|c| c.process_id.clone())
+                .collect();
+            if !processes.is_empty() {
+                if self.stop_processes.len() >= STOP_PROCESS_TURNS_KEPT {
+                    self.stop_processes.pop_front();
+                }
+                self.stop_processes
+                    .push_back((native.to_owned(), processes));
+            }
+        }
         for id in std::mem::take(&mut turn.running_compactions) {
             emit_compaction(&mut turn, &id, terminal_status, &completed_at, out);
         }
@@ -1879,17 +2001,33 @@ impl<E: Env> Mapper<E> {
                 "failure": failure,
                 "threadDisposition": "reusable",
             });
+            if self.closing {
+                terminal["cause"] = json!("sessionClosed");
+            }
             // T3's failed terminal carries no reason.
             if terminal_status != "failed"
                 && let Some(reason) = &turn.hook_stop_reason
             {
                 terminal["reason"] = json!(reason);
             }
-            if holds_for_goal {
+            // `emitOrDeferRootTerminal`: a failed root leaves its running descendants working
+            // and settles without them; an interrupted one waits for them, as Stop ends the
+            // whole lineage.
+            let mut roots = vec![turn.provider_turn_id.clone()];
+            roots.extend(turn.continues.iter().cloned());
+            let descendants = !self.lineage(&roots).is_empty();
+            if descendants && terminal_status == "failed" {
+                terminal["childTurnsContinue"] = json!(true);
+                push_event(out, terminal);
+            } else if descendants && terminal_status != "completed" {
+                self.deferred_terminals.push_back((roots, terminal));
+            } else if holds_for_goal {
                 self.hold_goal(&turn, completed_row, terminal, out);
             } else {
                 push_event(out, terminal);
             }
+        } else {
+            self.flush_ready_terminals(out);
         }
         // `retainSettledContext`: a completed turn stays while its background commands run, so
         // their output and end still show, and a root turn's ending command wakes the agent.
@@ -1902,6 +2040,19 @@ impl<E: Env> Mapper<E> {
                 offered: Vec::new(),
             });
         }
+    }
+
+    /// `flushReadyRootTerminals`: deferred root terminals whose descendants all ended.
+    fn flush_ready_terminals(&mut self, out: &mut Vec<Out>) {
+        let mut waiting = VecDeque::with_capacity(self.deferred_terminals.len());
+        for (roots, terminal) in std::mem::take(&mut self.deferred_terminals) {
+            if self.lineage(&roots).is_empty() {
+                push_event(out, terminal);
+            } else {
+                waiting.push_back((roots, terminal));
+            }
+        }
+        self.deferred_terminals = waiting;
     }
 
     /// A command of a settled turn ended (`item/completed` with `settled`): its rows, and for

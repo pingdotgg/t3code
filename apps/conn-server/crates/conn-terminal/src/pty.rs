@@ -50,7 +50,8 @@ pub(crate) struct Spawned {
 }
 
 /// The environment a shell gets: the server's, minus server-only variables, plus terminal
-/// settings, plus the client's `env` (with `~` and `$HOME` expanded).
+/// settings, plus the client's `env` as given, but for `~` in the home-folder variables
+/// (`createTerminalSpawnEnv`, `expandHomeVariable`).
 pub(crate) fn shell_env(
     runtime: &BTreeMap<String, String>,
     version: &str,
@@ -71,9 +72,13 @@ pub(crate) fn shell_env(
     env.insert("TERM".into(), "xterm-256color".into());
     env.insert("TERM_PROGRAM".into(), "t3code".into());
     env.insert("TERM_PROGRAM_VERSION".into(), version.into());
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var("HOME").ok();
     for (key, value) in runtime {
-        env.insert(key.into(), expand_home(value, &home).into());
+        let value = match &home {
+            Some(home) => conn_support::home::expand_home_variable(key, value, home),
+            None => value.clone(),
+        };
+        env.insert(key.into(), value.into());
     }
     if !had_colorterm && !runtime.contains_key("COLORTERM") {
         env.insert("COLORTERM".into(), "truecolor".into());
@@ -92,20 +97,6 @@ pub(crate) fn shell_env(
         }
     }
     env.into_iter().collect()
-}
-
-fn expand_home(value: &str, home: &str) -> String {
-    if home.is_empty() {
-        return value.to_owned();
-    }
-    let value = if value == "~" {
-        home.to_owned()
-    } else if let Some(rest) = value.strip_prefix("~/") {
-        format!("{home}/{rest}")
-    } else {
-        value.to_owned()
-    };
-    value.replace("${HOME}", home).replace("$HOME", home)
 }
 
 /// Shells to try, in order: `$SHELL`, then the usual ones.
@@ -433,6 +424,7 @@ mod tests {
     fn builds_the_shell_environment() {
         let runtime = BTreeMap::from([
             ("CONN_TEST".to_owned(), "~/x:$HOME/y".to_owned()),
+            ("CODEX_HOME".to_owned(), "~/codex".to_owned()),
             ("COLORTERM".to_owned(), String::new()),
         ]);
         let env: BTreeMap<_, _> = shell_env(&runtime, "1.2.3")
@@ -440,7 +432,9 @@ mod tests {
             .map(|(k, v)| (k.into_string().unwrap(), v.into_string().unwrap()))
             .collect();
         let home = std::env::var("HOME").unwrap();
-        assert_eq!(env["CONN_TEST"], format!("{home}/x:{home}/y"));
+        // Values stay as given: only the home-folder variables expand `~` (T3).
+        assert_eq!(env["CONN_TEST"], "~/x:$HOME/y");
+        assert_eq!(env["CODEX_HOME"], format!("{home}/codex"));
         assert_eq!(env["COLORTERM"], "");
         assert_eq!(env["TERM"], "xterm-256color");
         assert_eq!(env["TERM_PROGRAM_VERSION"], "1.2.3");

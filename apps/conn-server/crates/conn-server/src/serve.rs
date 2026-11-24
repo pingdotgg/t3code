@@ -282,6 +282,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        worktree_cleanup: OnceLock::new(),
         previews: OnceLock::new(),
         settle_cleanups: Arc::default(),
     });
@@ -353,8 +354,8 @@ pub async fn serve_with_instances(
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
-    // `start_agent_tools` recovers them, once agents can reach `/mcp`.
-    config.recover_runs = false;
+    config.recover_runs = !inert;
+    config.restart_policy = crate::settings::restart_policy(&environment.settings.raw());
     // Attention events for iOS push: off unless asked for, and only where a sender exists
     // (`attention.rs`). A container server sends through its managed Gateway client.
     let attention = !inert && crate::attention::enabled_by_env();
@@ -372,6 +373,9 @@ pub async fn serve_with_instances(
         None
     };
     config.attention = attention && (provision.is_some() || native_attention.is_some());
+    // The host's services (scheduled tasks, devices, `/mcp`) start below; a replayed effect
+    // must find them, so the worker starts after them.
+    config.hold_effects = true;
     let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
         environment.clone(),
     ));
@@ -421,6 +425,7 @@ pub async fn serve_with_instances(
         files,
         vcs,
         terminals: Some(terminals.clone()),
+        workspace_locks: sqlite_engine.workspace_locks(),
         text_generators: Some(text_generators),
         oauth: Some(Arc::new(crate::oauth::McpOAuth::new(
             &state_dir.join("secrets"),
@@ -439,10 +444,7 @@ pub async fn serve_with_instances(
     if let Some(devices) = &deps.devices {
         let _ = host.devices.set(devices.clone());
     }
-    or_exit(
-        start_agent_tools(&mut deps, &host, &sqlite_engine, addr),
-        "cannot recover the runs a previous process left active",
-    );
+    start_agent_tools(&mut deps, &host, &sqlite_engine, addr);
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -451,6 +453,7 @@ pub async fn serve_with_instances(
         deps,
     };
 
+    crate::routes::preview_tunnel::serving_on(addr.port());
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
     // The write and its fsync run on a blocking thread, as all file work here does.
     let published = {
@@ -472,6 +475,7 @@ pub async fn serve_with_instances(
     println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     // An inert copy starts none of these: each can start a turn or act on another host.
+    let mut worktree_cleanup = None;
     if !inert {
         crate::methods::provider::start_status_refresh(&state.deps);
         // Tasks in linked environments: their followers, again after a restart.
@@ -480,6 +484,16 @@ pub async fn serve_with_instances(
         }
         // Pull request watches: a sweep every two minutes, as T3's `PullRequestWatchReactor`.
         crate::methods::pull_requests::start_watches(&state.deps);
+        // Worktree cleanup: at start, hourly, and on rule changes and deletions, as T3's
+        // `StorageCleanup`.
+        let cleanup = crate::worktree_cleanup::WorktreeCleanup::new(
+            sqlite_engine.clone(),
+            environment.clone(),
+            terminals.clone(),
+            crate::methods::pull_requests::merge_lookup(&state.deps),
+        );
+        worktree_cleanup = Some(cleanup.start());
+        let _ = host.worktree_cleanup.set(cleanup);
     }
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
     if let Some(manifest) = &state.deps.model_manifest {
@@ -544,6 +558,11 @@ pub async fn serve_with_instances(
     if let Some(managed) = managed_server {
         managed.abort();
     }
+    // No removal starts once the server stops; one under way ends before terminals and
+    // sessions drain.
+    if let Some(cleanup) = worktree_cleanup {
+        cleanup.stop().await;
+    }
     // Shells and provider processes end with their whole process groups, so nothing they
     // started outlives the server.
     terminals.shutdown().await;
@@ -567,23 +586,20 @@ pub async fn serve_with_instances(
     }
 }
 
-/// Gives the engine's agents `/mcp` at `listen`, and only then recovers the runs a previous
-/// process left active (none in an inert copy). A resumed session keeps the credential it
-/// opens with, so its URL must already be the one this server answers on.
+/// Gives the engine's agents `/mcp` at `listen`, and only then starts the effects the engine
+/// held, the ones its recovery replays too. A resumed session keeps the credential it opens
+/// with, so its URL must already be the one this server answers on.
 pub(crate) fn start_agent_tools(
     deps: &mut Deps,
     host: &Host,
     engine: &SqliteEngine,
     listen: SocketAddr,
-) -> Result<(), String> {
+) {
     deps.mcp = crate::routes::mcp::service(deps, listen);
     if let Some(mcp) = &deps.mcp {
         let _ = host.mcp.set(mcp.clone());
     }
-    if inert() {
-        return Ok(());
-    }
-    engine.recover_runs()
+    engine.start_effects();
 }
 
 /// Binds the managed ingress and starts its authority, probe, lease, ACK and notice tasks.
@@ -628,6 +644,7 @@ async fn start_managed(
         }
     };
     if let Ok(addr) = listener.local_addr() {
+        crate::routes::preview_tunnel::serving_on(addr.port());
         println!("managed ingress on http://{addr}");
     }
     let ingress = managed::ingress::Managed::new(shared, gateway, provision.preview_tabs);

@@ -23,8 +23,10 @@ mod background;
 mod background_wait;
 mod calls;
 mod checkpoint;
+pub mod citations;
 mod clock;
 mod commands;
+mod composer_context;
 mod effect_worker;
 pub use commands::{completed_without_result, provider_stop_reason_id};
 mod engine;
@@ -49,11 +51,13 @@ mod families;
 mod fold;
 mod fork;
 mod fresh;
+mod history;
 mod html_cleanup;
 mod link_requests;
 mod outbox;
 mod output;
 mod projects;
+mod provider_handoff;
 mod pull_requests;
 mod push;
 mod reads;
@@ -66,6 +70,7 @@ mod store;
 mod streaming;
 mod streams;
 mod t3_import;
+mod thread_find;
 mod time;
 mod titles;
 mod transcript;
@@ -76,13 +81,15 @@ pub use attention::{AttentionOutboxRow, RELEASED_COMPLETION_GRACE_MS};
 pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
-    CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
-    STORE_IN_USE, SqliteEngine,
+    CleanupThreads, CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig,
+    RuntimePolicyOverride, STORE_IN_USE, SqliteEngine,
 };
+pub use families::{delegated_task_result, monitor_runs};
 pub use fold::{SearchField, field_holds_words, fold, fold_field, fold_search_query, match_fields};
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };
+pub use restart::RestartPolicy;
 pub use streaming::ResponseStreamingMode;
 pub use t3_import::{
     ImportProgress, ImportReport, import_t3_state, import_t3_state_with_progress, open_t3_read_only,
@@ -165,6 +172,10 @@ pub trait EngineHost: Send + Sync {
     /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
     fn session_closed(&self, _key: &str) {}
 
+    /// A live provider session ended, whether or not it revoked agent tools: a folder it held
+    /// may be free now.
+    fn session_released(&self) {}
+
     /// The host handle a new provider session gets for its agent's file and terminal
     /// callbacks (`ProviderHost`). `None`: the server offers none (today's server).
     fn provider_host(&self, _session: AgentSession) -> Option<conn_provider::HostHandle> {
@@ -233,17 +244,28 @@ pub trait EngineHost: Send + Sync {
         )))
     }
 
+    /// A worktree launch committed its thread and handed off its first run, if any: its
+    /// setup's agent stage ends now, as T3 marks it done once the launch is prepared, even
+    /// when the provider then fails before a turn starts.
+    fn launch_committed(&self, _thread_id: &str) {}
+
     /// A worktree made for a command that the engine then refused (`refused` holds why) or
-    /// that an earlier attempt had already accepted (`None`): remove it and its branch.
+    /// that an earlier attempt had already accepted (`None`): remove it, then its branch. An
+    /// `Err` says what stayed: the branch goes only once its worktree is gone.
     fn discard_worktree(
         &self,
         _thread_id: String,
         _project_root: String,
         _worktree: ProvisionedWorktree,
         _refused: Option<String>,
-    ) -> BoxFuture<'_, ()> {
-        Box::pin(std::future::ready(()))
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Ok(())))
     }
+
+    /// Asks the worktree setup running for `thread_id` to stop, as T3 interrupts a launch's
+    /// preparation at shutdown. The setup removes what it made and fails. The default has
+    /// nothing to stop.
+    fn cancel_preparation(&self, _thread_id: &str) {}
 
     /// The branch checked out in `cwd` (`GitWorkflowService.currentBranch`): `None` when HEAD
     /// is detached, the folder is no checkout, or git fails. A project-folder launch that
@@ -258,7 +280,16 @@ pub trait EngineHost: Send + Sync {
     }
 
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
-    fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) {}
+    /// The effect settles once the returned future ends, so a replayed close finishes its
+    /// cleanup (a deleted thread's scheduled tasks) before its row settles. An error is tried
+    /// again, then recorded on the row (`failed`).
+    fn thread_closed(
+        &self,
+        _thread_id: &str,
+        _reason: ThreadClose,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
 
     /// A remote task of `thread_id` now owes its thread in a linked environment a stop.
     fn remote_task_changed(&self, _thread_id: &str, _task_id: &str) {}
@@ -285,10 +316,26 @@ pub struct AgentTools {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorktreeRequest {
     pub thread_id: String,
+    /// The project, for its settings overrides (`worktreeSubmodules`).
+    pub project_id: Option<String>,
+    /// The link that starts the thread (`linkOrigin`); a delegate's is its parent's. A link
+    /// below full access runs no setup script (`linkOriginIsFenced`).
+    pub link_origin: Option<Value>,
     pub project_root: String,
     pub base_ref: String,
     pub branch: Option<String>,
     pub start_from_origin: bool,
+    pub missing_base: conn_vcs::setup::MissingBase,
+}
+
+/// A thread's worktree as a terminal needs it (`getThreadShell` in T3's
+/// `prepareTerminalLaunch`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadWorktree {
+    pub worktree_path: String,
+    pub branch: Option<String>,
+    /// The thread's project's workspace root.
+    pub project_root: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -320,6 +367,9 @@ pub enum ThreadClose {
     SettledAgain {
         settled_at: String,
     },
+    /// A settle close an earlier build stored without its settlement (`"settled"`). Its
+    /// terminals close, but nothing shows whether its settle script ran, so it does not run.
+    SettledUnnamed,
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
@@ -359,6 +409,16 @@ pub trait Engine: Send + Sync {
     fn provider_instance_enabled(&self, _project_id: &str, _instance_id: &str) -> bool {
         true
     }
+    /// Records, durably, that the settle script of `thread_id`'s settlement `settled_at`
+    /// starts: `true` the first time, `false` once any process recorded it.
+    fn claim_settle_script<'a>(
+        &'a self,
+        _thread_id: &'a str,
+        _settled_at: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(std::future::ready(Ok(true)))
+    }
+
     /// Whether a command already committed; retries must use its recorded target.
     fn has_receipt<'a>(&'a self, _command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(std::future::ready(Ok(false)))
@@ -399,6 +459,17 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Ok(true)))
     }
 
+    /// Every thread's committed `command_execution` item updates and run updates, from now on,
+    /// as `(thread id, event)` (the part of T3's `streamDomainEvents` the pull request watch
+    /// reads). An engine without them answers an error.
+    fn subscribe_command_events(
+        &self,
+    ) -> BoxFuture<'_, Result<mpsc::Receiver<(String, Value)>, String>> {
+        Box::pin(std::future::ready(Err(
+            "this engine has no command events".to_owned()
+        )))
+    }
+
     /// The shell stream: projects and thread summaries. Starts with a `snapshot` item (or
     /// replays from `afterSequence`), then `synchronized`, then live updates.
     fn subscribe_shell(
@@ -428,7 +499,19 @@ pub trait Engine: Send + Sync {
     /// `orchestration.launchThread`: creates a thread and sends its first message in one call,
     /// which is how a client starts a new thread. Input `OrchestrationV2ThreadLaunchInput`,
     /// result `OrchestrationV2ThreadLaunchResult`, error `OrchestrationV2ThreadLaunchError`.
-    fn launch_thread(&self, _input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+    fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        self.launch_thread_with(input, conn_vcs::setup::MissingBase::Fail)
+    }
+
+    /// [`Engine::launch_thread`] for a trusted caller that says what a `worktree` strategy's
+    /// missing base does. Only the scheduler passes [`MissingBase::FallBack`](
+    /// conn_vcs::setup::MissingBase::FallBack), for a saved strategy that outlived its base;
+    /// a client's launch names its base now and fails without it.
+    fn launch_thread_with(
+        &self,
+        _input: Value,
+        _missing_base: conn_vcs::setup::MissingBase,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         unsupported("orchestration.launchThread")
     }
 
@@ -438,6 +521,23 @@ pub trait Engine: Send + Sync {
         _thread_id: ThreadId,
     ) -> BoxFuture<'_, Result<Value, EngineError<GetThreadProjectionError>>> {
         unsupported("orchestration.getThreadProjection")
+    }
+
+    /// The thread's worktree, from its stored row; `None` for a thread without one.
+    fn thread_worktree(
+        &self,
+        _thread_id: &str,
+    ) -> BoxFuture<'_, Result<Option<ThreadWorktree>, String>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
+    /// Holds the workspace lock that turn preparation and checkpoint capture take for the
+    /// folder `root` (`withWorkspaceLease`). `None` when this engine takes none.
+    fn workspace_lease<'a>(
+        &'a self,
+        _root: &'a str,
+    ) -> BoxFuture<'a, Option<conn_vcs::locks::WorkspaceLock<'a>>> {
+        Box::pin(std::future::ready(None))
     }
 
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
@@ -537,6 +637,18 @@ pub trait Engine: Send + Sync {
         )))
     }
 
+    /// `cancelDelegatedTask`: Stop for a task's child thread (`threadId`), recording the task
+    /// (`parentThreadId`, `taskId`) as cancelled in the same write. Refused, with `code`
+    /// `runtime_mode_escalation_denied` or `interaction_mode_escalation_denied`, when the child
+    /// or a thread under it runs above `modeLimit`. An internal command, so it never goes
+    /// through [`Engine::dispatch`].
+    fn cancel_delegated_task(
+        &self,
+        _command: Value,
+    ) -> BoxFuture<'_, Result<(), EngineError<Value>>> {
+        unsupported("cancelling a delegated task")
+    }
+
     /// The thread's subagent rows alone (`getThreadRecords(threadId, ["subagents"])`), for a
     /// follower that must not load the thread's whole history.
     fn subagent_rows(&self, _thread_id: &str) -> BoxFuture<'_, Result<Vec<Value>, String>> {
@@ -585,6 +697,19 @@ pub trait Engine: Send + Sync {
         unsupported("the thread transcript")
     }
 
+    /// `GET /api/orchestration/threads/:threadId/history`: the page before `cursor`
+    /// (`OrchestrationV2ThreadHistoryPage`), as T3's `getThreadHistoryPage` without work
+    /// folding. `conversation_only` is `view=conversation`.
+    fn thread_history_page(
+        &self,
+        _thread_id: ThreadId,
+        _cursor: String,
+        _through_entry_id: Option<String>,
+        _conversation_only: bool,
+    ) -> BoxFuture<'_, Result<ThreadHistory, EngineError<GetThreadProjectionError>>> {
+        unsupported("thread history pages")
+    }
+
     /// `ThreadManagementService.awaitBackgroundTasks`: the live session of the thread's
     /// active provider thread marks (`awaited`) or clears these background task ids. Answers
     /// the matched and unmatched ids; see [`BackgroundWaitError`] for the refusals.
@@ -607,6 +732,17 @@ pub enum ThreadTranscript {
     NotFound,
     /// The file would pass the limit (`thread_transcript_too_large`).
     TooLarge,
+}
+
+/// The outcome of [`Engine::thread_history_page`].
+#[derive(Debug, PartialEq)]
+pub enum ThreadHistory {
+    /// The page.
+    Page(Value),
+    /// No such thread, or it was deleted (`thread_not_found`).
+    NotFound,
+    /// The cursor does not decode (`invalid_history_cursor`).
+    InvalidCursor,
 }
 
 fn unsupported<T: Send + 'static, E: Send + 'static>(

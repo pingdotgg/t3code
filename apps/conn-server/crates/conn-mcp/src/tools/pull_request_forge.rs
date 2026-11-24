@@ -786,6 +786,29 @@ impl Cx<'_> {
     }
 }
 
+/// The calling thread's own merge, as the watch counts it: the target's repository and the
+/// pull requests the merge names, the target and, for a stack, each layer in
+/// `expectedStackHeads`.
+fn own_merge(thread_id: &Value, target: &Map<String, Value>, action: &Value, item: &str) -> Value {
+    let mut numbers: Vec<Value> = target.get("number").cloned().into_iter().collect();
+    for head in action["expectedStackHeads"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        if let Some(number) = head.get("number").filter(|n| !numbers.contains(n)) {
+            numbers.push(number.clone());
+        }
+    }
+    json!({
+        "threadId": thread_id,
+        "itemId": item,
+        "host": target.get("host"),
+        "repository": target.get("repository"),
+        "numbers": numbers,
+    })
+}
+
 pub(crate) async fn merge(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.forge_writer().await?;
     let located = cx.locate(args).await?;
@@ -803,7 +826,30 @@ pub(crate) async fn merge(cx: &Cx<'_>, args: &Args) -> ToolResult {
             action[key] = value;
         }
     }
-    cx.panel("runAction", located.with(action)).await?;
+    // A merge now is the calling thread's own, as an agent's `gh pr merge` is: its watch
+    // ends quietly. An auto-merge lands later, when the merge should still wake the thread.
+    let own = (args.get("auto") != Some(&Value::Bool(true))).then(|| {
+        own_merge(
+            &located.thread["id"],
+            &located.target.json(),
+            &action,
+            &format!("mcp-merge:{}", conn_support::uuid_v4()),
+        )
+    });
+    let mark = |phase: &str| {
+        own.clone().map(|mut own| {
+            own["phase"] = json!(phase);
+            own
+        })
+    };
+    if let Some(own) = mark("running") {
+        let _ = cx.forge_call("agentMerge", own).await;
+    }
+    let merged = cx.panel("runAction", located.with(action)).await;
+    if let Some(own) = mark(if merged.is_ok() { "merged" } else { "failed" }) {
+        let _ = cx.forge_call("agentMerge", own).await;
+    }
+    merged?;
     let after = cx.fresh("summary", located.with(json!({}))).await?;
     let mut result = located.identity();
     result.insert("state".into(), after["state"].clone());
@@ -909,5 +955,30 @@ mod tests {
         }
         assert!(list_cursors(&encode_cursor(&json!({"a": "b"}))).is_ok());
         assert!(list_cursors(&encode_cursor(&json!({"a": ""}))).is_err());
+    }
+}
+
+#[cfg(test)]
+mod own_merge_tests {
+    use super::*;
+
+    /// Round-2 gate finding 9: a stack merge marks its repository and the layers it merges,
+    /// not every pull request of the thread.
+    #[test]
+    fn a_stack_merge_names_its_repository_and_layers() {
+        let target = json!({"host": "github.com", "repository": "a/b", "number": 7,
+            "url": "https://github.com/a/b/pull/7"});
+        let action = json!({"action": "merge", "stackNumber": 1,
+            "expectedStackHeads": [{"number": 5, "headSha": "x"}, {"number": 7, "headSha": "y"}]});
+        let own = own_merge(
+            &json!("t1"),
+            target.as_object().expect("target"),
+            &action,
+            "m",
+        );
+        assert_eq!(own["numbers"], json!([7, 5]));
+        assert_eq!(own["repository"], "a/b");
+        assert_eq!(own["host"], "github.com");
+        assert!(own.get("any").is_none());
     }
 }

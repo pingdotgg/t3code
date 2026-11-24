@@ -12,7 +12,8 @@
 //   `providers:manage`. The payload rules themselves stay by hand in scopes.rs; a test there
 //   fails when this list and the hand rules differ.
 // - tools/upkeep/http-routes.json: every (method, path) of the T3 server's HTTP API
-//   (`EnvironmentHttpApi` in packages/contracts/src/environmentHttp.ts), by reflection.
+//   (`EnvironmentHttpApi` in packages/contracts/src/environmentHttp.ts), by reflection, and
+//   the routes apps/server mounts with `HttpRouter.add`, read from its source.
 //   tools/bump-report.mjs compares it with the routes this server serves.
 // - crates/conn-contract/src/upstream.rs: `T3_SERVER_VERSION`, the `version` of
 //   apps/server/package.json. Clients compare it with their own; the Codex provider sends it
@@ -26,6 +27,9 @@
 //   this server knows, and the keys of a `projectSettingsOverrides` entry. settings.rs redacts
 //   and restores exactly these secrets.
 //
+// - crates/conn-source-control/src/close_commands/generated.rs: each host's close command
+//   pattern and the shell-word patterns of `changeRequestsClosedBy`, with T3's own answers for
+//   sample commands and command outputs, which the Rust port's tests compare with.
 // - crates/conn-server/src/model_manifest/generated.rs: where `model-manifest.json` comes from
 //   and its times (apps/server/src/provider/ModelManifest.ts), and the bundled manifest's
 //   `updatedAt`.
@@ -183,6 +187,56 @@ HttpApi.reflect(http.EnvironmentHttpApi, {
   },
 });
 if (routes.length === 0) throw new Error("EnvironmentHttpApi has no endpoints");
+
+// Routes the T3 server mounts outside the API with `HttpRouter.add(method, path, ...)`, such
+// as /ws and /api/preview/tunnel. A path names constants; each must resolve to a string, or
+// generation fails, so a new route is never left out.
+const ROUTER_ROOT = "apps/server/src";
+// Files whose HttpRouter.add serves another listener, not the environment's.
+const ROUTER_OTHER_LISTENERS = new Set([
+  "apps/server/src/cloud/CliTokenManager.ts", // its own loopback server for the CLI sign-in
+]);
+const sourceFiles = (dir) =>
+  NodeFS.readdirSync(inMonorepo(dir), { withFileTypes: true }).flatMap((entry) => {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+const stringConstants = new Map();
+for (const dir of [ROUTER_ROOT, "packages/contracts/src", "packages/shared/src"]) {
+  for (const file of sourceFiles(dir)) {
+    const text = NodeFS.readFileSync(inMonorepo(file), "utf8");
+    for (const m of text.matchAll(/\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*("[^"\n]*"|`[^`\n]*`)/g)) {
+      stringConstants.set(m[1], m[2]);
+    }
+  }
+}
+function resolvePath(expression, where, seen = new Set()) {
+  const text = expression.trim();
+  if (/^"[^"]*"$/.test(text)) return text.slice(1, -1);
+  if (/^`[^`]*`$/.test(text)) {
+    return text
+      .slice(1, -1)
+      .replace(/\$\{([^}]+)\}/g, (_, inner) => resolvePath(inner, where, seen));
+  }
+  const name = /^(?:\w+\.)*([A-Z][A-Z0-9_]*)$/.exec(text)?.[1];
+  const value = name && !seen.has(name) ? stringConstants.get(name) : undefined;
+  if (value === undefined) throw new Error(`HttpRouter.add path ${text} in ${where} does not resolve to a string`);
+  return resolvePath(value, where, new Set([...seen, name]));
+}
+for (const file of sourceFiles(ROUTER_ROOT)) {
+  if (ROUTER_OTHER_LISTENERS.has(file)) continue;
+  const text = NodeFS.readFileSync(inMonorepo(file), "utf8");
+  for (const m of text.matchAll(/HttpRouter\.add\(\s*("[^"]*")\s*,\s*("[^"]*"|`[^`]*`|[\w.]+)\s*,/g)) {
+    const method = m[1].slice(1, -1);
+    const path = resolvePath(m[2], file);
+    if (path === "*") continue; // the static files and the dev proxy, served as a fallback
+    routes.push({ group: "router", method, path });
+  }
+  const calls = (text.match(/HttpRouter\.add\(/g) ?? []).length;
+  const parsed = [...text.matchAll(/HttpRouter\.add\(\s*"[^"]*"\s*,\s*("[^"]*"|`[^`]*`|[\w.]+)\s*,/g)].length;
+  if (calls !== parsed) throw new Error(`${file}: an HttpRouter.add call has a form this generator cannot read`);
+}
 routes.sort((a, b) =>
   a.path === b.path ? (a.method < b.method ? -1 : 1) : a.path < b.path ? -1 : 1,
 );
@@ -190,7 +244,7 @@ routes.sort((a, b) =>
 const routesJson = [
   "{",
   `  "generated": ${str(`${HEADER[0].slice(3)} ${HEADER[1].slice(3)}`)},`,
-  `  "source": ${str(`${HTTP_FILE} (EnvironmentHttpApi)`)},`,
+  `  "source": ${str(`${HTTP_FILE} (EnvironmentHttpApi) and HttpRouter.add in ${ROUTER_ROOT}`)},`,
   `  "routes": [`,
   routes.map((r) => `    ${JSON.stringify(r)}`).join(",\n"),
   "  ]",
@@ -289,6 +343,24 @@ for (const id of [...defaultEnabledInstances, ...defaultDisabledDrivers, "conn-t
   }
 }
 
+// `deriveProviderInstanceConfigMap` gives every driver a default instance unless its client
+// sets `hasDefaultInstance: false`; `KNOWN_DRIVERS` in managedProviders.ts lists them.
+const MANAGED_FILE = "apps/server/src/policy/managedProviders.ts";
+const managedText = NodeFS.readFileSync(inMonorepo(MANAGED_FILE), "utf8");
+const defaultInstanceDrivers = [...managedText.matchAll(/^\s*known\("(\w+)", "[^"]*", \w+\),$/gm)].map((m) => m[1]);
+const packagedClients = /PACKAGED_CLIENTS[^=]*=\s*\[([^\]]*)\]/.exec(managedText)?.[1].match(/\w+Client/g) ?? [];
+if (defaultInstanceDrivers.length < 3 || packagedClients.length < 3) {
+  throw new Error(`${MANAGED_FILE}: KNOWN_DRIVERS or PACKAGED_CLIENTS changed shape`);
+}
+for (const name of packagedClients) {
+  const specifier = new RegExp(`import \\{ ${name} \\} from "([^"]+)";`).exec(managedText)?.[1];
+  if (specifier === undefined) throw new Error(`${MANAGED_FILE}: no import for ${name}`);
+  const client = (await importServerPackage(specifier))[name];
+  if (!client?.driverKind) throw new Error(`${specifier} exports no ${name} with a driverKind`);
+  if (client.hasDefaultInstance !== false) defaultInstanceDrivers.push(client.driverKind);
+}
+defaultInstanceDrivers.sort();
+
 const strs = (list) => `&[${list.map(str).join(", ")}]`;
 // Persisted settings for the null-rule differential: T3's own decoder gives each verdict.
 const nullRuleCases = (() => {
@@ -358,6 +430,10 @@ const secretsRs = rustfmt(
     "",
     "/// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).",
     `pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = ${strs(defaultEnabledInstances)};`,
+    "",
+    "/// Drivers with an instance named after them even when settings name none",
+    `/// (\`deriveProviderInstanceConfigMap\`, \`hasDefaultInstance\`; ${MANAGED_FILE}).`,
+    `pub(super) const DEFAULT_INSTANCE_DRIVERS: &[&str] = ${strs(defaultInstanceDrivers)};`,
     "",
     "/// Where `ServerSettings` (packages/contracts/src/settings.ts) takes an explicit `null`, by",
     "/// T3's own decoder (`nullRule` in tools/schema-rules.mjs): `n` marks a node that may be null,",
@@ -678,6 +754,114 @@ const titlePromptsRs = rustfmt(
   ].join("\n"),
 );
 
+// ---- Change request close commands -------------------------------------------------------
+// `isChangeRequestCloseCommand` and `changeRequestsClosedBy`
+// (apps/server/src/sourceControl/sourceControlDefinitions.ts): each host's close pattern and
+// the shell-word patterns, in Rust syntax, and what T3's own functions answer for a set of
+// commands and outputs, so the Rust port is tested against T3 itself.
+
+const CLOSE_FILE = "apps/server/src/sourceControl/sourceControlDefinitions.ts";
+const closeModule = await importSource(CLOSE_FILE);
+const closeSource = NodeFS.readFileSync(inMonorepo(CLOSE_FILE), "utf8");
+const toolOutput = await importSource("packages/shared/src/toolOutput.ts");
+// JS `\d` and `\w` are ASCII; Rust's are Unicode. Lookaround and backreferences do not port.
+const rustPattern = (source) => {
+  if (/\(\?<?[=!]|\\[1-9]|\\k</.test(source)) throw new Error(`pattern does not port: ${source}`);
+  let out = "";
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === "\\") {
+      const next = source[i + 1];
+      const ascii = { d: "0-9", w: "0-9A-Za-z_" }[next];
+      out += ascii === undefined ? c + next : inClass ? ascii : `[${ascii}]`;
+      i++;
+    } else {
+      if (c === "[") inClass = true;
+      else if (c === "]") inClass = false;
+      out += c;
+    }
+  }
+  return out;
+};
+const constPattern = (name) => {
+  const match = new RegExp(`const ${name} =\\s*/(.+)/([a-z]*);`).exec(closeSource);
+  if (match === null) throw new Error(`${CLOSE_FILE} has no ${name}`);
+  return rustPattern(match[1]);
+};
+const closePatterns = closeModule.sourceControlDefinitions.definitions
+  .flatMap((d) => (d.changeRequestCloseCommand === undefined ? [] : [d.changeRequestCloseCommand]))
+  .map((re) => {
+    if (re.flags.replace(/[gu]/g, "") !== "") throw new Error(`close pattern flags: ${re.flags}`);
+    return rustPattern(re.source);
+  });
+const closeCommandCases = [
+  // sourceControlDefinitions.test.ts
+  "gh pr merge 19 --squash", 'gh pr merge "19" --squash', '/bin/zsh -lc "gh pr merge 19"',
+  'gh pr merge 19 --squash --subject "Release 20"', `/bin/zsh -lc "gh pr merge 19 --subject 'Release 20'"`,
+  "gh pr merge 19 --body 'see https://github.com/o/r/pull/20'", "gh pr merge 19 --body https://github.com/o/r/pull/20",
+  "gh pr merge 19 # then 20", "gh pr merge --squash --match-head-commit 3b2f958 #19",
+  "gh pr close https://github.com/o/r/pull/19 && gh pr merge 20", "glab mr merge https://gitlab.com/o/r/-/merge_requests/7",
+  "sleep 30; cafe pr merge 26271", "az repos pr update --id 19 --status completed",
+  "az repos pr update --id=19 --status=abandoned", "gh pr merge --squash", "gh stack merge",
+  "gh pr merge 19 && gh pr merge --auto",
+  // Other hosts, and commands that close nothing.
+  "tea pr merge 3", "tea pulls close 4", "fj pr m 5", "origin pr close 8", "glab mr accept 2",
+  "cafe stack merge", "gh pr merge #", "gh pr merge '#12'", "ls -la", "gh pr view 19",
+  "gh pr checks 19 --watch", "az repos pr update --id 19 --status active", "ghost pr merge 1",
+];
+const failureCases = [
+  // toolOutput.test.ts
+  "FILE NOT FOUND", "No files found", "ENOENT", "No such file or directory", "CommandNotFoundException",
+  "command not found", "Cannot find path 'a' because it does not exist", "The term 'example' is not recognized",
+  "is not recognized as the name of a cmdlet", "A parameter cannot be found that matches parameter name",
+  "<exited with exit code 2>", "Exited with exit code 1", "exit code: 127", "clean exit first, then ExIt CoDe: 3",
+  "Done", "exit code: 0", "Exited with exit code 0", "cannot find path", "is not recognized", "exit",
+  "not found", "the path cannot be found",
+  // The merge outputs the watch reads.
+  "GraphQL: Pull request is not mergeable\n<exited with exit code 1>",
+  "✓ Squashed and merged pull request #19", "exit code 10", "exit code:   0 then exit code 5",
+];
+// `commandIndicatesFailure` reads the first 32,768 UTF-16 units of an output.
+// Each case is a unit repeated `count` times, then a suffix.
+const commandFailureCases = [
+  ["中", 12_000, "exit code: 1"],
+  ["a", 32_768, "exit code: 1"],
+  ["a", 32_000, "exit code: 1"],
+  ["😀", 16_000, "exit code: 1"],
+  ["😀", 16_390, "exit code: 1"],
+];
+const closedByRs = (command) => {
+  if (!closeModule.isChangeRequestCloseCommand(command)) return "None";
+  const closed = closeModule.changeRequestsClosedBy(command);
+  return closed === "any" ? "Some(&[])" : `Some(&[${[...closed].join(", ")}])`;
+};
+const closeCommandsRs = rustfmt(
+  [
+    ...HEADER,
+    "",
+    `//! From \`${CLOSE_FILE}\` and \`packages/shared/src/toolOutput.ts\`.`,
+    "",
+    "/// Each host's `changeRequestCloseCommand`, in the registry's order.",
+    `pub(super) const CLOSE_COMMANDS: &[&str] = &[${closePatterns.map(str).join(", ")}];`,
+    "/// `SHELL_WORD`: a double-quoted, single-quoted or bare shell word.",
+    `pub(super) const SHELL_WORD: &str = ${str(constPattern("SHELL_WORD"))};`,
+    "/// `NAMED_CHANGE_REQUEST`: a word that names one change request by number or URL.",
+    `pub(super) const NAMED_CHANGE_REQUEST: &str = ${str(constPattern("NAMED_CHANGE_REQUEST"))};`,
+    "",
+    "/// T3's answers: `None` for no close command, an empty list for `\"any\"`.",
+    "#[cfg(test)]",
+    `pub(super) const CLOSED_BY_CASES: &[(&str, Option<&[u64]>)] = &[${closeCommandCases.map((c) => `(${str(c)}, ${closedByRs(c)})`).join(", ")}];`,
+    "/// T3's `toolOutputIndicatesFailure` answers.",
+    "#[cfg(test)]",
+    `pub(super) const FAILURE_CASES: &[(&str, bool)] = &[${failureCases.map((c) => `(${str(c)}, ${toolOutput.toolOutputIndicatesFailure(c)})`).join(", ")}];`,
+    "/// T3's `commandIndicatesFailure` answers for long outputs: (unit, count, suffix, failed).",
+    "#[cfg(test)]",
+    `pub(super) const COMMAND_FAILURE_CASES: &[(&str, usize, &str, bool)] = &[${commandFailureCases.map(([unit, count, suffix]) => `(${str(unit)}, ${count}, ${str(suffix)}, ${toolOutput.commandIndicatesFailure({ output: unit.repeat(count) + suffix })})`).join(", ")}];`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Write or check ----------------------------------------------------------------------
 
 const vcsSource = NodeFS.readFileSync(inMonorepo("apps/server/src/vcs/GitVcsDriverCore.ts"), "utf8");
@@ -697,6 +881,7 @@ const gitRulesRs = rustfmt([...HEADER,
 
 const outputs = {
   "crates/conn-vcs/src/generated.rs": gitRulesRs,
+  "crates/conn-source-control/src/close_commands/generated.rs": closeCommandsRs,
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,

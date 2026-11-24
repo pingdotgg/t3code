@@ -599,7 +599,8 @@ async fn an_abandoned_goal_command_sends_nothing_more() {
 }
 
 /// Close cancels the goal's grace timer: a grace that runs out while a shared app-server
-/// unloads the thread pauses nothing for the closed session.
+/// unloads the thread pauses nothing for the closed session. The held run still settles:
+/// its completed turn shows, then its terminal.
 #[tokio::test(flavor = "current_thread")]
 async fn close_cancels_the_goal_grace() {
     let unsubscribe =
@@ -634,6 +635,10 @@ async fn close_cancels_the_goal_grace() {
         }
     }
     fixture.session.close().await;
+    let events = fixture.until_terminal().await;
+    let g1 = ids::provider_turn_id(DRIVER, "g1");
+    assert_eq!(turn_statuses(&events, &g1), ["completed"]);
+    assert_eq!(terminals(&events), [(g1, "completed".to_owned())]);
     // A request on the shared process: every earlier line has been read by then.
     witness
         .ensure_thread(EnsureThreadInput {

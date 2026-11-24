@@ -54,6 +54,15 @@ pub(crate) struct TestHooks {
         tokio::sync::oneshot::Sender<()>,
         tokio::sync::oneshot::Receiver<()>,
     )>,
+    /// Outbox rows that hold their lane until released, then settle without running.
+    pub(crate) gates: std::collections::HashMap<i64, tokio::sync::oneshot::Receiver<()>>,
+    /// Right after a rollback's result commit: sends, then waits (`rollback.rs`).
+    pub(crate) rollback_committed: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+    /// The next rollback failure writes fail (`rollback.rs`).
+    pub(crate) rollback_result_faults: u32,
 }
 
 /// The wait before settlement try `failures + 1`: 100 ms, doubling, at most 30 s (the
@@ -78,6 +87,7 @@ impl Inner {
     /// nothing starts, and rows wait in the outbox for a later call.
     pub(crate) fn ensure_effect_worker(self: &Arc<Self>) {
         if tokio::runtime::Handle::try_current().is_err()
+            || self.effects_held.load(Ordering::SeqCst)
             || self.effect_worker.swap(true, Ordering::SeqCst)
         {
             return;
@@ -156,10 +166,28 @@ impl Inner {
 
     /// Runs one claimed row and settles it; its thread's next row may then run.
     async fn run_claimed(self: Arc<Self>, claimed: Claimed) {
-        let Claimed { id, effect } = claimed;
+        let Claimed {
+            id,
+            mut effect,
+            progress,
+        } = claimed;
+        if let crate::commands::Effect::Rollback(request) = &mut effect {
+            crate::rollback::resume_from(request, progress.as_ref());
+        }
+        #[cfg(test)]
+        {
+            let gate = crate::lock(&self.worker_hooks).gates.remove(&id);
+            if let Some(release) = gate {
+                let _ = release.await;
+                self.settle_ran(id, None).await;
+                self.effects_wake.notify_one();
+                return;
+            }
+        }
         #[cfg(test)]
         let effect_type = effect.effect_type();
-        self.clone().run_effect(effect).await;
+        let owns_settlement = matches!(effect, crate::commands::Effect::Rollback(_));
+        let outcome = self.clone().run_effect(effect).await;
         #[cfg(test)]
         {
             let pause = {
@@ -177,7 +205,11 @@ impl Inner {
                 let _ = release.await;
             }
         }
-        self.settle_ran(id).await;
+        // A rollback's own result write settles its row (`Tx::settle_rollback`): settling it
+        // here would mark a rollback whose result was never written as done.
+        if !owns_settlement {
+            self.settle_ran(id, outcome.err()).await;
+        }
         self.effects_wake.notify_one();
     }
 
@@ -190,9 +222,11 @@ impl Inner {
     /// `failed`, with the reason. Where T3 gives up after one failed `fail`, the row would hold
     /// its thread until a restart; here the settlement is tried again with backoff for as long
     /// as this engine owns the store.
-    async fn settle_ran(&self, id: i64) {
-        let mut status = Settled::Succeeded;
-        let mut reason = None;
+    async fn settle_ran(&self, id: i64, failure: Option<String>) {
+        let (mut status, mut reason) = match failure {
+            Some(error) => (Settled::Failed, Some(error)),
+            None => (Settled::Succeeded, None),
+        };
         let mut failures = 0;
         loop {
             let error = match self.settle(id, status, reason.clone()).await {
@@ -218,7 +252,7 @@ impl Inner {
 
     /// Whether this engine still owns the store, read from the durable epoch after a failed
     /// write. A read that fails too counts as owned: the next try asks again.
-    async fn still_owns(&self) -> bool {
+    pub(crate) async fn still_owns(&self) -> bool {
         !self.engine_dropped.load(Ordering::SeqCst)
             && self.db(|store| store.owns_store()).await.unwrap_or(true)
     }

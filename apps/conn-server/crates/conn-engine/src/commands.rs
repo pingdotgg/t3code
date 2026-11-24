@@ -71,6 +71,7 @@ pub(crate) enum Effect {
     #[serde(rename = "thread.closed")]
     ThreadClosed {
         thread_id: String,
+        #[serde(deserialize_with = "close_reason")]
         reason: crate::ThreadClose,
     },
     /// Asks the title generator; answers with `thread.title.regeneration.complete`.
@@ -80,6 +81,18 @@ pub(crate) enum Effect {
         request_id: String,
         regenerate: bool,
     },
+}
+
+/// A close's reason as an outbox row stores it. A row from before closes named their
+/// settlement holds the bare `"settled"`.
+fn close_reason<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::ThreadClose, D::Error> {
+    let reason = Value::deserialize(deserializer)?;
+    if reason == "settled" {
+        return Ok(crate::ThreadClose::SettledUnnamed);
+    }
+    serde_json::from_value(reason).map_err(serde::de::Error::custom)
 }
 
 pub(crate) enum CommandError {
@@ -337,6 +350,9 @@ struct MessageDispatch {
     scheduled_task_id: Option<String>,
     /// Start a new provider conversation without the thread's earlier context. Never steers.
     fresh_context: Option<bool>,
+    /// The run's provider instance's capabilities, which the engine adds before the command
+    /// reaches its handler (`ensureContextHandoff` for a provider switch).
+    target_capabilities: Option<Value>,
 }
 
 /// How a message reaches the thread, after the busy-thread rules.
@@ -409,14 +425,95 @@ fn delivery(
             });
         }
     }
-    let restart =
-        c.dispatch_mode.kind == "restart_active" || c.delivery_intent.as_deref() == Some("restart");
+    // A steer on another instance cannot join the running turn: it restarts there, with the
+    // conversation (`selectionMustApplyNow` in `dispatchMessage`).
+    let requested = match &c.model_selection {
+        Some(selection) => selection["instanceId"].clone(),
+        None => tx
+            .thread(&c.thread_id)?
+            .map_or(Value::Null, |t| t["modelSelection"]["instanceId"].clone()),
+    };
+    let switches = steer_target
+        .as_ref()
+        .is_some_and(|t| requested.is_string() && t["providerInstanceId"] != requested);
+    let restart = switches
+        || c.dispatch_mode.kind == "restart_active"
+        || c.delivery_intent.as_deref() == Some("restart");
     Ok(match steer_target {
         // Interrupt-and-restart: the message goes first in the queue and the turn stops.
         Some(target) if restart => (Delivery::Queue { first: true }, Some(target)),
         Some(target) if turn_running(&target)? => (Delivery::Steer(target), None),
         _ => (Delivery::Queue { first: false }, None),
     })
+}
+
+/// `validateReusableThread` in T3's `ThreadLaunchService`: a launch may reuse only an empty,
+/// active thread of its own project.
+fn check_reusable(tx: &Tx<'_>, thread_id: &str, project_id: &str) -> Result<(), CommandError> {
+    let thread = live_thread(tx, thread_id)?;
+    if thread["projectId"] != project_id
+        || !thread["archivedAt"].is_null()
+        || !thread["deletedAt"].is_null()
+        || is_used(tx, thread_id)?
+    {
+        return reject(
+            "Only an empty active thread in the target project can change workspace during launch.",
+        );
+    }
+    Ok(())
+}
+
+/// A thread with a message or a run: what `expectedEmpty` and `onlyIfUnused` read.
+fn is_used(tx: &Tx<'_>, thread_id: &str) -> Result<bool, CommandError> {
+    Ok(tx.has(thread_id, "messages")? || tx.has(thread_id, "runs")?)
+}
+
+/// `exceededDispatchModeLimit` and `OrchestratorThreadAboveModeLimitError`.
+fn refuse_above_mode_limit(
+    thread_id: &str,
+    thread: &Value,
+    limit: &Value,
+) -> Result<(), CommandError> {
+    use conn_support::modes::{interaction_rank, runtime_rank};
+    let mode = |v: &Value, key: &str| v[key].as_str().unwrap_or_default().to_owned();
+    let (runtime, interaction) = (mode(thread, "runtimeMode"), mode(thread, "interactionMode"));
+    if runtime_rank(&runtime) > runtime_rank(&mode(limit, "runtimeMode"))
+        || interaction_rank(&interaction) > interaction_rank(&mode(limit, "interactionMode"))
+    {
+        return reject(format!(
+            "Thread {thread_id} now runs in {runtime}/{interaction} mode, above what this caller may change."
+        ));
+    }
+    Ok(())
+}
+
+/// A launch's own checks, run in its command's write before the decision. T3 runs them in
+/// `ThreadLaunchService` (`validateReusableThread`, the project check, `DispatchModeLimit`),
+/// outside the orchestrator: a refusal here is no outcome of the command, so it records no
+/// receipt and the launch id stays usable.
+pub(crate) fn admit_launch(tx: &Tx<'_>, command: &Value) -> Result<(), CommandError> {
+    let Some(thread_id) = command["threadId"].as_str() else {
+        return Ok(());
+    };
+    if let Some(project) = command["launchProjectId"].as_str()
+        && live_thread(tx, thread_id)?["projectId"] != project
+    {
+        return reject("Project identity changed.");
+    }
+    if let Some(project) = command["reuseProjectId"].as_str() {
+        check_reusable(tx, thread_id, project)?;
+    }
+    // The checkout the launch's claim recorded: T3 carries the workspace with the accepted
+    // message, so a reuse that rebound the thread meanwhile does not move this one.
+    if let Some(checkout) = command.get("launchCheckout").filter(|c| c.is_object())
+        && live_thread(tx, thread_id)?["worktreePath"] != checkout["worktreePath"]
+    {
+        return reject("The thread's checkout changed during the launch.");
+    }
+    if let Some(limit) = command.get("modeLimit").filter(|l| l.is_object()) {
+        refuse_above_mode_limit(thread_id, &live_thread(tx, thread_id)?, limit)?;
+    }
+    Ok(())
 }
 
 /// `isNativeMaintenanceCommand`: compaction and sign-out, which take no steering input.
@@ -505,12 +602,16 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 .command(Some(&c.command_id)),
         )?;
     }
-    crate::fork::ensure_native_fork(
+    let fork = crate::fork::decide_fork_execution(
         tx,
-        &c.thread_id,
-        thread["modelSelection"]["instanceId"]
+        &thread,
+        c.model_selection
+            .as_ref()
+            .unwrap_or(&thread["modelSelection"])["instanceId"]
             .as_str()
             .unwrap_or_default(),
+        c.target_capabilities.as_ref(),
+        &c.command_id,
     )?;
     if !matches!(
         c.dispatch_mode.kind.as_str(),
@@ -571,13 +672,51 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .unwrap_or(&thread["modelSelection"]),
     );
     // A fresh run starts a new provider thread when it runs.
-    let provider_thread_id = if fresh {
+    let mut provider_thread_id = if fresh {
         Value::Null
     } else {
         thread["activeProviderThreadId"].clone()
     };
     let now = tx.now().to_owned();
     let cid = Some(c.command_id.as_str());
+    // A run on another instance than the conversation's carries its history there. A queued
+    // run decides when it starts (`start_next_queued`).
+    let from = if fresh || queued {
+        None
+    } else {
+        crate::provider_handoff::conversation_instance(tx, &thread, c.notification.is_some())?
+    };
+    let created_by = json!(c.created_by);
+    let place = crate::provider_handoff::Place {
+        thread_id: &c.thread_id,
+        run_id: &run_id,
+        root_node_id: &root,
+        ordinal,
+        model_selection: &model,
+        created_by: &created_by,
+        requires_full: !crate::merge_back::pending(tx, &c.thread_id)?.is_empty(),
+        queued: false,
+        now: &now,
+    };
+    let switch = match (&fork, from) {
+        (crate::fork::ForkExecution::Portable(pending), _) => Some(
+            crate::provider_handoff::prepare_fork(tx, &thread, &place, pending)?,
+        ),
+        (_, Some(from)) if from != model["instanceId"] => {
+            crate::provider_handoff::prepare(tx, &thread, &place)?
+        }
+        _ => None,
+    };
+    if let Some(switch) = &switch {
+        if let Some(capabilities) = &c.target_capabilities {
+            switch.ensure_supported(
+                capabilities,
+                model["instanceId"].as_str().unwrap_or_default(),
+                &c.command_id,
+            )?;
+        }
+        provider_thread_id = switch.provider_thread_id.clone();
+    }
     let draft = |event_type, payload| {
         Draft::new(&c.thread_id, event_type, payload)
             .run(Some(&run_id))
@@ -657,7 +796,11 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         "startedAt": null,
         "completedAt": null,
         "checkpointId": null,
-        "contextHandoffId": merge_back.as_ref().map(|m| m.handoff["id"].clone()),
+        "contextHandoffId": switch
+            .as_ref()
+            .map(|s| &s.handoff)
+            .or(merge_back.as_ref().map(|m| &m.handoff))
+            .map(|h| h["id"].clone()),
     });
     if held {
         run["queueHeld"] = json!(true);
@@ -679,6 +822,22 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     if let Some(source) = &c.restart_continuation_of_run_id {
         run["restartContinuationOfRunId"] = json!(source);
+    }
+    // A run the thread queues for itself continues the task of the run that sent it.
+    let continued = match &c.restart_continuation_of_run_id {
+        Some(source) => tx.entity(&c.thread_id, "runs", source)?,
+        None if c.sender_thread_id.as_deref() == Some(c.thread_id.as_str()) => {
+            active_run(tx, &c.thread_id)?
+        }
+        None => None,
+    };
+    if let Some(task) = continued.as_ref().map(|r| &r["delegatedTaskId"])
+        && task.is_string()
+    {
+        run["delegatedTaskId"] = task.clone();
+    }
+    if let Some(switch) = &switch {
+        switch.append_records(tx, &c.thread_id, &run_id, cid)?;
     }
     if let Some(merge_back) = &merge_back {
         crate::merge_back::append_records(
@@ -742,10 +901,37 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
     }
-    if let Some(merge_back) = &merge_back {
-        tx.append(draft("turn-item.updated", merge_back.turn_item.clone()))?;
+    // One handoff item per run: the merge-back's, with the switch's sources when both.
+    let handoff_item = match (&merge_back, &switch) {
+        (Some(merge_back), Some(switch)) => {
+            let mut item = merge_back.turn_item.clone();
+            let (instances, selections) = switch.sources();
+            item["fromProviderInstanceIds"] = instances;
+            item["fromModelSelections"] = selections;
+            Some(item)
+        }
+        (Some(merge_back), None) => Some(merge_back.turn_item.clone()),
+        (None, Some(switch)) => Some(switch.turn_item.clone()),
+        (None, None) => None,
+    };
+    if let Some(item) = handoff_item {
+        tx.append(draft("turn-item.updated", item))?;
     }
     tx.append(draft("message.updated", message))?;
+    crate::families::record_follow_up(
+        tx,
+        &crate::families::FollowUpSource {
+            command_id: &c.command_id,
+            thread_id: &c.thread_id,
+            run_id: &run_id,
+            text: &c.text,
+            created_by: &c.created_by,
+            creation_source: &c.creation_source,
+            sender_thread_id: c.sender_thread_id.as_deref(),
+            notification: c.notification.as_ref(),
+            excluded: c.scheduled_task_id.is_some() || c.restart_continuation_of_run_id.is_some(),
+        },
+    )?;
     let item_id = format!("turn-item:{}", c.message_id);
     let existing_item = tx.entity(&c.thread_id, "turnItems", &item_id)?;
     if queued {
@@ -1036,6 +1222,27 @@ fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
         }
     }
     Ok(released)
+}
+
+/// Cancels the queued runs of buffered provider notifications: their output lived in the
+/// provider process that is gone (T3's `isBufferedProviderNotification` at recovery).
+pub(crate) fn cancel_buffered_notifications(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    for run in queued_runs(tx, thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let buffered = tx
+            .entity(thread_id, "messages", message_id)?
+            .is_some_and(|m| {
+                m["createdBy"] == "agent"
+                    && m["creationSource"] == "provider"
+                    && !is_null(&m, "notification")
+                    && is_null(&m, "delegatedCompletion")
+            });
+        if buffered {
+            let run_id = run["id"].as_str().unwrap_or_default();
+            finish_run(tx, thread_id, run_id, "cancelled", None)?;
+        }
+    }
+    Ok(())
 }
 
 /// Sets `queueHeld` on every queued run, so they wait for the user.
@@ -1379,7 +1586,37 @@ fn start_next_queued_as(
             .run(Some(&run_id))
             .node(Some(&root))
     };
-    if let Some(message) = tx.entity(thread_id, "messages", &message_id)? {
+    let message = tx.entity(thread_id, "messages", &message_id)?;
+    // A run queued for another instance than the last run carries the history there.
+    let switch = if run["freshContext"] == true {
+        None
+    } else {
+        crate::provider_handoff::prepare(
+            tx,
+            &thread,
+            &crate::provider_handoff::Place {
+                thread_id,
+                run_id: &run_id,
+                root_node_id: &root,
+                ordinal: run["ordinal"].as_u64().unwrap_or(0),
+                model_selection: &run["modelSelection"],
+                created_by: message.as_ref().map_or(&Value::Null, |m| &m["createdBy"]),
+                requires_full: false,
+                queued: true,
+                now: &now,
+            },
+        )?
+    };
+    let provider_thread_id = match &switch {
+        Some(switch) => switch.provider_thread_id.clone(),
+        None => queued_provider_thread(&run, &thread),
+    };
+    if let Some(switch) = &switch {
+        switch.append_records(tx, thread_id, &run_id, None)?;
+        tx.append(draft("turn-item.updated", switch.turn_item.clone()))?;
+        run["contextHandoffId"] = switch.handoff["id"].clone();
+    }
+    if let Some(message) = message {
         let item_id = format!("turn-item:{message_id}");
         let mut item = tx
             .entity(thread_id, "turnItems", &item_id)?
@@ -1412,7 +1649,7 @@ fn start_next_queued_as(
         }
         item["runId"] = json!(run_id);
         item["nodeId"] = json!(root);
-        item["providerThreadId"] = queued_provider_thread(&run, &thread);
+        item["providerThreadId"] = provider_thread_id.clone();
         item["inputIntent"] = json!("queued_turn");
         item["status"] = json!("completed");
         item["completedAt"] = json!(now);
@@ -1425,7 +1662,7 @@ fn start_next_queued_as(
     run["status"] = json!("starting");
     run["queuePosition"] = Value::Null;
     run["queueHeld"] = json!(false);
-    run["providerThreadId"] = queued_provider_thread(&run, &thread);
+    run["providerThreadId"] = provider_thread_id;
     tx.append(draft("run.updated", run))?;
     Ok(Some(Effect::StartTurn {
         thread_id: thread_id.to_owned(),
@@ -1499,7 +1736,8 @@ fn queued_run_cancel(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: QueuedRun = decode(command)?;
     queued_run(tx, &c)?;
     finish_run(tx, &c.thread_id, &c.run_id, "cancelled", None)?;
-    Ok(vec![])
+    // A follow-up whose queued run is cancelled before it starts ends cancelled.
+    Ok(crate::families::finalize_tasks(tx, &c.thread_id)?)
 }
 
 #[derive(Deserialize)]
@@ -1584,6 +1822,7 @@ fn queued_run_edit(tx: &mut Tx<'_>, command: Value) -> Outcome {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromoteToSteer {
+    command_id: String,
     thread_id: String,
     queued_run_id: String,
     target_run_id: String,
@@ -1635,6 +1874,25 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         });
     }
     finish_run(tx, &c.thread_id, &c.queued_run_id, "cancelled", None)?;
+    // Queued on another instance: the message restarts there, as a direct steer does.
+    let selection = &queued["modelSelection"];
+    if selection["instanceId"].is_string()
+        && selection["instanceId"] != target["providerInstanceId"]
+    {
+        let mut command = json!({
+            "type": "message.dispatch", "commandId": c.command_id, "threadId": c.thread_id,
+            "messageId": message_id, "text": message["text"], "attachments": message["attachments"],
+            "modelSelection": selection, "createdBy": message["createdBy"],
+            "creationSource": message["creationSource"],
+            "dispatchMode": {"type": "steer_active", "targetRunId": c.target_run_id},
+        });
+        for field in ["context", "notification", "scheduledTaskId"] {
+            if message[field].is_object() || message[field].is_string() {
+                command[field] = message[field].clone();
+            }
+        }
+        return message_dispatch(tx, command);
+    }
     let dispatch = MessageDispatch {
         command_id: String::new(),
         thread_id: c.thread_id.clone(),
@@ -1660,6 +1918,7 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         restart_continuation_of_run_id: None,
         sender_thread_id: None,
         title_seed: None,
+        target_capabilities: None,
         notification: message
             .get("notification")
             .filter(|v| v.is_object())
@@ -1751,21 +2010,37 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 .payload_instance(),
         )?;
     }
-    let children = crate::families::stop_children(tx, &c.thread_id)?;
-    let active = active_run(tx, &c.thread_id)?;
-    // With no active run, background work that outlives the latest run is the target: the
-    // provider alone knows whether work remains (`dispatchThreadStop`).
+    Ok(stop_thread_work(
+        tx,
+        &c.thread_id,
+        c.reason.as_deref(),
+        true,
+    )?)
+}
+
+/// What Stop ends in a thread: its delegates first, then its active run or, with none, the
+/// background work that outlives its latest run (`dispatchThreadStop`). `mark` records the
+/// Stop on the run, as a Stop the user asked for does.
+pub(crate) fn stop_thread_work(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    reason: Option<&str>,
+    mark: bool,
+) -> StoreResult<Vec<Effect>> {
+    let children = crate::families::stop_children(tx, thread_id)?;
+    let active = active_run(tx, thread_id)?;
+    // Only the provider knows whether background work remains, so it is asked to stop it.
     let settled = match &active {
         Some(_) => None,
-        None => crate::shell::settled_background_target(tx, &c.thread_id)?
+        None => crate::shell::settled_background_target(tx, thread_id)?
             .and_then(|(run, _)| run["id"].as_str().map(str::to_owned)),
     };
     let own = match &active {
-        Some(run) => stop_run(tx, &c.thread_id, run, c.reason.as_deref(), true)?,
+        Some(run) => stop_run(tx, thread_id, run, reason, mark)?,
         None => vec![],
     };
     let background = settled.map(|run_id| Effect::StopBackgroundWork {
-        thread_id: c.thread_id.clone(),
+        thread_id: thread_id.to_owned(),
         run_id,
     });
     Ok(children.into_iter().chain(own).chain(background).collect())
@@ -2419,63 +2694,194 @@ fn patch_thread(
     bump_updated_at: bool,
     patch: impl FnOnce(&mut Value, &str),
 ) -> Result<(), CommandError> {
+    patch_thread_for(tx, thread_id, event_type, bump_updated_at, None, patch)
+}
+
+/// [`patch_thread`] with the event filed under the command that wrote it.
+fn patch_thread_for(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    event_type: &'static str,
+    bump_updated_at: bool,
+    command_id: Option<&str>,
+    patch: impl FnOnce(&mut Value, &str),
+) -> Result<(), CommandError> {
     let mut thread = live_thread(tx, thread_id)?;
     let now = tx.now().to_owned();
     patch(&mut thread, &now);
     if bump_updated_at {
         thread["updatedAt"] = json!(now);
     }
-    tx.append(Draft::new(thread_id, event_type, thread).payload_instance())?;
+    tx.append(
+        Draft::new(thread_id, event_type, thread)
+            .payload_instance()
+            .command(command_id),
+    )?;
     Ok(())
+}
+
+/// T3's `liveSideChatIds`: side chats live inside their parent, so deleting or archiving the
+/// parent takes them too. Found by lineage, not by fork run: a side chat opened during the
+/// parent's first turn has none. The command's one transaction stands in for T3's locks.
+fn live_side_chats(tx: &Tx<'_>, parent_id: &str) -> StoreResult<Vec<Value>> {
+    Ok(tx
+        .threads_where("lineage.parentThreadId", parent_id)?
+        .into_iter()
+        .filter(|t| t["lineage"]["sideChat"] == true)
+        .collect())
+}
+
+/// T3's `hasRunningDelegatedTasks`: an app-owned task with a child thread still at work.
+fn has_running_delegated_tasks(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool> {
+    Ok(tx.entities(thread_id, "subagents")?.iter().any(|task| {
+        task["origin"] == "app_owned"
+            && !task["childThreadId"].is_null()
+            && matches!(
+                task["status"].as_str(),
+                Some("pending" | "running" | "waiting")
+            )
+    }))
+}
+
+/// T3's archive of one thread (`Orchestrator.ts` `thread.archive`): queued and preparing runs
+/// are cancelled, live provider sessions detach, pending link requests close, and the thread's
+/// terminals and devices go (`ThreadClosed`).
+fn archive_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
+    for run in tx.entities(thread_id, "runs")? {
+        if matches!(run["status"].as_str(), Some("queued" | "preparing")) {
+            let run_id = run["id"].as_str().unwrap_or_default();
+            finish_run(tx, thread_id, run_id, "cancelled", None)?;
+        }
+    }
+    let now = tx.now().to_owned();
+    let mut effects = vec![];
+    for session in tx.entities(thread_id, "providerSessions")? {
+        if matches!(session["status"].as_str(), Some("stopped" | "error")) {
+            continue;
+        }
+        tx.append(Draft::new(
+            thread_id,
+            "provider-session.detached",
+            json!({"providerSessionId": session["id"], "detachedAt": now,
+                "reason": "Thread archived."}),
+        ))?;
+        if effects.is_empty() {
+            effects.push(Effect::CloseSession {
+                thread_id: thread_id.to_owned(),
+            });
+        }
+    }
+    crate::link_requests::close_pending(tx, thread_id)?;
+    patch_thread(tx, thread_id, "thread.archived", true, |t, now| {
+        t["archivedAt"] = json!(now);
+        crate::pull_requests::end_watches(t);
+    })?;
+    effects.push(Effect::ThreadClosed {
+        thread_id: thread_id.to_owned(),
+        reason: crate::ThreadClose::Archived,
+    });
+    Ok(effects)
 }
 
 fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
-    crate::link_requests::close_pending(tx, &c.thread_id)?;
-    patch_thread(tx, &c.thread_id, "thread.archived", true, |t, now| {
-        t["archivedAt"] = json!(now);
-        crate::pull_requests::end_watches(t);
-    })?;
-    Ok(vec![Effect::ThreadClosed {
-        thread_id: c.thread_id,
-        reason: crate::ThreadClose::Archived,
-    }])
+    // T3's guards, decided before either thread changes.
+    if !live_thread(tx, &c.thread_id)?["archivedAt"].is_null() {
+        return reject(format!("Thread {} is already archived.", c.thread_id));
+    }
+    if has_running_delegated_tasks(tx, &c.thread_id)? {
+        return reject(format!(
+            "Thread {} has running delegated tasks. Wait for them or cancel them before archiving.",
+            c.thread_id
+        ));
+    }
+    let side_chats = live_side_chats(tx, &c.thread_id)?;
+    let mut effects = archive_one(tx, &c.thread_id)?;
+    // Orchestrator.ts `thread.archive`: an active side chat follows its parent, unless it
+    // still waits on delegated tasks.
+    for side_chat in side_chats {
+        let id = side_chat["id"].as_str().unwrap_or_default();
+        if side_chat["archivedAt"].is_null() && !has_running_delegated_tasks(tx, id)? {
+            effects.extend(archive_one(tx, id)?);
+        }
+    }
+    Ok(effects)
 }
 
 fn thread_unarchive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
+    let parent_archived_at = live_thread(tx, &c.thread_id)?["archivedAt"].clone();
+    if parent_archived_at.is_null() {
+        return reject(format!("Thread {} is not archived.", c.thread_id));
+    }
+    let side_chats = live_side_chats(tx, &c.thread_id)?;
     patch_thread(tx, &c.thread_id, "thread.unarchived", true, |t, _| {
         t["archivedAt"] = Value::Null;
     })?;
+    // Unarchive restores the side chats this parent's archive took, not ones archived before it.
+    for side_chat in side_chats {
+        let at = |v: &Value| v.as_str().and_then(conn_support::time::millis_from_iso);
+        let follows = matches!(
+            (at(&side_chat["archivedAt"]), at(&parent_archived_at)),
+            (Some(child), Some(parent)) if child >= parent
+        );
+        if follows {
+            let id = side_chat["id"].as_str().unwrap_or_default();
+            patch_thread(tx, id, "thread.unarchived", true, |t, _| {
+                t["archivedAt"] = Value::Null;
+            })?;
+        }
+    }
     Ok(vec![])
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadDelete {
+    thread_id: String,
+    only_if_unused: Option<bool>,
+}
+
 fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadOnly = decode(command)?;
-    let mut effects = vec![];
-    for run in tx
-        .entities(&c.thread_id, "runs")?
-        .into_iter()
-        .filter(is_live)
-    {
-        let run_id = run["id"].as_str().unwrap_or_default();
-        finish_run(tx, &c.thread_id, run_id, "cancelled", None)?;
+    let c: ThreadDelete = decode(command)?;
+    live_thread(tx, &c.thread_id)?;
+    // Checked under the thread lock (T3's `onlyIfUnused`): a message sent since the client
+    // looked keeps the thread, and the delete is accepted with no change.
+    if c.only_if_unused == Some(true) && is_used(tx, &c.thread_id)? {
+        return Ok(vec![]);
     }
-    effects.push(Effect::CloseThreadSessions {
-        thread_id: c.thread_id.clone(),
-    });
-    patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {
+    let side_chats = live_side_chats(tx, &c.thread_id)?;
+    let mut effects = delete_one(tx, &c.thread_id)?;
+    for side_chat in side_chats {
+        effects.extend(delete_one(
+            tx,
+            side_chat["id"].as_str().unwrap_or_default(),
+        )?);
+    }
+    Ok(effects)
+}
+
+fn delete_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
+    for run in tx.entities(thread_id, "runs")?.into_iter().filter(is_live) {
+        let run_id = run["id"].as_str().unwrap_or_default();
+        finish_run(tx, thread_id, run_id, "cancelled", None)?;
+    }
+    patch_thread(tx, thread_id, "thread.deleted", true, |t, now| {
         t["deletedAt"] = json!(now);
     })?;
-    effects.push(Effect::CleanupHtmlAttachments {
-        thread_id: c.thread_id.clone(),
-        ids: crate::html_cleanup::plan(tx, &c.thread_id)?,
-    });
-    effects.push(Effect::ThreadClosed {
-        thread_id: c.thread_id,
-        reason: crate::ThreadClose::Deleted,
-    });
-    Ok(effects)
+    Ok(vec![
+        Effect::CloseThreadSessions {
+            thread_id: thread_id.to_owned(),
+        },
+        Effect::CleanupHtmlAttachments {
+            thread_id: thread_id.to_owned(),
+            ids: crate::html_cleanup::plan(tx, thread_id)?,
+        },
+        Effect::ThreadClosed {
+            thread_id: thread_id.to_owned(),
+            reason: crate::ThreadClose::Deleted,
+        },
+    ])
 }
 
 #[derive(Deserialize)]
@@ -2599,6 +3005,11 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
             ));
         }
     }
+    // A launch's claim on an existing thread (`expectedEmpty` in T3's `Orchestrator`).
+    let expects_empty = command["expectedEmpty"] == true;
+    if expects_empty && is_used(tx, &c.thread_id)? {
+        return reject(format!("Thread {} is no longer empty.", c.thread_id));
+    }
     let workspace_changed = command
         .get("worktreePath")
         .is_some_and(|p| *p != old["worktreePath"]);
@@ -2623,11 +3034,13 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let command_id = c.command_id.clone();
     let titled = c.title.is_some();
     let thread_id = c.thread_id.clone();
-    patch_thread(
+    patch_thread_for(
         tx,
         &c.thread_id,
         "thread.metadata-updated",
         true,
+        // The claim's event names its command, so a replay can find the thread it claimed.
+        expects_empty.then_some(command_id.as_str()),
         |t, now| {
             for field in ["branch", "worktreePath"] {
                 if let Some(value) = command.get(field) {
@@ -2809,8 +3222,22 @@ pub(crate) fn finish_run(
         failure,
         None,
         IdleWrite::WhileActive,
+        RunEnd::Settled,
     )
     .map(drop)
+}
+
+/// Why a run ends, which decides what happens to its live provider-native subagents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunEnd {
+    /// The provider or the engine ended the run (a confirmed Stop, a failure, a cancel): an
+    /// interrupted, failed or cancelled run takes its open native subagents with it, as T3's
+    /// `cascadeTerminalizeRunOwnedSubagents`.
+    Settled,
+    /// The run's session went away (released, or its events ended). A native subagent still
+    /// running keeps its item open: it ends with its own row, from the provider (Codex's
+    /// shared `app-server` outlives the session) or from the orphan cleanup.
+    Detached,
 }
 
 /// When a run's end writes its provider thread `idle`.
@@ -2842,6 +3269,7 @@ pub(crate) fn finish_run_as(
     failure: Option<Value>,
     stop_reason: Option<&str>,
     idle: IdleWrite,
+    end: RunEnd,
 ) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
         return Ok(false);
@@ -2849,6 +3277,8 @@ pub(crate) fn finish_run_as(
     if !is_live(&run) {
         return Ok(false);
     }
+    // A queued run never started, so the thread's pending requests belong to the active run.
+    let queued = run["status"] == "queued";
     crate::secret_requests::cancel_pending(tx, thread_id, run_id)?;
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None, stop_reason)?;
@@ -2866,6 +3296,9 @@ pub(crate) fn finish_run_as(
         "cancelled" => "cancelled",
         _ => "interrupted",
     };
+    if end == RunEnd::Settled && matches!(item_status, "interrupted" | "failed" | "cancelled") {
+        crate::families::end_run_native_subagents(tx, thread_id, run_id, item_status)?;
+    }
 
     for mut message in tx.entities_where(thread_id, "messages", "runId", run_id)? {
         if message["streaming"] == true {
@@ -2881,11 +3314,25 @@ pub(crate) fn finish_run_as(
         let background = status == "completed"
             && crate::background::BACKGROUND_ITEM_TYPES
                 .contains(&item["type"].as_str().unwrap_or_default());
-        let open = !background
+        let mut open = !background
             && matches!(
                 item["status"].as_str(),
                 Some("idle" | "pending" | "running" | "waiting")
             );
+        if open
+            && end == RunEnd::Detached
+            && item["type"] == "subagent"
+            && let Some(id) = item["subagentId"].as_str()
+            && tx.entity(thread_id, "subagents", id)?.is_some_and(|row| {
+                row["origin"] == "provider_native"
+                    && matches!(
+                        row["status"].as_str(),
+                        Some("pending" | "running" | "waiting")
+                    )
+            })
+        {
+            open = false;
+        }
         if item["streaming"] == true || open {
             if item.get("streaming").is_some() {
                 item["streaming"] = json!(false);
@@ -2901,7 +3348,12 @@ pub(crate) fn finish_run_as(
     // Only this run's requests end with it: a queued run removed while another run waits on
     // an approval must leave that approval answerable. A request names its node; the node
     // names its run.
-    for mut request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+    let pending = if queued {
+        vec![]
+    } else {
+        tx.entities_where(thread_id, "runtimeRequests", "status", "pending")?
+    };
+    for mut request in pending {
         let owner = match request["nodeId"].as_str() {
             Some(node) => tx.entity(thread_id, "nodes", node)?,
             None => None,
@@ -3771,8 +4223,8 @@ fn provider_session_detach(tx: &mut Tx<'_>, command: Value) -> Outcome {
     Ok(vec![Effect::CloseSession { thread_id }])
 }
 
-/// `provider.switch`: the next turn runs on another provider instance. Its history does not
-/// move to the new provider (no context handoff yet), so the new provider starts fresh.
+/// `provider.switch`: the next turn runs on another provider instance. That run carries the
+/// conversation's history to the new provider (`provider_handoff.rs`).
 fn provider_switch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default();
     if active_run(tx, thread_id)?.is_some() {

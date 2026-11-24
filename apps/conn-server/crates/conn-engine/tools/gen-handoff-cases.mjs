@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // T3's context handoff functions on fixed inputs: `handoffBudget.ts` (history selection,
-// rendering, cost and budget), `ContextHandoffService.ts` (`prepareForkDelta`,
+// rendering, cost and budget), `ContextHandoffService.ts` (`prepareForkDelta`, `prepareProviderHandoff`,
 // `visibleDeltaRunOrdinals`) and `ContextHandoffDelivery.ts` (`deliverContextHandoffs`).
 // Writes `src/handoff-cases.json`; `--check` fails when T3's answers changed. The Rust test
 // `handoff::tests::handoff_functions_match_t3s` must give the same values. No model, no CLI.
@@ -115,6 +115,33 @@ for (const fork of [
   add("forkDelta", recorded, { ...JSON.parse(JSON.stringify(handoff)), id: "handoff-id" });
 }
 
+// `prepareProviderHandoff`: a provider switch's history, full or since the target last saw it.
+const switchRuns = [
+  { id: "run:thread-fork:1", ordinal: 1, status: "completed" },
+  { id: "run:thread-fork:2", ordinal: 2, status: "interrupted" },
+  { id: "run:thread-fork:3", ordinal: 3, status: "failed" },
+];
+const switchInput = (fields) => ({
+  threadId: "thread-fork", targetRunId: "run:thread-fork:4", transferId: "context-transfer:switch",
+  fromProviderThreadIds: ["provider-thread:fork"], toProviderThreadId: "provider-thread:pending:run:thread-fork:4",
+  fromProviderInstanceId: "codex", toProviderInstanceId: "claudeAgent", createdAt: at, ...fields,
+});
+const providerHandoffs = [];
+for (const fields of [
+  { strategy: "full_thread_summary", coveredRunOrdinals: { from: 1, to: 3 }, items, runs: switchRuns },
+  { strategy: "delta_since_target_last_seen", coveredRunOrdinals: { from: 2, to: 3 }, items: [{ ...items[0], runId: "run:thread-fork:2" }, { ...items[1], runId: "run:thread-fork:3" }], runs: switchRuns },
+  { strategy: "full_thread_summary", coveredRunOrdinals: { from: 1, to: 1 }, items: items.slice(0, 2) },
+  { strategy: "full_thread_summary", coveredRunOrdinals: { from: 1, to: 1 }, items: [], runs: switchRuns },
+  { strategy: "full_thread_summary", coveredRunOrdinals: { from: 1, to: 2 }, items: [{ ...items[0], threadId: "thread-source" }, items[1]], runs: switchRuns, sourceThreadId: "thread-source", transferId: null },
+]) {
+  const input = switchInput(fields);
+  const handoff = await Effect.runPromise(service.prepareProviderHandoff(input));
+  const { fromProviderInstanceId: _from, toProviderInstanceId: _to, ...recorded } = input;
+  const result = { ...JSON.parse(JSON.stringify(handoff)), id: "handoff-id" };
+  providerHandoffs.push(result);
+  add("providerHandoff", recorded, result);
+}
+
 // `deliverContextHandoffs`: what it injects or inlines, and each record it persists.
 const ready = await Effect.runPromise(service.prepareForkDelta(forkInput({ coveredRunOrdinals: { from: 1, to: 1 }, deltaItems: items })));
 const handoff = { ...JSON.parse(JSON.stringify(ready)), id: "handoff-id" };
@@ -138,14 +165,19 @@ for (const [handoffs, nativeThreadId, budget, alreadyDelivered, inject] of [
   [[pendingDelivery], "native-1", 16_000, [], true],
   [[pendingDelivery], "native-1", 16_000, [], false],
   [Array.from({ length: 12 }, (_, i) => ({ ...handoff, id: `h-${i}` })), "native-1", 4_000, [], false],
+  [[providerHandoffs[0]], "native-1", 16_000, [], false],
+  [[providerHandoffs[0]], "native-1", 16_000, [], true],
+  [[providerHandoffs[1], handoff], "native-1", 16_000, [], false],
+  [[providerHandoffs[1]], "native-1", 1_200, [], false],
 ]) {
   const persisted = [];
   let injected = null;
-  const input = { handoffs, nativeThreadId, budget, alreadyDelivered, inject };
+  const appThreadId = "thread-parent";
+  const input = { handoffs, nativeThreadId, appThreadId, budget, alreadyDelivered, inject };
   const outcome = await Effect.runPromise(Effect.result(Effect.gen(function* () {
     const result = yield* deliverContextHandoffs({
       handoffs,
-      providerThread: { appThreadId: "thread-parent", nativeThreadRef: nativeThreadId === null ? null : { nativeId: nativeThreadId } },
+      providerThread: { appThreadId, nativeThreadRef: nativeThreadId === null ? null : { nativeId: nativeThreadId } },
       budget,
       alreadyDeliveredItemIds: new Set(alreadyDelivered),
       ...(inject ? { inject: (history) => Effect.sync(() => { injected = JSON.parse(JSON.stringify(history)); return true; }) } : {}),

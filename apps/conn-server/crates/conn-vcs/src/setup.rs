@@ -7,13 +7,14 @@
 //! per thread with a running or recent setup or a live subscriber.
 //!
 //! The engine owns launch. It calls [`provision`] for the `fetch`, `checkout`, `submodules`
-//! and `setup-script` stages, then marks `agent` and calls [`WorktreeSetups::finish`].
+//! and `setup-script` stages, then [`WorktreeSetups::agent_started`] when the agent starts.
+//! The setup script runs through a [`SetupRunner`]; the server's runs it in the thread's
+//! terminal, as T3 does.
 
 use std::{
     collections::HashMap,
     hash::{BuildHasher, Hasher},
     path::{Path, PathBuf},
-    process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -22,16 +23,13 @@ use conn_contract::{
     ProjectClonePhase as Phase, WorktreeSetupSnapshot, WorktreeSetupSnapshotSetupScript,
     WorktreeSetupStage, WorktreeSetupStageId as StageId, WorktreeSetupStageStatus as StageStatus,
 };
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    sync::{Notify, watch},
-};
+use tokio::sync::{Notify, watch};
 
 use crate::{
     error::{VcsError, VcsResult},
     process::ProcessError,
     repo::{self, git},
-    worktree::{self, CreateWorktree, Removal},
+    worktree::{self, CreateWorktree},
 };
 
 pub const FINISHED_RETENTION: Duration = Duration::from_secs(30);
@@ -54,6 +52,14 @@ fn clamp(text: &str, max: usize) -> String {
     let mut out: String = text.chars().take(max - 1).collect();
     out.push('…');
     out
+}
+
+/// The setup-script stage's detail.
+fn exited(code: Option<i64>) -> String {
+    match code {
+        Some(code) => format!("exited with {code}"),
+        None => "exited with no exit code".into(),
+    }
 }
 
 struct Entry {
@@ -254,6 +260,45 @@ impl WorktreeSetups {
         });
     }
 
+    /// The agent started (`markUncancellable`, then the `agent` stage). The setup ends now,
+    /// unless an async setup script still runs: its end finishes it (`awaitAsyncSetup`).
+    pub fn agent_started(&self, thread_id: &str) {
+        self.mark_uncancellable(thread_id);
+        self.stage_status(thread_id, StageId::Agent, StageStatus::Done, None);
+        let script_runs = self.get(thread_id).is_some_and(|s| {
+            s.stages
+                .iter()
+                .any(|st| st.id == StageId::SetupScript && st.status == StageStatus::Running)
+        });
+        if !script_runs {
+            self.finish(thread_id, Phase::Done, None);
+        }
+    }
+
+    /// An async setup script ended: its stage records the exit code, and a setup whose agent
+    /// already started finishes.
+    pub fn setup_script_ended(&self, thread_id: &str, code: Option<i64>) {
+        let Some(snapshot) = self.get(thread_id) else {
+            return;
+        };
+        if snapshot.phase != Phase::Running {
+            return;
+        }
+        let status = if code == Some(0) {
+            StageStatus::Done
+        } else {
+            StageStatus::Failed
+        };
+        self.stage_status(thread_id, StageId::SetupScript, status, Some(&exited(code)));
+        let agent_done = snapshot
+            .stages
+            .iter()
+            .any(|st| st.id == StageId::Agent && st.status == StageStatus::Done);
+        if agent_done {
+            self.finish(thread_id, Phase::Done, None);
+        }
+    }
+
     /// After this, `cancel` returns false (the agent stage has begun).
     pub fn mark_uncancellable(&self, thread_id: &str) {
         self.with(|e| {
@@ -294,15 +339,47 @@ impl WorktreeSetups {
     }
 }
 
-/// A project script that runs when a worktree is created (`runOnWorktreeCreate`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SetupScript {
-    pub id: String,
-    pub name: String,
-    pub command: String,
+/// A boxed future, as [`SetupRunner`] returns.
+pub type SetupFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// Runs the project's `runOnWorktreeCreate` script in a new checkout
+/// (`ProjectSetupScriptRunner.runForThread` with `observeCompletion`). The server's runner
+/// types it into the thread's `setup-<id>` terminal and hands each output line to
+/// [`WorktreeSetups::append_tail`].
+pub trait SetupRunner: Send + Sync {
+    /// Starts the script; `Ok(None)` when the project has none.
+    fn start<'a>(
+        &'a self,
+        thread: &'a str,
+        worktree: &'a Path,
+    ) -> SetupFuture<'a, Result<Option<StartedSetup>, String>>;
+
+    /// Closes a started script's terminal when its launch failed or was cancelled.
+    fn discard(&self, thread: &str, terminal_id: &str);
 }
 
-#[derive(Clone, Debug)]
+/// A started setup script.
+pub struct StartedSetup {
+    pub name: String,
+    pub command: String,
+    pub terminal_id: String,
+    /// The script's `async` flag: the agent starts without waiting for it.
+    pub background: bool,
+    /// The exit code, or `None` when the terminal ended first.
+    pub completion: SetupFuture<'static, Option<i64>>,
+}
+
+impl std::fmt::Debug for StartedSetup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartedSetup")
+            .field("name", &self.name)
+            .field("terminal_id", &self.terminal_id)
+            .field("background", &self.background)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone)]
 pub struct ProvisionRequest {
     pub thread_id: String,
     /// The project's workspace root.
@@ -313,8 +390,39 @@ pub struct ProvisionRequest {
     pub branch: Option<String>,
     /// Fetch the base from its remote first, as `startFromOrigin` does.
     pub start_from_origin: bool,
-    pub setup_script: Option<SetupScript>,
+    /// Runs the setup script; `None` skips the stage.
+    pub setup: Option<Arc<dyn SetupRunner>>,
     pub worktrees_dir: PathBuf,
+    /// `worktreeSubmodules` for the project; `None` follows `t3.json`.
+    pub submodules: Option<String>,
+    pub missing_base: MissingBase,
+}
+
+impl std::fmt::Debug for ProvisionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProvisionRequest")
+            .field("thread_id", &self.thread_id)
+            .field("project_root", &self.project_root)
+            .field("base_ref", &self.base_ref)
+            .field("branch", &self.branch)
+            .field("start_from_origin", &self.start_from_origin)
+            .field("setup", &self.setup.is_some())
+            .field("worktrees_dir", &self.worktrees_dir)
+            .field("submodules", &self.submodules)
+            .field("missing_base", &self.missing_base)
+            .finish()
+    }
+}
+
+/// What provisioning does when `base_ref` names no commit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MissingBase {
+    /// Git refuses it and the launch fails: someone named this base just now.
+    #[default]
+    Fail,
+    /// A saved strategy (a scheduled task's) outlived its base: start from the remote's
+    /// default branch, else the checked-out commit (`worktreeFallbackBase`).
+    FallBack,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -367,23 +475,41 @@ pub async fn provision(
         Some(request.base_ref.clone()),
         &STAGE_ORDER,
     );
-    let mut created: Option<(PathBuf, String)> = None;
+    let mut created: Option<(worktree::Claim, String)> = None;
+    let mut started: Option<String> = None;
     let mut dropped = FinishOnDrop {
         setups,
         thread,
         armed: true,
     };
-    let result = provision_stages(setups, &request, &cancel, &mut created).await;
+    let result = provision_stages(setups, &request, &cancel, &mut created, &mut started).await;
     dropped.armed = false;
     if let Err(error) = &result {
-        if let Some((path, branch)) = created {
-            let root = request.project_root.as_path();
-            let _ = worktree::remove_worktree(root, &path, Removal::Force).await;
-            let _ = worktree::delete_branch(root, &branch, Removal::Force).await;
+        if let (Some(runner), Some(terminal)) = (&request.setup, &started) {
+            runner.discard(thread, terminal);
         }
-        match error {
-            ProvisionError::Cancelled => setups.finish(thread, Phase::Cancelled, None),
-            other => setups.finish(thread, Phase::Failed, Some(&other.to_string())),
+        let left = match created {
+            Some((claim, branch)) => {
+                worktree::discard_claim(request.project_root.as_path(), &claim, &branch)
+                    .await
+                    .err()
+                    .map(|e| {
+                        format!(
+                            "The worktree at {} could not be removed: {e}",
+                            claim.path.display()
+                        )
+                    })
+            }
+            None => None,
+        };
+        match (error, left) {
+            (ProvisionError::Cancelled, left) => {
+                setups.finish(thread, Phase::Cancelled, left.as_deref());
+            }
+            (other, None) => setups.finish(thread, Phase::Failed, Some(&other.to_string())),
+            (other, Some(left)) => {
+                setups.finish(thread, Phase::Failed, Some(&format!("{other} {left}")));
+            }
         }
     }
     result
@@ -393,18 +519,22 @@ async fn provision_stages(
     setups: &WorktreeSetups,
     request: &ProvisionRequest,
     cancel: &Notify,
-    created: &mut Option<(PathBuf, String)>,
+    created: &mut Option<(worktree::Claim, String)>,
+    started: &mut Option<String>,
 ) -> Result<ProvisionedWorktree, ProvisionError> {
     let thread = request.thread_id.as_str();
     let root = request.project_root.as_path();
     let branch = request.branch.clone().unwrap_or_else(temporary_branch_name);
 
     let mut start = request.base_ref.clone();
+    let mut base_name = request.base_ref.clone();
+    let mut fetched = false;
     if request.start_from_origin {
         setups.stage_status(thread, StageId::Fetch, StageStatus::Running, None);
         match cancellable(cancel, fetch_base(root, &request.base_ref)).await? {
             Some((sha, _)) => {
                 start = sha;
+                fetched = true;
                 setups.stage_status(thread, StageId::Fetch, StageStatus::Done, None);
             }
             None => setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None),
@@ -412,20 +542,53 @@ async fn provision_stages(
     } else {
         setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None);
     }
+    if request.missing_base == MissingBase::FallBack && !fetched {
+        let fallback = cancellable(cancel, async {
+            // A failed lookup keeps the recorded base, so Git names what is missing.
+            Ok(fallback_base(root, &start, request.start_from_origin)
+                .await
+                .unwrap_or(None))
+        })
+        .await?;
+        if let Some((fallback_start, fallback_name)) = fallback {
+            start = fallback_start;
+            base_name = fallback_name;
+            setups.update(thread, |s| s.base_ref = Some(base_name.clone()));
+        }
+    }
 
     setups.stage_status(thread, StageId::Checkout, StageStatus::Running, None);
-    let worktree = cancellable(
+    let mut claimed = None;
+    let made = cancellable(
         cancel,
-        worktree::create_worktree(&CreateWorktree {
-            cwd: root.to_owned(),
-            ref_name: start.clone(),
-            new_ref_name: Some(branch.clone()),
-            base_ref_name: Some(request.base_ref.clone()),
-            worktrees_dir: request.worktrees_dir.clone(),
-        }),
+        worktree::create_worktree_claiming(
+            &CreateWorktree {
+                cwd: root.to_owned(),
+                ref_name: start.clone(),
+                new_ref_name: Some(branch.clone()),
+                base_ref_name: Some(base_name),
+                worktrees_dir: request.worktrees_dir.clone(),
+            },
+            &mut claimed,
+        ),
     )
-    .await?;
-    *created = Some((worktree.path.clone(), branch.clone()));
+    .await;
+    // A cancel during the checkout removes what it started. A failed checkout (a failing
+    // `post-checkout` hook) keeps it, as Git does: the hook may have written files.
+    let worktree = match made {
+        Err(ProvisionError::Cancelled) => {
+            *created = claimed.map(|claim| (claim, branch.clone()));
+            return Err(ProvisionError::Cancelled);
+        }
+        made => made?,
+    };
+    *created = Some((
+        worktree::Claim {
+            path: worktree.path.clone(),
+            lock_reason: None,
+        },
+        branch.clone(),
+    ));
     let path_text = worktree.path.to_string_lossy().into_owned();
     setups.update(thread, |s| {
         s.worktree_path = Some(path_text.clone());
@@ -433,77 +596,97 @@ async fn provision_stages(
     });
     setups.stage_status(thread, StageId::Checkout, StageStatus::Done, None);
 
-    if worktree.path.join(".gitmodules").exists() {
-        setups.stage_status(thread, StageId::Submodules, StageStatus::Running, None);
-        let result = cancellable(cancel, async {
-            git(
-                "GitVcsDriver.submodules",
-                &worktree.path,
-                ["submodule", "update", "--init", "--recursive"],
-            )
-            .timeout(Duration::from_secs(3600))
-            .run()
-            .await?;
-            Ok(())
-        })
-        .await;
-        match result {
-            Ok(()) => setups.stage_status(thread, StageId::Submodules, StageStatus::Done, None),
-            Err(ProvisionError::Cancelled) => return Err(ProvisionError::Cancelled),
-            Err(_) => setups.stage_status(
-                thread,
-                StageId::Submodules,
-                StageStatus::Warning,
-                Some("submodule checkout failed"),
-            ),
-        }
-    } else {
-        setups.stage_status(
+    match worktree::submodule_mode(&worktree.path, request.submodules.as_deref()).await {
+        None => setups.stage_status(
             thread,
             StageId::Submodules,
             StageStatus::Skipped,
             Some("none"),
-        );
+        ),
+        Some((worktree::Submodules::None, origin)) => setups.stage_status(
+            thread,
+            StageId::Submodules,
+            StageStatus::Skipped,
+            Some(format!("disabled in {}", origin.label()).as_str()),
+        ),
+        Some((mode, _)) => {
+            setups.stage_status(thread, StageId::Submodules, StageStatus::Running, None);
+            match cancellable(cancel, async {
+                worktree::update_submodules(&worktree.path, mode).await?;
+                Ok(())
+            })
+            .await
+            {
+                Ok(()) => setups.stage_status(thread, StageId::Submodules, StageStatus::Done, None),
+                Err(ProvisionError::Cancelled) => return Err(ProvisionError::Cancelled),
+                Err(_) => setups.stage_status(
+                    thread,
+                    StageId::Submodules,
+                    StageStatus::Warning,
+                    Some("submodule checkout failed"),
+                ),
+            }
+        }
     }
 
-    match &request.setup_script {
+    match &request.setup {
         None => setups.stage_status(thread, StageId::SetupScript, StageStatus::Skipped, None),
-        Some(script) => {
+        Some(runner) => {
             setups.stage_status(thread, StageId::SetupScript, StageStatus::Running, None);
-            let terminal_id = format!("setup-{}", script.id);
-            setups.update(thread, |s| {
-                s.setup_script = Some(WorktreeSetupSnapshotSetupScript {
-                    name: script.name.clone(),
-                    command: script.command.clone(),
-                    terminal_id,
-                });
-            });
-            let code = tokio::select! {
-                code = run_setup_script(setups, thread, script, root, &worktree.path) => code,
+            // A terminal being opened is not dropped half-made: the start runs to its end, so
+            // its id is known and the cancel below discards it (`provision`).
+            let run = runner.start(thread, &worktree.path).await;
+            if let Ok(Some(script)) = &run {
+                *started = Some(script.terminal_id.clone());
+            }
+            // `cancel` stores its permit, so one sent during the start is seen here.
+            tokio::select! {
+                biased;
                 () = cancel.notified() => return Err(ProvisionError::Cancelled),
-            };
-            let detail = match code {
-                Some(code) => format!("exited with {code}"),
-                None => "exited with no exit code".into(),
-            };
-            if code == Some(0) {
-                setups.stage_status(
-                    thread,
-                    StageId::SetupScript,
-                    StageStatus::Done,
-                    Some(&detail),
-                );
-            } else {
-                setups.stage_status(
-                    thread,
-                    StageId::SetupScript,
-                    StageStatus::Failed,
-                    Some(&detail),
-                );
-                return Err(ProvisionError::SetupScript(match code {
-                    Some(code) => format!("Setup script exited with {code}."),
-                    None => "Setup script exited with no exit code.".into(),
-                }));
+                () = std::future::ready(()) => {}
+            }
+            match run.map_err(ProvisionError::SetupScript)? {
+                None => {
+                    setups.stage_status(thread, StageId::SetupScript, StageStatus::Skipped, None)
+                }
+                Some(script) => {
+                    setups.update(thread, |s| {
+                        s.setup_script = Some(WorktreeSetupSnapshotSetupScript {
+                            name: script.name.clone(),
+                            command: script.command.clone(),
+                            terminal_id: script.terminal_id.clone(),
+                        });
+                    });
+                    if script.background {
+                        // Record the result when the script ends, not after the agent starts.
+                        let (setups, thread) = (setups.clone(), thread.to_owned());
+                        tokio::spawn(async move {
+                            let code = script.completion.await;
+                            setups.setup_script_ended(&thread, code);
+                        });
+                    } else {
+                        let code = tokio::select! {
+                            code = script.completion => code,
+                            () = cancel.notified() => return Err(ProvisionError::Cancelled),
+                        };
+                        setups.stage_status(
+                            thread,
+                            StageId::SetupScript,
+                            if code == Some(0) {
+                                StageStatus::Done
+                            } else {
+                                StageStatus::Failed
+                            },
+                            Some(&exited(code)),
+                        );
+                        if code != Some(0) {
+                            return Err(ProvisionError::SetupScript(match code {
+                                Some(code) => format!("Setup script exited with {code}."),
+                                None => "Setup script exited with no exit code.".into(),
+                            }));
+                        }
+                    }
+                }
             }
         }
     }
@@ -512,6 +695,53 @@ async fn provision_stages(
         branch,
         base_ref: start,
     })
+}
+
+/// `worktreeFallbackBase`, for a recorded `base` that names no commit: the remote's default
+/// branch, fetched first, then the checked-out branch, then HEAD, as `(start, base name)`.
+/// `None` when `base` still resolves or nothing does.
+async fn fallback_base(
+    root: &Path,
+    base: &str,
+    start_from_origin: bool,
+) -> VcsResult<Option<(String, String)>> {
+    // `:/text` is a commit search, not a ref; `git worktree add` reads `-` as `@{-1}`.
+    let probe = if base == "-" { "@{-1}" } else { base };
+    if base.starts_with(':') || repo::resolve_commit(root, probe).await?.is_some() {
+        return Ok(None);
+    }
+    let remote = if start_from_origin {
+        base_remote(root, base).await?.map(|(remote, _)| remote)
+    } else {
+        None
+    };
+    let remote = match remote {
+        Some(remote) => Some(remote),
+        None => repo::primary_remote(root).await?,
+    };
+    if let Some(remote) = remote
+        && let Some(default) = repo::remote_default_branch(root, &remote).await?
+    {
+        match fetch_remote_branch(root, &remote, &default).await {
+            Ok(Some((sha, remote_ref))) => {
+                return Ok(Some((sha, format!("refs/remotes/{remote_ref}"))));
+            }
+            // A completed fetch that found no branch: the tracking ref is stale.
+            Ok(None) => {}
+            Err(_) => {
+                let tracking = format!("refs/remotes/{remote}/{default}");
+                if repo::resolve_commit(root, &tracking).await?.is_some() {
+                    return Ok(Some((tracking.clone(), tracking)));
+                }
+            }
+        }
+    }
+    if let Some(branch) = repo::current_branch(root).await? {
+        return Ok(Some((branch.clone(), branch)));
+    }
+    Ok(repo::has_head_commit(root)
+        .await?
+        .then(|| ("HEAD".to_owned(), "HEAD".to_owned())))
 }
 
 /// `(remote, branch)` to fetch for `base_ref`: its upstream when it is a local branch, else
@@ -639,74 +869,6 @@ pub async fn fetch_remote_branch(
     .map(|sha| (sha, remote_ref)))
 }
 
-/// Runs the script with `sh -c` in the worktree (the TypeScript server types it into a
-/// terminal; this server has no terminal service in this crate). Keeps the last 4 output
-/// lines in the stage's tail. Returns the exit code.
-///
-/// The script runs in its own process group. The group is killed when the script exits (jobs
-/// it left behind would hold its pipes open), and when this future is dropped, which is how
-/// a cancel or a dropped launch ends it.
-async fn run_setup_script(
-    setups: &WorktreeSetups,
-    thread: &str,
-    script: &SetupScript,
-    project_root: &Path,
-    worktree: &Path,
-) -> Option<i32> {
-    let mut child = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(&script.command)
-        .current_dir(worktree)
-        .envs(conn_support::login_env::vars())
-        .env("T3CODE_PROJECT_ROOT", project_root)
-        .env("T3CODE_WORKTREE_PATH", worktree)
-        .env("COLORTERM", "")
-        .env("NO_COLOR", "1")
-        .env("FORCE_COLOR", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn()
-        .ok()?;
-    let group = GroupKill(
-        child
-            .id()
-            .and_then(|id| i32::try_from(id).ok())
-            .and_then(rustix::process::Pid::from_raw),
-    );
-    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
-    let wait = async move {
-        let code = child.wait().await.ok().and_then(|status| status.code());
-        drop(group);
-        code
-    };
-    let (code, (), ()) = tokio::join!(
-        wait,
-        tail_pipe(setups, thread, stdout),
-        tail_pipe(setups, thread, stderr)
-    );
-    code
-}
-
-async fn tail_pipe(setups: &WorktreeSetups, thread: &str, pipe: Option<impl AsyncRead + Unpin>) {
-    if let Some(pipe) = pipe {
-        tail_lines(setups, thread, pipe).await;
-    }
-}
-
-/// Kills a process group with `SIGKILL` when dropped.
-struct GroupKill(Option<rustix::process::Pid>);
-
-impl Drop for GroupKill {
-    fn drop(&mut self) {
-        if let Some(group) = self.0.take() {
-            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-        }
-    }
-}
-
 /// Ends a setup entry as cancelled if [`provision`] is dropped before it returns, so a
 /// dropped launch never leaves an entry running forever.
 struct FinishOnDrop<'a> {
@@ -721,67 +883,6 @@ impl Drop for FinishOnDrop<'_> {
             self.setups.finish(self.thread, Phase::Cancelled, None);
         }
     }
-}
-
-/// Longest partial line kept; the rest of a longer line is skipped.
-const PARTIAL_LINE_MAX: usize = 4096;
-
-/// Feeds each output line to the stage's tail, with bounded memory.
-async fn tail_lines(setups: &WorktreeSetups, thread: &str, mut reader: impl AsyncRead + Unpin) {
-    let emit = |line: &[u8]| {
-        let line = strip_ansi(String::from_utf8_lossy(line).trim());
-        if !line.is_empty() {
-            setups.append_tail(thread, StageId::SetupScript, &line);
-        }
-    };
-    let mut chunk = [0u8; 4096];
-    let mut line = Vec::new();
-    let mut skipping = false;
-    loop {
-        let n = match reader.read(&mut chunk).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        for &byte in &chunk[..n] {
-            if byte == b'\n' || byte == b'\r' {
-                if !skipping {
-                    emit(&line);
-                }
-                line.clear();
-                skipping = false;
-            } else if !skipping {
-                line.push(byte);
-                if line.len() >= PARTIAL_LINE_MAX {
-                    emit(&line);
-                    line.clear();
-                    skipping = true;
-                }
-            }
-        }
-    }
-    emit(&line);
-}
-
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for c in chars.by_ref() {
-                    if c.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        if !c.is_control() {
-            out.push(c);
-        }
-    }
-    out
 }
 
 impl std::fmt::Debug for WorktreeSetups {
@@ -840,8 +941,7 @@ mod tests {
     }
 
     #[test]
-    fn strips_escape_sequences() {
-        assert_eq!(strip_ansi("\u{1b}[32mok\u{1b}[0m done"), "ok done");
+    fn clamps_long_text() {
         assert_eq!(clamp("abcdef", 4), "abc…");
     }
 }

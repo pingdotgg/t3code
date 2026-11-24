@@ -67,6 +67,11 @@ pub enum SessionMsg {
         thread: String,
         response: Value,
     },
+    /// What Codex says about a closed session's silent subagent thread.
+    ChildRead {
+        thread: String,
+        read: ChildRead,
+    },
     /// A held goal run's grace ran out ([`crate::mapper::Out::GoalHeld`]).
     GoalGrace {
         thread: String,
@@ -77,6 +82,26 @@ pub enum SessionMsg {
         thread: String,
         response: Option<Value>,
     },
+}
+
+/// A closed session's check of a silent subagent thread with Codex (`thread/read` with turns).
+#[derive(Debug)]
+pub enum ChildRead {
+    /// Codex answered: a turn it reports ended ends here with that status.
+    Turns(Value),
+    /// Codex does not know the thread (`isCodexThreadNotFoundError`), so nothing runs there.
+    Missing,
+}
+
+/// How [`AppServer::claim_route`] found a native thread's route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Claim {
+    /// It had none; the claimant routes it now.
+    Taken,
+    /// It already led to the claimant.
+    Held,
+    /// It leads to another session, which keeps it until the claimant takes it over.
+    Elsewhere,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -115,6 +140,9 @@ struct State {
     loaded: HashMap<String, u64>,
     /// At most [`UNROUTED_KEPT`] frames, oldest first, with the native thread they name.
     unrouted: VecDeque<(String, Inbound)>,
+    /// Closed sessions that wait for their subagents, by session id: the process generation
+    /// they wait on and their inbox. That process's exit ends them. At most one per session.
+    detached: HashMap<String, (u64, mpsc::Sender<SessionMsg>)>,
 }
 
 pub struct AppServer {
@@ -159,9 +187,11 @@ impl AppServer {
     }
 
     /// Forgets a session; stops the process when it was the last one. True when a running
-    /// process keeps serving other sessions.
-    pub async fn remove_session(&self, session_id: &str) -> bool {
-        let process = self.detach_session(session_id);
+    /// process keeps serving other sessions. `keep` names native threads whose frames still
+    /// go to the session's inbox: subagents that may outlive it on a shared process, as T3
+    /// keeps their turn contexts after a release. They end with their own frames or the exit.
+    pub async fn remove_session(&self, session_id: &str, keep: &[String]) -> bool {
+        let process = self.detach(session_id, keep);
         let shared = {
             let state = self.lock();
             !state.sessions.is_empty() && state.live.is_some()
@@ -175,9 +205,23 @@ impl AppServer {
     /// Forgets a session without waiting: the sync half of [`Self::remove_session`]. Returns
     /// the process to stop when no session is left.
     pub(crate) fn detach_session(&self, session_id: &str) -> Option<Process> {
+        self.detach(session_id, &[])
+    }
+
+    fn detach(&self, session_id: &str, keep: &[String]) -> Option<Process> {
         let mut state = self.lock();
         if let Some(inbox) = state.sessions.remove(session_id) {
-            state.routes.retain(|_, r| !r.same_channel(&inbox));
+            state
+                .routes
+                .retain(|thread, r| !r.same_channel(&inbox) || keep.contains(thread));
+            if !keep.is_empty()
+                && !state.sessions.is_empty()
+                && let Some(generation) = state.live.as_ref().map(|l| l.generation)
+            {
+                state
+                    .detached
+                    .insert(session_id.to_owned(), (generation, inbox));
+            }
         }
         if state.sessions.is_empty() {
             state.live.take().map(|live| live.process)
@@ -220,8 +264,46 @@ impl AppServer {
             .insert(native_thread_id.to_owned(), inbox);
     }
 
+    /// Routes `native_thread_id` to `inbox` unless another session owns it: that session keeps
+    /// its frames until the claimant takes the thread over ([`Self::route`]).
+    pub fn claim_route(&self, native_thread_id: &str, inbox: &mpsc::Sender<SessionMsg>) -> Claim {
+        let mut state = self.lock();
+        match state.routes.get(native_thread_id) {
+            Some(r) if r.same_channel(inbox) => Claim::Held,
+            Some(_) => Claim::Elsewhere,
+            None => {
+                state
+                    .routes
+                    .insert(native_thread_id.to_owned(), inbox.clone());
+                Claim::Taken
+            }
+        }
+    }
+
+    /// Removes the route of `native_thread_id` while it leads to `inbox`.
+    pub fn unroute_from(&self, native_thread_id: &str, inbox: &mpsc::Sender<SessionMsg>) {
+        let mut state = self.lock();
+        if state
+            .routes
+            .get(native_thread_id)
+            .is_some_and(|r| r.same_channel(inbox))
+        {
+            state.routes.remove(native_thread_id);
+        }
+    }
+
+    /// A closed session stopped waiting for its subagents.
+    pub fn forget_detached(&self, session_id: &str) {
+        self.lock().detached.remove(session_id);
+    }
+
     pub fn unroute(&self, native_thread_id: &str) {
         self.lock().routes.remove(native_thread_id);
+    }
+
+    /// Removes every route that leads to `inbox`.
+    pub fn unroute_inbox(&self, inbox: &mpsc::Sender<SessionMsg>) {
+        self.lock().routes.retain(|_, r| !r.same_channel(inbox));
     }
 
     /// The running process's generation, starting and initializing one when none runs.
@@ -535,7 +617,30 @@ impl AppServer {
             }
             // Requests waiting on the dead process fail with `Stopped`.
             state.pending.clear();
-            state.sessions.values().cloned().collect()
+            let mut inboxes: Vec<mpsc::Sender<SessionMsg>> =
+                state.sessions.values().cloned().collect();
+            // Closed sessions that wait on this process's subagents end with it, whatever
+            // their routes say now.
+            let ended: Vec<String> = state
+                .detached
+                .iter()
+                .filter(|(_, (g, _))| *g == generation)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in ended {
+                if let Some((_, inbox)) = state.detached.remove(&id)
+                    && !inboxes.iter().any(|i| i.same_channel(&inbox))
+                {
+                    inboxes.push(inbox);
+                }
+            }
+            // Their child routes go with the process.
+            let state = &mut *state;
+            let sessions = &state.sessions;
+            state
+                .routes
+                .retain(|_, r| sessions.values().any(|s| s.same_channel(r)));
+            inboxes
         };
         let detail = format!(
             "The Codex app-server exited unexpectedly ({}).",
@@ -662,7 +767,7 @@ read never
         };
         assert_eq!(method, "thread/started");
         let pid = server.pid().unwrap();
-        server.remove_session("s1").await;
+        server.remove_session("s1", &[]).await;
         assert!(server.generation().is_none());
         let alive = conn_provider_support::process::pid_alive(pid);
         assert!(!alive, "the app-server outlived its last session");
@@ -720,7 +825,7 @@ read never
             deltas, SESSION_INBOX,
             "the overflow was dropped, not queued"
         );
-        server.remove_session("slow").await;
+        server.remove_session("slow", &[]).await;
     }
 
     #[tokio::test(flavor = "current_thread")]

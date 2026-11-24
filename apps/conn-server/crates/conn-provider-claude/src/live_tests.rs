@@ -547,6 +547,7 @@ async fn live_steer_is_taken_into_the_running_turn() {
                 attachments: vec![],
             },
             model_selection: None,
+            app_context: vec![],
         })
         .await
         .unwrap();

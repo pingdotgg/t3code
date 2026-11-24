@@ -33,7 +33,7 @@ mod pull_requests;
 mod scheduled;
 mod script_completion;
 mod secrets;
-mod tasks;
+pub(crate) mod tasks;
 mod test_logins;
 mod themes;
 mod threads;
@@ -641,23 +641,8 @@ impl Cx<'_> {
 
     /// Dispatches one contract command; returns the sequence of its last event.
     pub(crate) async fn dispatch(&self, command: Value) -> Result<u64, ToolError> {
-        let command: Command =
-            from_json(command).map_err(|e| internal(format!("bad command: {e}")))?;
-        match self.engine().dispatch(command).await {
-            Ok(result) => Ok(conn_contract::to_json(&result)["sequence"]
-                .as_u64()
-                .unwrap_or(0)),
-            Err(EngineError::Rejected(error)) => Err(fail(
-                "orchestration_error",
-                conn_contract::to_json(&error)["message"]
-                    .as_str()
-                    .unwrap_or("The command was refused.")
-                    .to_owned(),
-            )),
-            Err(EngineError::Internal(message)) => Err(internal(message)),
-        }
+        dispatch_to(self.engine(), command).await
     }
-
     /// `clientRequestId`, or a fresh key: retries with the same id replay the first call.
     fn request_key(args: &Args) -> String {
         args.get("clientRequestId")
@@ -681,6 +666,27 @@ impl Cx<'_> {
         let digest = Sha256::digest(pair.as_bytes());
         let hex = conn_support::hex::hex(&digest);
         format!("{prefix}{hex}")
+    }
+}
+
+/// [`Cx::dispatch`] on an engine handle, for work that outlives the call (a delegate's dispatch).
+pub(crate) async fn dispatch_to(
+    engine: &dyn conn_engine::Engine,
+    command: Value,
+) -> Result<u64, ToolError> {
+    let command: Command = from_json(command).map_err(|e| internal(format!("bad command: {e}")))?;
+    match engine.dispatch(command).await {
+        Ok(result) => Ok(conn_contract::to_json(&result)["sequence"]
+            .as_u64()
+            .unwrap_or(0)),
+        Err(EngineError::Rejected(error)) => Err(fail(
+            "orchestration_error",
+            conn_contract::to_json(&error)["message"]
+                .as_str()
+                .unwrap_or("The command was refused.")
+                .to_owned(),
+        )),
+        Err(EngineError::Internal(message)) => Err(internal(message)),
     }
 }
 

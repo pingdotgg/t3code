@@ -680,6 +680,87 @@ async fn keeps_scrollback_across_a_restart() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A T3 home's scrollback (`logs/terminals/terminal_<base64url(thread)>[_<terminal>].log`)
+/// shows once per terminal, each its own, and once again after a restart: it is imported, not
+/// read twice. A terminal with history of its own keeps it.
+#[tokio::test(flavor = "current_thread")]
+async fn opens_a_t3_servers_scrollback_once() {
+    let dir = temp_dir("t3-history");
+    let t3 = dir.join("logs/terminals");
+    std::fs::create_dir_all(&t3).unwrap();
+    let b64 = |text: &str| conn_support::base64::url_encode(text.as_bytes());
+    std::fs::write(
+        t3.join(format!("terminal_{}.log", b64("t3-thread"))),
+        "first-from-T3\nsecond-from-T3\n",
+    )
+    .unwrap();
+    std::fs::write(
+        t3.join(format!(
+            "terminal_{}_{}.log",
+            b64("t3-thread"),
+            b64("term-2")
+        )),
+        "other-terminal-from-T3\n",
+    )
+    .unwrap();
+    let with_dir = || TerminalConfig {
+        history_dir: Some(dir.join("terminals")),
+        t3_history_dir: Some(t3.clone()),
+        ..config()
+    };
+    for round in 0..2 {
+        let manager = TerminalManager::new(with_dir());
+        for (terminal, mine, other) in [
+            ("term-1", "second-from-T3", "other-terminal-from-T3"),
+            ("term-2", "other-terminal-from-T3", "first-from-T3"),
+        ] {
+            manager.adopt_t3_history("t3-thread", terminal).await;
+            let mut resume = attach_input("t3-thread", terminal);
+            resume.resume = Some(true);
+            let mut sub = manager.attach(resume, 1).unwrap();
+            let E::Snapshot(s) = sub.next().await else {
+                panic!()
+            };
+            let history = &s.snapshot.history;
+            assert_eq!(
+                history.matches(mine).count(),
+                1,
+                "round {round} {terminal}: {history:?}"
+            );
+            assert!(
+                !history.contains(other),
+                "round {round} {terminal}: {history:?}"
+            );
+            if terminal == "term-1" {
+                let first = history.find("first-from-T3").unwrap();
+                assert!(first < history.find("second-from-T3").unwrap());
+            }
+        }
+        manager.shutdown().await;
+    }
+    // T3's files stay as they were.
+    assert_eq!(std::fs::read_dir(&t3).unwrap().count(), 2);
+
+    // Native history wins over T3's from then on.
+    std::fs::write(
+        t3.join(format!("terminal_{}.log", b64("t3-thread"))),
+        "stale-from-T3\n",
+    )
+    .unwrap();
+    let manager = TerminalManager::new(with_dir());
+    manager.adopt_t3_history("t3-thread", "term-1").await;
+    let mut resume = attach_input("t3-thread", "term-1");
+    resume.resume = Some(true);
+    let mut sub = manager.attach(resume, 1).unwrap();
+    let E::Snapshot(s) = sub.next().await else {
+        panic!()
+    };
+    assert!(s.snapshot.history.contains("second-from-T3"));
+    assert!(!s.snapshot.history.contains("stale-from-T3"));
+    manager.shutdown().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn stops_shells_and_their_jobs() {
     let manager = TerminalManager::new(config());

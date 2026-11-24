@@ -8,8 +8,7 @@ use std::{
 };
 
 use conn_contract::{
-    ChatAttachment, ProjectClonePhase, TerminalCloseInput, WorktreeSetupStageId,
-    WorktreeSetupStageStatus, from_json, to_json,
+    ChatAttachment, ProjectClonePhase, TerminalCloseInput, WorktreeSetupStageId, from_json, to_json,
 };
 use conn_engine::{
     AgentSession, AgentTools, BoxFuture, EngineHost, ProvisionedWorktree, ThreadClose,
@@ -34,6 +33,8 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Set once the engine exists; a deleted thread or a stopped session may free a worktree.
+    pub worktree_cleanup: OnceLock<crate::worktree_cleanup::WorktreeCleanup>,
     /// Preview tabs a deleted thread held (`ResourceCleanupService.cleanupPreviews`).
     pub previews: OnceLock<conn_preview::tabs::Preview>,
     /// Settled-thread cleanups run one at a time, as T3's single event consumer runs them.
@@ -59,9 +60,128 @@ pub fn worktrees_dir(environment: &Environment) -> PathBuf {
     }
 }
 
+/// `managedWorktreesDirectories` (T3 `worktreesDirectory.ts`): `<state-dir>/worktrees`, the
+/// `worktreesDirectory` setting and the `previousWorktreesDirectories` it remembers, each with
+/// `~` expanded; a relative setting or a filesystem root names none.
+pub fn managed_worktree_dirs(environment: &Environment) -> Vec<PathBuf> {
+    let settings = environment.settings.raw();
+    let default = environment.state_dir.join("worktrees");
+    let previous = settings
+        .get("previousWorktreesDirectories")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    let configured = settings.get("worktreesDirectory").and_then(Value::as_str);
+    let mut dirs = vec![default.clone()];
+    for setting in configured.into_iter().chain(previous).map(str::trim) {
+        let dir = if setting.is_empty() {
+            default.clone()
+        } else {
+            conn_files::paths::normalize(std::path::Path::new(
+                &conn_provider_support::instance::expand_home(setting),
+            ))
+        };
+        if dir.is_absolute() && dir.parent().is_some() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+/// `isManagedWorktreePath`: an absolute, normalized path exactly two levels below a managed
+/// folder (`<dir>/<repo>/<name>`), compared after symlinks resolve as Git resolves them.
+/// Blocking: it reads the filesystem.
+pub fn is_managed_worktree_path(dirs: &[PathBuf], path: &std::path::Path) -> bool {
+    if !path.is_absolute() || conn_files::paths::normalize(path) != path {
+        return false;
+    }
+    let candidate = real_location(path);
+    dirs.iter().map(|dir| real_location(dir)).any(|root| {
+        root.parent().is_some()
+            && candidate
+                .strip_prefix(&root)
+                .is_ok_and(|rest| rest.components().count() == 2)
+    })
+}
+
+/// The nearest existing ancestor's real path, plus the missing components.
+fn real_location(path: &std::path::Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => real_location(parent).join(name),
+        _ => path.to_owned(),
+    }
+}
+
 impl Host {
     fn worktrees_dir(&self) -> PathBuf {
         worktrees_dir(&self.environment)
+    }
+
+    /// The project's setup script, run in the thread's terminal. `None` without the `/mcp`
+    /// service, which owns the project script runner.
+    fn setup_runner(
+        &self,
+        project_id: Option<String>,
+        link_origin: Option<Value>,
+    ) -> Option<Arc<dyn conn_vcs::setup::SetupRunner>> {
+        Some(Arc::new(TerminalSetup {
+            mcp: self.mcp.get()?.clone(),
+            setups: self.vcs.setups.clone(),
+            project_id: project_id?,
+            link_origin,
+        }))
+    }
+}
+
+/// `ProjectSetupScriptRunner.runForThread` for a launch: the script runs in terminal
+/// `setup-<id>`, and its output lines go to the setup's tail.
+struct TerminalSetup {
+    mcp: Arc<McpService>,
+    setups: conn_vcs::WorktreeSetups,
+    project_id: String,
+    /// The thread's `linkOrigin`: a fenced one runs no script.
+    link_origin: Option<Value>,
+}
+
+impl conn_vcs::setup::SetupRunner for TerminalSetup {
+    fn start<'a>(
+        &'a self,
+        thread: &'a str,
+        worktree: &'a std::path::Path,
+    ) -> conn_vcs::setup::SetupFuture<'a, Result<Option<conn_vcs::setup::StartedSetup>, String>>
+    {
+        Box::pin(async move {
+            let (setups, owner) = (self.setups.clone(), thread.to_owned());
+            let on_line = Box::new(move |line: String| {
+                setups.append_tail(&owner, WorktreeSetupStageId::SetupScript, &line);
+            });
+            let path = worktree.to_string_lossy();
+            let started = self
+                .mcp
+                .start_launch_setup(
+                    thread,
+                    &self.project_id,
+                    self.link_origin.as_ref(),
+                    &path,
+                    on_line,
+                )
+                .await?;
+            Ok(started.map(|s| conn_vcs::setup::StartedSetup {
+                name: s.name,
+                command: s.command,
+                terminal_id: s.terminal_id,
+                background: s.background,
+                completion: Box::pin(async move { s.completion.await.ok().flatten() }),
+            }))
+        })
+    }
+
+    fn discard(&self, thread: &str, terminal_id: &str) {
+        self.mcp.discard_launch_setup(thread, terminal_id);
     }
 }
 
@@ -141,6 +261,12 @@ impl EngineHost for Host {
         }
     }
 
+    fn session_released(&self) {
+        if let Some(cleanup) = self.worktree_cleanup.get() {
+            cleanup.session_closed();
+        }
+    }
+
     fn snapshot_mcp_app(
         &self,
         thread: String,
@@ -209,6 +335,10 @@ impl EngineHost for Host {
         request: WorktreeRequest,
     ) -> BoxFuture<'_, Result<ProvisionedWorktree, String>> {
         Box::pin(async move {
+            let submodules = crate::settings::worktree_submodules(
+                &self.environment.settings.raw(),
+                request.project_id.as_deref(),
+            );
             let made = provision(
                 &self.vcs.setups,
                 ProvisionRequest {
@@ -217,8 +347,10 @@ impl EngineHost for Host {
                     base_ref: request.base_ref,
                     branch: request.branch,
                     start_from_origin: request.start_from_origin,
-                    setup_script: None,
+                    setup: self.setup_runner(request.project_id, request.link_origin),
                     worktrees_dir: self.worktrees_dir(),
+                    submodules,
+                    missing_base: request.missing_base,
                 },
             )
             .await
@@ -230,30 +362,60 @@ impl EngineHost for Host {
         })
     }
 
+    fn cancel_preparation(&self, thread_id: &str) {
+        self.vcs.setups.cancel(thread_id);
+    }
+
+    fn launch_committed(&self, thread_id: &str) {
+        let setups = &self.vcs.setups;
+        if setups
+            .get(thread_id)
+            .is_some_and(|s| s.phase == ProjectClonePhase::Running)
+        {
+            setups.agent_started(thread_id);
+        }
+    }
+
     fn discard_worktree(
         &self,
         thread_id: String,
         project_root: String,
         worktree: ProvisionedWorktree,
         refused: Option<String>,
-    ) -> BoxFuture<'_, ()> {
+    ) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            use conn_vcs::worktree::{Removal, delete_branch, remove_worktree};
             let root = PathBuf::from(project_root);
             let path = PathBuf::from(&worktree.path);
-            if let Err(error) = remove_worktree(&root, &path, Removal::Force).await {
-                eprintln!("discard worktree {}: {error}", worktree.path);
-            }
-            if let Err(error) = delete_branch(&root, &worktree.branch, Removal::Force).await {
-                eprintln!("discard branch {}: {error}", worktree.branch);
+            let discarded = conn_vcs::worktree::discard(&root, &path, &worktree.branch)
+                .await
+                .map_err(|e| e.to_string());
+            // A refused command left no thread to show the setup script's terminal. A replay's
+            // terminal id is the winning attempt's, so it stays.
+            let terminal = refused.as_ref().and(
+                self.vcs
+                    .setups
+                    .get(&thread_id)
+                    .and_then(|s| s.setup_script)
+                    .map(|s| s.terminal_id),
+            );
+            if let (Some(mcp), Some(terminal)) = (self.mcp.get(), terminal) {
+                mcp.discard_launch_setup(&thread_id, &terminal);
             }
             // A refused command made no thread, so no agent ends its setup. A replay leaves
             // the setup to the attempt that made the thread.
             if let Some(reason) = refused {
+                let reason = match &discarded {
+                    Ok(()) => reason,
+                    Err(error) => format!(
+                        "{reason} The worktree at {} could not be removed: {error}",
+                        worktree.path
+                    ),
+                };
                 self.vcs
                     .setups
                     .finish(&thread_id, ProjectClonePhase::Failed, Some(&reason));
             }
+            discarded
         })
     }
 
@@ -283,43 +445,33 @@ impl EngineHost for Host {
         }
     }
 
-    fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
+    fn thread_closed(
+        &self,
+        thread_id: &str,
+        reason: ThreadClose,
+    ) -> BoxFuture<'_, Result<(), String>> {
         match &reason {
             // `settleActionRunAt`: the script runs once per settlement, so only on the
             // transition to settled.
             ThreadClose::Settled { settled_at } => {
-                self.clean_up_settled(thread_id, settled_at.clone(), true);
+                self.clean_up_settled(thread_id, Some(settled_at.clone()), true);
+                return Box::pin(std::future::ready(Ok(())));
             }
             ThreadClose::SettledAgain { settled_at } => {
-                self.clean_up_settled(thread_id, settled_at.clone(), false);
+                self.clean_up_settled(thread_id, Some(settled_at.clone()), false);
+                return Box::pin(std::future::ready(Ok(())));
             }
-            ThreadClose::Archived | ThreadClose::Deleted => {
-                // T3's `terminal.cleanup` effect: archive and delete both drop the history. The
-                // close scans and unlinks history files under the manager's lock, so it runs on
-                // the blocking pool; the device sessions end after it.
-                let (terminals, devices) = (self.terminals.clone(), self.devices.get().cloned());
-                let thread_id = thread_id.to_owned();
-                tokio::spawn(async move {
-                    let close = TerminalCloseInput {
-                        thread_id: thread_id.clone(),
-                        terminal_id: None,
-                        delete_history: Some(true),
-                    };
-                    if let Err(error) =
-                        tokio::task::spawn_blocking(move || terminals.close(close)).await
-                    {
-                        eprintln!("terminal cleanup: {error}");
-                    }
-                    if let Some(devices) = devices {
-                        devices.cleanup_thread(&thread_id).await;
-                    }
-                });
+            // Its settle script may have run already: the terminals close for the thread's
+            // current settlement, and no script runs.
+            ThreadClose::SettledUnnamed => {
+                self.clean_up_settled(thread_id, None, false);
+                return Box::pin(std::future::ready(Ok(())));
             }
+            ThreadClose::Archived | ThreadClose::Deleted => {}
         }
+        let deleted = reason == ThreadClose::Deleted;
         // `ThreadDeletion`'s `preview.cleanup`: a deleted thread's tabs free their slots.
-        if reason == ThreadClose::Deleted
-            && let Some(previews) = self.previews.get().cloned()
-        {
+        if deleted && let Some(previews) = self.previews.get().cloned() {
             let thread_id = thread_id.to_owned();
             tokio::spawn(async move {
                 if let Err(error) = previews.close(&thread_id, None).await {
@@ -327,31 +479,92 @@ impl EngineHost for Host {
                 }
             });
         }
-        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
         if reason == ThreadClose::Deleted
-            && let Some(tasks) = self.scheduled_tasks.get().cloned()
+            && let Some(cleanup) = self.worktree_cleanup.get()
         {
-            let thread_id = thread_id.to_owned();
-            tokio::spawn(async move {
-                if let Err(error) = tasks.delete_for_thread(&thread_id).await {
-                    eprintln!("scheduled tasks: {error}");
-                }
-            });
+            cleanup.thread_deleted();
         }
+        let terminals = self.terminals.clone();
+        // The thread's device sessions end; the devices stay on for other threads.
+        let devices = self.devices.get().cloned();
+        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
+        let tasks = deleted
+            .then(|| self.scheduled_tasks.get().cloned())
+            .flatten();
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            // Each step runs whatever the others did; their errors come back together, so the
+            // close is tried again (`ResourceCleanupService`).
+            let mut errors = vec![];
+            // T3's `terminal.cleanup` effect: archive and delete both drop the history. The
+            // close scans and unlinks history files under the manager's lock: off the runtime.
+            let closing = thread_id.clone();
+            let terminals = tokio::task::spawn_blocking(move || {
+                terminals.close(TerminalCloseInput {
+                    thread_id: closing,
+                    terminal_id: None,
+                    delete_history: Some(true),
+                });
+            })
+            .await;
+            if let Err(e) = terminals {
+                errors.push(format!("closing the thread's terminals stopped: {e}"));
+            }
+            if let Some(tasks) = tasks
+                && let Err(e) = tasks.delete_for_thread(&thread_id).await
+            {
+                errors.push(format!("deleting the thread's scheduled tasks: {e}"));
+            }
+            if let Some(devices) = devices {
+                match tokio::time::timeout(
+                    DEVICE_RELEASE_DEADLINE,
+                    devices.cleanup_thread(&thread_id),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        errors.push(format!("releasing the thread's devices: {}", e.message()));
+                    }
+                    Err(_) => errors.push(format!(
+                        "releasing the thread's devices took over {} s",
+                        DEVICE_RELEASE_DEADLINE.as_secs()
+                    )),
+                }
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
+            }
+        })
     }
 }
+
+/// How long a closed thread's device release may take, all devices together. T3 lets a worker
+/// reclaim its slot from an effect after 30 s.
+const DEVICE_RELEASE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Host {
     /// `cleanUpSettledThread` (`ThreadSettlementService.ts:700`) for the committed settlement
     /// named by `settled_at`, one cleanup at a time. While that settlement is still the
     /// thread's, `closeOnSettle` closes its `stopOnSettle` terminals and then every idle one;
     /// then a new settlement (`first`) runs the project's settle script in the worktree.
-    fn clean_up_settled(&self, thread_id: &str, settled_at: String, first: bool) {
+    /// Without `settled_at`, the thread's current settlement is the one.
+    fn clean_up_settled(&self, thread_id: &str, settled_at: Option<String>, first: bool) {
         let (terminals, mcp) = (self.terminals.clone(), self.mcp.get().cloned());
         let cleanups = self.settle_cleanups.clone();
         let thread_id = thread_id.to_owned();
         tokio::spawn(async move {
             let _one_at_a_time = cleanups.lock().await;
+            let settled_at = match (settled_at, &mcp) {
+                (Some(settled_at), _) => settled_at,
+                (None, Some(mcp)) => match mcp.current_settlement(&thread_id).await {
+                    Some(settled_at) => settled_at,
+                    None => return,
+                },
+                (None, None) => String::new(),
+            };
             if let Some(mcp) = &mcp
                 && !mcp.is_current_settlement(&thread_id, &settled_at).await
             {
@@ -371,20 +584,14 @@ impl TurnObserver for Host {
         if let Some(mcp) = self.mcp.get() {
             mcp.touch_thread(&point.thread_id);
         }
-        // A launch into a new worktree ends its setup when the agent starts.
+        // A launch into a new worktree ends its setup when the agent starts, or when its
+        // async setup script ends after that.
         let setups = &self.vcs.setups;
         if setups
             .get(&point.thread_id)
             .is_some_and(|s| s.phase == ProjectClonePhase::Running)
         {
-            setups.mark_uncancellable(&point.thread_id);
-            setups.stage_status(
-                &point.thread_id,
-                WorktreeSetupStageId::Agent,
-                WorktreeSetupStageStatus::Done,
-                None,
-            );
-            setups.finish(&point.thread_id, ProjectClonePhase::Done, None);
+            setups.agent_started(&point.thread_id);
         }
         Box::pin(std::future::ready(()))
     }
@@ -427,6 +634,7 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         }
     }
 
@@ -514,7 +722,9 @@ mod tests {
         let second = print_marker(&host, "archived", "term-2", "archmarktwo").await;
         let other = print_marker(&host, "other", "term-1", "othermarker").await;
 
-        host.thread_closed("archived", ThreadClose::Archived);
+        host.thread_closed("archived", ThreadClose::Archived)
+            .await
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             while alive(first) || alive(second) {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -566,9 +776,15 @@ mod tests {
                 .is_ok()
         });
         held_rx.recv().unwrap();
-        host.thread_closed("archived", ThreadClose::Archived);
-        probe(CallContext::default(), json!({})).await.unwrap();
-        let _ = done_tx.send(());
+        // The close waits for the lock while the RPC runs.
+        let (closed, ()) = tokio::join!(
+            host.thread_closed("archived", ThreadClose::Archived),
+            async {
+                probe(CallContext::default(), json!({})).await.unwrap();
+                let _ = done_tx.send(());
+            }
+        );
+        closed.unwrap();
         assert!(
             holder.join().unwrap(),
             "the RPC completed while history cleanup held the lock"
@@ -599,7 +815,9 @@ mod tests {
                 .map_or(0, Vec::len)
         };
         for _ in 0..2 {
-            host.thread_closed("deleted", ThreadClose::Deleted);
+            host.thread_closed("deleted", ThreadClose::Deleted)
+                .await
+                .unwrap();
             for _ in 0..100 {
                 if sessions("deleted") == 0 {
                     break;
@@ -701,6 +919,7 @@ mod tests {
             devices: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         });
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
         config.projects = vec![conn_engine::ProjectConfig {
@@ -866,6 +1085,264 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// T3's launch preparation (`ThreadLaunchService.prepareInBackground`): a thread launched
+    /// into a new worktree runs the project's `runOnWorktreeCreate` script in terminal
+    /// `setup-<id>`. A script with `async: false` holds the launch until it exits; an async
+    /// one (T3's default) runs on while the launch answers, and its stage records its end.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_worktree_launch_runs_the_setup_script_through_the_host() {
+        use conn_contract::{
+            ProjectClonePhase as Phase, WorktreeSetupStageId as Id, WorktreeSetupStageStatus as St,
+        };
+        let dir = std::env::temp_dir().join(format!("conn-host-setup-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let root = dir.join("repo");
+        {
+            let root = root.clone();
+            tokio::task::spawn_blocking(move || {
+                std::fs::create_dir_all(&root).unwrap();
+                git(&root, &["init", "-q", "-b", "main"]);
+                git(
+                    &root,
+                    &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "init",
+                    ],
+                );
+            })
+            .await
+            .unwrap();
+        }
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        let script = |command: &str, blocking: bool| {
+            let mut script = json!({"id":"install","name":"Install","icon":"play",
+                "command":command,"runOnWorktreeCreate":true});
+            if blocking {
+                script["async"] = json!(false);
+            }
+            json!({"defaultProjectScripts":[script]})
+        };
+        let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+            shells: vec!["/bin/sh".into()],
+            ..Default::default()
+        });
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: terminals.clone(),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            previews: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
+        });
+        let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.to_string_lossy().into_owned(),
+        }];
+        config.providers = vec![Arc::new(conn_engine::fake::FakeProvider::new(
+            "claudeAgent",
+        ))];
+        config.host = Some(host.clone());
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        // The launches here start no agent, so no agent reaches this address.
+        let service = mcp::service(
+            &Deps {
+                environment: Some(environment.clone()),
+                engine: Some(engine.clone()),
+                terminals: Some(terminals.clone()),
+                ..Deps::default()
+            },
+            ([127, 0, 0, 1], 0).into(),
+        )
+        .unwrap();
+        host.mcp.set(service.clone()).unwrap();
+        // No first message: no turn starts, so the launch itself ends the agent stage.
+        let launch = |thread: &str, link_origin: Option<Value>| {
+            let engine = engine.clone();
+            let root = root.clone();
+            let thread = thread.to_owned();
+            async move {
+                let mut input = json!({"commandId":format!("launch:{thread}"),"threadId":thread,
+                    "projectId":conn_engine::SqliteEngine::project_id_for(&root.to_string_lossy()),
+                    "title":"Setup","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+                    "runtimeMode":"auto","interactionMode":"default",
+                    "workspaceStrategy":{"type":"worktree","baseRef":"main","startFromOrigin":false},
+                    "createdBy":"user","creationSource":"web"});
+                if let Some(origin) = link_origin {
+                    input["linkOrigin"] = origin;
+                }
+                let launched = engine.launch_thread(input).await;
+                let Ok(launched) = launched else {
+                    panic!(
+                        "the launch fails: {:?}",
+                        launched.err().map(|e| format!("{e:?}"))
+                    );
+                };
+                PathBuf::from(
+                    launched["projection"]["thread"]["worktreePath"]
+                        .as_str()
+                        .expect("the thread records its worktree"),
+                )
+            }
+        };
+        let exists = |path: PathBuf| async move {
+            tokio::task::spawn_blocking(move || path.exists())
+                .await
+                .unwrap()
+        };
+        let stage = |thread: &str| {
+            let snapshot = host.vcs.setups.get(thread).unwrap();
+            let stage = snapshot
+                .stages
+                .iter()
+                .find(|s| s.id == Id::SetupScript)
+                .unwrap()
+                .clone();
+            (snapshot.setup_script.map(|s| s.terminal_id), stage)
+        };
+
+        // `async: false`: the launch answers after the script exited.
+        environment
+            .settings
+            .update(
+                script(
+                    "printf '%s\\n' \"$T3CODE_PROJECT_ROOT\" > setup-ran.txt; printf 'INSTALLED-%s\\n' ok",
+                    true,
+                ),
+                None,
+            )
+            .unwrap();
+        let worktree = launch("thread:blocking", None).await;
+        assert!(
+            exists(worktree.join("setup-ran.txt")).await,
+            "a blocking setup script finished before the launch answered"
+        );
+        assert_eq!(
+            host.vcs.setups.get("thread:blocking").unwrap().phase,
+            Phase::Done,
+            "a launch with no first message ends its setup when it commits"
+        );
+        let (terminal, script_stage) = stage("thread:blocking");
+        assert_eq!(terminal.as_deref(), Some("setup-install"));
+        assert_eq!(script_stage.status, St::Done);
+        assert_eq!(script_stage.detail.as_deref(), Some("exited with 0"));
+        assert!(
+            script_stage.tail.iter().any(|line| line == "INSTALLED-ok"),
+            "{:?}",
+            script_stage.tail
+        );
+
+        // T3's default (`async` unset): the launch answers while the script still runs.
+        let gate = dir.join("go");
+        environment
+            .settings
+            .update(
+                script(
+                    &format!(
+                        "while [ ! -f '{}' ]; do sleep 0.1; done; printf done > async-ran.txt",
+                        gate.display()
+                    ),
+                    false,
+                ),
+                None,
+            )
+            .unwrap();
+        let mut watch = host.vcs.setups.subscribe("thread:async");
+        let worktree = launch("thread:async", None).await;
+        assert_eq!(stage("thread:async").1.status, St::Running);
+        assert!(!exists(worktree.join("async-ran.txt")).await);
+        let snapshot = host.vcs.setups.get("thread:async").unwrap();
+        assert!(
+            snapshot
+                .stages
+                .iter()
+                .any(|s| s.id == Id::Agent && s.status == St::Done),
+            "{:?}",
+            snapshot.stages
+        );
+        assert_eq!(
+            snapshot.phase,
+            Phase::Running,
+            "the setup waits for its async script"
+        );
+        tokio::task::spawn_blocking({
+            let gate = gate.clone();
+            move || std::fs::write(gate, "").unwrap()
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                if watch
+                    .borrow_and_update()
+                    .as_ref()
+                    .is_some_and(|s| s.phase == Phase::Done)
+                {
+                    return;
+                }
+                watch.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("the async script's end finishes the setup");
+        assert_eq!(
+            stage("thread:async").1.detail.as_deref(),
+            Some("exited with 0")
+        );
+        assert!(exists(worktree.join("async-ran.txt")).await);
+
+        // `linkOriginIsFenced`: a thread a link below full access starts runs no script, and
+        // an origin stamped before access was recorded counts as fenced.
+        environment
+            .settings
+            .update(script("printf ran > fenced-ran.txt", true), None)
+            .unwrap();
+        for (thread, origin) in [
+            (
+                "thread:linked",
+                json!({"sessionId":"s1","label":"Peer","access":"auto"}),
+            ),
+            (
+                "thread:linked-old",
+                json!({"sessionId":"s2","label":"Old peer"}),
+            ),
+        ] {
+            let worktree = launch(thread, Some(origin)).await;
+            assert!(!exists(worktree.join("fenced-ran.txt")).await, "{thread}");
+            let (terminal, script_stage) = stage(thread);
+            assert_eq!(
+                (terminal, script_stage.status),
+                (None, St::Skipped),
+                "{thread}"
+            );
+            assert!(
+                terminals.read(thread, "setup-install", None).is_none(),
+                "{thread} opened no setup terminal"
+            );
+        }
+
+        terminals.shutdown().await;
+        engine.shutdown().await;
+        drop(host);
+        drop(service);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn browser_access_is_scoped_to_project_and_captured_at_session_start() {
         let dir =
@@ -895,6 +1372,7 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            worktree_cleanup: OnceLock::new(),
             previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
         };
@@ -1017,11 +1495,12 @@ mod tests {
             previews: OnceLock::new(),
             devices: OnceLock::new(),
             settle_cleanups: Arc::default(),
+            worktree_cleanup: OnceLock::new(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
         let mut config = config(&provider);
         config.host = Some(host.clone());
-        config.recover_runs = false;
+        config.hold_effects = true;
         let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
         let mut stream = subscribe(engine.as_ref(), thread).await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1031,7 +1510,7 @@ mod tests {
             engine: Some(engine.clone()),
             ..Deps::default()
         };
-        crate::serve::start_agent_tools(&mut deps, &host, &engine, address).unwrap();
+        crate::serve::start_agent_tools(&mut deps, &host, &engine, address);
         let opened = || provider.sessions.load(std::sync::atomic::Ordering::SeqCst) > 0;
         while !opened() {
             stream.recv().await.unwrap().unwrap();

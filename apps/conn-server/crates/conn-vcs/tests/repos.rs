@@ -18,7 +18,7 @@ use conn_contract::{
     VcsPullResultStatus, VcsSwitchRefInput,
 };
 use conn_vcs::{
-    commit, refs, review, status,
+    VcsHub, commit, hub, refs, review, status,
     worktree::{self, CreateWorktree, Removal},
 };
 use support::{Fixture, TempDir, commit_all, git, write};
@@ -164,6 +164,31 @@ async fn remote_status_reads_divergence_after_fetch() {
     git(&fx.work, &["checkout", "-q", "--detach"]);
     let detached = status::branch_status(&fx.work).await.unwrap();
     assert_eq!((detached.ref_name, detached.is_repo), (None, Some(true)));
+}
+
+/// T3's `statusDetailsRemote`: with no usable remote default (here `origin/HEAD` names a
+/// deleted `origin/master`), both `main` and `master` count as the default, even when the
+/// other one exists locally.
+#[tokio::test]
+async fn either_conventional_branch_is_the_default_without_a_remote_default() {
+    let fx = Fixture::new("dangling-remote-head");
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/master",
+        ],
+    );
+    git(&fx.work, &["checkout", "-q", "-b", "master"]);
+    write(&fx.work, "m.txt", "m\n");
+    commit_all(&fx.work, "ahead of main");
+
+    let local = status::local_status(&fx.work).await.unwrap();
+    assert_eq!(local.ref_name.as_deref(), Some("master"));
+    assert!(local.is_default_ref, "master is a default branch");
+    let remote = status::remote_status(&fx.work).await.unwrap().unwrap();
+    assert_eq!(remote.ahead_of_default_count, Some(0));
 }
 
 #[tokio::test]
@@ -1184,40 +1209,135 @@ async fn a_plain_recorded_base_compares_with_the_remote_it_tracks() {
     assert_eq!(read(None).await, theirs);
 }
 
+/// One scripted answer: the script's `async` flag and where its exit code arrives.
+type ScriptAnswer = Option<(bool, tokio::sync::oneshot::Receiver<Option<i64>>)>;
+
+/// A setup runner the test drives: each start takes the next scripted answer, and the
+/// completion resolves when the test sends the exit code.
+#[derive(Default)]
+struct FakeRunner {
+    answers: std::sync::Mutex<std::collections::VecDeque<ScriptAnswer>>,
+    started: std::sync::Mutex<Vec<(String, PathBuf)>>,
+    discarded: std::sync::Mutex<Vec<String>>,
+    /// When set, a start waits here before it answers, as a terminal still being opened.
+    opening: std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
+}
+
+impl FakeRunner {
+    /// Queues a script; `background` is its `async` flag. Send its exit code on the sender.
+    fn script(&self, background: bool) -> tokio::sync::oneshot::Sender<Option<i64>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.answers
+            .lock()
+            .unwrap()
+            .push_back(Some((background, rx)));
+        tx
+    }
+
+    fn no_script(&self) {
+        self.answers.lock().unwrap().push_back(None);
+    }
+
+    /// Holds the next start until the returned gate is notified.
+    fn hold_opening(&self) -> std::sync::Arc<tokio::sync::Notify> {
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        *self.opening.lock().unwrap() = Some(gate.clone());
+        gate
+    }
+}
+
+impl conn_vcs::setup::SetupRunner for FakeRunner {
+    fn start<'a>(
+        &'a self,
+        thread: &'a str,
+        worktree: &'a std::path::Path,
+    ) -> conn_vcs::setup::SetupFuture<'a, Result<Option<conn_vcs::setup::StartedSetup>, String>>
+    {
+        Box::pin(async move {
+            self.started
+                .lock()
+                .unwrap()
+                .push((thread.to_owned(), worktree.to_owned()));
+            let opening = self.opening.lock().unwrap().take();
+            if let Some(gate) = opening {
+                gate.notified().await;
+            }
+            let answer = self.answers.lock().unwrap().pop_front().flatten();
+            Ok(
+                answer.map(|(background, rx)| conn_vcs::setup::StartedSetup {
+                    name: "Setup".into(),
+                    command: "pnpm i".into(),
+                    terminal_id: "setup-s1".into(),
+                    background,
+                    completion: Box::pin(async move { rx.await.ok().flatten() }),
+                }),
+            )
+        })
+    }
+
+    fn discard(&self, thread: &str, terminal_id: &str) {
+        self.discarded
+            .lock()
+            .unwrap()
+            .push(format!("{thread}:{terminal_id}"));
+    }
+}
+
+/// Lets spawned tasks run.
+async fn settle_tasks() {
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// T3's launch preparation (`ThreadLaunchService.prepareInBackground`): the setup script
+/// starts in the new checkout; a script with `async: false` holds the launch until it exits
+/// and fails it on a non-zero exit, removing the worktree and its branch.
 #[tokio::test]
-async fn provision_creates_a_worktree_and_runs_the_setup_script() {
+async fn provision_creates_a_worktree_and_waits_for_a_blocking_setup_script() {
     use conn_contract::{
         ProjectClonePhase as Phase, WorktreeSetupStageId as Id, WorktreeSetupStageStatus as St,
     };
-    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
 
     let fx = Fixture::new("provision");
     git(&fx.work, &["tag", "launch-tag"]);
     git(&fx.work, &["push", "-q", "origin", "launch-tag"]);
     git(&fx.work, &["tag", "-d", "launch-tag"]);
     let setups = WorktreeSetups::new();
-    let request = |thread: &str, command: &str| ProvisionRequest {
+    let runner = Arc::new(FakeRunner::default());
+    let request = |thread: &str| ProvisionRequest {
         thread_id: thread.into(),
         project_root: fx.work.clone(),
         base_ref: "main".into(),
         branch: None,
         start_from_origin: true,
-        setup_script: Some(SetupScript {
-            id: "s1".into(),
-            name: "Setup".into(),
-            command: command.into(),
-        }),
+        setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
+        missing_base: setup::MissingBase::Fail,
     };
-    let done = setup::provision(
-        &setups,
-        request(
-            "t1",
-            "echo one; echo two >&2; echo \"$T3CODE_PROJECT_ROOT\" > root.txt",
-        ),
-    )
-    .await
-    .unwrap();
+    let exit = runner.script(false);
+    let launch = {
+        let (setups, request) = (setups.clone(), request("t1"));
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    while runner.started.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    settle_tasks().await;
+    assert!(!launch.is_finished(), "a blocking script holds the launch");
+    let running = setups.get("t1").unwrap();
+    assert_eq!(
+        running
+            .setup_script
+            .as_ref()
+            .map(|s| s.terminal_id.as_str()),
+        Some("setup-s1")
+    );
+    exit.send(Some(0)).unwrap();
+    let done = launch.await.unwrap().unwrap();
     assert!(
         done.branch.starts_with("t3/") && done.branch.len() == 11,
         "{}",
@@ -1231,10 +1351,9 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     );
     assert!(done.path.join("README.md").exists());
     assert_eq!(
-        std::fs::read_to_string(done.path.join("root.txt"))
-            .unwrap()
-            .trim(),
-        fx.cwd()
+        runner.started.lock().unwrap().first().map(|s| s.1.clone()),
+        Some(done.path.clone()),
+        "the script runs in the new checkout"
     );
     let snapshot = setups.get("t1").unwrap();
     let stage = |id| snapshot.stages.iter().find(|s| s.id == id).unwrap().clone();
@@ -1248,34 +1367,36 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     let script = stage(Id::SetupScript);
     assert_eq!(script.status, St::Done);
     assert_eq!(script.detail.as_deref(), Some("exited with 0"));
-    let mut tail = script.tail.clone();
-    tail.sort();
-    assert_eq!(tail, ["one", "two"]);
     assert_eq!(
         snapshot.worktree_path.as_deref(),
         Some(&*done.path.to_string_lossy())
     );
-    setups.finish("t1", Phase::Done, None);
-    assert_eq!(
-        setups.get("t1").unwrap().stages.last().unwrap().id,
-        Id::Agent
-    );
+    setups.agent_started("t1");
+    assert_eq!(setups.get("t1").unwrap().phase, Phase::Done);
 
     write(&fx.work, "local-only.txt", "local base\n");
     commit_all(&fx.work, "local base");
     git(&fx.origin, &["update-ref", "-d", "refs/heads/main"]);
-    let local = setup::provision(&setups, request("deleted", "exit 0"))
-        .await
-        .unwrap();
+    runner.no_script();
+    let local = setup::provision(&setups, request("deleted")).await.unwrap();
     assert_eq!(
         git(&local.path, &["rev-parse", "HEAD"]),
         git(&fx.work, &["rev-parse", "main"])
     );
+    let skipped = setups.get("deleted").unwrap();
+    assert!(
+        skipped
+            .stages
+            .iter()
+            .any(|s| s.id == Id::SetupScript && s.status == St::Skipped),
+        "no script: the stage is skipped"
+    );
 
-    // A failing script fails the setup and removes the worktree and its branch.
-    let failed = setup::provision(&setups, request("t2", "exit 3"))
-        .await
-        .unwrap_err();
+    // A failing script fails the setup, closes its terminal, and removes the worktree and
+    // its branch.
+    let exit = runner.script(false);
+    exit.send(Some(3)).unwrap();
+    let failed = setup::provision(&setups, request("t2")).await.unwrap_err();
     assert!(
         matches!(failed, ProvisionError::SetupScript(ref m) if m == "Setup script exited with 3.")
     );
@@ -1285,20 +1406,303 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     assert!(!path.exists());
     let branch = snapshot.branch.unwrap();
     assert!(!git(&fx.work, &["branch", "--list", &branch]).contains(&branch));
+    assert_eq!(*runner.discarded.lock().unwrap(), ["t2:setup-s1"]);
 }
 
-/// Reads a PID the script wrote, waiting up to 10 s for the file.
-async fn read_pid(path: &std::path::Path) -> u32 {
+/// T3's "deletes a claimed worktree's branch when setup is cancelled before checkout
+/// returns": a cancel while `git worktree add` runs its `post-checkout` hook stops the hook's
+/// whole process tree and removes the checkout and its branch.
+#[tokio::test]
+async fn a_cancel_during_post_checkout_removes_the_checkout_and_branch() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new("post-checkout");
+    let pids_dir = fx.root.path().join("pids");
+    std::fs::create_dir_all(&pids_dir).unwrap();
+    let hook = fx.work.join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    let pids = pids_dir.display();
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\necho $$ > {pids}/hook\nsleep 31 &\necho $! > {pids}/child\nwait\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let setups = WorktreeSetups::new();
+    let worktrees = fx.root.path().join("worktrees");
+    let request = ProvisionRequest {
+        thread_id: "pc".into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: Some("feature-pc".into()),
+        start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
+        submodules: None,
+        setup: None,
+        worktrees_dir: worktrees.clone(),
+    };
+    let run = {
+        let setups = setups.clone();
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    let pids = [
+        read_pid(&pids_dir.join("hook")).await,
+        read_pid(&pids_dir.join("child")).await,
+    ];
+    assert!(setups.cancel("pc"));
+    let result = run.await.unwrap();
+    let left = survivors(&pids).await;
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(left, Vec::<u32>::new(), "the hook kept running");
+    assert!(
+        !git(&fx.work, &["worktree", "list", "--porcelain"]).contains("feature-pc"),
+        "the checkout stayed registered"
+    );
+    assert!(
+        !git(&fx.work, &["branch", "--list", "feature-pc"]).contains("feature-pc"),
+        "the branch stayed"
+    );
+    let mut stack = vec![worktrees];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            assert_ne!(
+                entry.file_name(),
+                "feature-pc",
+                "the checkout folder stayed"
+            );
+            if entry.path().is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+}
+
+/// The direct `vcs.createWorktree` RPC: a dropped call (a client that disconnects) during a
+/// slow `post-checkout` hook leaves no locked checkout. Like the TypeScript server's
+/// interrupt, it removes the checkout and its branch.
+#[tokio::test]
+async fn a_dropped_create_worktree_leaves_no_locked_checkout() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new("dropped-create");
+    let pids_dir = fx.root.path().join("pids");
+    std::fs::create_dir_all(&pids_dir).unwrap();
+    let hook = fx.work.join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    let pids = pids_dir.display();
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\necho $$ > {pids}/hook\nsleep 31 &\necho $! > {pids}/child\nwait\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let input = CreateWorktree {
+        cwd: fx.work.clone(),
+        ref_name: "main".into(),
+        new_ref_name: Some("feature-dropped".into()),
+        base_ref_name: Some("main".into()),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let call = tokio::spawn(async move { worktree::create_worktree(&input).await });
+    let pids = [
+        read_pid(&pids_dir.join("hook")).await,
+        read_pid(&pids_dir.join("child")).await,
+    ];
+    call.abort();
+    assert!(call.await.unwrap_err().is_cancelled());
+    assert_eq!(
+        survivors(&pids).await,
+        Vec::<u32>::new(),
+        "the hook kept running"
+    );
+
+    let mut list = String::new();
     for _ in 0..200 {
-        if let Some(pid) = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| text.trim().parse().ok())
-        {
-            return pid;
+        list = git(&fx.work, &["worktree", "list", "--porcelain"]);
+        let branch = git(&fx.work, &["branch", "--list", "feature-dropped"]);
+        if !list.contains("feature-dropped") && !branch.contains("feature-dropped") {
+            break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    panic!("no pid in {}", path.display())
+    assert!(
+        !list.contains("locked"),
+        "the checkout stayed locked: {list}"
+    );
+    assert!(
+        !list.contains("feature-dropped"),
+        "the checkout stayed registered: {list}"
+    );
+    assert!(
+        !git(&fx.work, &["branch", "--list", "feature-dropped"]).contains("feature-dropped"),
+        "the branch stayed"
+    );
+}
+
+/// A worktree the cleanup cannot remove (a locked one) keeps its branch, and the failed setup
+/// says what it left behind instead of failing quietly.
+#[tokio::test]
+async fn a_worktree_cleanup_cannot_remove_keeps_its_branch_and_says_so() {
+    use conn_vcs::setup::{self, ProvisionRequest, SetupFuture, StartedSetup, WorktreeSetups};
+
+    /// A setup script that locks its worktree, then exits 3.
+    struct LockingRunner;
+    impl conn_vcs::setup::SetupRunner for LockingRunner {
+        fn start<'a>(
+            &'a self,
+            _thread: &'a str,
+            worktree: &'a std::path::Path,
+        ) -> SetupFuture<'a, Result<Option<StartedSetup>, String>> {
+            Box::pin(async move {
+                git(
+                    worktree,
+                    &["worktree", "lock", &worktree.display().to_string()],
+                );
+                Ok(Some(StartedSetup {
+                    name: "Setup".into(),
+                    command: "git worktree lock && exit 3".into(),
+                    terminal_id: "setup-s1".into(),
+                    background: false,
+                    completion: Box::pin(std::future::ready(Some(3))),
+                }))
+            })
+        }
+        fn discard(&self, _thread: &str, _terminal_id: &str) {}
+    }
+
+    let fx = Fixture::new("locked-cleanup");
+    let setups = WorktreeSetups::new();
+    let failed = setup::provision(
+        &setups,
+        ProvisionRequest {
+            thread_id: "locked".into(),
+            project_root: fx.work.clone(),
+            base_ref: "main".into(),
+            branch: Some("feature-locked".into()),
+            start_from_origin: false,
+            missing_base: conn_vcs::setup::MissingBase::Fail,
+            submodules: None,
+            setup: Some(std::sync::Arc::new(LockingRunner)),
+            worktrees_dir: fx.root.path().join("worktrees"),
+        },
+    )
+    .await;
+    assert!(failed.is_err());
+    let error = setups.get("locked").unwrap().error.unwrap_or_default();
+    assert!(
+        error.contains("could not be removed"),
+        "the setup hid the worktree it left: {error}"
+    );
+    assert!(git(&fx.work, &["branch", "--list", "feature-locked"]).contains("feature-locked"));
+    let path = setups.get("locked").unwrap().worktree_path.unwrap();
+    git(&fx.work, &["worktree", "unlock", &path]);
+}
+
+/// T3 and Git keep the checkout when its `post-checkout` hook fails: only a cancel abandons it.
+#[tokio::test]
+async fn a_failed_post_checkout_hook_keeps_the_checkout_and_its_files() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new("hook-fails");
+    let hook = fx.work.join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\necho kept > hook-notes.txt\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let setups = WorktreeSetups::new();
+    let result = setup::provision(
+        &setups,
+        ProvisionRequest {
+            thread_id: "hook".into(),
+            project_root: fx.work.clone(),
+            base_ref: "main".into(),
+            branch: Some("feature-hook".into()),
+            start_from_origin: false,
+            missing_base: conn_vcs::setup::MissingBase::Fail,
+            submodules: None,
+            setup: None,
+            worktrees_dir: fx.root.path().join("worktrees"),
+        },
+    )
+    .await;
+    assert!(
+        matches!(result, Err(ProvisionError::Failed(_))),
+        "{result:?}"
+    );
+    let path = worktree::list_worktrees(&fx.work)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.ref_name.as_deref() == Some("feature-hook"))
+        .expect("the checkout was removed")
+        .path;
+    assert_eq!(
+        std::fs::read_to_string(path.join("hook-notes.txt")).unwrap(),
+        "kept\n"
+    );
+    assert!(
+        !git(&fx.work, &["worktree", "list", "--porcelain"]).contains("locked"),
+        "the kept checkout stayed locked"
+    );
+}
+
+/// T3's lock reason: a cancel while Git still populates the checkout (here a slow smudge
+/// filter) removes the partial checkout and its branch, so a retry can reuse the name.
+#[tokio::test]
+async fn a_cancel_while_git_populates_the_checkout_removes_it() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+
+    let fx = Fixture::new("populating");
+    write(&fx.work, ".gitattributes", "*.slow filter=slow\n");
+    write(&fx.work, "big.slow", "data\n");
+    commit_all(&fx.work, "slow file");
+    let pid = fx.root.path().join("filter.pid");
+    git(
+        &fx.work,
+        &[
+            "config",
+            "filter.slow.smudge",
+            &format!("sh -c 'echo $$ > {}; sleep 31; cat'", pid.display()),
+        ],
+    );
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: Some("feature-slow".into()),
+        start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
+        submodules: None,
+        setup: None,
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let run = {
+        let setups = setups.clone();
+        let request = request("slow");
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    read_pid(&pid).await;
+    assert!(setups.cancel("slow"));
+    let result = run.await.unwrap();
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    let left = setups.get("slow").unwrap().error;
+    assert_eq!(left, None, "the cleanup left something");
+    assert!(
+        !git(&fx.work, &["worktree", "list", "--porcelain"]).contains("feature-slow"),
+        "the partial checkout stayed registered"
+    );
+    assert!(
+        !git(&fx.work, &["branch", "--list", "feature-slow"]).contains("feature-slow"),
+        "the branch stayed"
+    );
 }
 
 fn alive(pid: u32) -> bool {
@@ -1328,96 +1732,169 @@ async fn survivors(pids: &[u32]) -> Vec<u32> {
     left
 }
 
-/// The setup script's whole process tree ends when the setup is cancelled, when the launch is
-/// dropped, and when the script exits leaving a background job; no entry stays running.
-#[tokio::test]
-async fn setup_scripts_leave_no_processes_behind() {
-    use conn_contract::ProjectClonePhase as Phase;
-    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
+/// Reads a PID the script wrote, waiting up to 10 s for the file.
+async fn read_pid(path: &std::path::Path) -> u32 {
+    for _ in 0..200 {
+        if let Some(pid) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+        {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("no pid in {}", path.display())
+}
 
-    let fx = Fixture::new("setup-tree");
+/// An `async` setup script (T3's default) does not hold the launch; its stage records the exit
+/// when the script ends, and the setup finishes only once both it and the agent are done.
+#[tokio::test]
+async fn an_async_setup_script_runs_on_while_the_agent_starts() {
+    use conn_contract::{
+        ProjectClonePhase as Phase, WorktreeSetupStageId as Id, WorktreeSetupStageStatus as St,
+    };
+    use conn_vcs::setup::{self, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
+
+    let fx = Fixture::new("provision-async");
     let setups = WorktreeSetups::new();
-    let request = |thread: &str, command: &str| ProvisionRequest {
+    let runner = Arc::new(FakeRunner::default());
+    let request = |thread: &str| ProvisionRequest {
         thread_id: thread.into(),
         project_root: fx.work.clone(),
         base_ref: "main".into(),
         branch: None,
         start_from_origin: false,
-        setup_script: Some(SetupScript {
-            id: "s1".into(),
-            name: "Setup".into(),
-            command: command.into(),
-        }),
+        setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
+        missing_base: setup::MissingBase::Fail,
     };
-    let pids_dir = fx.root.path().join("pids");
-    std::fs::create_dir_all(&pids_dir).unwrap();
-    let script = |name: &str, tail: &str| {
-        let d = pids_dir.join(name);
-        std::fs::create_dir_all(&d).unwrap();
-        let d = d.display();
-        format!("sleep 30 & echo $! > {d}/bg; sleep 31 & echo $! > {d}/fg; {tail}")
+    let script_stage = |thread: &str| {
+        let snapshot = setups.get(thread).unwrap();
+        let stage = snapshot
+            .stages
+            .iter()
+            .find(|s| s.id == Id::SetupScript)
+            .unwrap()
+            .clone();
+        (snapshot.phase, stage.status, stage.detail)
     };
 
-    // Cancelled while it runs.
-    let run = {
-        let (setups, request) = (setups.clone(), request("cancel", &script("cancel", "wait")));
+    // The agent starts first; the script's end finishes the setup.
+    let exit = runner.script(true);
+    setup::provision(&setups, request("agent-first"))
+        .await
+        .unwrap();
+    assert_eq!(
+        script_stage("agent-first"),
+        (Phase::Running, St::Running, None)
+    );
+    setups.agent_started("agent-first");
+    assert_eq!(
+        script_stage("agent-first").0,
+        Phase::Running,
+        "the setup waits for its async script"
+    );
+    exit.send(Some(0)).unwrap();
+    settle_tasks().await;
+    assert_eq!(
+        script_stage("agent-first"),
+        (Phase::Done, St::Done, Some("exited with 0".into()))
+    );
+
+    // The script fails before the agent starts: the launch goes on, the stage says so.
+    let exit = runner.script(true);
+    setup::provision(&setups, request("script-first"))
+        .await
+        .unwrap();
+    exit.send(Some(2)).unwrap();
+    settle_tasks().await;
+    assert_eq!(
+        script_stage("script-first"),
+        (Phase::Running, St::Failed, Some("exited with 2".into()))
+    );
+    setups.agent_started("script-first");
+    assert_eq!(script_stage("script-first").0, Phase::Done);
+}
+
+/// Cancelling while a blocking script runs ends the launch and closes the script's terminal.
+#[tokio::test]
+async fn cancelling_a_blocking_setup_closes_its_terminal() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
+
+    let fx = Fixture::new("provision-cancel");
+    let setups = WorktreeSetups::new();
+    let runner = Arc::new(FakeRunner::default());
+    let _exit = runner.script(false);
+    let request = ProvisionRequest {
+        thread_id: "cancel".into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: None,
+        start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
+        submodules: None,
+        setup: Some(runner.clone()),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let launch = {
+        let setups = setups.clone();
         tokio::spawn(async move { setup::provision(&setups, request).await })
     };
-    let pids = [
-        read_pid(&pids_dir.join("cancel/bg")).await,
-        read_pid(&pids_dir.join("cancel/fg")).await,
-    ];
+    while runner.started.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    settle_tasks().await;
     assert!(setups.cancel("cancel"));
-    let result = run.await.unwrap();
-    let left = survivors(&pids).await;
+    let result = launch.await.unwrap();
     assert!(
         matches!(result, Err(ProvisionError::Cancelled)),
         "{result:?}"
     );
-    assert_eq!(left, Vec::<u32>::new(), "cancel left processes running");
+    assert_eq!(*runner.discarded.lock().unwrap(), ["cancel:setup-s1"]);
+}
 
-    // The launch future dropped while the script runs.
-    let run = {
-        let (setups, request) = (setups.clone(), request("drop", &script("drop", "wait")));
+/// A cancel that arrives while the script's terminal is still being opened waits for the
+/// open, then closes that terminal: no shell is left behind.
+#[tokio::test]
+async fn cancelling_while_the_setup_terminal_opens_closes_it() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
+
+    let fx = Fixture::new("provision-cancel-opening");
+    let setups = WorktreeSetups::new();
+    let runner = Arc::new(FakeRunner::default());
+    let _exit = runner.script(false);
+    let opening = runner.hold_opening();
+    let request = ProvisionRequest {
+        thread_id: "opening".into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: None,
+        start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
+        submodules: None,
+        setup: Some(runner.clone()),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let launch = {
+        let setups = setups.clone();
         tokio::spawn(async move { setup::provision(&setups, request).await })
     };
-    let pids = [
-        read_pid(&pids_dir.join("drop/bg")).await,
-        read_pid(&pids_dir.join("drop/fg")).await,
-    ];
-    run.abort();
-    let _ = run.await;
-    let left = survivors(&pids).await;
-    assert_eq!(
-        left,
-        Vec::<u32>::new(),
-        "a dropped launch left processes running"
-    );
-    assert_ne!(setups.get("drop").unwrap().phase, Phase::Running);
-
-    // The script exits at once, but its background jobs hold its output pipes.
-    let started = std::time::Instant::now();
-    let done = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        setup::provision(&setups, request("exit", &script("exit", "exit 0"))),
-    )
-    .await;
-    let pids = [
-        read_pid(&pids_dir.join("exit/bg")).await,
-        read_pid(&pids_dir.join("exit/fg")).await,
-    ];
-    let left = survivors(&pids).await;
+    while runner.started.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    assert!(setups.cancel("opening"));
+    opening.notify_one();
+    let result = launch.await.unwrap();
     assert!(
-        matches!(done, Ok(Ok(_))),
-        "{done:?} after {:?}",
-        started.elapsed()
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
     );
-    assert_eq!(
-        left,
-        Vec::<u32>::new(),
-        "background jobs outlived the script"
-    );
+    assert_eq!(*runner.discarded.lock().unwrap(), ["opening:setup-s1"]);
+    assert_eq!(git(&fx.work, &["branch", "--list", "t3/*"]).trim(), "");
 }
 
 #[tokio::test]
@@ -1605,6 +2082,737 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
+}
+
+/// T3 `GitVcsDriverCore.createWorktree` with `worktreeSparsePatternsPath`: the patterns file
+/// named by `t3.json` at the ref limits the checkout; a missing one fails with nothing left.
+#[tokio::test]
+async fn a_sparse_worktree_leaves_out_what_t3_json_excludes() {
+    let fx = Fixture::new("sparse");
+    let dir = fx.root.path().join("worktrees");
+    write(&fx.work, "patterns", "/*\n!/excluded/\n");
+    write(&fx.work, "excluded/asset", "omitted by design\n");
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"./patterns"}"#,
+    );
+    commit_all(&fx.work, "sparse checkout");
+    let create = |branch: &str| {
+        let input = CreateWorktree {
+            cwd: fx.work.clone(),
+            ref_name: "HEAD".into(),
+            new_ref_name: Some(branch.into()),
+            base_ref_name: None,
+            worktrees_dir: dir.clone(),
+        };
+        async move { worktree::create_worktree(&input).await }
+    };
+    let sparse = create("probe-sparse").await.unwrap().path;
+    assert!(!sparse.join("excluded/asset").exists());
+    assert!(sparse.join("README.md").exists() && sparse.join("src/lib.rs").exists());
+
+    // `parseT3ProjectFile` is lenient JSON: comments and trailing commas are fine.
+    write(
+        &fx.work,
+        "t3.json",
+        "{\n  // keep assets out\n  \"worktreeSparsePatternsPath\": \"./patterns\",\n}\n",
+    );
+    commit_all(&fx.work, "jsonc t3.json");
+    let jsonc = create("probe-jsonc").await.unwrap().path;
+    assert!(!jsonc.join("excluded/asset").exists());
+
+    // One invalid field rejects the whole file, so the checkout is full.
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"./patterns","worktreeSubmodules":"bogus"}"#,
+    );
+    commit_all(&fx.work, "invalid t3.json");
+    let full = create("probe-invalid").await.unwrap().path;
+    assert!(full.join("excluded/asset").exists());
+
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"missing"}"#,
+    );
+    commit_all(&fx.work, "missing patterns");
+    let error = create("probe-missing").await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("\"missing\", which is not a file in HEAD"),
+        "{error}"
+    );
+    assert!(
+        git(&fx.work, &["branch", "--list", "probe-missing"])
+            .trim()
+            .is_empty()
+    );
+}
+
+/// `resolveProjectFileBackedSetting("worktreeSubmodules", …)`: the setting, else `t3.json` at
+/// `HEAD` (even when sparse patterns leave it out), else recursive; nothing without
+/// `.gitmodules`. `none` leaves the module empty.
+#[tokio::test]
+async fn submodule_mode_follows_the_setting_then_t3_json() {
+    let fx = Fixture::new("submodule-mode");
+    let mode = |setting: Option<&'static str>| {
+        let work = fx.work.clone();
+        async move { worktree::submodule_mode(&work, setting).await }
+    };
+    assert_eq!(mode(None).await, None, "no .gitmodules");
+    write(
+        &fx.work,
+        ".gitmodules",
+        "[submodule \"module\"]\n\tpath = module\n\turl = ../child\n",
+    );
+    commit_all(&fx.work, "gitmodules");
+    use worktree::{Origin, Submodules};
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    write(&fx.work, "t3.json", r#"{"worktreeSubmodules":"top-level"}"#);
+    commit_all(&fx.work, "t3.json");
+    // Read from HEAD: the working copy may lack it.
+    std::fs::remove_file(fx.work.join("t3.json")).unwrap();
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::TopLevel, Origin::ProjectFile))
+    );
+    assert_eq!(
+        mode(Some("none")).await,
+        Some((Submodules::None, Origin::Settings))
+    );
+    assert_eq!(
+        mode(Some("recursive")).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    write(
+        &fx.work,
+        "t3.json",
+        "{\n  /* a setup script fills it */\n  \"worktreeSubmodules\": \"none\",\n}\n",
+    );
+    commit_all(&fx.work, "jsonc t3.json");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::None, Origin::ProjectFile))
+    );
+    // A repeated key takes its last value, as `JSON.parse` does.
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSubmodules":"recursive","worktreeSubmodules":"top-level"}"#,
+    );
+    commit_all(&fx.work, "repeated key");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::TopLevel, Origin::ProjectFile))
+    );
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSubmodules":"none","scripts":[{"name":" ","command":"x"}]}"#,
+    );
+    commit_all(&fx.work, "invalid t3.json");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    worktree::update_submodules(&fx.work, Submodules::None)
+        .await
+        .unwrap();
+    assert!(!fx.work.join("module").exists());
+}
+
+/// A fixed [`hub::RemotePolicy`] the test changes between refreshes.
+struct FixedPolicy(std::sync::Mutex<hub::RemotePolicy>);
+
+impl hub::RemotePolicySource for FixedPolicy {
+    fn policy<'a>(
+        &'a self,
+        _cwds: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = hub::RemotePolicy> + Send + 'a>> {
+        let policy = *self.0.lock().unwrap();
+        Box::pin(async move { policy })
+    }
+}
+
+/// T3 `VcsStatusBroadcaster.refreshStatus` with `VcsAutomaticFetchInterval` and
+/// `maybeAutoPull`: a zero interval fetches nothing; an automatic pull fast-forwards only a
+/// clean default branch that is behind and not ahead.
+#[tokio::test]
+async fn refresh_follows_the_fetch_interval_and_auto_pull() {
+    let fx = Fixture::new("auto-pull");
+    let other = fx.other_clone();
+    git(&other, &["config", "user.name", "test"]);
+    git(&other, &["config", "user.email", "test@example.com"]);
+    write(&other, "upstream.txt", "from upstream\n");
+    let upstream = commit_all(&other, "upstream");
+    git(&other, &["push", "-q", "origin", "main"]);
+    let before = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    let tracking = || {
+        git(&fx.work, &["rev-parse", "refs/remotes/origin/main"])
+            .trim()
+            .to_owned()
+    };
+    let head = || git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    let policy = std::sync::Arc::new(FixedPolicy(std::sync::Mutex::new(hub::RemotePolicy {
+        fetch_interval: std::time::Duration::ZERO,
+        auto_pull: true,
+        background: true,
+    })));
+    let vcs = VcsHub::new();
+    vcs.set_policy(policy.clone());
+    let cwd = fx.cwd();
+    let refresh = || vcs.refresh_status(&cwd, hub::Remote::Read);
+
+    // Fetching off: the tracking ref stays, so nothing justifies a pull.
+    refresh().await.unwrap();
+    assert_eq!(tracking(), before);
+    assert_eq!(head(), before);
+
+    // Fetching on, but the default branch has local changes: fetched, not pulled.
+    *policy.0.lock().unwrap() = hub::RemotePolicy {
+        fetch_interval: std::time::Duration::from_secs(30),
+        auto_pull: true,
+        background: true,
+    };
+    write(&fx.work, "README.md", "# edited\n");
+    let dirty = refresh().await.unwrap();
+    assert_eq!(tracking(), upstream);
+    assert_eq!(head(), before);
+    assert_eq!(dirty.behind_count, 1);
+    let readme = || std::fs::read_to_string(fx.work.join("README.md")).unwrap();
+    assert_eq!(readme(), "# edited\n", "local changes survive");
+
+    // Diverged: ahead and behind, so no pull.
+    let local = commit_all(&fx.work, "local");
+    refresh().await.unwrap();
+    assert_eq!(head(), local);
+    assert_eq!(readme(), "# edited\n", "the local commit survives");
+
+    // Clean and only behind: fast-forwarded, and the result says so.
+    git(&fx.work, &["reset", "-q", "--hard", &before]);
+    let pulled = refresh().await.unwrap();
+    assert_eq!(head(), upstream);
+    assert_eq!((pulled.behind_count, pulled.ahead_count), (0, 0));
+    assert_eq!(
+        std::fs::read_to_string(fx.work.join("upstream.txt")).unwrap(),
+        "from upstream\n"
+    );
+
+    // Automatic pull off: a later upstream commit is fetched but not pulled.
+    *policy.0.lock().unwrap() = hub::RemotePolicy {
+        fetch_interval: std::time::Duration::from_secs(30),
+        auto_pull: false,
+        background: true,
+    };
+    git(&fx.work, &["reset", "-q", "--hard", &before]);
+    refresh().await.unwrap();
+    assert_eq!(head(), before);
+
+    // Fetching off leaves a refresh alone, but an explicit pull still fetches and moves.
+    write(&other, "later.txt", "later\n");
+    let later = commit_all(&other, "later");
+    git(&other, &["push", "-q", "origin", "main"]);
+    *policy.0.lock().unwrap() = hub::RemotePolicy {
+        fetch_interval: std::time::Duration::ZERO,
+        auto_pull: true,
+        background: true,
+    };
+    refresh().await.unwrap();
+    assert_eq!(tracking(), upstream);
+    refs::pull(&fx.work).await.unwrap();
+    assert_eq!((tracking(), head()), (later.clone(), later));
+}
+
+/// A policy the test answers per poll, with the raw folders the poll asked for.
+type PolicyAsk = (Vec<String>, tokio::sync::oneshot::Sender<hub::RemotePolicy>);
+struct AskedPolicy(tokio::sync::mpsc::UnboundedSender<PolicyAsk>);
+
+impl hub::RemotePolicySource for AskedPolicy {
+    fn policy<'a>(
+        &'a self,
+        cwds: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = hub::RemotePolicy> + Send + 'a>> {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let _ = self.0.send((cwds.to_vec(), reply));
+        Box::pin(async move { answer.await.unwrap_or_default() })
+    }
+}
+
+/// `makeRemoteRefreshLoop`: after the first read, a poll reads nothing while fetching is off
+/// or no client lease lets `vcs-status` work run (`shouldRunScopeWork`); the policy sees
+/// the folder as the subscriber gave it.
+#[tokio::test]
+async fn the_remote_poll_waits_for_fetching_and_client_activity() {
+    let fx = Fixture::new("poll-gate");
+    let other = fx.other_clone();
+    git(&other, &["config", "user.name", "test"]);
+    git(&other, &["config", "user.email", "test@example.com"]);
+    let before = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    let tracking = || {
+        git(&fx.work, &["rev-parse", "refs/remotes/origin/main"])
+            .trim()
+            .to_owned()
+    };
+    let head = || git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    let (asks, mut asked) = tokio::sync::mpsc::unbounded_channel();
+    let vcs = VcsHub::new();
+    vcs.set_policy(std::sync::Arc::new(AskedPolicy(asks)));
+    let cwd = format!("{}/./", fx.cwd());
+    let (sink, mut events) = tokio::sync::mpsc::channel(64);
+    vcs.subscribe_status(&cwd, hub::Remote::Read, Box::new(sink))
+        .await
+        .unwrap();
+    let policy = |fetch_ms: u64, auto_pull: bool, background: bool| hub::RemotePolicy {
+        fetch_interval: std::time::Duration::from_millis(fetch_ms),
+        auto_pull,
+        background,
+    };
+    // Each ask starts a poll, so it also means the poll before it has ended.
+    let mut ask = async || {
+        let (cwds, reply) = asked.recv().await.unwrap();
+        assert_eq!(cwds, std::slice::from_ref(&cwd));
+        reply
+    };
+    let remote_events = |events: &mut tokio::sync::mpsc::Receiver<_>| {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .filter(|e| matches!(e, conn_contract::VcsStatusStreamEvent::RemoteUpdated(_)))
+            .count()
+    };
+
+    // The first read runs paused: it has nothing yet.
+    ask().await.send(policy(10, false, false)).unwrap();
+    let reply = ask().await;
+    write(&other, "upstream.txt", "from upstream\n");
+    let upstream = commit_all(&other, "upstream");
+    git(&other, &["push", "-q", "origin", "main"]);
+    // Behind already, so only a pull or a read could change anything.
+    git(&fx.work, &["fetch", "-q", "origin"]);
+    assert_eq!(tracking(), upstream);
+    let _ = remote_events(&mut events);
+
+    // Paused: no pull, no read.
+    reply.send(policy(10, true, false)).unwrap();
+    let reply = ask().await;
+    assert_eq!(head(), before, "no pull while paused");
+    assert_eq!(remote_events(&mut events), 0, "no read while paused");
+
+    // Fetching off: not even the cached refs are read.
+    reply.send(policy(0, true, true)).unwrap();
+    let reply = ask().await;
+    assert_eq!(remote_events(&mut events), 0, "no read with fetching off");
+    assert_eq!(head(), before);
+
+    // Active and fetching: the poll pulls.
+    reply.send(policy(10, true, true)).unwrap();
+    let reply = ask().await;
+    assert_eq!(head(), upstream);
+
+    // `reconcileCheckedOutRef`: a terminal checkout rereads remote status while paused, but
+    // fetches nothing and pulls nothing, even onto a clean default branch that is behind.
+    write(&other, "second.txt", "second\n");
+    let second = commit_all(&other, "second");
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(&fx.work, &["fetch", "-q", "origin"]);
+    write(&other, "third.txt", "third\n");
+    commit_all(&other, "third");
+    git(&other, &["push", "-q", "origin", "main"]);
+    reply.send(policy(10, true, false)).unwrap();
+    tokio::spawn(async move {
+        while let Some((_, reply)) = asked.recv().await {
+            let _ = reply.send(policy(10, true, false));
+        }
+    });
+    let mut switch_to = async |branch: &str, args: &[&str]| {
+        git(&fx.work, args);
+        let mut switched = false;
+        while let Some(event) = events.recv().await {
+            match event {
+                conn_contract::VcsStatusStreamEvent::LocalUpdated(e) => {
+                    switched |= e.local.ref_name.as_deref() == Some(branch);
+                }
+                conn_contract::VcsStatusStreamEvent::RemoteUpdated(e)
+                    if switched && e.remote.is_some() =>
+                {
+                    return;
+                }
+                _ => {}
+            }
+        }
+    };
+    switch_to("side", &["checkout", "-q", "-b", "side"]).await;
+    switch_to("main", &["checkout", "-q", "main"]).await;
+    assert_eq!(
+        tracking(),
+        second,
+        "no fetch on a branch switch while paused"
+    );
+    assert_eq!(head(), upstream, "no pull on a branch switch while paused");
+}
+
+/// T3 `ProviderTurnStartService.test.ts` "recovers the local or pushed thread tip, else the
+/// current branch, remote default, or detached HEAD", through `restore_missing_worktree`.
+#[tokio::test]
+async fn a_missing_worktree_is_restored_from_its_surviving_tip() {
+    let root = TempDir::new("restore");
+    let project = root.path().join("project");
+    let origin = root.path().join("origin.git");
+    let path = root.path().join("worktrees/project/restore");
+    std::fs::create_dir_all(&project).unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(&project, &["init", "-q", "-b", "main"]);
+    git(&project, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    let base_tip = git(&project, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(
+        &project,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&project, &["push", "-q", "origin", "main"]);
+    git(&project, &["remote", "set-head", "origin", "main"]);
+    git(
+        &project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/restore",
+            path.to_str().unwrap(),
+        ],
+    );
+    write(&path, "thread.txt", "thread work");
+    let thread_tip = commit_all(&path, "thread tip");
+    git(&project, &["switch", "-q", "-c", "project-current"]);
+    write(&project, "project.txt", "new project code");
+    let project_tip = commit_all(&project, "project tip");
+    // Tags must neither hide the thread branch nor select a different tip.
+    git(&project, &["tag", "feature/restore", &project_tip]);
+    git(&project, &["tag", "project-current", &thread_tip]);
+    git(&project, &["tag", "origin/feature/restore", &thread_tip]);
+    let config = |key: &str| {
+        std::process::Command::new("git")
+            .args(["-C", project.to_str().unwrap(), "config", "--get"])
+            .arg(format!("branch.feature/restore.{key}"))
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            .unwrap()
+    };
+    /// (scenario, tip, file, upstream, recorded base)
+    type Case<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a str>, &'a str);
+    let cases: [Case<'_>; 8] = [
+        ("retained", &thread_tip, Some("thread.txt"), None, ""),
+        ("leftover", &thread_tip, Some("thread.txt"), None, ""),
+        (
+            "deleted",
+            &project_tip,
+            Some("project.txt"),
+            None,
+            "project-current",
+        ),
+        (
+            "pushed",
+            &thread_tip,
+            Some("thread.txt"),
+            Some("refs/remotes/origin/feature/restore"),
+            "",
+        ),
+        (
+            "pushed-detached",
+            &thread_tip,
+            Some("thread.txt"),
+            Some("refs/remotes/origin/feature/restore"),
+            "",
+        ),
+        (
+            "pushed-sole-remote",
+            &thread_tip,
+            Some("thread.txt"),
+            Some("refs/remotes/upstream/feature/restore"),
+            "",
+        ),
+        ("detached", &base_tip, None, None, "main"),
+        (
+            "detached-no-remote",
+            &project_tip,
+            Some("project.txt"),
+            None,
+            "",
+        ),
+    ];
+    for (scenario, tip, file, upstream, base) in cases {
+        match scenario {
+            "pushed" => {
+                git(
+                    &project,
+                    &[
+                        "push",
+                        "-q",
+                        "origin",
+                        &format!("{thread_tip}:refs/heads/feature/restore"),
+                    ],
+                );
+                git(&project, &["fetch", "-q", "origin"]);
+            }
+            "pushed-detached" => {
+                git(&project, &["switch", "-q", "--detach"]);
+            }
+            "pushed-sole-remote" => {
+                git(&project, &["remote", "rename", "origin", "upstream"]);
+            }
+            "detached" => {
+                git(&project, &["remote", "rename", "upstream", "origin"]);
+                git(
+                    &project,
+                    &["push", "-q", "origin", "--delete", "feature/restore"],
+                );
+            }
+            "detached-no-remote" => {
+                git(&project, &["remote", "remove", "origin"]);
+            }
+            _ => {}
+        }
+        std::fs::remove_dir_all(&path).unwrap();
+        if scenario == "leftover" {
+            std::fs::create_dir_all(path.join("node_modules")).unwrap();
+        }
+        if scenario != "retained" && scenario != "leftover" {
+            git(&project, &["worktree", "prune"]);
+            git(&project, &["branch", "-q", "-D", "feature/restore"]);
+        }
+        assert!(
+            worktree::restore_missing_worktree(&project, &path, "feature/restore")
+                .await
+                .unwrap(),
+            "{scenario}"
+        );
+        assert_eq!(
+            git(&path, &["branch", "--show-current"]).trim(),
+            "feature/restore",
+            "{scenario}"
+        );
+        assert_eq!(git(&path, &["rev-parse", "HEAD"]).trim(), tip, "{scenario}");
+        for name in ["thread.txt", "project.txt"] {
+            assert_eq!(
+                path.join(name).exists(),
+                Some(name) == file,
+                "{scenario} {name}"
+            );
+        }
+        if let Some(upstream) = upstream {
+            assert_eq!(
+                git(&path, &["rev-parse", "--symbolic-full-name", "@{upstream}"]).trim(),
+                upstream,
+                "{scenario}"
+            );
+        } else {
+            assert_eq!(config("merge"), "", "{scenario}");
+        }
+        assert_eq!(config("t3-merge-base"), base, "{scenario}");
+    }
+    // A checkout that is there, or a folder with other files, is left alone.
+    assert!(
+        !worktree::restore_missing_worktree(&project, &path, "feature/restore")
+            .await
+            .unwrap()
+    );
+}
+
+/// T3's ThreadLaunchService cases for a recorded base (`worktreeFallbackBase`): a saved
+/// strategy whose base names no commit starts from the remote's default branch, then the
+/// checked-out branch. A base someone names now still fails.
+#[tokio::test]
+async fn a_saved_base_that_names_no_commit_falls_back_as_t3() {
+    use conn_vcs::setup::{self, MissingBase, ProvisionError, ProvisionRequest, WorktreeSetups};
+
+    let fx = Fixture::new("missing-base");
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str, base: &str, missing_base| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: base.into(),
+        branch: Some(format!("task-{thread}")),
+        start_from_origin: true,
+        setup: None,
+        worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
+        missing_base,
+    };
+    let remote_head = git(&fx.work, &["rev-parse", "origin/main"])
+        .trim()
+        .to_owned();
+    git(&fx.work, &["checkout", "-q", "--detach"]);
+    git(
+        &fx.work,
+        &["commit", "-q", "--allow-empty", "-m", "local only"],
+    );
+    let local_head = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    // "re-bases a stored base that no longer exists on the remote default branch"
+    let made = setup::provision(
+        &setups,
+        request("gone", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), remote_head);
+    assert_eq!(
+        setups.get("gone").unwrap().base_ref.as_deref(),
+        Some("refs/remotes/origin/main")
+    );
+
+    // The same base named in a new launch is refused, and nothing is left behind.
+    let refused = setup::provision(
+        &setups,
+        request("asked", "obsolete-base", MissingBase::Fail),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, ProvisionError::Failed(_)), "{refused}");
+    assert!(git(&fx.work, &["branch", "--list", "task-asked"]).is_empty());
+
+    // A base that resolves is kept, a local branch and a `:/` commit search alike.
+    git(&fx.work, &["branch", "kept"]);
+    for (thread, base) in [("kept", "kept"), ("search", ":/local only")] {
+        let made = setup::provision(&setups, request(thread, base, MissingBase::FallBack))
+            .await
+            .unwrap();
+        assert_eq!(
+            git(&made.path, &["rev-parse", "HEAD"]).trim(),
+            local_head,
+            "{base}"
+        );
+    }
+
+    // "skips a stale tracking ref when the remote reports the base branch is gone": the
+    // remote's HEAD names a deleted branch whose tracking ref stayed behind.
+    git(
+        &fx.work,
+        &["update-ref", "refs/remotes/origin/gone", &remote_head],
+    );
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/gone",
+        ],
+    );
+    git(&fx.work, &["checkout", "-q", "-b", "beta"]);
+    let made = setup::provision(
+        &setups,
+        request("stale", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), local_head);
+    assert_eq!(
+        setups.get("stale").unwrap().base_ref.as_deref(),
+        Some("beta")
+    );
+
+    // A dangling `origin/HEAD`: it names `origin/next`, which the remote has but this clone
+    // never fetched. Git's `rev-parse` refuses it (`resolveDefaultBranchName`), so the
+    // checked-out commit is used, not the remote's `next`.
+    let remote_next = git(
+        &fx.work,
+        &[
+            "commit-tree",
+            "HEAD^{tree}",
+            "-p",
+            &remote_head,
+            "-m",
+            "next",
+        ],
+    )
+    .trim()
+    .to_owned();
+    git(
+        &fx.work,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{remote_next}:refs/heads/next"),
+        ],
+    );
+    git(&fx.work, &["update-ref", "-d", "refs/remotes/origin/next"]);
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/next",
+        ],
+    );
+    let made = setup::provision(
+        &setups,
+        request("dangling", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), local_head);
+    assert_eq!(
+        setups.get("dangling").unwrap().base_ref.as_deref(),
+        Some("beta")
+    );
+}
+
+/// The checkout probes ask the filesystem off the runtime thread: with the one blocking
+/// thread held, a probe of a missing folder cannot answer at its first poll.
+#[test]
+fn checkout_probes_stat_off_the_runtime_thread() {
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let dir = TempDir::new("blocking");
+    let missing = dir.path().join("missing");
+    runtime.block_on(async {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = held.recv();
+        });
+        running.await.unwrap();
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut branch = std::pin::pin!(conn_vcs::repo::current_branch(&missing));
+        let mut commit = std::pin::pin!(conn_vcs::repo::resolve_commit(&missing, "HEAD"));
+        assert!(
+            branch.as_mut().poll(&mut cx).is_pending(),
+            "current_branch stats on the runtime thread"
+        );
+        assert!(
+            commit.as_mut().poll(&mut cx).is_pending(),
+            "resolve_commit stats on the runtime thread"
+        );
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        assert_eq!(branch.await.unwrap(), None);
+        assert_eq!(commit.await.unwrap(), None);
+    });
 }
 
 /// The Git settings a project can carry that change what a plain `git diff` reports.

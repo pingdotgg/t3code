@@ -20,6 +20,7 @@
 //! server on the same cases (`settings-cases.json`) and fails when they differ.
 
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -42,7 +43,7 @@ mod secrets;
 
 use generated::{
     BACKGROUND_PRESETS, CLIENT_PATCH_KEYS, DEFAULT_DISABLED_DRIVERS, DEFAULT_ENABLED_INSTANCES,
-    PROJECT_OVERRIDE_KEYS,
+    DEFAULT_INSTANCE_DRIVERS, PROJECT_OVERRIDE_KEYS,
 };
 use secrets::redact;
 
@@ -542,6 +543,7 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
     translate_legacy_project_overrides(settings, &mut patch);
     let idle_compaction = patched_idle_compaction(settings, &patch);
     let background_profile = preset_background_profile(&patch);
+    remember_worktrees_directory(settings, &mut patch);
 
     let set_favorites = patch.remove("setModelFavorites");
     let set_hidden = patch.remove("setModelsHidden");
@@ -682,6 +684,36 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
             }
         }
     }
+}
+
+/// `applyServerSettingsPatch`: a moved `worktreesDirectory` keeps the one it replaces in
+/// `previousWorktreesDirectories`, so worktrees made there stay managed.
+fn remember_worktrees_directory(settings: &Map<String, Value>, patch: &mut Map<String, Value>) {
+    let Some(next) = patch.get("worktreesDirectory").and_then(Value::as_str) else {
+        return;
+    };
+    let current = settings
+        .get("worktreesDirectory")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if next == current {
+        return;
+    }
+    let mut previous: Vec<Value> = settings
+        .get("previousWorktreesDirectories")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let remember = !current.is_empty() && !previous.iter().any(|d| d == current);
+    let current = json!(current);
+    previous.retain(|d| d != next);
+    if remember {
+        previous.push(current);
+    }
+    patch.insert(
+        "previousWorktreesDirectories".into(),
+        Value::Array(previous),
+    );
 }
 
 /// `translateLegacyProjectOverridePatch`: the legacy per-project maps become
@@ -903,6 +935,27 @@ pub fn agent_browser_access(settings: &Map<String, Value>, project_id: Option<&s
         .unwrap_or(generated::DEFAULT_AGENT_BROWSER_ACCESS)
 }
 
+/// `resolveProjectSettings(settings, projectId).settings.continueThreadsAfterServerUpdate`,
+/// for every project at once: the machine-wide value (T3's default `true`) and each project's
+/// override, which wins either way.
+pub fn restart_policy(settings: &Map<String, Value>) -> conn_engine::RestartPolicy {
+    let key = "continueThreadsAfterServerUpdate";
+    let projects = settings
+        .get("projectSettingsOverrides")
+        .and_then(Value::as_object)
+        .map(|overrides| {
+            overrides
+                .iter()
+                .filter_map(|(id, project)| Some((id.clone(), project.get(key)?.as_bool()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    conn_engine::RestartPolicy {
+        continue_by_default: settings.get(key).and_then(Value::as_bool).unwrap_or(true),
+        projects,
+    }
+}
+
 /// `resolveProjectSettings(settings, projectId).settings.removeAgentCreditsOnMerge`: the
 /// project's override when set, else the machine-wide value, else T3's default `false`.
 pub fn remove_agent_credits_on_merge(settings: &Map<String, Value>, project_id: &str) -> bool {
@@ -933,6 +986,57 @@ pub fn response_streaming_mode(
     });
     let value = project.or_else(|| settings.get("responseStreamingMode")?.as_str());
     conn_engine::ResponseStreamingMode::from_setting(value)
+}
+
+/// `worktreeSubmodules` as `resolveProjectSettings` gives it: the project's override, else the
+/// environment's; `None` (or `null`) leaves it to `t3.json`.
+pub fn worktree_submodules(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+) -> Option<String> {
+    let project = project_id.and_then(|project| {
+        settings
+            .get("projectSettingsOverrides")?
+            .get(project)?
+            .get("worktreeSubmodules")?
+            .as_str()
+    });
+    project
+        .or_else(|| settings.get("worktreeSubmodules")?.as_str())
+        .map(str::to_owned)
+}
+
+/// `resolveServerBackgroundActivitySettings(..).automaticGitFetchInterval`: with the default
+/// `backgroundActivity`, the legacy top-level field; else a custom profile's override, or the
+/// (base) profile's preset. The client saves a custom interval only as an override.
+pub fn automatic_git_fetch_interval(settings: &Map<String, Value>) -> std::time::Duration {
+    let millis = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_f64)
+            .filter(|ms| ms.is_finite() && *ms >= 0.0)
+    };
+    let preset = |profile: &str| {
+        BACKGROUND_PRESETS
+            .iter()
+            .find(|(name, _, _)| *name == profile)
+            .map_or(30_000.0, |(_, fetch, _)| *fetch as f64)
+    };
+    let activity = settings.get("backgroundActivity");
+    let field = |key: &str| activity.and_then(|a| a.get(key));
+    let profile = field("profile")
+        .and_then(Value::as_str)
+        .unwrap_or("balanced");
+    let base = field("baseProfile").and_then(Value::as_str);
+    let overrides = field("overrides").and_then(Value::as_object);
+    let ms = if profile == "balanced" && base.is_none() && overrides.is_none_or(|o| o.is_empty()) {
+        millis(settings.get("automaticGitFetchInterval")).unwrap_or(preset("balanced"))
+    } else if profile == "custom" {
+        millis(overrides.and_then(|o| o.get("automaticGitFetchInterval")))
+            .unwrap_or_else(|| preset(base.unwrap_or("balanced")))
+    } else {
+        preset(profile)
+    };
+    std::time::Duration::from_millis(ms as u64)
 }
 
 /// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
@@ -967,6 +1071,46 @@ pub fn provider_instance_enabled(
         let driver = instance.get("driver").and_then(Value::as_str).unwrap_or("");
         !DEFAULT_DISABLED_DRIVERS.contains(&driver)
     })
+}
+
+/// `resolveProviderInstanceTerminalEnvironment` (T3 `terminal/Manager.ts`): the environment a
+/// terminal opened for `instance_id` starts with: `env`, then the instance's own entries, then
+/// `CODEX_HOME` or `CLAUDE_CONFIG_DIR` from its home settings. `None` when no such instance
+/// exists, configured or by default (`deriveProviderInstanceConfigMap`).
+pub fn provider_terminal_env(
+    settings: &Map<String, Value>,
+    instance_id: &str,
+    mut env: BTreeMap<String, String>,
+) -> Option<BTreeMap<String, String>> {
+    use conn_provider_support::instance::{InstanceEnvelope, expand_home};
+    let entry = settings
+        .get("providerInstances")
+        .and_then(|instances| instances.get(instance_id));
+    let driver = match entry {
+        Some(entry) => entry.get("driver").and_then(Value::as_str).unwrap_or(""),
+        None if DEFAULT_INSTANCE_DRIVERS.contains(&instance_id) => instance_id,
+        None => return None,
+    };
+    let envelope = InstanceEnvelope::parse(entry, true);
+    env.extend(envelope.environment.iter().cloned());
+    let home = |key: &str| {
+        let path = expand_home(&envelope.config_str(key)?);
+        let path = std::path::absolute(&path).unwrap_or_else(|_| path.into());
+        Some(path.to_string_lossy().into_owned())
+    };
+    // `resolveCodexHomeLayout` and `makeClaudeEnvironment`.
+    let (name, value) = match driver {
+        "codex" => (
+            "CODEX_HOME",
+            home("shadowHomePath").or_else(|| home("homePath")),
+        ),
+        "claudeAgent" => ("CLAUDE_CONFIG_DIR", home("homePath")),
+        _ => return Some(env),
+    };
+    if let Some(value) = value {
+        env.insert(name.to_owned(), value);
+    }
+    Some(env)
 }
 
 /// T3's queue start (`startNextQueuedRun`): only an explicit project override or a machine
@@ -1006,7 +1150,74 @@ mod tests {
 
     use conn_contract::ServerSettings;
 
+    #[test]
+    fn a_moved_worktrees_directory_is_remembered() {
+        let mut settings = Map::new();
+        let patch = |dir: &str| {
+            let Value::Object(patch) = json!({"worktreesDirectory": dir}) else {
+                unreachable!()
+            };
+            patch
+        };
+        apply_patch(&mut settings, patch("/a"));
+        assert_eq!(
+            settings.get("previousWorktreesDirectories"),
+            Some(&json!([]))
+        );
+        apply_patch(&mut settings, patch("/b"));
+        apply_patch(&mut settings, patch("/b"));
+        assert_eq!(settings["previousWorktreesDirectories"], json!(["/a"]));
+        apply_patch(&mut settings, patch("/a"));
+        assert_eq!(settings["previousWorktreesDirectories"], json!(["/b"]));
+        assert_eq!(settings["worktreesDirectory"], "/a");
+    }
+
+    #[test]
+    fn a_terminal_takes_its_provider_instances_environment() {
+        let Value::Object(settings) = serde_json::json!({"providerInstances": {
+            "profile": {"driver": "codex", "config": {"homePath": "/codex/home"},
+                "environment": [{"name": "MARKER", "value": "profile", "sensitive": false},
+                    {"name": "SHARED", "value": "instance", "sensitive": false}]},
+            "claudeLow": {"driver": "claudeAgent", "config": {"homePath": "/claude/low"}},
+        }}) else {
+            unreachable!()
+        };
+        let given = BTreeMap::from([("SHARED".to_owned(), "client".to_owned())]);
+        let env = provider_terminal_env(&settings, "profile", given).unwrap();
+        assert_eq!(env["MARKER"], "profile");
+        assert_eq!(env["SHARED"], "instance", "the instance wins, as in T3");
+        assert_eq!(env["CODEX_HOME"], "/codex/home");
+        let claude = provider_terminal_env(&settings, "claudeLow", BTreeMap::new()).unwrap();
+        assert_eq!(claude["CLAUDE_CONFIG_DIR"], "/claude/low");
+        assert_eq!(
+            provider_terminal_env(&settings, "grok", BTreeMap::new()),
+            Some(BTreeMap::new())
+        );
+        assert_eq!(
+            provider_terminal_env(&settings, "missing", BTreeMap::new()),
+            None
+        );
+        assert_eq!(
+            provider_terminal_env(&settings, "acpRegistry", BTreeMap::new()),
+            None
+        );
+    }
+
     use super::*;
+
+    /// T3 `applyServerSettingsPatch`: a moved `worktreesDirectory` stays managed.
+    #[test]
+    fn a_moved_and_cleared_worktrees_directory_stays_remembered() {
+        let next = patched(
+            json!({ "worktreesDirectory": "/a" }),
+            json!({ "worktreesDirectory": "/b" }),
+        );
+        assert_eq!(next["previousWorktreesDirectories"], json!(["/a"]));
+        let back = patched(next, json!({ "worktreesDirectory": "/a" }));
+        assert_eq!(back["previousWorktreesDirectories"], json!(["/b"]));
+        let cleared = patched(back, json!({ "worktreesDirectory": "" }));
+        assert_eq!(cleared["previousWorktreesDirectories"], json!(["/b", "/a"]));
+    }
 
     fn patched(stored: Value, patch: Value) -> Value {
         let Value::Object(mut stored) = stored else {
@@ -2015,6 +2226,27 @@ mod tests {
         assert_eq!(response_streaming_mode(&turn, None), Turn);
         assert_eq!(response_streaming_mode(&turn, Some("p")), Turn);
         assert_eq!(response_streaming_mode(&turn, Some("q")), Paragraph);
+    }
+
+    /// Audit 5.1: `continueThreadsAfterServerUpdate` is on by default, and a project override
+    /// wins in both directions.
+    #[test]
+    fn restart_policy_follows_the_project_override() {
+        let settings = |v: Value| v.as_object().cloned().unwrap();
+        let policy = restart_policy(&Map::new());
+        assert!(policy.continues(None) && policy.continues(Some("p")));
+        let off_but_p = restart_policy(&settings(json!({
+            "continueThreadsAfterServerUpdate": false,
+            "projectSettingsOverrides": {"p": {"continueThreadsAfterServerUpdate": true}, "q": {}},
+        })));
+        assert!(off_but_p.continues(Some("p")));
+        assert!(!off_but_p.continues(Some("q")) && !off_but_p.continues(None));
+        let on_but_p = restart_policy(&settings(json!({
+            "continueThreadsAfterServerUpdate": true,
+            "projectSettingsOverrides": {"p": {"continueThreadsAfterServerUpdate": false}},
+        })));
+        assert!(!on_but_p.continues(Some("p")));
+        assert!(on_but_p.continues(Some("q")));
     }
 
     /// `serverSettings.ts` (`read-provider-history`): a history that cannot be read fails

@@ -167,7 +167,10 @@ pub(crate) async fn subscribe_thread(
     let after = input["afterSequence"].as_u64();
     let marker = input["requestCompletionMarker"] == true;
     let dedupe = input["acceptDedupedBodies"] == true;
-    let omit_local = input["acceptCompactTurnItems"] == true;
+    // T3's `shouldUseBoundedThreadSnapshot`: the newest window and a cursor for older pages.
+    let bounded = input["acceptBoundedSnapshot"] == true;
+    // A bounded snapshot keeps its window's turn items whole; it is small already.
+    let omit_local = input["acceptCompactTurnItems"] == true && !bounded;
     let mut wake = inner.notify.subscribe();
     let id = thread_id.clone();
     let first = inner
@@ -184,6 +187,13 @@ pub(crate) async fn subscribe_thread(
             }
             if !store.thread_exists(&id)? {
                 return Ok(None);
+            }
+            if bounded && let Some(window) = store.bounded_thread(&id, high)? {
+                let mut item = snapshot_item(window.projection, high, dedupe, false);
+                item["historyCursor"] = json!(window.history_cursor);
+                item["hasMoreHistory"] = json!(window.has_more_history);
+                item["latestLocalTurnOrdinal"] = json!(window.latest_local_turn_ordinal);
+                return Ok(Some((vec![item], high)));
             }
             let (projection, omitted) = store
                 .thread_projection_with(&id, omit_local)?
@@ -237,6 +247,44 @@ pub(crate) async fn subscribe_thread(
                         return;
                     }
                 }
+                if !full {
+                    break;
+                }
+            }
+        }
+    });
+    Ok(rx)
+}
+
+/// `Engine::subscribe_command_events`: from the current high water on, read in pages after
+/// each commit. A slow reader holds the task, not memory: the cursor stays in the store.
+pub(crate) async fn subscribe_command_events(
+    inner: Arc<Inner>,
+) -> Result<mpsc::Receiver<(String, Value)>, String> {
+    let mut wake = inner.notify.subscribe();
+    let mut cursor = inner.db(|store| store.high_water()).await;
+    let (tx, rx) = mpsc::channel(64);
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tx.closed() => return,
+                changed = wake.changed() => if changed.is_err() { return },
+            }
+            loop {
+                let after = cursor;
+                let Ok((events, through)) = inner
+                    .db(move |store| store.command_events_after(after, LIVE_READ_BATCH))
+                    .await
+                else {
+                    return;
+                };
+                let full = events.len() == LIVE_READ_BATCH;
+                for (_, thread_id, event) in events {
+                    if tx.send((thread_id, event)).await.is_err() {
+                        return;
+                    }
+                }
+                cursor = through;
                 if !full {
                     break;
                 }

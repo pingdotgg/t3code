@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use conn_contract::{Command, ThreadId, from_json, to_json};
 use conn_engine::{BoxFuture, Engine, EngineError};
+use conn_vcs::setup::MissingBase;
 use serde_json::{Value, json};
 
 use super::{LaunchRequest, RUN_OUTCOME_WAIT, SendError, SendRequest, TaskRunner, ThreadShell};
@@ -137,7 +138,12 @@ impl TaskRunner for EngineRunner {
                 "createdBy": request.created_by,
                 "creationSource": request.creation_source,
             });
-            match self.engine.launch_thread(input).await {
+            // A saved strategy can outlive its base (T3's `worktreeFallbackBase`).
+            match self
+                .engine
+                .launch_thread_with(input, MissingBase::FallBack)
+                .await
+            {
                 Ok(result) => result["threadId"]
                     .as_str()
                     .map(str::to_owned)
@@ -262,6 +268,31 @@ impl TaskRunner for EngineRunner {
                     }
                 }
             }
+        })
+    }
+
+    fn is_non_git_project(&self, project_id: String) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let Ok(projects) = self.engine.projects_snapshot().await else {
+                return false;
+            };
+            let Some(root) = projects
+                .iter()
+                .find(|p| p["id"] == project_id.as_str() && p["deletedAt"].is_null())
+                .and_then(|p| p["workspaceRoot"].as_str())
+                .map(str::to_owned)
+            else {
+                return false;
+            };
+            let scratch = self
+                .engine
+                .call("projects.isScratchRoot", json!({"workspaceRoot": root}))
+                .await;
+            if matches!(scratch, Ok(Value::Bool(true))) {
+                return true;
+            }
+            // A repository Git cannot read keeps its worktree and its own error at launch.
+            conn_vcs::repo::is_plain_folder(std::path::Path::new(&root)).await
         })
     }
 }

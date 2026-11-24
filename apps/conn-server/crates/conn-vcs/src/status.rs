@@ -203,13 +203,12 @@ async fn local_status_inner(cwd: &Path) -> VcsResult<VcsStatusLocalResult> {
         .collect();
     files.sort_by_key(|f| f.path.to_lowercase());
 
-    let default_branch = match &remotes {
-        Ok(remotes) => repo::default_branch_with(cwd, remotes)
-            .await
-            .unwrap_or(None),
-        Err(_) => None,
-    };
-    let is_default_ref = match (&status.ref_name, &default_branch) {
+    // T3 reads only the remote default here: without one, `main` and `master` both count.
+    let default_branch = remotes
+        .as_ref()
+        .ok()
+        .and_then(|r| r.primary_default.as_ref());
+    let is_default_ref = match (&status.ref_name, default_branch) {
         (Some(name), Some(default)) => name == default,
         (Some(name), None) => name == "main" || name == "master",
         (None, _) => false,
@@ -408,13 +407,11 @@ async fn remote_status_inner(cwd: &Path) -> VcsResult<Option<VcsStatusRemoteResu
             None => (0, 0),
         },
     };
-    let default_branch = match &remotes {
-        Ok(remotes) => repo::default_branch_with(cwd, remotes)
-            .await
-            .unwrap_or(None),
-        Err(_) => None,
-    };
-    let is_default = match (&branch, &default_branch) {
+    let default_branch = remotes
+        .as_ref()
+        .ok()
+        .and_then(|r| r.primary_default.as_ref());
+    let is_default = match (&branch, default_branch) {
         (Some(b), Some(d)) => b == d,
         (Some(b), None) => b == "main" || b == "master",
         _ => false,

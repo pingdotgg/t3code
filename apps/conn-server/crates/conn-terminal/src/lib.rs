@@ -71,6 +71,9 @@ const MAX_LABEL_CHARS: usize = 128;
 pub struct TerminalConfig {
     /// Where scrollback is kept across restarts; `None` keeps it in memory only.
     pub history_dir: Option<PathBuf>,
+    /// The T3 server's terminal history folder (`<state>/logs/terminals`); a terminal with
+    /// no history of its own takes T3's from there.
+    pub t3_history_dir: Option<PathBuf>,
     /// Scrollback per terminal. `apps/server` keeps 8 MiB but replays at most 512 KiB to a new
     /// session, and the web client asks for 512 KiB; we keep only what is ever sent.
     pub history_bytes: usize,
@@ -97,6 +100,7 @@ impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             history_dir: None,
+            t3_history_dir: None,
             history_bytes: 512 * 1024,
             history_lines: 5000,
             kill_grace: Duration::from_secs(1),
@@ -219,7 +223,10 @@ struct Launch {
 impl TerminalManager {
     /// Needs a tokio runtime with IO, time and process support.
     pub fn new(config: TerminalConfig) -> Self {
-        let store = config.history_dir.clone().map(Store::new);
+        let store = config
+            .history_dir
+            .clone()
+            .map(|dir| Store::new(dir, config.t3_history_dir.clone()));
         Self {
             inner: Arc::new(Inner {
                 config,
@@ -271,6 +278,34 @@ impl TerminalManager {
         let grid = state.shared_grid(&key);
         self.inner.open_locked(state, &key, launch, grid)?;
         Ok(key)
+    }
+
+    /// Copies a T3 server's history for a terminal that has none here yet (see `store`), on a
+    /// blocking thread. Call it before the open or attach that starts the terminal.
+    pub async fn adopt_t3_history(&self, thread_id: &str, terminal_id: &str) {
+        let Some(store) = self.inner.store.clone() else {
+            return;
+        };
+        let (thread_id, terminal_id) = (thread_id.to_owned(), terminal_id.to_owned());
+        let max = self.inner.config.history_bytes;
+        let _ = tokio::task::spawn_blocking(move || store.adopt_t3(&thread_id, &terminal_id, max))
+            .await;
+    }
+
+    /// Whether [`Self::attach`] with `input` would start or restart the shell, as opposed to
+    /// joining the running one. Only then does it take a launch environment
+    /// (`openOrAttachForStream`).
+    pub fn attach_starts_shell(&self, input: &TerminalAttachInput) -> bool {
+        if input.cwd.is_none() {
+            return false;
+        }
+        let key = (input.thread_id.clone(), input.terminal_id.clone());
+        let resume = input.resume == Some(true);
+        let state = self.inner.lock();
+        match state.sessions.get(&key) {
+            None => !(resume && state.closed.contains(&key)),
+            Some(s) => !resume && s.proc.is_none() && input.restart_if_not_running == Some(true),
+        }
     }
 
     /// `terminal.attach`: the terminal's stream, starting with a snapshot (or `closed`).

@@ -28,6 +28,27 @@ fn thread_id(args: &Args) -> &str {
     str_arg(args, "threadId").unwrap_or_default()
 }
 
+/// `threadId` and its projection, also in a thread chip's form:
+/// `t3-context://v1/thread/thread_<id>` names the thread `<id>`
+/// (`toKindScopedComposerContextId`). An id that is a thread here stays as given.
+async fn chip_thread(cx: &Cx<'_>, args: &Args) -> Result<(String, Value), ToolError> {
+    let id = thread_id(args);
+    let found = cx.projection(id).await;
+    if let Some(bare) = id.strip_prefix("thread_").filter(|bare| !bare.is_empty())
+        && matches!(
+            found,
+            Err(ToolError::Failure {
+                code: "thread_not_found",
+                ..
+            })
+        )
+        && let Ok(projection) = cx.projection(bare).await
+    {
+        return Ok((bare.to_owned(), projection));
+    }
+    Ok((id.to_owned(), found?))
+}
+
 /// The thread a tool acts on: `threadId`, or the caller's own thread.
 fn target_id<'a>(cx: &'a Cx<'_>, args: &'a Args) -> Result<&'a str, ToolError> {
     str_arg(args, "threadId")
@@ -112,8 +133,7 @@ pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let id = thread_id(args);
-    let projection = cx.projection(id).await?;
+    let (_, projection) = chip_thread(cx, args).await?;
     let view_name = str_arg(args, "view").unwrap_or("messages");
     let limit = u64_arg(args, "limit").map_or(DEFAULT_READ_LIMIT, |l| l.min(100) as usize);
     let max_chars =
@@ -776,9 +796,10 @@ pub(super) fn normalize_selection(mut selection: Value) -> Value {
 }
 
 pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let id = thread_id(args);
-    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
-    let projection = cx.projection(id).await?;
+    let (id, projection) = chip_thread(cx, args).await?;
+    let id = id.as_str();
+    cx.writes_threads(&[str_arg(args, "threadId").map(|_| id)])
+        .await?;
     let fresh = bool_arg(args, "freshContext") == Some(true);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
     let mode = match str_arg(args, "mode").unwrap_or("auto") {
@@ -850,21 +871,24 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
         _ if mode == "restart" => "restarted",
         _ => "steered",
     };
-    Ok(json!({
+    let mut result = json!({
         "threadId": id,
         "link": cx.link(id, projection["thread"]["title"].as_str().unwrap_or_default()),
         "messageId": message_id,
         "runId": run["id"],
         "status": run["status"],
         "delivery": delivery,
-    }))
+    });
+    // A send to a finished delegated child is a follow-up task of its own.
+    if let Some(task) = run["delegatedTaskId"].as_str() {
+        result["taskId"] = json!(task);
+    }
+    Ok(result)
 }
 
 /// When a wait is over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Until {
-    /// The run ended or waits on a person (`delegate_task`'s wait).
-    EndedOrWaiting,
     /// The run reached a terminal status (`waitForThread`, `isTerminalRunStatus`).
     Ended,
     /// As `Ended`, then the thread's other work too: `untilDelegatedWorkSettled`.
@@ -883,6 +907,24 @@ fn is_terminal(run: &Value) -> bool {
     TERMINAL_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or_default())
 }
 
+/// `subagentHoldsCompletion` (`subagentProjection.ts`): a subagent still at work, or one whose
+/// result the thread still owes a follow-up.
+pub(super) fn subagent_holds_completion(task: &Value) -> bool {
+    let status = task["status"].as_str().unwrap_or_default();
+    let delivery = task["completionDelivery"]["state"]
+        .as_str()
+        .unwrap_or_default();
+    matches!(status, "pending" | "running" | "waiting")
+        || (status != "idle" && matches!(delivery, "pending" | "claimed"))
+}
+
+/// `backgroundWorkHoldsCompletion` (`orchestrationV2PendingBackgroundWork.ts:90`): commands and
+/// monitors are as often a dev server or its watchdog as a wait, so they hold only when the
+/// agent marked them awaited.
+pub(super) fn background_holds_completion(task: &Value) -> bool {
+    task["awaited"] == true || matches!(task["kind"].as_str(), Some("subagent" | "background_task"))
+}
+
 /// `delegatedTaskProgress` and the wait's `delegatedWorkResult`: the run whose reply is the
 /// thread's answer, once no run is active and no subagent or background task holds the
 /// thread. `None` while work goes on.
@@ -891,10 +933,21 @@ fn work_result(projection: &Value) -> Option<Value> {
         .as_array()
         .map(|r| r.iter().collect())
         .unwrap_or_default();
+    // `monitorUpdateRunIds`: a turn that only answers a monitor update is no work.
+    let monitor: Vec<&Value> = projection["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| {
+            m["notification"]["source"]["kind"] == "monitor"
+                && m["notification"]["outcome"] == "updated"
+        })
+        .map(|m| &m["runId"])
+        .collect();
     let work: Vec<&Value> = runs
         .iter()
         .copied()
-        .filter(|run| run["status"] != "rolled_back")
+        .filter(|run| run["status"] != "rolled_back" && !monitor.contains(&&run["id"]))
         .collect();
     let result = work
         .iter()
@@ -907,23 +960,16 @@ fn work_result(projection: &Value) -> Option<Value> {
     let active = work
         .iter()
         .any(|run| !is_terminal(run) && !(run["status"] == "queued" && run["queueHeld"] == true));
-    let holding_subagent = projection["subagents"].as_array().is_some_and(|tasks| {
-        tasks.iter().any(|task| {
-            let status = task["status"].as_str().unwrap_or_default();
-            let delivery = task["completionDelivery"]["state"]
-                .as_str()
-                .unwrap_or_default();
-            matches!(status, "pending" | "running" | "waiting")
-                || (status != "idle" && matches!(delivery, "pending" | "claimed"))
-        })
-    });
+    let holding_subagent = projection["subagents"]
+        .as_array()
+        .is_some_and(|tasks| tasks.iter().any(subagent_holds_completion));
     let holding_background = projection["providerThreads"]
         .as_array()
         .is_some_and(|threads| {
             threads.iter().any(|thread| {
                 thread["pendingBackgroundTasks"]
                     .as_array()
-                    .is_some_and(|tasks| !tasks.is_empty())
+                    .is_some_and(|tasks| tasks.iter().any(background_holds_completion))
             })
         });
     if active || holding_subagent || holding_background {
@@ -964,9 +1010,6 @@ pub(super) async fn wait_for_run(
                 return Ok((run, Some(None)));
             };
             let over = match until {
-                Until::EndedOrWaiting => {
-                    (!view::is_live(current) || current["status"] == "waiting").then_some(None)
-                }
                 Until::Ended => is_terminal(current).then_some(None),
                 Until::WorkSettled => {
                     if is_terminal(current) {

@@ -19,11 +19,15 @@ const ROOT: &str = "/tmp/conn-mcp-test-project";
 struct Fixture {
     service: Arc<McpService>,
     dir: PathBuf,
+    /// Set by [`reopen`]: the next fixture opens the same folder.
+    keep_dir: bool,
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+        if !self.keep_dir {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
@@ -58,12 +62,16 @@ fn fixture_with_provider(
     provider: Arc<dyn conn_provider::Provider>,
     peers: Option<Arc<dyn crate::Peers>>,
 ) -> Fixture {
-    let listed = vec![json!({
+    fixture_with_providers(name, host, vec![provider], default_listing(), peers)
+}
+
+/// The provider snapshot `/mcp` lists for the default Claude fixture.
+fn default_listing() -> Vec<Value> {
+    vec![json!({
         "instanceId": "claudeAgent", "driver": "claudeAgent", "displayName": "Claude",
         "enabled": true, "installed": true, "status": "ready",
         "models": [{"slug": "claude-haiku-5-5", "name": "Claude Haiku 5.5"}],
-    })];
-    fixture_with_providers(name, host, vec![provider], listed, peers)
+    })]
 }
 
 /// The engine runs `providers`; `/mcp` lists `listed` as the server's provider snapshot.
@@ -97,6 +105,18 @@ fn fixture_listing(
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dir.canonicalize().unwrap();
+    build_fixture(dir, host, providers, listed, refresh_provider, peers)
+}
+
+/// The engine and `/mcp` service on `dir`, as they open at a server start.
+fn build_fixture(
+    dir: PathBuf,
+    host: Option<Arc<dyn conn_engine::EngineHost>>,
+    providers: Vec<Arc<dyn conn_provider::Provider>>,
+    listed: Arc<dyn Fn() -> Vec<Value> + Send + Sync>,
+    refresh_provider: Option<crate::ProviderRefresh>,
+    peers: Option<Arc<dyn crate::Peers>>,
+) -> Fixture {
     let files = Arc::new(conn_files::Files::open(&dir).unwrap());
     let mut config = EngineConfig::new(dir.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {
@@ -142,7 +162,32 @@ fn fixture_listing(
         scheduled_tasks: None,
         annotations: None,
     });
-    Fixture { service, dir }
+    Fixture {
+        service,
+        dir,
+        keep_dir: false,
+    }
+}
+
+/// The server stopped and started again on the same state: the engine shuts down, and a new
+/// engine and `/mcp` service open the stored rows.
+async fn reopen(f: Fixture, provider: FakeProvider) -> Fixture {
+    f.service.config.engine.shutdown().await;
+    let dir = f.dir.clone();
+    // The folder outlives the first service, but its engine closes: the store takes one
+    // engine at a time.
+    let mut f = f;
+    f.keep_dir = true;
+    drop(f);
+    let listed = default_listing();
+    build_fixture(
+        dir,
+        None,
+        vec![Arc::new(provider)],
+        Arc::new(move || listed.clone()),
+        None,
+        None,
+    )
 }
 
 fn client(write: bool) -> Caller {
@@ -559,6 +604,15 @@ async fn swamp_drives_a_thread_from_outside() {
         rest["items"].as_array().unwrap().len() + 1,
         read["items"].as_array().unwrap().len()
     );
+    // A thread chip's id (`t3-context://v1/thread/thread_<id>`) names the same thread.
+    let chip = format!("thread_{thread}");
+    let by_chip = c
+        .ok(
+            "conn_thread_read",
+            json!({"threadId": chip, "view": "activity", "afterPosition": -1, "limit": 100}),
+        )
+        .await;
+    assert_eq!(by_chip["items"], read["items"]);
 
     let sent = c
         .ok("conn_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
@@ -568,6 +622,14 @@ async fn swamp_drives_a_thread_from_outside() {
         .ok("conn_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
         .await;
     assert_eq!(resent["runId"], sent["runId"]);
+    assert_eq!(sent["threadId"], thread.as_str());
+    let by_chip = c
+        .ok("conn_thread_send", json!({"threadId": chip, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
+        .await;
+    assert_eq!(
+        (by_chip["threadId"].as_str(), &by_chip["runId"]),
+        (Some(thread.as_str()), &sent["runId"])
+    );
     c.ok(
         "conn_thread_wait",
         json!({"threadId": thread, "runId": sent["runId"]}),
@@ -754,18 +816,27 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     assert_eq!(waited["summary"], "echo: child work");
     assert!(waited.get("next").is_none());
 
+    // The child holds its turn until the test saw the running answer, then finishes.
     let task = c
         .ok(
             "delegate_task",
-            json!({"task": "async work", "clientRequestId": "k1"}),
+            json!({"task": "hang", "clientRequestId": "k1"}),
         )
         .await;
     let task_id = task["taskId"].as_str().unwrap().to_owned();
+    assert_eq!(task["status"], "running", "{task}");
     assert_eq!(
         task["next"],
         "Completion wakes this thread. Do not wait on it or poll it. Continue other work, and end your turn when none is left."
     );
     let child = task["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    swamp
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "async work", "mode": "steer"}),
+        )
+        .await;
     c.ok(
         "conn_thread_wait",
         json!({"threadId": child, "timeoutMs": 10_000}),
@@ -1007,6 +1078,13 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
         agent.ok("task_cancel", json!({"taskId": task_id})).await["status"],
         "cancel_requested"
     );
+    // T3 refuses to archive a thread with running delegated tasks: the stop ends first.
+    agent
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": task["childThreadId"], "timeoutMs": 10_000}),
+        )
+        .await;
 
     // Archived: the credential still resolves, but the caller is no longer live.
     dispatch(
@@ -1880,7 +1958,11 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     });
     let dir = base.dir.clone();
     std::mem::forget(base);
-    Fixture { service, dir }
+    Fixture {
+        service,
+        dir,
+        keep_dir: false,
+    }
 }
 
 /// The access rules of the scheduled task tools (`schedule_task` is `either(startsThreads,
@@ -3830,6 +3912,14 @@ async fn fill_credential_answers_with_a_status_only() {
     assert!(!result.to_string().contains("fixture-only"));
 }
 
+async fn parent_with_agent(f: &Fixture) -> (String, Client<'_>, Client<'_>) {
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+    until_provider_turn(f, &parent).await;
+    let agent = Client::open(&f.service, agent_of(f, &parent)).await;
+    (parent, operator, agent)
+}
+
 /// T3 `resolveTarget` (`OrchestratorMcpService.ts:1576`): an explicit `driverKind` with no
 /// instance of that driver fails before any work starts; it never falls back to the parent's.
 #[tokio::test(flavor = "current_thread")]
@@ -4010,19 +4100,1484 @@ async fn delegate_task_refuses_a_named_unhealthy_instance() {
         );
     }
     assert_eq!(sessions[0].load(Ordering::SeqCst), 0);
-    assert_eq!(
-        projection_of_thread(&f, &parent).await["subagents"],
-        json!([])
-    );
+    assert_eq!(projection_of(&f, &parent).await["subagents"], json!([]));
 }
 
-async fn projection_of_thread(f: &Fixture, thread: &str) -> Value {
+async fn projection_of(f: &Fixture, thread: &str) -> Value {
     f.service
         .config
         .engine
         .get_thread_projection(thread.into())
         .await
         .unwrap()
+}
+
+/// T3 `readTask` and `finalizeAppOwnedSubagent` (`OrchestratorMcpService.test.ts:231`): a
+/// child whose own turn ended while its delegate still runs is `waiting_for_children`; no
+/// result reaches the parent until that work ends.
+#[tokio::test(flavor = "current_thread")]
+async fn a_child_waiting_on_its_own_delegate_holds_its_result() {
+    let f = fixture("task-nested");
+    let (parent, mut operator, mut parent_agent) = parent_with_agent(&f).await;
+    let child = parent_agent
+        .ok("delegate_task", json!({"task": "hang"}))
+        .await;
+    let child_id = child["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child_id).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child_id)).await;
+    let grandchild = child_agent
+        .ok("delegate_task", json!({"task": "hang"}))
+        .await;
+    until_provider_turn(&f, grandchild["childThreadId"].as_str().unwrap()).await;
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child_id, "message": "waiting for worker", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child_id, "runId": child["childRunId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let status = parent_agent
+        .ok("task_status", json!({"taskId": child["taskId"]}))
+        .await;
+    assert_eq!(status["status"], "running", "{status}");
+    assert_eq!(status["workState"], "waiting_for_children");
+    assert!(status["summary"].is_null());
+    let row = &projection_of(&f, &parent).await["subagents"][0];
+    assert_eq!(row["status"], "running", "{row}");
+    assert!(row["result"].is_null());
+
+    // The delegate ends; the child's wake turn ends; then the parent gets the result.
+    child_agent
+        .ok("task_cancel", json!({"taskId": grandchild["taskId"]}))
+        .await;
+    let settled = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child_id, "untilDelegatedWorkSettled": true, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(settled["timedOut"], false, "{settled}");
+    let status = parent_agent
+        .ok("task_status", json!({"taskId": child["taskId"]}))
+        .await;
+    assert_eq!(status["workState"], "result_available", "{status}");
+    assert_eq!(status["status"], "completed");
+    let projection = projection_of(&f, &parent).await;
+    let child_task = child["taskId"].as_str().unwrap();
+    let wakes = projection["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["text"].as_str().is_some_and(|t| t.contains(child_task)))
+        .count();
+    assert_eq!(wakes, 1, "one final result reaches the parent");
+}
+
+/// T3 `recordSubagentFollowup` (`Orchestrator.ts:9794`): a send to a finished child is a new
+/// task bound to the new run; the original task keeps its own result.
+#[tokio::test(flavor = "current_thread")]
+async fn a_follow_up_to_a_finished_child_is_its_own_task() {
+    let f = fixture("task-followup");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let first = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(first["summary"], "echo: original");
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": first["childThreadId"], "message": "followup", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"]
+        .as_str()
+        .expect("a follow-up task")
+        .to_owned();
+    assert_ne!(followup, first["taskId"].as_str().unwrap());
+    // A retry of the same send replays its receipt; it makes no further task.
+    let retried = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": first["childThreadId"], "message": "again", "mode": "queue",
+                   "clientRequestId": "followup-1"}),
+        )
+        .await;
+    let again = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": first["childThreadId"], "message": "again", "mode": "queue",
+                   "clientRequestId": "followup-1"}),
+        )
+        .await;
+    assert_eq!(retried["taskId"], again["taskId"]);
+    assert_eq!(retried["runId"], again["runId"]);
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": first["childThreadId"], "runId": sent["runId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let original = agent
+        .ok("task_status", json!({"taskId": first["taskId"]}))
+        .await;
+    assert_eq!(original["summary"], "echo: original");
+    let second = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(second["summary"], "echo: followup", "{second}");
+    assert_eq!(second["childRunId"], sent["runId"]);
+    assert_eq!(second["childThreadId"], first["childThreadId"]);
+    let projection = projection_of(&f, &parent).await;
+    let rows = projection["subagents"].as_array().unwrap();
+    assert_eq!(
+        rows.len(),
+        3,
+        "the original and two follow-ups; the retry added none"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r["id"] == first["taskId"] && r["result"] == "echo: original")
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r["id"] == followup.as_str() && r["result"] == "echo: followup")
+    );
+    // A scheduled send into the child starts an untagged run; the original keeps its answer.
+    dispatch(
+        &f,
+        json!({"type": "message.dispatch", "commandId": "scheduled-into-child",
+               "threadId": first["childThreadId"], "messageId": "message:scheduled-into-child",
+               "text": "scheduled", "attachments": [], "scheduledTaskId": "task:nightly",
+               "dispatchMode": {"type": "queue_after_active"},
+               "createdBy": "user", "creationSource": "web"}),
+    )
+    .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": first["childThreadId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let original = agent
+        .ok("task_status", json!({"taskId": first["taskId"]}))
+        .await;
+    assert_eq!(original["summary"], "echo: original", "{original}");
+
+    // After a restart, both tasks still read their own results through `/mcp`.
+    drop((agent, operator));
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let original = agent
+        .ok("task_status", json!({"taskId": first["taskId"]}))
+        .await;
+    assert_eq!(original["summary"], "echo: original", "{original}");
+    let second = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(second["summary"], "echo: followup", "{second}");
+}
+
+/// T3 `readTask` acknowledges a terminal result it returns (`OrchestratorMcpService.ts:1902`):
+/// the parent that waited for it is not woken with it again.
+#[tokio::test(flavor = "current_thread")]
+async fn a_result_returned_by_a_blocking_delegate_does_not_wake_the_parent_again() {
+    let f = fixture("task-ack");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "final report", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(task["summary"], "echo: final report");
+    let projection = projection_of(&f, &parent).await;
+    let delivery = &projection["subagents"][0]["completionDelivery"];
+    assert_eq!(delivery["state"], "acknowledged", "{delivery}");
+    assert_eq!(delivery["observedByRunId"], projection["runs"][0]["id"]);
+    let turn = projection["runs"][0]["id"].clone();
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": parent, "message": "wrap up", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": parent, "runId": turn, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &parent).await;
+    assert_eq!(projection["runs"].as_array().unwrap().len(), 1);
+    assert!(!projection["messages"].as_array().unwrap().iter().any(|m| {
+        m["text"]
+            .as_str()
+            .is_some_and(|t| t.starts_with("Delegated task"))
+    }));
+
+    // A wait that gives up before the child ends leaves the result to one later wake.
+    let f = fixture("task-ack-timeout");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "hang", "mode": "wait", "timeoutMs": 50}),
+        )
+        .await;
+    assert_eq!(task["waitTimedOut"], true);
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId": child}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &parent).await;
+    let task_id = task["taskId"].as_str().unwrap();
+    let wakes = projection["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["text"].as_str().is_some_and(|t| t.contains(task_id)))
+        .count();
+    assert_eq!(wakes, 1, "{}", projection["messages"]);
+    assert_eq!(
+        projection["subagents"][0]["completionDelivery"]["state"],
+        "delivered"
+    );
+}
+
+/// `backgroundWorkHoldsCompletion` (`orchestrationV2PendingBackgroundWork.ts:90`): an
+/// unawaited command or monitor is often a dev server, so it does not hold settled work.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unawaited_background_command_does_not_hold_settled_work() {
+    let f = fixture("settled-bg");
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(
+        &mut operator,
+        "Dev server",
+        "background-task",
+        "auto",
+        "default",
+    )
+    .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &thread).await;
+    assert!(
+        projection["providerThreads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| {
+                t["pendingBackgroundTasks"].as_array().is_some_and(|tasks| {
+                    tasks
+                        .iter()
+                        .any(|task| task["kind"] == "command" && task["awaited"] != true)
+                })
+            })
+    );
+    let wait = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "untilDelegatedWorkSettled": true, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(wait["timedOut"], false, "{wait}");
+    assert_eq!(wait["resultRun"]["status"], "completed");
+
+    // A command the agent marked awaited holds the wait, after its turn ended too.
+    let awaited = launch_as_swamp(
+        &mut operator,
+        "Awaited",
+        "background-task-hang",
+        "auto",
+        "default",
+    )
+    .await;
+    until_provider_turn(&f, &awaited).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &awaited)).await;
+    agent
+        .ok("conn_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId": awaited}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": awaited, "timeoutMs": 5000}),
+        )
+        .await;
+    let wait = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": awaited, "untilDelegatedWorkSettled": true, "timeoutMs": 80}),
+        )
+        .await;
+    assert_eq!(wait["timedOut"], true, "{wait}");
+    assert!(wait["resultRun"].is_null());
+}
+
+/// Messages of `thread` that name `task_id`: the parent's wakes for that task.
+async fn wakes_for(f: &Fixture, thread: &str, task_id: &str) -> usize {
+    projection_of(f, thread).await["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["text"].as_str().is_some_and(|t| t.contains(task_id)))
+        .count()
+}
+
+/// `Orchestrator.ts:2113`: a follow-up's pending delivery waits for its terminal status, so a
+/// parent whose turn ends while the follow-up still runs is not woken until it finishes.
+#[tokio::test(flavor = "current_thread")]
+async fn a_running_follow_up_wakes_its_parent_once_when_it_finishes() {
+    let f = fixture("task-followup-held");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let first = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let child = first["childThreadId"].as_str().unwrap().to_owned();
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "hang", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let turn = projection_of(&f, &parent).await["runs"][0]["id"].clone();
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": parent, "message": "wrap up", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": parent, "runId": turn, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(wakes_for(&f, &parent, &followup).await, 0, "still running");
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId": child}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": sent["runId"], "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(
+        wakes_for(&f, &parent, &followup).await,
+        1,
+        "one wake when it ends"
+    );
+}
+
+/// `Orchestrator.ts:7076`: a run the child queues for itself, and a restart continuation,
+/// continue the follow-up task of the run that sent them, so the task reports their answer.
+#[tokio::test(flavor = "current_thread")]
+async fn a_follow_ups_own_next_turn_and_its_restart_continuation_stay_its_work() {
+    let f = fixture("task-followup-continued");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let first = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let child = first["childThreadId"].as_str().unwrap().to_owned();
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "hang", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+    let next = child_agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "final", "mode": "queue"}),
+        )
+        .await;
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId": child}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": next["runId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let status = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(status["summary"], "echo: final", "{status}");
+
+    // A restart cuts a follow-up's turn short; its continuation answers for the task.
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "hang", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    drop((agent, operator, child_agent));
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut operator = Client::open(&f.service, client(true)).await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "untilDelegatedWorkSettled": true, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &parent).await;
+    let row = projection["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == followup.as_str())
+        .unwrap();
+    assert_eq!(row["status"], "completed", "{row}");
+    assert!(
+        row["result"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("echo: Continue where you left off")),
+        "{row}"
+    );
+}
+
+/// `Orchestrator.ts:16134`: a restart that cancels a delegated child's turn waiting on an
+/// approval starts no continuation, and still publishes the task.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_publishes_a_task_whose_turn_it_cancels() {
+    let f = fixture("task-restart-approval");
+    let (parent, _operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent.ok("delegate_task", json!({"task": "ask"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    for _ in 0..200 {
+        let pending = projection_of(&f, &child).await["runtimeRequests"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|r| r["status"] == "pending"));
+        if pending {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    drop((agent, _operator));
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let status = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(status["workState"], "result_available", "{status}");
+    assert_eq!(status["status"], "cancelled", "{status}");
+}
+
+/// `Orchestrator.ts:16085`: a child whose turn ended while a command it awaits still runs
+/// settles when the roster reports that command gone: the settled-work wait returns its
+/// result, and the parent is woken once.
+#[tokio::test(flavor = "current_thread")]
+async fn an_awaited_command_that_ends_after_the_turn_settles_the_task() {
+    let fake = FakeProvider::new("claudeAgent");
+    let finish = fake.finish_background.clone();
+    let f = fixture_with_provider("task-roster-settles", None, Arc::new(fake), None);
+    let (parent, mut operator, mut parent_agent) = parent_with_agent(&f).await;
+    let task = parent_agent
+        .ok("delegate_task", json!({"task": "background-task-hang"}))
+        .await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    let task_id = task["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+    child_agent
+        .ok("conn_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "leave it running", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": task["childRunId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let held = parent_agent
+        .ok("task_status", json!({"taskId": task_id}))
+        .await;
+    assert_eq!(held["workState"], "waiting_for_children", "{held}");
+    assert_eq!(wakes_for(&f, &parent, &task_id).await, 0);
+
+    finish.notify_one();
+    let settled = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "untilDelegatedWorkSettled": true, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(settled["timedOut"], false, "{settled}");
+    assert_eq!(settled["resultRun"]["status"], "completed");
+    let done = parent_agent
+        .ok("task_status", json!({"taskId": task_id}))
+        .await;
+    assert_eq!(done["workState"], "result_available", "{done}");
+    assert_eq!(wakes_for(&f, &parent, &task_id).await, 1);
+}
+
+/// `ProjectionStore.ts:915`: a roster entry without a run is attributed to the run it first
+/// appeared under, so a follow-up that awaits its command holds its result like the original.
+#[tokio::test(flavor = "current_thread")]
+async fn a_follow_up_holds_for_the_command_it_awaits() {
+    let fake = FakeProvider::new("claudeAgent");
+    let finish = fake.finish_background.clone();
+    let f = fixture_with_provider("task-followup-roster", None, Arc::new(fake), None);
+    let (_, mut operator, mut agent) = parent_with_agent(&f).await;
+    let first = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let child = first["childThreadId"].as_str().unwrap().to_owned();
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "background-task-hang", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+    child_agent
+        .ok("conn_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    let roster = &projection_of(&f, &child).await["providerThreads"];
+    let attributed = roster
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|t| {
+            t["pendingBackgroundTasks"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .find(|task| task["taskId"] == "bg-1")
+        .unwrap();
+    assert_eq!(attributed["runId"], sent["runId"], "{attributed}");
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "leave it running", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": sent["runId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let held = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(held["workState"], "waiting_for_children", "{held}");
+    assert!(held["summary"].is_null());
+    finish.notify_one();
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "untilDelegatedWorkSettled": true, "timeoutMs": 5000}),
+        )
+        .await;
+    let done = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(done["workState"], "result_available", "{done}");
+}
+
+/// `OrchestratorMcpService.ts:2947`: cancelling a follow-up whose turn waits in the queue
+/// removes that turn, so a later Resume never sends its prompt; the task ends cancelled.
+#[tokio::test(flavor = "current_thread")]
+async fn a_cancelled_queued_follow_up_never_reaches_the_provider() {
+    let f = fixture("task-followup-cancel");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let first = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let child = first["childThreadId"].as_str().unwrap().to_owned();
+    // A user's turn runs in the child; the agent's follow-up waits behind it.
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "hang", "mode": "queue"}),
+        )
+        .await;
+    until_provider_turn(&f, &child).await;
+    let queued = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "never sent", "mode": "queue"}),
+        )
+        .await;
+    assert_eq!(queued["status"], "queued");
+    let followup = queued["taskId"].as_str().unwrap().to_owned();
+    let cancel = agent.ok("task_cancel", json!({"taskId": followup})).await;
+    assert_eq!(cancel["status"], "cancel_requested", "{cancel}");
+    dispatch(
+        &f,
+        json!({"type": "queue.resume", "commandId": "resume-child", "threadId": child}),
+    )
+    .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &child).await;
+    assert!(
+        !projection["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "echo: never sent"),
+        "the provider never got the cancelled prompt"
+    );
+    let run = projection["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == queued["runId"])
+        .unwrap();
+    assert_eq!(run["status"], "cancelled");
+    let status = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(status["status"], "cancelled", "{status}");
+    assert_eq!(status["workState"], "result_available");
+    assert_eq!(
+        wakes_for(&f, &parent, &followup).await,
+        0,
+        "a cancel stays quiet"
+    );
+}
+
+/// `waitForTask` (`OrchestratorMcpService.ts:2090`): a blocking `delegate_task` follows both
+/// threads, so a question the child asks after its first turn ended returns the wait at once.
+#[tokio::test(flavor = "current_thread")]
+async fn a_blocking_delegate_returns_on_a_question_after_the_childs_first_turn() {
+    let f = fixture("task-wait-question");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let wait = agent.ok(
+        "delegate_task",
+        json!({"task": "hang", "mode": "wait", "timeoutMs": 20000}),
+    );
+    let drive = async {
+        let child = loop {
+            let p = projection_of(&f, &parent).await;
+            if let Some(child) = p["subagents"][0]["childThreadId"].as_str() {
+                break child.to_owned();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        until_provider_turn(&f, &child).await;
+        let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+        let grandchild = child_agent
+            .ok("delegate_task", json!({"task": "hang"}))
+            .await;
+        until_provider_turn(&f, grandchild["childThreadId"].as_str().unwrap()).await;
+        let first_run = projection_of(&f, &child).await["runs"][0]["id"].clone();
+        operator
+            .ok(
+                "conn_thread_send",
+                json!({"threadId": child, "message": "waiting for worker", "mode": "steer"}),
+            )
+            .await;
+        operator
+            .ok(
+                "conn_thread_wait",
+                json!({"threadId": child, "runId": first_run, "timeoutMs": 5000}),
+            )
+            .await;
+        operator
+            .ok(
+                "conn_thread_send",
+                json!({"threadId": child, "message": "question", "mode": "queue"}),
+            )
+            .await;
+    };
+    let (task, ()) = tokio::join!(wait, drive);
+    assert_eq!(task["waitTimedOut"], false, "{task}");
+    assert_eq!(task["hasPendingQuestion"], true, "{task}");
+}
+
+/// Holds a blocking `delegate_task` once, right after its first read of the task.
+type TaskWaitHook = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+thread_local! {
+    static TASK_WAIT_HOOK: std::cell::RefCell<Option<TaskWaitHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) async fn after_first_task_read() {
+    let hook = TASK_WAIT_HOOK.with(|hook| hook.borrow_mut().take());
+    if let Some((read, go)) = hook {
+        read.notify_one();
+        go.notified().await;
+    }
+}
+
+thread_local! {
+    static PARK_HOOK: std::cell::RefCell<Option<(&'static str, Arc<tokio::sync::Notify>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Once a test armed `point` (with [`park_at_next`]), the delegate call that reaches it says so
+/// and never goes on, so the test can drop the call right there.
+pub(crate) async fn park_at(point: &str) {
+    let hook = PARK_HOOK.with(|hook| {
+        let mut hook = hook.borrow_mut();
+        if hook.as_ref().is_some_and(|(armed, _)| *armed == point) {
+            hook.take()
+        } else {
+            None
+        }
+    });
+    if let Some((_, reached)) = hook {
+        reached.notify_one();
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Arms [`park_at`] for `point`; the notify fires when a call parks there.
+fn park_at_next(point: &'static str) -> Arc<tokio::sync::Notify> {
+    let reached = Arc::new(tokio::sync::Notify::new());
+    PARK_HOOK.with(|hook| *hook.borrow_mut() = Some((point, reached.clone())));
+    reached
+}
+
+/// Waits until the parent's first task wakes it whatever happens (`completionWake: always`).
+async fn until_wake_upgraded(f: &Fixture, parent: &str) {
+    for _ in 0..200 {
+        let row = &projection_of(f, parent).await["subagents"][0];
+        if row["completionWake"] == "always" {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "the wake was not upgraded: {}",
+        projection_of(f, parent).await["subagents"][0]
+    );
+}
+
+/// `awaitTask` (`OrchestratorMcpService.ts:1984`): a wait that gave up keeps its wake upgrade
+/// armed until the upgrade committed, so a call dropped while it commits still upgrades.
+#[tokio::test(flavor = "current_thread")]
+async fn a_wait_dropped_while_it_upgrades_the_wake_still_upgrades() {
+    let f = fixture("task-wait-dropped-upgrade");
+    let (parent, _operator, mut agent) = parent_with_agent(&f).await;
+    let reached = park_at_next("wake-upgrade");
+    let wait = agent.ok(
+        "delegate_task",
+        json!({"task": "hang", "mode": "wait", "timeoutMs": 50}),
+    );
+    tokio::select! {
+        task = wait => panic!("the wait ended without upgrading: {task}"),
+        () = reached.notified() => {}
+    }
+    until_wake_upgraded(&f, &parent).await;
+}
+
+/// The child a parent's first task runs in, once the task exists.
+async fn first_child(f: &Fixture, parent: &str) -> String {
+    for _ in 0..200 {
+        if let Some(child) =
+            projection_of(f, parent).await["subagents"][0]["childThreadId"].as_str()
+        {
+            return child.to_owned();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("{parent} delegated no task");
+}
+
+/// A child whose own turn ended while its delegate (`hang`) still runs: the task waits for
+/// children. Returns the child and the grandchild.
+async fn child_waiting_on_a_delegate(
+    f: &Fixture,
+    operator: &mut Client<'_>,
+    child: &str,
+) -> String {
+    until_provider_turn(f, child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(f, child)).await;
+    let grandchild = child_agent
+        .ok("delegate_task", json!({"task": "hang"}))
+        .await;
+    let grandchild = grandchild["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(f, &grandchild).await;
+    let first_run = projection_of(f, child).await["runs"][0]["id"].clone();
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "waiting for worker", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": first_run, "timeoutMs": 5000}),
+        )
+        .await;
+    grandchild
+}
+
+/// `cancelDelegatedTask` (`OrchestratorMcpService.ts:3026`): a task whose turn ended while its
+/// work goes on can be cancelled, and the cancel stops that work: a running grandchild, or a
+/// command the child awaits.
+#[tokio::test(flavor = "current_thread")]
+async fn cancelling_a_task_that_waits_for_its_children_stops_them() {
+    let f = fixture("task-cancel-waiting");
+    let (_, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    let grandchild = child_waiting_on_a_delegate(&f, &mut operator, &child).await;
+    let held = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(held["workState"], "waiting_for_children", "{held}");
+    let cancel = agent
+        .ok("task_cancel", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(cancel["status"], "cancel_requested", "{cancel}");
+    let stopped = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": grandchild, "timeoutMs": 3000}),
+        )
+        .await;
+    assert_eq!(stopped["timedOut"], false, "{stopped}");
+    assert_eq!(stopped["status"], "interrupted", "{stopped}");
+    // The cancelled task ends interrupted, not with its finished turn's `completed`.
+    let ended = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(ended["status"], "interrupted", "{ended}");
+    assert_eq!(ended["workState"], "result_available", "{ended}");
+
+    let fake = FakeProvider::new("claudeAgent");
+    let calls = fake.calls.clone();
+    let f = fixture_with_provider("task-cancel-awaited", None, Arc::new(fake), None);
+    let (_, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent
+        .ok("delegate_task", json!({"task": "background-task-hang"}))
+        .await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+    child_agent
+        .ok("conn_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "leave it running", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": task["childRunId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let cancel = agent
+        .ok("task_cancel", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(cancel["status"], "cancel_requested", "{cancel}");
+    until_background_stopped(&calls).await;
+    let ended = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(ended["status"], "interrupted", "{ended}");
+}
+
+/// Waits until the fake provider was asked to stop background work.
+async fn until_background_stopped(calls: &Arc<std::sync::Mutex<Vec<String>>>) {
+    for _ in 0..200 {
+        if calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call.starts_with("stop background"))
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "the awaited command was not stopped: {:?}",
+        calls.lock().unwrap()
+    );
+}
+
+/// `stopDelegatedTasks` (`ThreadManagementService.ts:1614`): Stop of a parent reaches a task
+/// whose turn ended while its work goes on, through every thread under it: its running
+/// delegate, and the command it awaits. The task ends interrupted, without a wake.
+#[tokio::test(flavor = "current_thread")]
+async fn stopping_a_parent_reaches_a_task_that_waits_for_its_work() {
+    let f = fixture("stop-waiting-task");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    let grandchild = child_waiting_on_a_delegate(&f, &mut operator, &child).await;
+    dispatch(
+        &f,
+        json!({"type": "thread.stop", "commandId": "stop-parent", "threadId": parent}),
+    )
+    .await;
+    let stopped = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": grandchild, "timeoutMs": 3000}),
+        )
+        .await;
+    assert_eq!(stopped["timedOut"], false, "{stopped}");
+    assert_eq!(stopped["status"], "interrupted", "{stopped}");
+    let row = &projection_of(&f, &parent).await["subagents"][0];
+    assert_eq!(row["status"], "interrupted", "{row}");
+    assert_eq!(row["completionDelivery"]["state"], "disposed", "{row}");
+
+    let fake = FakeProvider::new("claudeAgent");
+    let calls = fake.calls.clone();
+    let f = fixture_with_provider("stop-awaited-task", None, Arc::new(fake), None);
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent
+        .ok("delegate_task", json!({"task": "background-task-hang"}))
+        .await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+    child_agent
+        .ok("conn_background_wait", json!({"taskIds": ["bg-1"]}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "leave it running", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": task["childRunId"], "timeoutMs": 5000}),
+        )
+        .await;
+    dispatch(
+        &f,
+        json!({"type": "thread.stop", "commandId": "stop-parent", "threadId": parent}),
+    )
+    .await;
+    until_background_stopped(&calls).await;
+}
+
+/// A task's child and the child's own delegate, both running; the delegate's user raised it
+/// to `full-access`, above the parent's `auto`. Returns the task, the child and the delegate.
+async fn task_with_a_raised_delegate(
+    f: &Fixture,
+    agent: &mut Client<'_>,
+) -> (Value, String, String) {
+    let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(f, &child)).await;
+    let grandchild = child_agent
+        .ok("delegate_task", json!({"task": "hang"}))
+        .await;
+    let grandchild = grandchild["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(f, &grandchild).await;
+    dispatch(
+        f,
+        json!({"type": "thread.runtime-mode.set", "commandId": "raise-delegate",
+               "threadId": grandchild, "runtimeMode": "full-access"}),
+    )
+    .await;
+    (task, child, grandchild)
+}
+
+/// Nothing a refused cancel could have changed did change: the task is not marked, its
+/// delivery stands, and both threads still run.
+async fn untouched(f: &Fixture, parent: &str, child: &str, grandchild: &str) {
+    let row = &projection_of(f, parent).await["subagents"][0];
+    assert!(row["cancelledRunId"].is_null(), "{row}");
+    assert_ne!(row["completionDelivery"]["state"], "disposed", "{row}");
+    for thread in [child, grandchild] {
+        let run = &projection_of(f, thread).await["runs"][0];
+        assert_eq!(run["status"], "running", "{thread}: {run}");
+    }
+}
+
+/// `assertStoppable` (`OrchestratorMcpService.ts:2866`): a cancel checks the child and every
+/// thread under it before it changes anything. A thread its user raised above the parent's
+/// modes keeps running.
+#[tokio::test(flavor = "current_thread")]
+async fn a_cancel_refuses_a_raised_descendant_and_changes_nothing() {
+    let f = fixture("task-cancel-raised");
+    let (parent, _operator, mut agent) = parent_with_agent(&f).await;
+    let (task, child, grandchild) = task_with_a_raised_delegate(&f, &mut agent).await;
+    let (code, message) = agent
+        .failure("task_cancel", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(code, "runtime_mode_escalation_denied", "{message}");
+    untouched(&f, &parent, &child, &grandchild).await;
+}
+
+/// `DispatchModeLimit`: the engine checks the modes again in the cancel's own write, so a
+/// thread raised after the tool's check is still refused, and nothing is written.
+#[tokio::test(flavor = "current_thread")]
+async fn the_cancel_write_rechecks_the_modes() {
+    let f = fixture("task-cancel-recheck");
+    let (parent, _operator, mut agent) = parent_with_agent(&f).await;
+    let (task, child, grandchild) = task_with_a_raised_delegate(&f, &mut agent).await;
+    let cancel = |limit: &str| {
+        json!({"commandId": format!("cancel-{limit}"), "threadId": child,
+               "parentThreadId": parent, "taskId": task["taskId"], "reason": "test",
+               "modeLimit": {"runtimeMode": limit, "interactionMode": "default"}})
+    };
+    let refused = f
+        .service
+        .config
+        .engine
+        .cancel_delegated_task(cancel("auto"))
+        .await;
+    let Err(conn_engine::EngineError::Rejected(error)) = refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(error["code"], "runtime_mode_escalation_denied", "{error}");
+    untouched(&f, &parent, &child, &grandchild).await;
+    f.service
+        .config
+        .engine
+        .cancel_delegated_task(cancel("full-access"))
+        .await
+        .unwrap();
+    let row = &projection_of(&f, &parent).await["subagents"][0];
+    assert_eq!(row["cancelledRunId"], task["childRunId"], "{row}");
+}
+
+/// `delegatedTaskProgress` (`subagentProjection.ts:375`): a turn that only answers a monitor
+/// update is no work of its task. While one runs, a task waiting for its delegate still waits
+/// for children; once it ended, it is not the task's latest terminal turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_monitor_update_turn_is_not_the_tasks_work() {
+    let f = fixture("task-monitor-turn");
+    let (_, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    child_waiting_on_a_delegate(&f, &mut operator, &child).await;
+    dispatch(&f, monitor_update(&child, "monitor-1", "hang")).await;
+    let monitor = loop {
+        let runs = projection_of(&f, &child).await["runs"].clone();
+        if let Some(run) = runs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["status"] == "running")
+        {
+            break run["id"].as_str().unwrap().to_owned();
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let waiting = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(waiting["workState"], "waiting_for_children", "{waiting}");
+    dispatch(
+        &f,
+        json!({"type": "run.interrupt", "commandId": "stop-monitor", "threadId": child,
+               "runId": monitor}),
+    )
+    .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": monitor, "timeoutMs": 5000}),
+        )
+        .await;
+    let waiting = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(waiting["workState"], "waiting_for_children", "{waiting}");
+    assert_eq!(
+        waiting["latestTerminalRunId"], task["childRunId"],
+        "{waiting}"
+    );
+}
+
+/// `resultOfRun` (`subagentProjection.ts:282`): a run that reported and then failed reports
+/// its failure first, then what it said before.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_run_reports_its_failure_then_its_last_text() {
+    let f = fixture("task-report-fail");
+    let (_, _operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "report-fail", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(task["status"], "failed", "{task}");
+    assert_eq!(
+        task["summary"],
+        "The fake provider failed.\n\nLast assistant message before the run failed:\n\npartial report"
+    );
+}
+
+/// `readTask` (`OrchestratorMcpService.ts:1819`): a finished task whose row was stored without
+/// its result reads it from its own last run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_finished_task_stored_without_its_result_reads_its_run() {
+    let f = fixture("task-null-result");
+    let (parent, operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(task["summary"], "echo: original", "{task}");
+    drop((agent, operator));
+    f.service.config.engine.shutdown().await;
+    let changed = rusqlite::Connection::open(f.dir.join("engine.sqlite"))
+        .unwrap()
+        .execute(
+            "UPDATE entities SET body = json_set(body, '$.result', json('null'))
+             WHERE kind = 'subagents' AND id = ?1",
+            [task["taskId"].as_str().unwrap()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1);
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let row = &projection_of(&f, &parent).await["subagents"][0];
+    assert!(row["result"].is_null(), "{row}");
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let status = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(status["summary"], "echo: original", "{status}");
+}
+
+/// `readRemoteTask`: the run that observed a remote task's result is the caller's running
+/// turn, never a turn queued behind it, as for a local task.
+#[tokio::test(flavor = "current_thread")]
+async fn a_remote_result_is_observed_by_the_running_turn() {
+    let f = fixture("remote-task-observed");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let running = projection_of(&f, &parent).await["runs"][0].clone();
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": parent, "message": "later", "mode": "queue"}),
+        )
+        .await;
+    let engine = &f.service.config.engine;
+    engine
+        .remote_task(json!({
+            "type": "delegated_task.remote.request", "commandId": "remote-observed",
+            "parentThreadId": parent, "parentRunId": running["id"],
+            "parentNodeId": running["rootNodeId"], "task": "remote work",
+            "remoteChild": {"environmentId": "env-remote", "threadId": "thread:remote",
+                            "label": "Remote", "title": "Remote work"},
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "driver": "claudeAgent",
+        }))
+        .await
+        .unwrap();
+    let task_id = "node:delegated-task:remote-observed";
+    engine
+        .remote_task(json!({
+            "type": "delegated_task.remote.complete", "commandId": "remote-observed:done",
+            "parentThreadId": parent, "taskId": task_id, "status": "completed",
+            "result": "remote report",
+        }))
+        .await
+        .unwrap();
+    let status = agent.ok("task_status", json!({"taskId": task_id})).await;
+    assert_eq!(status["status"], "completed", "{status}");
+    let row = projection_of(&f, &parent).await["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == task_id)
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        row["completionDelivery"]["observedByRunId"], running["id"],
+        "{row}"
+    );
+}
+
+/// `subagentResultForRun` (`subagentProjection.ts:255`): a task's result is set when it is
+/// published. A run that said nothing says so; a later run in the child, or another task's
+/// run, never answers for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_task_that_ended_without_text_keeps_its_own_result() {
+    const NO_TEXT: &str = "Child task completed without an assistant result.";
+    let f = fixture("task-silent");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let silent = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "silent", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let child = silent["childThreadId"].as_str().unwrap().to_owned();
+    dispatch(
+        &f,
+        json!({"type": "message.dispatch", "commandId": "scheduled-into-silent",
+               "threadId": child, "messageId": "message:scheduled-into-silent",
+               "text": "scheduled", "attachments": [], "scheduledTaskId": "task:nightly",
+               "dispatchMode": {"type": "queue_after_active"},
+               "createdBy": "user", "creationSource": "web"}),
+    )
+    .await;
+    let scheduled = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(scheduled["status"], "completed", "{scheduled}");
+    let status = agent
+        .ok("task_status", json!({"taskId": silent["taskId"]}))
+        .await;
+    assert_eq!(status["summary"], NO_TEXT, "{status}");
+    assert_eq!(silent["summary"], NO_TEXT, "{silent}");
+
+    // A silent follow-up does not take the original's answer.
+    let answered = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": answered["childThreadId"], "message": "silent", "mode": "queue"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": answered["childThreadId"], "runId": sent["runId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let followup = agent
+        .ok("task_status", json!({"taskId": sent["taskId"]}))
+        .await;
+    assert_eq!(followup["summary"], NO_TEXT, "{followup}");
+
+    drop((agent, operator));
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let status = agent
+        .ok("task_status", json!({"taskId": silent["taskId"]}))
+        .await;
+    assert_eq!(status["summary"], NO_TEXT, "{status}");
+}
+
+/// `waitForTask` (`OrchestratorMcpService.ts:2090`): the wait follows both threads from
+/// before its first read, so a question that lands right after that read still ends it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_question_right_after_the_first_task_read_ends_the_wait() {
+    let f = fixture("task-wait-race");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let (read, go) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    TASK_WAIT_HOOK.with(|hook| *hook.borrow_mut() = Some((read.clone(), go.clone())));
+    let wait = agent.ok(
+        "delegate_task",
+        json!({"task": "hang", "mode": "wait", "timeoutMs": 3000}),
+    );
+    let drive = async {
+        let child = first_child(&f, &parent).await;
+        child_waiting_on_a_delegate(&f, &mut operator, &child).await;
+        read.notified().await;
+        operator
+            .ok(
+                "conn_thread_send",
+                json!({"threadId": child, "message": "question", "mode": "queue"}),
+            )
+            .await;
+        for _ in 0..200 {
+            let asked = projection_of(&f, &child).await["runtimeRequests"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|r| r["status"] == "pending"));
+            if asked {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        go.notify_one();
+    };
+    let (task, ()) = tokio::join!(wait, drive);
+    assert_eq!(task["waitTimedOut"], false, "{task}");
+    assert_eq!(task["hasPendingQuestion"], true, "{task}");
+}
+
+/// `awaitTask` (`OrchestratorMcpService.ts:1984`): a blocking wait whose call goes away before
+/// a terminal result upgrades the task's wake, so the result still reaches the parent.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_blocking_delegate_upgrades_the_wake() {
+    let f = fixture("task-wait-dropped");
+    let (parent, _operator, mut agent) = parent_with_agent(&f).await;
+    let wait = agent.ok(
+        "delegate_task",
+        json!({"task": "hang", "mode": "wait", "timeoutMs": 20000}),
+    );
+    let started = async {
+        let child = first_child(&f, &parent).await;
+        until_provider_turn(&f, &child).await;
+    };
+    tokio::select! {
+        task = wait => panic!("the wait ended on its own: {task}"),
+        () = started => {}
+    }
+    for _ in 0..200 {
+        let row = &projection_of(&f, &parent).await["subagents"][0];
+        if row["completionWake"] == "always" {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "{}",
+        projection_of(&f, &parent).await["subagents"][0]["completionWake"]
+    );
+}
+
+/// A message that answers a monitor update (`notification` source `monitor`, outcome
+/// `updated`), queued behind the thread's work.
+fn monitor_update(thread: &str, id: &str, text: &str) -> Value {
+    json!({"type": "message.dispatch", "commandId": id, "threadId": thread,
+           "messageId": format!("message:{id}"), "text": text, "attachments": [],
+           "notification": {"source": {"kind": "monitor"}, "outcome": "updated",
+                            "summary": "The log changed"},
+           "dispatchMode": {"type": "queue_after_active"},
+           "createdBy": "agent", "creationSource": "server"})
+}
+
+/// `delegatedTaskProgress` (`subagentProjection.ts:375`): a turn that only answers a monitor
+/// update is no work of its thread: it neither holds the thread's or the task's result nor
+/// becomes it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_monitor_update_turn_is_not_the_threads_work() {
+    let f = fixture("monitor-update-work");
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Watcher", "work", "auto", "default").await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let work = projection_of(&f, &thread).await["runs"][0]["id"].clone();
+    dispatch(&f, monitor_update(&thread, "monitor-1", "hang")).await;
+    until_provider_turn(&f, &thread).await;
+    let settled = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "runId": work, "untilDelegatedWorkSettled": true,
+                   "timeoutMs": 2000}),
+        )
+        .await;
+    assert_eq!(settled["timedOut"], false, "{settled}");
+    assert_eq!(settled["resultRun"]["runId"], work, "{settled}");
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId": thread}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let settled = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "untilDelegatedWorkSettled": true, "timeoutMs": 2000}),
+        )
+        .await;
+    assert_eq!(settled["resultRun"]["runId"], work, "{settled}");
+
+    // A delegated child: the monitor turn queued behind its work does not answer the task.
+    let (_, mut operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    dispatch(&f, monitor_update(&child, "monitor-2", "monitor tick")).await;
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "done", "mode": "steer"}),
+        )
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "timeoutMs": 5000}),
+        )
+        .await;
+    let status = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(status["summary"], "steered: done", "{status}");
+}
+
+/// `readTask` (`OrchestratorMcpService.ts:1908`): the run that observed a result is the
+/// caller's running turn, never a turn queued behind it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_result_is_observed_by_the_running_turn() {
+    let f = fixture("task-observed");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let running = projection_of(&f, &parent).await["runs"][0]["id"].clone();
+    operator
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": parent, "message": "later", "mode": "queue"}),
+        )
+        .await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "report", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(task["summary"], "echo: report");
+    let row = &projection_of(&f, &parent).await["subagents"][0];
+    assert_eq!(
+        row["completionDelivery"]["observedByRunId"], running,
+        "{row}"
+    );
 }
 
 /// A ready provider listing for `/mcp` with the given models.
@@ -4156,13 +5711,13 @@ async fn delegate_task_rechecks_a_stale_provider_snapshot() {
             let (got, message) = agent.failure("delegate_task", args).await;
             assert_eq!(got, code, "{case}: {message}");
             assert_eq!(
-                projection_of_thread(&f, &parent).await["subagents"],
+                projection_of(&f, &parent).await["subagents"],
                 json!([]),
                 "{case}"
             );
         } else {
             let task = agent.ok("delegate_task", args).await;
-            let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+            let child = projection_of(&f, task["childThreadId"].as_str().unwrap()).await;
             assert_eq!(
                 child["thread"]["modelSelection"]["model"], target["model"],
                 "{case}: {task}"
@@ -4220,7 +5775,7 @@ async fn delegate_task_converts_the_old_ultracode_effort() {
                    "target": {"model": "claude-opus-5-5", "options": {"effort": "ultracode"}}}),
         )
         .await;
-    let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+    let child = projection_of(&f, task["childThreadId"].as_str().unwrap()).await;
     assert_eq!(
         child["thread"]["modelSelection"],
         json!({"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": converted}),
@@ -4248,7 +5803,7 @@ async fn delegate_task_converts_the_old_ultracode_effort() {
             json!({"task": "inherited", "mode": "async"}),
         )
         .await;
-    let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+    let child = projection_of(&f, task["childThreadId"].as_str().unwrap()).await;
     assert_eq!(
         child["thread"]["modelSelection"],
         json!({"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": converted}),
@@ -4304,10 +5859,7 @@ async fn delegate_task_fits_the_runtime_mode_to_the_target_provider() {
         message.contains("approval-required, auto-accept-edits, full-access"),
         "{message}"
     );
-    assert_eq!(
-        projection_of_thread(&f, &parent).await["subagents"],
-        json!([])
-    );
+    assert_eq!(projection_of(&f, &parent).await["subagents"], json!([]));
 
     let task = agent
         .ok(
@@ -4315,6 +5867,6 @@ async fn delegate_task_fits_the_runtime_mode_to_the_target_provider() {
             json!({"task": "inherited", "target": target, "mode": "async"}),
         )
         .await;
-    let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+    let child = projection_of(&f, task["childThreadId"].as_str().unwrap()).await;
     assert_eq!(child["thread"]["runtimeMode"], "auto-accept-edits");
 }

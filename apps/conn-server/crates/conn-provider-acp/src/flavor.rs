@@ -203,13 +203,14 @@ pub(crate) fn provider_failure(message: &str, class: &str, code: Option<i64>) ->
     json!({"class": class, "message": message, "code": code, "retryable": null})
 }
 
-/// `AcpProviderCapabilitiesV2` (`packages/provider-acp/src/server/adapter.ts`).
+/// `AcpProviderCapabilitiesV2` (`packages/provider-acp/src/server/adapter.ts`), without the
+/// summaries this server never asks for. Provider switches carry the history inline.
 pub(crate) fn acp_capabilities() -> Value {
     json!({
         "sessions": {
             "supportsMultipleProviderThreadsPerSession": false,
             "supportsModelSwitchInSession": false,
-            "supportsProviderSwitchingViaHandoff": false,
+            "supportsProviderSwitchingViaHandoff": true,
             "supportsRuntimeModeSwitchInSession": false,
             "pendingRequestsSurviveRestart": false,
         },
@@ -275,11 +276,11 @@ pub(crate) fn acp_capabilities() -> Value {
         "context": {
             "acceptsSystemContext": false,
             "acceptsDeveloperContext": false,
-            "acceptsSyntheticUserContext": false,
+            "acceptsSyntheticUserContext": true,
             "canGenerateSummaries": false,
-            "canConsumeHandoffSummaries": false,
-            "supportsDeltaHandoff": false,
-            "supportsFullThreadHandoff": false,
+            "canConsumeHandoffSummaries": true,
+            "supportsDeltaHandoff": true,
+            "supportsFullThreadHandoff": true,
             "maxRecommendedHandoffChars": null,
         },
         "checkpointing": {

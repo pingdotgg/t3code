@@ -10,13 +10,17 @@
 //! the start it abandons still runs, where T3 signals the running effect's cancellation instead,
 //! and `RemoteTaskChanged` only wakes a follower.
 //!
-//! What a server process left `pending` or `running` when it stopped is cancelled at the next
-//! start ([`Store::cancel_unsettled_effects`]); the restart decides again from the stored runs.
+//! What a server process left `pending` or `running` when it stopped is reconciled at the next
+//! start (`reconcileAfterProcessLoss`): see [`PROCESS_BOUND`].
+//!
+//! A rollback keeps its phase in its row's `progress` (`rollback.rs`): T3 has no such journal;
+//! it lets a restart tell whether the provider was asked to roll back.
 
 use rusqlite::{Connection, params};
+use serde_json::{Value, json};
 
 use crate::commands::Effect;
-use crate::store::{NOT_OWNER, Store, StoreResult, Tx, owns};
+use crate::store::{Lease, NOT_OWNER, Store, StoreResult, Tx, lease_guard, owns};
 
 /// The outbox table. `progress` is what a running effect recorded so a later process can go on
 /// from there (a rollback's phase and the provider's answer).
@@ -43,6 +47,13 @@ WHERE status IN ('pending', 'running');
 -- Retention.
 CREATE INDEX IF NOT EXISTS effect_outbox_settled ON effect_outbox(completed_at)
 WHERE status IN ('succeeded', 'cancelled');
+-- The settlements whose settle script started. A settle close a restart runs again finds its
+-- row and starts no second script.
+CREATE TABLE IF NOT EXISTS settle_scripts (
+  thread_id  TEXT NOT NULL,
+  settled_at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, settled_at)
+);
 ";
 
 /// `SETTLED_EFFECT_RETENTION`: settled rows are kept 7 days. Failed rows stay, as in T3.
@@ -71,6 +82,20 @@ impl Lane {
         }
     }
 }
+
+/// `PROCESS_BOUND_EFFECT_TYPES`: effects that act on a provider session of the process that
+/// made them. After a process loss they are cancelled, and the restart decides again from the
+/// stored runs (`restart.rs`). Every other effect is replay-safe and runs again
+/// (`REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`).
+pub(crate) const PROCESS_BOUND: [&str; 7] = [
+    "provider-turn.start",
+    "provider-turn.steer",
+    "provider-turn.interrupt",
+    "provider-turn.abandon-start",
+    "provider-turn.stop-background-work",
+    "runtime-request.respond",
+    "provider-session.apply-model-selection",
+];
 
 impl Effect {
     /// The row's `effect_type`: T3's name where T3 has the effect.
@@ -128,6 +153,18 @@ impl Effect {
 pub(crate) struct Claimed {
     pub(crate) id: i64,
     pub(crate) effect: Effect,
+    /// What the effect recorded before a previous process stopped (`progress`).
+    pub(crate) progress: Option<Value>,
+}
+
+/// A rollback row a previous process left unsettled, with the phase it recorded.
+#[derive(Debug, PartialEq)]
+pub(crate) struct UnsettledRollback {
+    pub(crate) command_id: String,
+    pub(crate) thread_id: String,
+    /// `admitted` when the row recorded none.
+    pub(crate) phase: String,
+    pub(crate) snapshot: Option<Value>,
 }
 
 /// How an effect ended.
@@ -195,7 +232,112 @@ WHERE candidate.status = 'pending'
 ORDER BY candidate.id
 LIMIT ?1";
 
+/// The unsettled row of rollback `?2` on thread `?1`. Rows match on the payload's command id:
+/// a rollback the previous build enqueued again at start has no outer `command_id`.
+const ROLLBACK_ROW: &str = "thread_id = ?1 AND effect_type = 'provider-thread.rollback'
+  AND status IN ('pending', 'running') AND json_extract(payload, '$.commandId') = ?2";
+
 impl Tx<'_> {
+    /// Whether the run's `provider-turn.start` returned: `Some(true)` when one of its start rows
+    /// settled after running, `Some(false)` when it has rows and none did (a start the previous
+    /// process was running is cancelled at start), `None` when it has none (an older store).
+    pub(crate) fn start_settled(&self, run_id: &str) -> StoreResult<Option<bool>> {
+        self.sql()
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(status IN ('succeeded', 'failed')), 0)
+                 FROM effect_outbox
+                 WHERE effect_type = 'provider-turn.start'
+                   AND json_extract(payload, '$.runId') = ?1",
+                [run_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map(|(rows, settled)| (rows > 0).then_some(settled > 0))
+            .map_err(err)
+    }
+
+    /// Settles a rollback's row as `outcome`, with `error`, in the write that records its
+    /// result, so a restart after that commit never runs it again and a failure stays on
+    /// record (pruning takes only succeeded rows). Only this write settles a rollback row: the
+    /// worker leaves it alone (`effect_worker.rs`).
+    pub(crate) fn settle_rollback(
+        &self,
+        thread_id: &str,
+        command_id: &str,
+        outcome: Settled,
+        error: Option<&str>,
+    ) -> StoreResult<()> {
+        self.sql()
+            .execute(
+                &format!(
+                    "UPDATE effect_outbox SET status = ?3, completed_at = ?4, updated_at = ?4,
+                       last_error = ?5
+                     WHERE {ROLLBACK_ROW}"
+                ),
+                params![thread_id, command_id, outcome.as_str(), self.now(), error],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// How many rows of `command_id` a worker claimed: a restart's resends of one prompt.
+    pub(crate) fn resends(&self, command_id: &str) -> StoreResult<usize> {
+        self.sql()
+            .query_row(
+                "SELECT COUNT(*) FROM effect_outbox WHERE command_id = ?1 AND attempt_count > 0",
+                [command_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n.max(0) as usize)
+            .map_err(err)
+    }
+
+    /// The run's end (the parent's wake) is written already: its capture row says so in
+    /// `progress`, which a replay of that row keeps. A run with no capture row had its end
+    /// written by `end_run`.
+    pub(crate) fn run_end_recorded(&self, run_id: &str) -> StoreResult<bool> {
+        self.sql()
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM effect_outbox
+                   WHERE effect_type = 'checkpoint.capture'
+                     AND json_extract(payload, '$.runId') = ?1)
+                 OR EXISTS(SELECT 1 FROM effect_outbox
+                   WHERE effect_type = 'checkpoint.capture'
+                     AND json_extract(payload, '$.runId') = ?1
+                     AND json_extract(progress, '$.runEnded') = 1)",
+                [run_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
+    /// Marks the run's capture row: its end is written, in this transaction.
+    pub(crate) fn record_run_end(&self, run_id: &str) -> StoreResult<()> {
+        self.sql()
+            .execute(
+                "UPDATE effect_outbox
+                 SET progress = json_set(COALESCE(progress, '{}'), '$.runEnded', json('true'))
+                 WHERE effect_type = 'checkpoint.capture'
+                   AND json_extract(payload, '$.runId') = ?1
+                   AND status IN ('pending', 'running')",
+                [run_id],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// An unsettled `checkpoint.capture` row for this run: the restart leaves the capture to it.
+    pub(crate) fn capture_queued(&self, run_id: &str) -> StoreResult<bool> {
+        self.sql()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM effect_outbox
+                 WHERE effect_type = 'checkpoint.capture' AND status IN ('pending', 'running')
+                   AND json_extract(payload, '$.runId') = ?1)",
+                [run_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
     /// Writes `effects` to the outbox in this transaction. The worker hears of them once it
     /// commits; a rolled back write leaves nothing.
     pub(crate) fn enqueue(
@@ -250,7 +392,7 @@ impl Store {
                      SET status = 'running', attempt_count = attempt_count + 1,
                          updated_at = ?2, last_error = NULL
                      WHERE id IN ({CLAIMABLE})
-                     RETURNING id, effect_type, payload"
+                     RETURNING id, effect_type, payload, progress"
                 ))
                 .map_err(err)?;
             let rows = stmt
@@ -259,6 +401,7 @@ impl Store {
                         row.get::<_, i64>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 })
                 .map_err(err)?
@@ -266,9 +409,13 @@ impl Store {
                 .map_err(err)?;
             let mut claimed = vec![];
             let mut unreadable = false;
-            for (id, effect_type, payload) in rows {
+            for (id, effect_type, payload, progress) in rows {
                 match serde_json::from_str::<Effect>(&payload) {
-                    Ok(effect) => claimed.push(Claimed { id, effect }),
+                    Ok(effect) => claimed.push(Claimed {
+                        id,
+                        effect,
+                        progress: progress.and_then(|p| serde_json::from_str(&p).ok()),
+                    }),
                     Err(e) => {
                         eprintln!("conn-engine: failing effect {id} ({effect_type}): {e}");
                         self.settle_effect(
@@ -318,21 +465,19 @@ impl Store {
                 Some("injected settlement fault".into()),
             ));
         }
-        let epoch = match self.owner() {
-            None => None,
-            Some(owner) => match owner.epoch() {
-                Some(epoch) => Some(epoch),
-                None => return Ok(false),
-            },
-        };
+        let lease = self.lease();
+        if matches!(lease, Lease::Released) {
+            return Ok(false);
+        }
         let now = self.now_iso();
         let changed = self.raw().execute(
-            "UPDATE effect_outbox
-             SET status = ?2, completed_at = ?3, updated_at = ?3, last_error = ?4
-             WHERE id = ?1 AND status = 'running'
-               AND (?5 IS NULL
-                    OR ?5 = (SELECT value FROM meta WHERE key = 'engine_epoch'))",
-            params![id, status.as_str(), now, error, epoch],
+            &format!(
+                "UPDATE effect_outbox
+                 SET status = ?2, completed_at = ?3, updated_at = ?3, last_error = ?4
+                 WHERE id = ?1 AND status = 'running' AND {}",
+                lease_guard(5)
+            ),
+            params![id, status.as_str(), now, error, lease.guard()],
         )?;
         Ok(changed == 1)
     }
@@ -357,12 +502,28 @@ impl Store {
             .map_err(err)
     }
 
-    /// Cancels what a previous process left `pending` or `running`, at start, before anything
-    /// is claimed. Returns how many rows it cancelled. The ownership check and the cancel are
-    /// one transaction: an engine whose open a newer one overtook gets [`NOT_OWNER`] and must
-    /// not go on, or it would cancel the newer engine's rows.
-    pub(crate) fn cancel_unsettled_effects(&self) -> StoreResult<usize> {
+    /// `reconcileAfterProcessLoss`, at start, before anything is claimed. A process-bound
+    /// row the previous process left unsettled is cancelled; a replay-safe row it was running
+    /// becomes pending again and runs once more. With `replay` off (an inert copy, no
+    /// recovery) every unsettled row is cancelled. Returns `(requeued, cancelled)`.
+    ///
+    /// The ownership check and the writes are one transaction: an engine whose open a newer
+    /// one overtook gets [`NOT_OWNER`] and must not go on, or it would cancel the newer
+    /// engine's rows.
+    pub(crate) fn reconcile_after_process_loss(&self, replay: bool) -> StoreResult<(usize, usize)> {
         let now = self.now_iso();
+        let bound = if replay {
+            format!(
+                "effect_type IN ({})",
+                PROCESS_BOUND
+                    .iter()
+                    .map(|t| format!("'{t}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            "1 = 1".to_owned()
+        };
         let tx = rusqlite::Transaction::new_unchecked(
             self.raw(),
             rusqlite::TransactionBehavior::Immediate,
@@ -371,17 +532,204 @@ impl Store {
         if !owns(&tx, self.owner())? {
             return Err(NOT_OWNER.into());
         }
+        // Only the owner migrates, inside its own write: a stale opener leaves the journal.
+        self.migrate_pending_rollbacks(&tx)?;
         let cancelled = tx
             .execute(
+                &format!(
+                    "UPDATE effect_outbox
+                     SET status = 'cancelled', completed_at = ?1, updated_at = ?1,
+                         last_error = 'Cancelled because the server process ended before the effect completed.'
+                     WHERE status IN ('pending', 'running') AND {bound}"
+                ),
+                [&now],
+            )
+            .map_err(err)?;
+        let requeued = tx
+            .execute(
                 "UPDATE effect_outbox
-                 SET status = 'cancelled', completed_at = ?1, updated_at = ?1,
-                     last_error = 'Cancelled because the server process ended before the effect completed.'
-                 WHERE status IN ('pending', 'running')",
-                [now],
+                 SET status = 'pending', updated_at = ?1,
+                     last_error = 'Requeued after the previous server process ended.'
+                 WHERE status = 'running'",
+                [&now],
             )
             .map_err(err)?;
         tx.commit().map_err(err)?;
-        Ok(cancelled)
+        Ok((requeued, cancelled))
+    }
+
+    /// Moves the rollbacks an older build kept in `pending_rollbacks` into the outbox, then
+    /// drops that table, in `tx`: the start's write, after it checked ownership. That build may
+    /// have left rows of its own, so each
+    /// journal entry is reconciled with them, matched on the payload's command id:
+    /// - an unsettled row takes the entry's phase, and no second row is written;
+    /// - an entry with no unsettled row becomes a row the previous process was running;
+    /// - an unsettled row with no entry committed its result already (the result cleared the
+    ///   entry), so it settles and never runs again.
+    fn migrate_pending_rollbacks(&self, tx: &Connection) -> StoreResult<()> {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_rollbacks')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        if !exists {
+            return Ok(());
+        }
+        let now = self.now_iso();
+        tx.execute_batch(
+            "CREATE TEMP VIEW legacy_rollback_rows AS
+               SELECT id, json_extract(payload, '$.commandId') AS rollback_id FROM effect_outbox
+               WHERE effect_type = 'provider-thread.rollback' AND status IN ('pending', 'running');",
+        )
+        .map_err(err)?;
+        tx.execute(
+            "INSERT INTO effect_outbox (command_id, thread_id, lane, effect_type, payload, status,
+               progress, created_at, updated_at)
+             SELECT command_id, thread_id, 'thread', 'provider-thread.rollback',
+               json_object('type', 'provider-thread.rollback', 'threadId', thread_id,
+                 'commandId', command_id,
+                 'providerThreadId', json_extract(request, '$.providerThreadId'),
+                 'checkpointId', json_extract(request, '$.checkpointId'),
+                 'scopeId', json_extract(request, '$.scopeId'),
+                 'restoreFiles', json(request -> '$.restoreFiles')),
+               'running',
+               CASE WHEN phase = 'admitted' THEN NULL
+                    ELSE json_object('phase', phase, 'snapshot', json(snapshot)) END,
+               ?1, ?1
+             FROM pending_rollbacks AS journal
+             WHERE NOT EXISTS (SELECT 1 FROM legacy_rollback_rows
+                               WHERE rollback_id = journal.command_id)
+             ORDER BY rowid",
+            [&now],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "UPDATE effect_outbox SET updated_at = ?1,
+               progress = (SELECT CASE WHEN phase = 'admitted' THEN NULL
+                                  ELSE json_object('phase', phase, 'snapshot', json(snapshot)) END
+                           FROM pending_rollbacks
+                           WHERE command_id = json_extract(effect_outbox.payload, '$.commandId'))
+             WHERE id IN (SELECT id FROM legacy_rollback_rows
+                          WHERE rollback_id IN (SELECT command_id FROM pending_rollbacks))",
+            [&now],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "UPDATE effect_outbox
+             SET status = 'succeeded', completed_at = ?1, updated_at = ?1,
+                 last_error = 'Its result was committed before the upgrade.'
+             WHERE id IN (SELECT id FROM legacy_rollback_rows
+                          WHERE rollback_id NOT IN (SELECT command_id FROM pending_rollbacks))",
+            [&now],
+        )
+        .map_err(err)?;
+        tx.execute_batch("DROP VIEW legacy_rollback_rows; DROP TABLE pending_rollbacks;")
+            .map_err(err)
+    }
+
+    /// Moves a rollback's row from phase `from` to `to` (`provider` once the provider rollback
+    /// is sent, `provider_done` with the provider's answer once it is back), in one write that
+    /// also checks the engine's lease. A row with no phase is `admitted`. `false` when nothing
+    /// moved: another engine owns the store, or the row is not in `from`. A caller then must
+    /// not contact the provider.
+    pub(crate) fn advance_rollback(
+        &self,
+        thread_id: &str,
+        command_id: &str,
+        from: &str,
+        to: &str,
+        snapshot: Option<&Value>,
+    ) -> StoreResult<bool> {
+        let lease = self.lease();
+        if matches!(lease, Lease::Released) {
+            return Ok(false);
+        }
+        let progress = json!({"phase": to, "snapshot": snapshot});
+        self.raw()
+            .execute(
+                &format!(
+                    "UPDATE effect_outbox SET progress = ?3
+                     WHERE {ROLLBACK_ROW}
+                       AND COALESCE(json_extract(progress, '$.phase'), 'admitted') = ?5
+                       AND {}",
+                    lease_guard(4)
+                ),
+                params![
+                    thread_id,
+                    command_id,
+                    progress.to_string(),
+                    lease.guard(),
+                    from
+                ],
+            )
+            .map(|changed| changed == 1)
+            .map_err(err)
+    }
+
+    /// Unsettled rollbacks with the phase each recorded, in commit order.
+    pub(crate) fn unsettled_rollbacks(&self) -> StoreResult<Vec<UnsettledRollback>> {
+        let mut stmt = self
+            .raw()
+            .prepare(
+                "SELECT json_extract(payload, '$.commandId'), thread_id, progress FROM effect_outbox
+                 WHERE effect_type = 'provider-thread.rollback' AND status IN ('pending', 'running')
+                 ORDER BY id",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(err)?;
+        let mut out = vec![];
+        for row in rows {
+            let (command_id, thread_id, progress) = row.map_err(err)?;
+            let progress: Value = progress
+                .and_then(|p| serde_json::from_str(&p).ok())
+                .unwrap_or(Value::Null);
+            let phase = progress["phase"].as_str().unwrap_or("admitted").to_owned();
+            let snapshot = Some(progress["snapshot"].clone()).filter(|s| !s.is_null());
+            out.push(UnsettledRollback {
+                command_id: command_id.unwrap_or_default(),
+                thread_id,
+                phase,
+                snapshot,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Records that the settle script of `thread_id`'s settlement `settled_at` starts: `true`
+    /// the first time, `false` when this or an earlier process recorded it already.
+    pub(crate) fn claim_settle_script(
+        &self,
+        thread_id: &str,
+        settled_at: &str,
+    ) -> StoreResult<bool> {
+        let tx = rusqlite::Transaction::new_unchecked(
+            self.raw(),
+            rusqlite::TransactionBehavior::Immediate,
+        )
+        .map_err(err)?;
+        if !owns(&tx, self.owner())? {
+            return Err(NOT_OWNER.into());
+        }
+        let taken = tx
+            .execute(
+                "INSERT INTO settle_scripts (thread_id, settled_at) VALUES (?1, ?2)
+                 ON CONFLICT DO NOTHING",
+                params![thread_id, settled_at],
+            )
+            .map_err(err)?
+            == 1;
+        tx.commit().map_err(err)?;
+        Ok(taken)
     }
 
     /// The status of an outbox row.

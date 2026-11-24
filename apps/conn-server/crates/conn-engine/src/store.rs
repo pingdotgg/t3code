@@ -71,14 +71,15 @@ CREATE TABLE IF NOT EXISTS shell_changes (
   seq  INTEGER PRIMARY KEY,
   item TEXT NOT NULL
 );
--- Final message texts for `searchThreads`, case and accents folded (`fold.rs`). Trigram tokens
+-- Final message texts for `searchThreads` as they read (`readable_search_text`), case and
+-- accents folded (`fold.rs`). Trigram tokens
 -- make LIKE '%q%' an index lookup for queries of three or more characters. `message_keys`
 -- gives each message a stable rowid.
 CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(text, tokenize = 'trigram');
 CREATE TABLE IF NOT EXISTS message_keys (
-  id         INTEGER PRIMARY KEY,
-  thread_id  TEXT NOT NULL,
-  message_id TEXT NOT NULL,
+  id          INTEGER PRIMARY KEY,
+  thread_id   TEXT NOT NULL,
+  message_id  TEXT NOT NULL,
   UNIQUE (thread_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS turn_item_positions (
@@ -98,17 +99,10 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 -- The store's high-water mark reads the newest receipt at open.
 CREATE INDEX IF NOT EXISTS receipts_by_sequence ON receipts(sequence);
--- Rollbacks admitted and not yet committed or failed, so a restart can finish them (T3 keeps
--- `provider-thread.rollback` in its effect outbox). `phase`: `admitted`; `provider`, the
--- provider rollback was sent; `provider_done`, its answer is in `snapshot`.
-CREATE TABLE IF NOT EXISTS pending_rollbacks (
-  command_id TEXT PRIMARY KEY,
-  thread_id  TEXT NOT NULL,
-  request    TEXT NOT NULL,
-  phase      TEXT NOT NULL,
-  snapshot   TEXT
-);
 ";
+
+/// A command's receipt: a key lookup, never a scan of the event log.
+pub(crate) const RECEIPT_SQL: &str = "SELECT sequence, owner_kind, owner_id, error, command_type FROM receipts WHERE command_id = ?1";
 
 /// A thread's turn items in timeline order; served by `turn_items_in_order`.
 pub(crate) const TRANSCRIPT_ITEMS_SQL: &str =
@@ -153,15 +147,6 @@ fn fork_marker(thread: &Value, source_id: &str, run_id: &str) -> Value {
         "source": {"type": "run", "threadId": source_id, "runId": run_id},
         "targetThreadId": id,
     })
-}
-
-/// A rollback a previous process left pending (`pending_rollbacks`).
-pub(crate) struct PendingRollback {
-    pub(crate) command_id: String,
-    pub(crate) thread_id: String,
-    pub(crate) request: Value,
-    pub(crate) phase: String,
-    pub(crate) snapshot: Option<Value>,
 }
 
 /// The projection collections of `OrchestrationV2ThreadProjection`, in its field order.
@@ -223,6 +208,8 @@ fn streams_only(event_type: &str, payload: &Value) -> bool {
 }
 
 pub(crate) type StoreResult<T> = Result<T, String>;
+/// A committed command or run event: `(sequence, thread id, event)`.
+pub(crate) type CommandEvent = (u64, String, Value);
 
 /// Shell changes kept for resuming streams. An older cursor gets a fresh snapshot instead.
 pub(crate) const SHELL_CHANGES_KEEP: i64 = 1024;
@@ -238,6 +225,44 @@ fn err(e: rusqlite::Error) -> String {
 }
 
 /// A stored JSON column. The engine wrote it, so bad JSON is a broken store, not a value.
+/// The shell fields worktree cleanup reads; the rest is dropped as each row is read.
+fn cleanup_fields(mut shell: Value) -> Value {
+    const KEPT: [&str; 25] = [
+        "id",
+        "projectId",
+        "title",
+        "branch",
+        "worktreePath",
+        "lineage",
+        "status",
+        "activeRunId",
+        "pendingBackgroundTasks",
+        "pendingRuntimeRequest",
+        "latestUserMessageAt",
+        "latestRunId",
+        "latestRunRequestedAt",
+        "latestRunStartedAt",
+        "latestRunCompletedAt",
+        "createdAt",
+        "updatedAt",
+        "archivedAt",
+        "settledAt",
+        "settledOverride",
+        "pinnedAt",
+        "lastErrorClass",
+        "usageLimitResetAt",
+        "limitRecovery",
+        "deletedAt",
+    ];
+    match shell.as_object_mut() {
+        Some(map) => {
+            map.retain(|key, _| KEPT.contains(&key.as_str()));
+            shell
+        }
+        None => Value::Null,
+    }
+}
+
 fn parse(text: String) -> StoreResult<Value> {
     serde_json::from_str(&text).map_err(|e| format!("store: a stored row is not JSON: {e}"))
 }
@@ -585,6 +610,52 @@ impl Store {
         refuse(&self.conn, key, refusal)
     }
 
+    /// Whether `command_id` was an accepted `message.dispatch` for `thread_id` that made a run:
+    /// the proof of a launch's first message (T3: "Initial message was accepted without a
+    /// durable run"). Both reads are key lookups.
+    pub(crate) fn accepted_first_message(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+    ) -> StoreResult<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM receipts WHERE command_id = ?1
+                     AND command_type = 'message.dispatch' AND owner_kind = 'thread'
+                     AND owner_id = ?2 AND error IS NULL)
+                 AND EXISTS(SELECT 1 FROM events WHERE command_id = ?1 AND thread_id = ?2
+                     AND type = 'run.created')",
+                params![command_id, thread_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
+    /// The checkout a launch's claim recorded: the `worktreePath` of the thread event that
+    /// `command_id` wrote on `thread_id` (`thread.created`, or the reuse claim's
+    /// `thread.metadata-updated`). `None` when no such event exists. Reads the thread's own
+    /// events, through `events_by_thread`.
+    pub(crate) fn claimed_checkout(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+    ) -> StoreResult<Option<Value>> {
+        let event: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT event FROM events WHERE thread_id = ?2 AND command_id = ?1
+                   AND type IN ('thread.created', 'thread.metadata-updated')
+                 ORDER BY seq LIMIT 1",
+                params![command_id, thread_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        event
+            .map(|event| parse(event).map(|e| e["payload"]["worktreePath"].clone()))
+            .transpose()
+    }
+
     pub(crate) fn created_run_status(&self, command_id: &str) -> StoreResult<Option<String>> {
         let event: Option<String> = self.conn.query_row(
             "SELECT event FROM events WHERE command_id = ?1 AND type = 'run.created' ORDER BY seq DESC LIMIT 1",
@@ -640,6 +711,82 @@ impl Store {
             "archivedThreads": [],
             "projects": projects,
         }))
+    }
+
+    /// What worktree cleanup weighs (T3 `storageCleanup.ts`): the shells of live and archived
+    /// threads, and deleted threads that had a worktree and a branch, each
+    /// with its project's root as `workspaceRoot`.
+    pub(crate) fn cleanup_threads(&self) -> StoreResult<(Vec<Value>, Vec<Value>)> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT shell FROM threads WHERE deleted = 0 AND shell IS NOT NULL ORDER BY rowid",
+            )
+            .map_err(err)?;
+        let live = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .map(|row| row.map_err(err).and_then(parse).map(cleanup_fields))
+            .collect::<StoreResult<Vec<Value>>>()?;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT p.workspace_root, t.thread FROM threads t JOIN projects p ON p.id = t.project_id
+                 WHERE t.deleted = 1 AND json_extract(t.thread, '$.worktreePath') IS NOT NULL
+                   AND json_extract(t.thread, '$.branch') IS NOT NULL ORDER BY t.rowid",
+            )
+            .map_err(err)?;
+        let deleted = keyed_rows(
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(err)?,
+        )?
+        .into_iter()
+        .map(|(root, thread)| {
+            let mut thread = cleanup_fields(thread);
+            thread["workspaceRoot"] = Value::String(root);
+            thread
+        })
+        .collect();
+        Ok((live, deleted))
+    }
+
+    /// `getThreadWorktreePaths`: each live thread with a stored worktree path.
+    pub(crate) fn worktree_bindings(&self) -> StoreResult<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, json_extract(shell, '$.worktreePath') FROM threads
+                 WHERE deleted = 0 AND shell IS NOT NULL
+                   AND json_extract(shell, '$.worktreePath') IS NOT NULL ORDER BY rowid",
+            )
+            .map_err(err)?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(err)?
+            .map(|row| row.map_err(err))
+            .collect()
+    }
+
+    /// The cleanup fields of the live shells of `ids` (`getThreadShell`).
+    pub(crate) fn cleanup_shells(&self, ids: &[String]) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT shell FROM threads WHERE id = ?1 AND deleted = 0 AND shell IS NOT NULL",
+            )
+            .map_err(err)?;
+        let mut shells = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(text) = stmt
+                .query_row([id], |row| row.get::<_, String>(0))
+                .optional()
+                .map_err(err)?
+            {
+                shells.push(cleanup_fields(parse(text)?));
+            }
+        }
+        Ok(shells)
     }
 
     pub(crate) fn projects_snapshot(&self) -> StoreResult<Vec<Value>> {
@@ -861,6 +1008,206 @@ impl Store {
         Ok(Some((Value::Object(projection), omitted)))
     }
 
+    /// The control projection of a live thread (no `messages`, `turnItems` or
+    /// `visibleTurnItems`) and its timeline index: each visible row's selection fields and
+    /// size, read one body at a time (`history::IndexRows`). `None` for an unknown or deleted
+    /// thread.
+    fn timeline_index(&self, thread_id: &str) -> StoreResult<Option<(Value, Vec<Value>)>> {
+        let Some((thread, activity_at)) = self.live_thread(thread_id)? else {
+            return Ok(None);
+        };
+        let mut projection = serde_json::Map::new();
+        projection.insert("thread".into(), thread.clone());
+        // Nodes, provider turns and subagents grow with every turn; a window reads its
+        // cohort's only.
+        for kind in COLLECTIONS {
+            if !matches!(
+                kind,
+                "turnItems" | "messages" | "nodes" | "providerTurns" | "subagents"
+            ) {
+                projection.insert(
+                    kind.into(),
+                    Value::Array(entities(&self.conn, thread_id, kind)?),
+                );
+            }
+        }
+        projection.insert("updatedAt".into(), Value::String(activity_at));
+        let mut index = crate::history::IndexRows::default();
+        self.inherited_rows(&thread, &mut index)?;
+        let rows = |kind: &str| {
+            projection
+                .get(kind)
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice)
+        };
+        let rule = self.visibility(thread_id, rows("runs"), rows("attempts"))?;
+        self.transcript_rows(thread_id, "local", &mut index, |item| rule.shows(item))?;
+        Ok(Some((Value::Object(projection), index.0)))
+    }
+
+    /// Index rows with their stored items in place (T3's `materializeHistoryRows`).
+    fn materialize_rows(&self, rows: Vec<Value>) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems' AND id = ?2",
+            )
+            .map_err(err)?;
+        rows.into_iter()
+            .map(|mut row| {
+                if !crate::history::is_generated(&row["item"]) {
+                    let source = row["sourceThreadId"].as_str().unwrap_or_default();
+                    let id = row["sourceItemId"].as_str().unwrap_or_default();
+                    let body: String = stmt
+                        .query_row(params![source, id], |r| r.get(0))
+                        .map_err(err)?;
+                    row["item"] = parse(body)?;
+                }
+                Ok(row)
+            })
+            .collect()
+    }
+
+    /// `buildBoundedThreadProjection` on indexed reads: the newest window of the thread and
+    /// what it needs, with only the window's bodies, the open requests and the kept messages
+    /// read. `None` for an unknown or deleted thread.
+    pub(crate) fn bounded_thread(
+        &self,
+        thread_id: &str,
+        sequence: u64,
+    ) -> StoreResult<Option<crate::history::Bounded>> {
+        use crate::history;
+        let Some((control, index)) = self.timeline_index(thread_id)? else {
+            return Ok(None);
+        };
+        let pending = history::pending_request_ids(&control);
+        let dependencies: Vec<Value> = self
+            .query_json(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+                 AND json_extract(body, '$.type') IN
+                   ('run_interrupt_request', 'user_input_request', 'approval_request')
+                 ORDER BY ordinal, id",
+                [thread_id],
+            )?
+            .into_iter()
+            .filter(|item| history::is_retained_dependency(item, &pending))
+            .collect();
+        let window = history::select_window(&control, &index, &dependencies, sequence);
+        drop(index);
+        let mut control = control;
+        let cohort = history::cohort_runs(&control, &window.rows);
+        history::keep_cohort(&mut control, &cohort);
+        let attempts: Vec<Value> = control["attempts"]
+            .as_array()
+            .map(|rows| rows.iter().map(|a| a["id"].clone()).collect())
+            .unwrap_or_default();
+        let nodes = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'nodes' AND (
+               json_extract(body, '$.runId') IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.status') IN ('pending', 'starting', 'running', 'waiting'))
+             ORDER BY first_seq",
+            params![thread_id, Value::from(cohort.clone()).to_string()],
+        )?;
+        let provider_turns = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'providerTurns' AND (
+               json_extract(body, '$.runAttemptId') IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.status') IN ('starting', 'running', 'waiting'))
+             ORDER BY first_seq",
+            params![thread_id, Value::from(attempts).to_string()],
+        )?;
+        // T3's windowed subagent read: the live ones, and those of the cohort's runs and nodes.
+        let node_ids: Vec<Value> = nodes.iter().map(|node| node["id"].clone()).collect();
+        let subagents = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'subagents' AND (
+               json_extract(body, '$.status') IN ('pending', 'starting', 'running', 'waiting')
+               OR json_extract(body, '$.runId') IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.parentNodeId') IN (SELECT value FROM json_each(?3)))
+             ORDER BY first_seq",
+            params![
+                thread_id,
+                Value::from(cohort).to_string(),
+                Value::from(node_ids).to_string()
+            ],
+        )?;
+        control["nodes"] = Value::Array(nodes);
+        control["providerTurns"] = Value::Array(provider_turns);
+        if let Value::Object(map) = &mut control {
+            map.insert("subagents".into(), Value::Array(subagents));
+            self.add_subagent_provider_threads(map)?;
+        }
+        let rows = self.materialize_rows(window.rows)?;
+        let turn_items = history::window_turn_items(&control["thread"]["id"], &rows, dependencies);
+        let (message_ids, run_ids) = history::message_scope(&control, &turn_items);
+        let mut messages = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'messages' AND (
+               id IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.runId') IN (SELECT value FROM json_each(?3))
+               OR json_extract(body, '$.delegatedCompletion') IS NOT NULL
+               OR json_extract(body, '$.workflowScript') = 1)
+             ORDER BY first_seq",
+            params![
+                thread_id,
+                Value::from(message_ids).to_string(),
+                Value::from(run_ids).to_string()
+            ],
+        )?;
+        sort_messages_by_turn_items(&mut messages, &turn_items);
+        let latest_local_turn_ordinal = self
+            .conn
+            .query_row(
+                "SELECT MAX(ordinal) FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'",
+                [thread_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(err)?
+            .and_then(|n| u64::try_from(n).ok());
+        Ok(Some(history::Bounded {
+            projection: history::finish(control, rows, turn_items, messages),
+            history_cursor: window.next_cursor,
+            has_more_history: window.has_more_history,
+            latest_local_turn_ordinal,
+        }))
+    }
+
+    /// `getThreadHistoryPage` on indexed reads: only the page's bodies are read. `None` for an
+    /// unknown or deleted thread.
+    pub(crate) fn history_page(
+        &self,
+        thread_id: &str,
+        sequence: u64,
+        cursor: &crate::history::Cursor,
+        through_entry_id: Option<&str>,
+        conversation_only: bool,
+    ) -> StoreResult<Option<Value>> {
+        use crate::history;
+        let Some((_, index)) = self.timeline_index(thread_id)? else {
+            return Ok(None);
+        };
+        let mut page = history::page_rows(
+            &index,
+            sequence,
+            cursor,
+            through_entry_id,
+            conversation_only,
+        );
+        drop(index);
+        page.rows = self.materialize_rows(std::mem::take(&mut page.rows))?;
+        let ids: Vec<Value> = page
+            .rows
+            .iter()
+            .filter(|row| row["item"]["type"] == "subagent")
+            .map(|row| row["item"]["subagentId"].clone())
+            .collect();
+        let subagents = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'subagents'
+             AND id IN (SELECT value FROM json_each(?2)) ORDER BY first_seq",
+            params![thread_id, Value::from(ids).to_string()],
+        )?;
+        Ok(Some(history::page_body(
+            thread_id, sequence, page, &subagents,
+        )))
+    }
+
     /// `GET /api/orchestration/threads/:threadId/transcript`, encoded: the thread's visible
     /// turn items read one at a time in timeline order, written straight into the JSON body.
     /// It stops at the first row that would make the file the client builds (the header line
@@ -888,13 +1235,7 @@ impl Store {
         if !out.fits() {
             return Ok(ThreadTranscript::TooLarge);
         }
-        if !self.inherited_rows(&thread, &mut out)? {
-            return Ok(ThreadTranscript::TooLarge);
-        }
-        let runs = entities(&self.conn, thread_id, "runs")?;
-        let attempts = entities(&self.conn, thread_id, "attempts")?;
-        let rule = self.visibility(thread_id, &runs, &attempts)?;
-        if !self.transcript_rows(thread_id, "local", &mut out, |item| rule.shows(item))? {
+        if !self.visible_rows(&thread, &mut out)? {
             return Ok(ThreadTranscript::TooLarge);
         }
         Ok(ThreadTranscript::Body(out.finish(
@@ -902,6 +1243,19 @@ impl Store {
             title,
             &updated_at,
         )?))
+    }
+
+    /// A thread's visible timeline rows, read one at a time into `out`: what a run fork
+    /// inherits, then the thread's own visible rows. `false` when the sink is full.
+    pub(crate) fn visible_rows(&self, thread: &Value, out: &mut impl RowSink) -> StoreResult<bool> {
+        if !self.inherited_rows(thread, out)? {
+            return Ok(false);
+        }
+        let thread_id = thread["id"].as_str().unwrap_or_default();
+        let runs = entities(&self.conn, thread_id, "runs")?;
+        let attempts = entities(&self.conn, thread_id, "attempts")?;
+        let rule = self.visibility(thread_id, &runs, &attempts)?;
+        self.transcript_rows(thread_id, "local", out, |item| rule.shows(item))
     }
 
     /// The rows a run fork that is not a side chat shows before its own, as T3's
@@ -924,7 +1278,7 @@ impl Store {
     }
 
     /// The thread record and `activity_at` of a thread that is not deleted.
-    fn live_thread(&self, thread_id: &str) -> StoreResult<Option<(Value, String)>> {
+    pub(crate) fn live_thread(&self, thread_id: &str) -> StoreResult<Option<(Value, String)>> {
         let row = self
             .conn
             .query_row(
@@ -1166,6 +1520,45 @@ impl Store {
         Ok(rows)
     }
 
+    /// Committed `command_execution` item updates and run updates of every thread after
+    /// `after`, at most `limit`, as `(sequence, thread id, event)`, and the sequence the read
+    /// covered: the high water for a short page, so rows that match nothing are read once.
+    pub(crate) fn command_events_after(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> StoreResult<(Vec<CommandEvent>, u64)> {
+        let high = self.high_water();
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT seq, thread_id, event FROM events WHERE seq > ?1 AND seq <= ?3
+                 AND (type = 'run.updated' OR (type = 'turn-item.updated'
+                   AND json_extract(event, '$.payload.type') = 'command_execution'))
+                 ORDER BY seq LIMIT ?2",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![after as i64, limit as i64, high as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(err)?
+            .map(|row| {
+                let (seq, thread_id, text) = row.map_err(err)?;
+                Ok((seq, thread_id, parse(text)?))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
+        let through = match rows.last() {
+            Some((seq, _, _)) if rows.len() == limit => *seq,
+            _ => high.max(after),
+        };
+        Ok((rows, through))
+    }
+
     /// One page of the whole event log after `after`, oldest first, as
     /// `OrchestrationV2StoredEvent` rows (`sequence`, `commandId`, `event`).
     pub(crate) fn stored_events_after(&self, after: u64, limit: usize) -> StoreResult<Vec<Value>> {
@@ -1239,73 +1632,6 @@ impl Store {
         keyed_rows(rows)
     }
 
-    /// Rollbacks admitted and not yet committed or failed, in admission order.
-    pub(crate) fn pending_rollbacks(&self) -> StoreResult<Vec<PendingRollback>> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT command_id, thread_id, request, phase, snapshot FROM pending_rollbacks
-                 ORDER BY rowid",
-            )
-            .map_err(err)?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })
-            .map_err(err)?;
-        rows.map(|row| {
-            let (command_id, thread_id, request, phase, snapshot) = row.map_err(err)?;
-            Ok(PendingRollback {
-                command_id,
-                thread_id,
-                request: parse(request)?,
-                phase,
-                snapshot: snapshot.map(parse).transpose()?,
-            })
-        })
-        .collect()
-    }
-
-    /// Moves a pending rollback from phase `from` to `to`, with the provider's answer for
-    /// `provider_done`, in one write that also checks the engine's lease. `false` when nothing
-    /// moved: another engine owns the store, or the rollback is not in `from`. A caller then
-    /// must not contact the provider.
-    pub(crate) fn advance_rollback(
-        &self,
-        command_id: &str,
-        from: &str,
-        to: &str,
-        snapshot: Option<&Value>,
-    ) -> StoreResult<bool> {
-        let lease = self.lease();
-        if matches!(lease, Lease::Released) {
-            return Ok(false);
-        }
-        self.conn
-            .execute(
-                &format!(
-                    "UPDATE pending_rollbacks SET phase = ?3, snapshot = ?4
-                     WHERE command_id = ?1 AND phase = ?2 AND {}",
-                    lease_guard(5)
-                ),
-                rusqlite::params![
-                    command_id,
-                    from,
-                    to,
-                    snapshot.map(Value::to_string),
-                    lease.guard()
-                ],
-            )
-            .map(|changed| changed == 1)
-            .map_err(err)
-    }
-
     /// Runs that were live when the store was last written: `(thread_id, run)`.
     pub(crate) fn unfinished_runs(&self) -> StoreResult<Vec<(String, Value)>> {
         let mut stmt = self
@@ -1321,6 +1647,22 @@ impl Store {
             })
             .map_err(err)?;
         keyed_rows(rows)
+    }
+
+    /// Threads with a provider-native subagent still open: no process is left to end it.
+    pub(crate) fn threads_with_live_native_subagents(&self) -> StoreResult<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT thread_id FROM entities WHERE kind = 'subagents'
+                 AND json_extract(body, '$.origin') = 'provider_native'
+                 AND json_extract(body, '$.status') IN ('pending','running','waiting')",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
     }
 
     #[cfg(test)]
@@ -1457,6 +1799,11 @@ impl Tx<'_> {
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
     }
 
+    /// Now, in milliseconds since the epoch, as [`Self::now`].
+    pub(crate) fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+
     /// What `command_id`'s receipt recorded, read inside this write.
     pub(crate) fn outcome(&self, command_id: &str) -> StoreResult<Option<Receipt>> {
         receipt_of(&self.tx, command_id)
@@ -1515,6 +1862,50 @@ impl Tx<'_> {
         seq
     }
 
+    /// `attributePendingBackgroundTasks` (`ProjectionStore.ts:915`): adapters resend whole
+    /// rosters without runs, so the projection's copy of a task keeps the run it first appeared
+    /// under: the event's run, else the thread's active run. `None` when nothing changes; the
+    /// event itself keeps the provider's roster.
+    fn attributed_background_tasks(
+        &self,
+        thread_id: &str,
+        payload: &Value,
+        run_id: Option<&str>,
+    ) -> StoreResult<Option<Value>> {
+        let Some(tasks) = payload["pendingBackgroundTasks"].as_array() else {
+            return Ok(None);
+        };
+        if tasks.iter().all(|task| task["runId"].is_string()) {
+            return Ok(None);
+        }
+        let id = payload["id"].as_str().unwrap_or_default();
+        let previous = self.entity(thread_id, "providerThreads", id)?;
+        let known: Vec<(Value, Value)> = previous
+            .as_ref()
+            .and_then(|thread| thread["pendingBackgroundTasks"].as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|task| (task["taskId"].clone(), task["runId"].clone()))
+            .collect();
+        let current = match run_id {
+            Some(run) => Some(Value::String(run.to_owned())),
+            None => crate::commands::active_run(self, thread_id)?.map(|run| run["id"].clone()),
+        };
+        let mut projected = payload.clone();
+        if let Some(tasks) = projected["pendingBackgroundTasks"].as_array_mut() {
+            for task in tasks.iter_mut().filter(|task| !task["runId"].is_string()) {
+                let owner = match known.iter().find(|(id, _)| *id == task["taskId"]) {
+                    Some((_, owner)) => Some(owner.clone()).filter(Value::is_string),
+                    None => current.clone(),
+                };
+                if let Some(owner) = owner {
+                    task["runId"] = owner;
+                }
+            }
+        }
+        Ok(Some(projected))
+    }
+
     /// Appends one domain event and applies it to the projection. Returns its sequence.
     pub(crate) fn append(&mut self, draft: Draft) -> StoreResult<u64> {
         let seq = self.alloc();
@@ -1527,6 +1918,12 @@ impl Tx<'_> {
             command_id,
             provider_instance,
         } = draft;
+        let projected = match event_type {
+            "provider-thread.updated" => {
+                self.attributed_background_tasks(&thread_id, &payload, run_id.as_deref())?
+            }
+            _ => None,
+        };
         let provider_instance_id = match provider_instance {
             Instance::Given(id) => Some(id),
             Instance::Absent => None,
@@ -1594,7 +1991,8 @@ impl Tx<'_> {
                 .execute(
                     "INSERT OR REPLACE INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![thread_id, kind, id, first_seq, seq as i64, ordinal, payload.to_string()],
+                    params![thread_id, kind, id, first_seq, seq as i64, ordinal,
+                        projected.as_ref().unwrap_or(&payload).to_string()],
                 )
                 .map_err(err)?;
         } else if event_type.starts_with("thread.") {
@@ -1914,6 +2312,17 @@ impl Tx<'_> {
             .map_err(err)?
             .map(parse)
             .transpose()
+    }
+
+    /// Whether the thread has any record of `kind`: stops at the first row of the key range.
+    pub(crate) fn has(&self, thread_id: &str, kind: &str) -> StoreResult<bool> {
+        self.tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM entities WHERE thread_id = ?1 AND kind = ?2)",
+                params![thread_id, kind],
+                |row| row.get(0),
+            )
+            .map_err(err)
     }
 
     pub(crate) fn count(&self, thread_id: &str, kind: &str) -> StoreResult<u64> {
@@ -2278,34 +2687,6 @@ impl Tx<'_> {
     /// counter only moves on a commit.
     pub(crate) fn rollback(self) {}
 
-    /// Records an admitted rollback until it commits or fails.
-    pub(crate) fn put_pending_rollback(
-        &self,
-        command_id: &str,
-        thread_id: &str,
-        request: &Value,
-    ) -> StoreResult<()> {
-        self.tx
-            .execute(
-                "INSERT OR REPLACE INTO pending_rollbacks (command_id, thread_id, request, phase)
-                 VALUES (?1, ?2, ?3, 'admitted')",
-                rusqlite::params![command_id, thread_id, request.to_string()],
-            )
-            .map(drop)
-            .map_err(err)
-    }
-
-    /// Forgets a rollback that committed or failed.
-    pub(crate) fn clear_pending_rollback(&self, command_id: &str) -> StoreResult<()> {
-        self.tx
-            .execute(
-                "DELETE FROM pending_rollbacks WHERE command_id = ?1",
-                [command_id],
-            )
-            .map(drop)
-            .map_err(err)
-    }
-
     // Raw access for the shell derivation in `shell.rs`.
     pub(crate) fn conn(&self) -> &Connection {
         &self.tx
@@ -2374,6 +2755,13 @@ fn take_reserved_position(
     Ok(ordinal)
 }
 
+/// Whether `table` has `column`; SQLite compares column names without case.
+fn has_column(conn: &Connection, table: &str, column: &str) -> StoreResult<bool> {
+    conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2 COLLATE NOCASE")
+        .and_then(|mut stmt| stmt.exists([table, column]))
+        .map_err(err)
+}
+
 /// Schema steps beyond `CREATE ... IF NOT EXISTS`, by `PRAGMA user_version`.
 fn migrate(conn: &Connection) -> StoreResult<()> {
     let version: i64 = conn
@@ -2435,30 +2823,90 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
-    if version < 5 {
-        // 5: a receipt names what it answers for and records a refusal (T3's
-        // `CommandReceiptV2`). A receipt from before names no owner, so a retry of it is
-        // refused rather than replayed for a thread nothing proves. One transaction: the
-        // columns and the version land together or not at all.
+    // A store a pre-merge build of the readable-search change wrote is at 6, with
+    // `message_keys.search_text`. The index holds that text now, so the column goes and the
+    // store is 5 again, and main's next step 6 runs on it. The refold below rebuilds its index.
+    let version = if version == 6 && has_column(conn, "message_keys", "search_text")? {
         let tx = conn.unchecked_transaction().map_err(err)?;
         tx.execute_batch(
-            "ALTER TABLE receipts ADD COLUMN owner_kind TEXT;
-             ALTER TABLE receipts ADD COLUMN owner_id TEXT;
-             ALTER TABLE receipts ADD COLUMN error TEXT;
+            "ALTER TABLE message_keys DROP COLUMN search_text;
              PRAGMA user_version = 5;",
         )
         .map_err(err)?;
         tx.commit().map_err(err)?;
+        5
+    } else {
+        version
+    };
+    if version <= 5 {
+        // 5: a receipt names what it answers for and records a refusal (T3's
+        // `CommandReceiptV2`). A receipt from before names no owner, so a retry of it is
+        // refused rather than replayed for a thread nothing proves. A store a pre-merge build
+        // wrote may lack them at 5, so each column is added where it is missing. One
+        // transaction: the columns and the version land together or not at all.
+        let tx = conn.unchecked_transaction().map_err(err)?;
+        for column in ["owner_kind", "owner_id", "error"] {
+            if !has_column(&tx, "receipts", column)? {
+                tx.execute_batch(&format!("ALTER TABLE receipts ADD COLUMN {column} TEXT"))
+                    .map_err(err)?;
+            }
+        }
+        if version < 5 {
+            tx.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
     }
-    // The index holds folded text, so a search without accents finds an accented message
-    // written before the upgrade (T3 indexes with `remove_diacritics`).
+    // The index holds folded text as it reads, so a search without accents finds an accented
+    // message written before the upgrade (T3 indexes `remove_diacritics(readableSearchText)`).
     refold_message_search_once(conn, &mut |event| {
         eprintln!("conn-engine: {}", event.line())
     })?;
     Ok(())
 }
 
-/// Puts the final text of one message into `message_search`, replacing an older version.
+/// `readableSearchText` in T3's `messageSearchIndex.ts`: a message as it reads, a citation as
+/// its text and comment, and a link label without its markdown escapes (a file mention stores
+/// `__init__.py` as `[\_\_init\_\_.py](...)`). `None` when that is the stored text.
+pub(crate) fn readable_search_text(text: &str) -> Option<String> {
+    let plain = crate::citations::to_plain_text(text);
+    let readable = unescape_link_labels(&plain);
+    (readable != text).then_some(readable)
+}
+
+/// T3's `LINK_LABEL` (`(!?\[)([^\]\n]*)(\]\([^)\s]*\))`), with `\*` and `\_` in each label
+/// unescaped.
+fn unescape_link_labels(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('[') {
+        out.push_str(before);
+        out.push('[');
+        // `label](href)`: the label stops at `]` or a line end, the href at `)` or a space.
+        let link = after.find([']', '\n']).and_then(|end| {
+            let label = after.get(..end)?;
+            let tail = after.get(end..)?.strip_prefix("](")?;
+            let end = tail.find(|c: char| c == ')' || c.is_whitespace())?;
+            let href = tail.get(..end)?;
+            let rest = tail.get(end..)?.strip_prefix(')')?;
+            Some((label, href, rest))
+        });
+        match link {
+            Some((label, href, tail)) => {
+                out.push_str(&label.replace("\\*", "*").replace("\\_", "_"));
+                out.push_str("](");
+                out.push_str(href);
+                out.push(')');
+                rest = tail;
+            }
+            None => rest = after,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Puts the final text of one message into `message_search` as it reads, replacing an older
+/// version.
 fn index_message(
     conn: &Connection,
     thread_id: &str,
@@ -2477,11 +2925,19 @@ fn index_message(
             |row| row.get(0),
         )
         .map_err(err)?;
+    write_search_entry(conn, id, text)
+}
+
+/// The index row of the keyed message `id`: its readable text, folded. Every message write
+/// goes through here; the upgrade and the T3 import fold the same way
+/// ([`refold_message_search`]).
+fn write_search_entry(conn: &Connection, id: i64, text: &str) -> StoreResult<()> {
+    let readable = readable_search_text(text);
     conn.execute("DELETE FROM message_search WHERE rowid = ?1", [id])
         .map_err(err)?;
     conn.execute(
         "INSERT INTO message_search (rowid, text) VALUES (?1, ?2)",
-        params![id, crate::fold::fold(text)],
+        params![id, crate::fold::fold(readable.as_deref().unwrap_or(text))],
     )
     .map_err(err)?;
     Ok(())
@@ -2489,9 +2945,10 @@ fn index_message(
 
 /// The fold the search index holds, in the `meta` row `message_search_folded`: 1 was the first
 /// fold, which also took marks off other scripts' letters; 2 lowercased as Rust does; 3 folds
-/// with SQLite's own table, as T3's index (`fold.rs`). A `meta` mark, not a schema version, so
+/// with SQLite's own table, as T3's index (`fold.rs`); 4 folds the message as it reads
+/// ([`readable_search_text`]). A `meta` mark, not a schema version, so
 /// this step composes with versioned steps in any order.
-const MESSAGE_SEARCH_FOLD: i64 = 3;
+const MESSAGE_SEARCH_FOLD: i64 = 4;
 /// Messages between two progress lines of a refold.
 const REFOLD_REPORT_EVERY: u64 = 10_000;
 /// The most text a refold batch holds before it writes, with `REFOLD_BATCH_ROWS` rows at most.
@@ -2583,8 +3040,8 @@ const REFOLD_ROWS_SQL: &str = "SELECT k.id, s.text, COALESCE(json_extract(e.body
        AND e.kind = 'messages' AND e.id = k.message_id
      WHERE k.id > ?1 ORDER BY k.id";
 
-/// Folds every `message_search` text again from its message's text, so an older fold is
-/// rebuilt. It reads rows in id order while their texts fit [`REFOLD_BATCH_BYTES`] and the row
+/// Folds every `message_search` text again from its message's readable text, so an older
+/// fold is rebuilt. It reads rows in id order while their texts fit [`REFOLD_BATCH_BYTES`] and the row
 /// cap, so a store of large messages never holds more than the budget at once. `progress` hears
 /// the messages read so far after each batch. A row whose message is gone keeps its text.
 pub(crate) fn refold_message_search(
@@ -2624,7 +3081,8 @@ pub(crate) fn refold_message_search(
         };
         done += batch.len() as u64;
         for (rowid, stored, text) in batch {
-            let folded = crate::fold::fold(&text);
+            let readable = readable_search_text(&text);
+            let folded = crate::fold::fold(readable.as_deref().unwrap_or(&text));
             if folded != stored {
                 conn.execute(
                     "UPDATE message_search SET text = ?2 WHERE rowid = ?1",
@@ -2707,25 +3165,20 @@ pub(crate) enum StoredOwner {
 
 /// A command's receipt, read on any connection or write.
 fn receipt_of(conn: &Connection, command_id: &str) -> StoreResult<Option<Receipt>> {
-    conn.query_row(
-        "SELECT sequence, owner_kind, owner_id, error, command_type FROM receipts
-         WHERE command_id = ?1",
-        [command_id],
-        |row| {
-            let kind: Option<String> = row.get(1)?;
-            let id: Option<String> = row.get(2)?;
-            Ok(Receipt {
-                sequence: row.get::<_, i64>(0)? as u64,
-                owner: match (kind.as_deref(), id) {
-                    (Some("thread"), Some(id)) => Some(StoredOwner::Thread(id)),
-                    (Some("project"), id) => Some(StoredOwner::Project(id)),
-                    _ => None,
-                },
-                refusal: row.get(3)?,
-                command_type: row.get(4)?,
-            })
-        },
-    )
+    conn.query_row(RECEIPT_SQL, [command_id], |row| {
+        let kind: Option<String> = row.get(1)?;
+        let id: Option<String> = row.get(2)?;
+        Ok(Receipt {
+            sequence: row.get::<_, i64>(0)? as u64,
+            owner: match (kind.as_deref(), id) {
+                (Some("thread"), Some(id)) => Some(StoredOwner::Thread(id)),
+                (Some("project"), id) => Some(StoredOwner::Project(id)),
+                _ => None,
+            },
+            refusal: row.get(3)?,
+            command_type: row.get(4)?,
+        })
+    })
     .optional()
     .map_err(err)
 }
@@ -3172,7 +3625,9 @@ mod tests {
         store
             .conn
             .execute_batch(
-                r#"INSERT INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body) VALUES
+                r#"INSERT INTO threads (id, project_id, activity_at, thread) VALUES
+                 ('t1', 'p1', '2026-01-01T00:00:00.000Z', '{"id":"t1","title":"Fox"}');
+                 INSERT INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body) VALUES
                  ('t1', 'turnItems', 'i1', 1, 1, 1,
                   '{"type":"user_message","status":"completed","text":"one fox, two fox","messageId":"m1","runId":"r1"}'),
                  ('t1', 'turnItems', 'i2', 2, 2, 2,

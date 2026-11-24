@@ -472,32 +472,9 @@ async fn refresh(cwd: &Path, target: &str, previous: Option<&str>) -> Result<boo
     Ok(true)
 }
 
-async fn initialize_submodules(ctx: DiscoveryContext<'_>, cwd: &Path) -> Result<(), Error> {
-    let configured = ctx.settings.worktree_submodules().map(str::to_owned);
-    let path = cwd.join("t3.json");
-    let project = tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(path).ok()?;
-        use std::io::Read;
-        let mut text = String::new();
-        file.take(1_000_000).read_to_string(&mut text).ok()?;
-        serde_json::from_str::<Value>(&text)
-            .ok()?
-            .get("worktreeSubmodules")?
-            .as_str()
-            .map(str::to_owned)
-    })
-    .await
-    .ok()
-    .flatten();
-    let mode = configured.or(project).unwrap_or_else(|| "recursive".into());
-    if mode != "none" {
-        let mut args = vec!["submodule".into(), "update".into(), "--init".into()];
-        if mode != "top-level" {
-            args.push("--recursive".into());
-        }
-        git(cwd, args).await?;
-    }
-    Ok(())
+/// `createWorktree`'s submodule step, shared with every new worktree (`conn_vcs::worktree`).
+async fn initialize_submodules(ctx: DiscoveryContext<'_>, cwd: &Path) {
+    worktree::populate_submodules(cwd, ctx.settings.worktree_submodules()).await;
 }
 
 pub async fn prepare(
@@ -759,7 +736,7 @@ async fn prepare_inner(
             } else {
                 true
             };
-            initialize_submodules(ctx, &worktree.path).await?;
+            initialize_submodules(ctx, &worktree.path).await;
             (
                 Some(worktree.path.to_string_lossy().into_owned()),
                 on_head,

@@ -278,14 +278,30 @@ pub(crate) fn pending_fork(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<V
         }))
 }
 
-/// `decideForkExecution` for a message on a fork: this server forks natively or not at all.
-pub(crate) fn ensure_native_fork(
+/// How a message on a thread with a pending fork runs (`CommandPolicy.decideForkExecution`).
+pub(crate) enum ForkExecution {
+    /// No pending fork, or one the provider forks natively at the first turn.
+    Ready,
+    /// The fork's history goes to the provider as a full handoff; carries the pending
+    /// transfer.
+    Portable(Value),
+}
+
+/// `decideForkExecution`: a native fork when the source turn finished on the same provider
+/// with a strong native thread that can fork from a turn, and no later turn runs on the
+/// source. Otherwise the history travels as a full handoff (`portable_context`), which the
+/// target must accept (`ensureContextHandoff`). A side chat forks natively or not at all:
+/// T3 gives it its own side-chat handoff, which this server does not build.
+pub(crate) fn decide_fork_execution(
     tx: &Tx<'_>,
-    thread_id: &str,
+    thread: &Value,
     instance: &str,
-) -> Result<(), CommandError> {
+    target_capabilities: Option<&Value>,
+    command_id: &str,
+) -> Result<ForkExecution, CommandError> {
+    let thread_id = thread["id"].as_str().unwrap_or_default();
     let Some(transfer) = pending_fork(tx, thread_id)? else {
-        return Ok(());
+        return Ok(ForkExecution::Ready);
     };
     let source_id = transfer["sourceThreadId"].as_str().unwrap_or_default();
     let runs = tx.entities(source_id, "runs")?;
@@ -320,11 +336,17 @@ pub(crate) fn ensure_native_fork(
         && capabilities["threads"]["canForkFromTurn"] == true
         && capabilities["identity"]["nativeThreadIds"] == "strong";
     if native {
-        return Ok(());
+        return Ok(ForkExecution::Ready);
     }
-    reject(
-        "Conn Server carries a fork's history only through a native fork: the same provider, a finished source turn, and no newer turn running on the source. Send the message on the source thread, or fork again.",
-    )
+    if thread["lineage"]["sideChat"] == true || source_run.is_none() {
+        return reject(
+            "Conn Server carries a side chat's history only through a native fork: the same provider, a finished source turn, and no newer turn running on the source. Send the message on the source thread, or fork again.",
+        );
+    }
+    if let Some(capabilities) = target_capabilities {
+        crate::provider_handoff::ensure_context_handoff(capabilities, instance, command_id, true)?;
+    }
+    Ok(ForkExecution::Portable(transfer))
 }
 
 /// What the fork's first turn needs to fork the source natively.

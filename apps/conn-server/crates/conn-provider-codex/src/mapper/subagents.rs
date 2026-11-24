@@ -1282,9 +1282,70 @@ impl<E: Env> Mapper<E> {
     /// Ends a running turn as interrupted without Codex's word, as T3's
     /// `finalizeRemainingInterruptLineage` does for a Stop's lineage.
     pub fn end_interrupted(&mut self, native_turn: &str) -> Vec<Out> {
+        self.end_turn(native_turn, "interrupted")
+    }
+
+    /// Ends a running turn with `status`, as its own `turn/completed` would.
+    pub fn end_turn(&mut self, native_turn: &str, status: &str) -> Vec<Out> {
         let mut out = Vec::new();
         let now = self.env.now();
-        self.finalize(native_turn, "interrupted", now, None, None, &mut out);
+        self.finalize(native_turn, status, now, None, None, &mut out);
+        out
+    }
+
+    /// The child threads of subagents Codex announced that have not settled, whether or not
+    /// their first turn started.
+    pub(super) fn unsettled_children(&self) -> impl Iterator<Item = &String> {
+        self.subagents
+            .iter()
+            .filter(|(_, sub)| active(&sub.task["status"]))
+            .map(|(thread, _)| thread)
+    }
+
+    /// Ends an unsettled subagent that runs no turn here: its node, its child's root node and
+    /// its task end with `status`.
+    pub fn end_idle_child(&mut self, child: &str, status: &str) -> Vec<Out> {
+        let mut out = Vec::new();
+        let now = self.env.now();
+        let Some(sub) = self
+            .subagents
+            .get(child)
+            .filter(|s| active(&s.task["status"]))
+        else {
+            return out;
+        };
+        push_event(
+            &mut out,
+            json!({"type": "node.updated", "node": {
+                "id": sub.child_root, "threadId": sub.child_thread_id, "runId": null,
+                "parentNodeId": null, "rootNodeId": sub.child_root, "kind": "root_turn",
+                "status": status, "countsForRun": false,
+                "providerThreadId": sub.provider_thread["id"], "providerTurnId": null,
+                "nativeItemRef": sub.task["nativeTaskRef"], "runtimeRequestId": null,
+                "checkpointScopeId": null, "startedAt": sub.started_at, "completedAt": now,
+            }}),
+        );
+        push_event(
+            &mut out,
+            json!({"type": "node.updated", "node": {
+                "id": sub.node_id, "threadId": sub.parent.thread_id, "runId": sub.parent.run_id,
+                "parentNodeId": sub.parent.root_node_id, "rootNodeId": sub.parent.root_node_id,
+                "kind": "subagent", "status": status, "countsForRun": false,
+                "providerThreadId": sub.provider_thread["id"],
+                "providerTurnId": sub.parent.provider_turn_id,
+                "nativeItemRef": sub.task["nativeTaskRef"], "runtimeRequestId": null,
+                "checkpointScopeId": null, "startedAt": sub.started_at, "completedAt": now,
+            }}),
+        );
+        self.task_update(
+            child,
+            TaskUpdate {
+                status: status_str(&json!(status)),
+                completed_at: Some(now),
+                ..TaskUpdate::default()
+            },
+            &mut out,
+        );
         out
     }
 }

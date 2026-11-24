@@ -76,6 +76,14 @@ impl Client {
             }
         }
         detail["reviewers"] = json!(reviewers);
+        // Only when the host has them (`mergeCommitSha`, `mergedBy` in T3's detail).
+        if let Some(sha) = trimmed(raw.pointer("/mergeCommit/oid")).as_str() {
+            detail["mergeCommitSha"] = json!(sha);
+        }
+        let merged_by = normalize::actor(raw.get("mergedBy"), &self.host);
+        if !merged_by.is_null() {
+            detail["mergedBy"] = merged_by;
+        }
         detail["checks"] = json!(checks);
         let comparison = if normalize::state(raw) == "open" {
             raw.pointer("/baseRef/compare")

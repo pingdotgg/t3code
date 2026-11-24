@@ -33,6 +33,9 @@ pub const STOP_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// the last one completes.
 pub const GOAL_CONTINUATION_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How often a closed session's silent subagent is checked with Codex.
+pub const CHILD_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The Codex instance's settings that shape a launch (`CodexSettings` in contracts).
 #[derive(Clone, Debug)]
 pub struct CodexConfig {
@@ -54,6 +57,9 @@ pub struct CodexConfig {
     /// How long the session waits for the answer to a `turn/start` that Stop abandoned after
     /// it was written (the request's own limit, 60 s). Tests shorten it.
     pub abandoned_start_timeout: std::time::Duration,
+    /// After a close on a shared app-server, how often a subagent that sends nothing is
+    /// checked with Codex (`thread/read`). Tests shorten it.
+    pub child_check_interval: std::time::Duration,
     /// How long a completed goal turn's run waits for Codex to continue the goal before it
     /// pauses the goal and settles (T3's `CODEX_GOAL_CONTINUATION_GRACE`, 5 s). Tests shorten it.
     pub goal_continuation_grace: std::time::Duration,
@@ -77,6 +83,7 @@ impl Default for CodexConfig {
             attachments_dir: None,
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
             abandoned_start_timeout: crate::client::REQUEST_TIMEOUT,
+            child_check_interval: CHILD_CHECK_INTERVAL,
             goal_continuation_grace: GOAL_CONTINUATION_GRACE,
             status_probe: true,
             status_cwd: None,

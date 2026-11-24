@@ -750,6 +750,9 @@ pub struct SteerInput {
     pub provider_turn_id: ProviderTurnId,
     pub message: TurnMessage,
     pub model_selection: Option<ModelSelection>,
+    /// `appContext`: the thread's MCP app notes; a steer sends those the native thread has
+    /// not seen with their current text.
+    pub app_context: Vec<AppContextEntry>,
 }
 
 /// `ProviderAdapterV2HistoricalContext` for one native thread: the history items as Codex's
@@ -875,10 +878,35 @@ pub struct TurnTerminal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<ProviderRetry>,
     pub thread_disposition: ThreadDisposition,
+    /// A failed root whose native children keep running: they settle without it, so the
+    /// run's end leaves them open (`childTurnsContinue`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub child_turns_continue: bool,
+    /// What ended the turn. The adapter sets [`TerminalCause::SessionClosed`] on every terminal
+    /// it produces once [`Session::close`] began, so the engine never takes a close's own end
+    /// for a Stop the provider confirmed.
+    #[serde(default, skip_serializing_if = "TerminalCause::is_provider")]
+    pub cause: TerminalCause,
     /// Why the provider stopped a turn it reports as completed (a Codex hook that stopped
     /// it); the engine keeps it as a warning on the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// What ended a turn: the provider's own report, or the session's close.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalCause {
+    #[default]
+    Provider,
+    /// The session's close ended the turn; the run detaches.
+    SessionClosed,
+}
+
+impl TerminalCause {
+    fn is_provider(&self) -> bool {
+        *self == Self::Provider
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -957,7 +985,7 @@ pub mod testing {
             "sessions": {
                 "supportsMultipleProviderThreadsPerSession": false,
                 "supportsModelSwitchInSession": true,
-                "supportsProviderSwitchingViaHandoff": false,
+                "supportsProviderSwitchingViaHandoff": true,
                 "supportsRuntimeModeSwitchInSession": false,
                 "pendingRequestsSurviveRestart": false,
             },
@@ -1023,11 +1051,11 @@ pub mod testing {
             "context": {
                 "acceptsSystemContext": false,
                 "acceptsDeveloperContext": false,
-                "acceptsSyntheticUserContext": false,
+                "acceptsSyntheticUserContext": true,
                 "canGenerateSummaries": false,
-                "canConsumeHandoffSummaries": false,
-                "supportsDeltaHandoff": false,
-                "supportsFullThreadHandoff": false,
+                "canConsumeHandoffSummaries": true,
+                "supportsDeltaHandoff": true,
+                "supportsFullThreadHandoff": true,
                 "maxRecommendedHandoffChars": null,
             },
             "checkpointing": {
@@ -1150,6 +1178,8 @@ mod tests {
                     failure: None,
                     retry: None,
                     thread_disposition: ThreadDisposition::Reusable,
+                    child_turns_continue: false,
+                    cause: TerminalCause::Provider,
                     reason: None,
                 }))
                 .await

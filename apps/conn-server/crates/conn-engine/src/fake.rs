@@ -4,7 +4,7 @@
 //!   that ignores `turn/interrupt`.
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `question`: the turn asks the user a question (`user_input`) and waits for the answer.
-//! - `fail`: the turn fails.
+//! - `fail`: the turn fails. `report-fail`: it says `partial report`, then fails.
 //! - `hook-stop`: the turn completes with a stop reason, as Codex reports a turn a hook
 //!   stopped. `hook-interrupt`: the turn ends interrupted with that reason. `hook-hang`: the
 //!   turn waits for an interrupt, which ends it with that reason.
@@ -69,6 +69,8 @@ pub struct FakeProvider {
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
     /// Rollback targets asked for: `start` or `turn <app run ordinal>`.
     pub rollbacks: Arc<Mutex<Vec<String>>>,
+    /// The native conversation head each turn started from (`""` for none).
+    pub heads: Arc<Mutex<Vec<String>>>,
     /// Forks asked for: `<target thread> <provider turn id or "-">`.
     pub forks: Arc<Mutex<Vec<String>>>,
     /// Native threads loaded again (`resume_thread`): `<native id> <model>`.
@@ -79,6 +81,12 @@ pub struct FakeProvider {
     /// The `nativeConversationHeadRef` of the provider thread each turn starts on. A rollback
     /// sets it to `rolled-back:<target>`, so a test sees which row a turn continues.
     pub turn_heads: Arc<Mutex<Vec<Value>>>,
+    /// The text each turn got, in order: the user's, after any inline history.
+    pub prompts: Arc<Mutex<Vec<String>>>,
+    /// History injected into a native thread (`inject_history`): `(native id, items)`.
+    pub injected: Arc<Mutex<Vec<(String, Value)>>>,
+    /// Sessions take injected history, as Codex's `thread/inject_items`.
+    injects: bool,
     /// Provider threads made per app thread (`ensure_thread`); the second and later get a
     /// numbered id, as a real provider gives each new conversation its own.
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
@@ -90,11 +98,22 @@ pub struct FakeProvider {
     /// Sessions answer `await_background_tasks`; see [`Self::without_background_wait`].
     background_wait: bool,
     close_delay: std::time::Duration,
+    /// A close ends the running turn as interrupted, as a provider's close can.
+    close_interrupts: bool,
     /// What a session's `close` answers; see [`Self::with_shared_runtime`].
     pub closes_as: Arc<Mutex<Closed>>,
+    /// The event sender of the last session closed on a shared process, which may still
+    /// report what that process runs for it. Dropping it ends the session's events.
+    pub after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
+    /// The last opened session's event sender, held weakly so a test can send a provider event
+    /// without keeping the session's events open.
+    pub last_events: Arc<Mutex<Option<mpsc::WeakSender<ProviderEvent>>>>,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
+    /// Ends the `background-task` scripts' `bg-1`: the roster reports it gone, as Claude's does
+    /// when a background command exits.
+    pub finish_background: Arc<tokio::sync::Notify>,
     /// Set by [`Self::with_process_exit`]: a notify ends every open session's event stream,
     /// as a provider process that exits on its own (systemd's SIGTERM reaches it too).
     process_exit: Option<Arc<tokio::sync::Notify>>,
@@ -125,20 +144,28 @@ impl FakeProvider {
             opened_policies: Arc::default(),
             applied_selections: Arc::new(Mutex::new(vec![])),
             rollbacks: Arc::new(Mutex::new(vec![])),
+            heads: Arc::default(),
             forks: Arc::new(Mutex::new(vec![])),
             resumes: Arc::new(Mutex::new(vec![])),
             calls: Arc::new(Mutex::new(vec![])),
             turn_heads: Arc::default(),
+            prompts: Arc::default(),
+            injected: Arc::default(),
+            injects: false,
             ensured: Arc::default(),
             fail_rollbacks: Arc::new(AtomicUsize::new(0)),
             control_delay: std::time::Duration::ZERO,
             steering: true,
             background_wait: true,
             close_delay: std::time::Duration::ZERO,
+            close_interrupts: false,
             closes_as: Arc::new(Mutex::new(Closed::RuntimeStopped)),
+            after_close: Arc::default(),
+            last_events: Arc::default(),
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
+            finish_background: Arc::default(),
             #[cfg(test)]
             late_start_entered: Arc::default(),
             #[cfg(test)]
@@ -160,6 +187,13 @@ impl FakeProvider {
         self
     }
 
+    /// A provider whose `capabilities` say it takes no context handoff; its sessions' rows
+    /// still say it does.
+    pub fn without_context_handoff(mut self) -> Self {
+        self.capabilities["context"]["canConsumeHandoffSummaries"] = json!(false);
+        self
+    }
+
     /// A provider whose `plan_selection_transition` answers `plan`.
     pub fn with_selection_plan(mut self, plan: conn_provider::SelectionTransitionPlan) -> Self {
         self.selection_plan = Some(plan);
@@ -169,6 +203,12 @@ impl FakeProvider {
     /// A provider whose sessions take `delay` to close, as a process given time to exit.
     pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
         self.close_delay = delay;
+        self
+    }
+
+    /// A provider whose sessions end their running turn as interrupted when they close.
+    pub fn with_close_interrupting(mut self) -> Self {
+        self.close_interrupts = true;
         self
     }
 
@@ -193,6 +233,13 @@ impl FakeProvider {
     /// A provider whose Stop and rollback take `delay` after their work.
     pub fn with_control_delay(mut self, delay: std::time::Duration) -> Self {
         self.control_delay = delay;
+        self
+    }
+
+    /// A provider whose sessions take context handoff history into the native thread, as
+    /// Codex does (`injectHistory`).
+    pub fn with_history_injection(mut self) -> Self {
+        self.injects = true;
         self
     }
 
@@ -237,7 +284,8 @@ struct FakeSession {
     abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
     instance: String,
     driver: String,
-    events: mpsc::Sender<ProviderEvent>,
+    /// Gone after `close`.
+    events: Mutex<Option<mpsc::Sender<ProviderEvent>>>,
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
     background: Arc<AtomicBool>,
@@ -247,21 +295,29 @@ struct FakeSession {
     roster: Arc<Mutex<Vec<(String, bool)>>>,
     /// The running turn ignores Stop.
     stuck: Arc<AtomicBool>,
+    finish_background: Arc<tokio::sync::Notify>,
     /// The running turn is `hook-hang`: its interrupt carries [`HOOK_STOP_REASON`].
     hook_hang: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
     rollbacks: Arc<Mutex<Vec<String>>>,
+    heads: Arc<Mutex<Vec<String>>>,
     forks: Arc<Mutex<Vec<String>>>,
     resumes: Arc<Mutex<Vec<String>>>,
     calls: Arc<Mutex<Vec<String>>>,
     turn_heads: Arc<Mutex<Vec<Value>>>,
+    prompts: Arc<Mutex<Vec<String>>>,
+    injected: Arc<Mutex<Vec<(String, Value)>>>,
+    injects: bool,
     ensured: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
+    /// A close ends the running turn as interrupted, as a provider's close can.
+    close_interrupts: bool,
     closes_as: Arc<Mutex<Closed>>,
+    after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
 }
 
 impl FakeSession {
@@ -314,6 +370,7 @@ impl Provider for FakeProvider {
             crate::lock(&self.opened_policies).push(conn_contract::to_json(&input.runtime_policy));
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, mut rx) = mpsc::channel(64);
+            *crate::lock(&self.last_events) = Some(tx.downgrade());
             if let Some(exit) = self.process_exit.clone() {
                 // Events pass through a task that stops, and drops the engine's end, on exit.
                 let (out, forwarded) = mpsc::channel(64);
@@ -358,27 +415,34 @@ impl Provider for FakeProvider {
                     abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
-                    events: tx,
+                    events: Mutex::new(Some(tx)),
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
                     background: Arc::new(AtomicBool::new(false)),
                     background_wait: self.background_wait,
                     roster: Arc::default(),
                     stuck: Arc::new(AtomicBool::new(false)),
+                    finish_background: self.finish_background.clone(),
                     hook_hang: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
                     rollbacks: self.rollbacks.clone(),
+                    heads: self.heads.clone(),
                     forks: self.forks.clone(),
                     resumes: self.resumes.clone(),
                     calls: self.calls.clone(),
                     turn_heads: self.turn_heads.clone(),
+                    prompts: self.prompts.clone(),
+                    injected: self.injected.clone(),
+                    injects: self.injects,
                     ensured: self.ensured.clone(),
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
                     close_delay: self.close_delay,
+                    close_interrupts: self.close_interrupts,
                     closes_as: self.closes_as.clone(),
+                    after_close: self.after_close.clone(),
                 }),
                 events: rx,
             })
@@ -450,6 +514,8 @@ fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> Provider
         failure: failure.map(|f| from_json(f).expect("failure")),
         retry: None,
         thread_disposition: ThreadDisposition::Reusable,
+        child_turns_continue: false,
+        cause: conn_provider::TerminalCause::Provider,
         reason: None,
     })
 }
@@ -460,30 +526,54 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
     }
 }
 
+/// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
+/// marked, as Claude's `emitRosterUpdate`.
+fn roster_event(
+    roster: &Mutex<Vec<(String, bool)>>,
+    instance: &str,
+    mut provider_thread: Value,
+) -> ProviderEvent {
+    let tasks: Vec<Value> = crate::lock(roster)
+        .iter()
+        .map(|(id, awaited)| {
+            let mut task = json!({"taskId": id, "kind": "command",
+                "description": "sleep 600", "providerInstanceId": instance});
+            if *awaited {
+                task["awaited"] = json!(true);
+            }
+            task
+        })
+        .collect();
+    provider_thread["pendingBackgroundTasks"] = json!(tasks);
+    provider_thread["updatedAt"] = json!(now_iso());
+    event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+}
+
 impl FakeSession {
+    /// The event sender; after `close`, one whose receiver is gone.
+    fn events(&self) -> mpsc::Sender<ProviderEvent> {
+        crate::lock(&self.events)
+            .clone()
+            .unwrap_or_else(|| mpsc::channel(1).0)
+    }
+
     /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
     /// marked, as Claude's `emitRosterUpdate`.
-    fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
-        let tasks: Vec<Value> = crate::lock(&self.roster)
-            .iter()
-            .map(|(id, awaited)| {
-                let mut task = json!({"taskId": id, "kind": "command",
-                    "description": "sleep 600", "providerInstanceId": self.instance});
-                if *awaited {
-                    task["awaited"] = json!(true);
-                }
-                task
-            })
-            .collect();
-        provider_thread["pendingBackgroundTasks"] = json!(tasks);
-        provider_thread["updatedAt"] = json!(now_iso());
-        event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+    fn roster_update(&self, provider_thread: Value) -> ProviderEvent {
+        roster_event(&self.roster, &self.instance, provider_thread)
     }
 
     /// The run of a `continuation.requested` message: shows `continued` and ends the work.
     fn continuation(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+            let provider_thread = conn_contract::to_json(&input.provider_thread);
+            crate::lock(&self.heads).push(
+                provider_thread["nativeConversationHeadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            let provider_thread_id = provider_thread["id"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
@@ -506,7 +596,7 @@ impl FakeSession {
             events.push(provider_turn(&turn, "completed"));
             events.push(terminal(&turn, TurnStatus::Completed, None));
             *crate::lock(&self.turn) = Some(turn);
-            let tx = self.events.clone();
+            let tx = self.events();
             tokio::spawn(async move { emit(&tx, events).await });
             Ok(())
         })
@@ -516,6 +606,25 @@ impl FakeSession {
 impl Session for FakeSession {
     fn provider_session_id(&self) -> &ProviderSessionId {
         &self.id
+    }
+
+    fn injects_history(&self) -> bool {
+        self.injects
+    }
+
+    fn inject_history(
+        &self,
+        input: conn_provider::InjectHistoryInput,
+    ) -> BoxFuture<'_, ProviderResult<bool>> {
+        Box::pin(async move {
+            let native =
+                conn_contract::to_json(&input.provider_thread)["nativeThreadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or("-")
+                    .to_owned();
+            crate::lock(&self.injected).push((native, input.items));
+            Ok(true)
+        })
     }
 
     fn ensure_thread(
@@ -582,7 +691,14 @@ impl Session for FakeSession {
             return self.continuation(input);
         }
         Box::pin(async move {
-            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+            let provider_thread = conn_contract::to_json(&input.provider_thread);
+            crate::lock(&self.heads).push(
+                provider_thread["nativeConversationHeadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            let provider_thread_id = provider_thread["id"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
@@ -599,6 +715,7 @@ impl Session for FakeSession {
                 conn_contract::to_json(&input.provider_thread)["nativeConversationHeadRef"].clone(),
             );
             let text = input.message.text.clone();
+            crate::lock(&self.prompts).push(text.clone());
             // `slowstart`: a slow cold start that fails when the session was closed meanwhile.
             if text.starts_with("slowstart") {
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -609,13 +726,13 @@ impl Session for FakeSession {
             // `coldstart`: a start that takes 500 ms with its provider turn shown at once, as
             // Claude's cold start. Abandoned, it ends that turn interrupted and fails.
             if text.starts_with("coldstart") {
-                emit(&self.events, [provider_turn(&turn, "running")]).await;
+                emit(&self.events(), [provider_turn(&turn, "running")]).await;
                 *crate::lock(&self.turn) = Some(turn.clone());
                 let wait = std::time::Duration::from_millis(500);
                 if self.wait_unless_abandoned(&turn.run_id, wait).await {
                     crate::lock(&self.calls).push(format!("start abandoned {}", turn.run_id));
                     emit(
-                        &self.events,
+                        &self.events(),
                         [
                             provider_turn(&turn, "interrupted"),
                             terminal(&turn, TurnStatus::Interrupted, None),
@@ -632,7 +749,7 @@ impl Session for FakeSession {
                     terminal(&turn, TurnStatus::Completed, None),
                 ];
                 tokio::spawn({
-                    let tx = self.events.clone();
+                    let tx = self.events();
                     async move { emit(&tx, done).await }
                 });
                 return Ok(());
@@ -669,7 +786,7 @@ impl Session for FakeSession {
                 })
                 .await;
             }
-            let tx = self.events.clone();
+            let tx = self.events();
             let mut started = vec![provider_turn(&turn, "running")];
             self.stuck.store(text == "stuck", Ordering::SeqCst);
             self.hook_hang.store(text == "hook-hang", Ordering::SeqCst);
@@ -681,6 +798,11 @@ impl Session for FakeSession {
                     started.push(terminal(&turn,TurnStatus::Completed,None));
                 }
                 "hang" | "stuck" | "hook-hang" => {}
+                // `silent`: the turn completes without saying anything.
+                "silent" => {
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
                 t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
@@ -776,7 +898,17 @@ impl Session for FakeSession {
                 "background-task" | "background-task-hang" => {
                     self.background.store(true, Ordering::SeqCst);
                     *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
-                    started.push(self.roster_update(conn_contract::to_json(&input.provider_thread)));
+                    let provider_thread = conn_contract::to_json(&input.provider_thread);
+                    started.push(self.roster_update(provider_thread.clone()));
+                    // `bg-1` exits when the test says so: the roster reports it gone.
+                    let (roster, events, finish) =
+                        (self.roster.clone(), self.events(), self.finish_background.clone());
+                    let instance = self.instance.clone();
+                    tokio::spawn(async move {
+                        finish.notified().await;
+                        crate::lock(&roster).retain(|(id, _)| id != "bg-1");
+                        let _ = events.send(roster_event(&roster, &instance, provider_thread)).await;
+                    });
                     if text == "background-task" {
                         started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
                         started.push(provider_turn(&turn, "completed"));
@@ -918,6 +1050,14 @@ impl Session for FakeSession {
                     Some(json!({"class": "usage_limit", "message": "The fake provider hit its usage limit.", "code": null, "retryable": false,
                         "resetAt": conn_support::time::iso_from_ms(conn_support::time::now_ms() + 3_600_000)})),
                 )),
+                "report-fail" => {
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "partial report", false));
+                    started.push(terminal(
+                        &turn,
+                        TurnStatus::Failed,
+                        Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
+                    ));
+                }
                 _ => {
                     let reply = format!("echo: {text}");
                     let cut = |n: usize| reply.chars().take(n).collect::<String>();
@@ -966,7 +1106,7 @@ impl Session for FakeSession {
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
             };
-            emit(&self.events, events).await;
+            emit(&self.events(), events).await;
             Ok(())
         })
     }
@@ -999,7 +1139,7 @@ impl Session for FakeSession {
                 )
             };
             crate::lock(&self.calls).push(format!("interrupt {run}"));
-            emit(&self.events, event).await;
+            emit(&self.events(), event).await;
             tokio::time::sleep(self.control_delay).await;
             crate::lock(&self.calls).push(format!("interrupted {run}"));
             Ok(())
@@ -1045,7 +1185,7 @@ impl Session for FakeSession {
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
             };
-            emit(&self.events, events).await;
+            emit(&self.events(), events).await;
             Ok(())
         })
     }
@@ -1138,7 +1278,7 @@ impl Session for FakeSession {
             ));
             if !matched.is_empty() {
                 let update = self.roster_update(conn_contract::to_json(&input.provider_thread));
-                emit(&self.events, [update]).await;
+                emit(&self.events(), [update]).await;
             }
             Ok(matched)
         })
@@ -1229,7 +1369,24 @@ impl Session for FakeSession {
         self.closed.fetch_add(1, Ordering::SeqCst);
         let delay = self.close_delay;
         let closed = *crate::lock(&self.closes_as);
+        let events = crate::lock(&self.events).take();
+        let ending = self
+            .close_interrupts
+            .then(|| crate::lock(&self.turn).take())
+            .flatten()
+            .zip(events.clone());
+        if closed == Closed::RuntimeShared {
+            *crate::lock(&self.after_close) = events;
+        }
         Box::pin(async move {
+            // As a real adapter does, the close says it ended the turn.
+            if let Some((turn, events)) = ending {
+                let mut ended = terminal(&turn, TurnStatus::Interrupted, None);
+                if let ProviderEvent::TurnTerminal(terminal) = &mut ended {
+                    terminal.cause = conn_provider::TerminalCause::SessionClosed;
+                }
+                emit(&events, [ended]).await;
+            }
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }

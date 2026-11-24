@@ -74,7 +74,11 @@ fn with_host(base: Fixture, state: &'static str) -> Fixture {
     });
     let dir = base.dir.clone();
     std::mem::forget(base);
-    Fixture { service, dir }
+    Fixture {
+        service,
+        dir,
+        keep_dir: false,
+    }
 }
 
 const URL: &str = "https://github.com/o/r/pull/7";

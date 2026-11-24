@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -121,8 +122,57 @@ pub async fn managed_path(cwd: &Path, branch: &str, worktrees_dir: &Path) -> Vcs
 
 /// Creates a worktree at the managed path and returns it. With `new_ref_name`, creates that
 /// branch at `ref_name` first (tracking it when it is a remote branch) and removes it again if
-/// the checkout fails.
+/// the checkout fails. A caller that drops this future mid-checkout (an RPC whose client left)
+/// loses nothing to a lock: a background task removes the checkout and its new branch, as the
+/// TypeScript server does on an interrupt.
 pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
+    let mut pending = DiscardOnDrop {
+        cwd: input.cwd.clone(),
+        branch: input.new_ref_name.clone(),
+        claim: None,
+    };
+    let result = create_worktree_claiming(input, &mut pending.claim).await;
+    pending.claim = None;
+    result
+}
+
+/// Discards a claimed checkout when its [`create_worktree`] future is dropped before it ends.
+struct DiscardOnDrop {
+    cwd: PathBuf,
+    branch: Option<String>,
+    claim: Option<Claim>,
+}
+
+impl Drop for DiscardOnDrop {
+    fn drop(&mut self) {
+        let (Some(claim), Some(branch)) = (self.claim.take(), self.branch.take()) else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let cwd = std::mem::take(&mut self.cwd);
+        runtime.spawn(async move {
+            let _ = discard_claim(&cwd, &claim, &branch).await;
+        });
+    }
+}
+
+/// A checkout [`create_worktree_claiming`] started: its path, and the lock reason Git holds on
+/// its registration until the checkout ends (`None` when this Git cannot set one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Claim {
+    pub path: PathBuf,
+    pub lock_reason: Option<String>,
+}
+
+/// [`create_worktree`], reporting the checkout in `claimed` once its new branch exists and
+/// before `git worktree add` runs. A caller that stops this future during the checkout then
+/// knows what to remove with [`discard_claim`].
+pub async fn create_worktree_claiming(
+    input: &CreateWorktree,
+    claimed: &mut Option<Claim>,
+) -> VcsResult<Worktree> {
     let cwd = input.cwd.as_path();
     refuse_option_like(cwd, &input.ref_name)?;
     if let Some(new) = &input.new_ref_name {
@@ -138,7 +188,17 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
     } else {
         input.ref_name.clone()
     };
+    // Read before the branch exists, so a missing pattern file leaves nothing behind.
+    let sparse = sparse_patterns(cwd, &start, &input.ref_name).await?;
 
+    // Git writes the lock during registration, before the checkout or any hook runs, so a
+    // checkout killed midway still carries a reason that proves it is ours.
+    let lock_reason = match &input.new_ref_name {
+        Some(_) => supports_lock_reason(cwd)
+            .await
+            .then(|| format!("t3-create-{}", conn_support::uuid_v4())),
+        None => None,
+    };
     if let Some(new) = &input.new_ref_name {
         git(
             OPERATION,
@@ -166,68 +226,538 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
         }
     }
 
+    if input.new_ref_name.is_some() {
+        *claimed = Some(Claim {
+            path: path.clone(),
+            lock_reason: lock_reason.clone(),
+        });
+    }
     let workers = repo::config_get(cwd, "checkout.workers")
         .await
         .unwrap_or(None)
         .unwrap_or_else(|| "0".into());
-    let added = git(
-        OPERATION,
-        cwd,
-        [
-            "-c".to_owned(),
-            format!("checkout.workers={workers}"),
-            "worktree".into(),
-            "add".into(),
-            "--".into(),
-            path.to_string_lossy().into_owned(),
-            target.clone(),
-        ],
-    )
-    .timeout(Duration::from_secs(3600))
-    .max_stdout(1_000_000, OnLimit::Truncate)
-    .run()
-    .await;
+    let mut add = vec![
+        "-c".to_owned(),
+        format!("checkout.workers={workers}"),
+        "worktree".into(),
+        "add".into(),
+    ];
+    if let Some(reason) = &lock_reason {
+        add.extend(["--lock".to_owned(), "--reason".into(), reason.clone()]);
+    }
+    if sparse.is_some() {
+        add.push("--no-checkout".into());
+    }
+    add.extend([
+        "--".into(),
+        path.to_string_lossy().into_owned(),
+        target.clone(),
+    ]);
+    let mut added = git(OPERATION, cwd, add)
+        .timeout(Duration::from_secs(3600))
+        .max_stdout(1_000_000, OnLimit::Truncate)
+        .run()
+        .await
+        .map(drop)
+        .map_err(VcsError::from);
+    let mut sparse_failed = false;
+    if added.is_ok()
+        && let Some(patterns) = sparse
+    {
+        added = sparse_checkout(&path, &workers, patterns).await;
+        sparse_failed = added.is_err();
+    }
+    // The lock covers the files' checkout, sparse or not; a locked worktree needs a double
+    // force to remove.
+    if let Some(reason) = &lock_reason {
+        let _ = unlock_registration(cwd, reason).await;
+    }
+    if sparse_failed {
+        // A worktree without its files is no use.
+        let _ = remove_worktree(cwd, &path, Removal::Force).await;
+    }
     if let Err(error) = added {
         if let Some(new) = &input.new_ref_name {
             let _ = git(OPERATION, cwd, ["branch", "-D", "--", new.as_str()])
                 .run()
                 .await;
         }
-        return Err(error.into());
+        return Err(error);
     }
 
-    if let (Some(new), Some(base)) = (&input.new_ref_name, &input.base_ref_name)
-        && let Some((branch_name, full)) = resolve_branch_base(cwd, base).await
-    {
-        let _ = git(
-            OPERATION,
-            cwd,
-            [
-                "config".to_owned(),
-                format!("branch.{new}.t3-merge-base"),
-                branch_name,
-            ],
-        )
-        .run()
-        .await;
-        if full.starts_with("refs/remotes/") {
-            let _ = git(
-                OPERATION,
-                cwd,
-                [
-                    "config".to_owned(),
-                    format!("branch.{new}.t3-merge-base-ref"),
-                    full,
-                ],
-            )
-            .run()
-            .await;
-        }
+    if let (Some(new), Some(base)) = (&input.new_ref_name, &input.base_ref_name) {
+        record_base(cwd, new, base).await;
     }
     Ok(Worktree {
         path,
         ref_name: Some(target),
     })
+}
+
+/// `t3.json` at `rev` as `parseT3ProjectFile` reads it: lenient JSON that decodes as a whole,
+/// else `None` (T3 then checks out every file and initializes submodules recursively).
+async fn project_file(cwd: &Path, rev: &str) -> Option<ProjectFile> {
+    let spec = format!("{rev}:t3.json");
+    let text = repo::optional_text(git(OPERATION, cwd, ["show", spec.as_str()]))
+        .await
+        .ok()??;
+    // Through `Value`, so a repeated key takes its last value, as `JSON.parse` does.
+    let value: serde_json::Value = conn_support::json::parse_lenient(&text)?;
+    ProjectFile::deserialize(value).ok()
+}
+
+/// `T3ProjectFile`. Fields Conn does not use are decoded only so an invalid one rejects the
+/// file, as in T3; unknown keys are ignored.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code, reason = "decoded only to validate the file")]
+struct ProjectFile {
+    #[serde(rename = "$schema", default, deserialize_with = "present")]
+    schema: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    icon_path: Option<Trimmed<PATH_MAX>>,
+    #[serde(default, deserialize_with = "present")]
+    default_thread_env_mode: Option<conn_contract::ThreadEnvMode>,
+    #[serde(default, deserialize_with = "present")]
+    worktree_submodules: Option<Submodules>,
+    #[serde(default, deserialize_with = "present")]
+    worktree_sparse_patterns_path: Option<Trimmed<PATH_MAX>>,
+    #[serde(default, deserialize_with = "scripts")]
+    scripts: Option<Vec<ProjectFileScript>>,
+}
+
+/// `T3ProjectFileScript`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[expect(dead_code, reason = "decoded only to validate the file")]
+struct ProjectFileScript {
+    name: Trimmed<{ usize::MAX }>,
+    command: Trimmed<{ usize::MAX }>,
+    #[serde(default, deserialize_with = "present")]
+    icon: Option<conn_contract::ProjectScriptIcon>,
+    #[serde(default, deserialize_with = "present")]
+    run_on_worktree_create: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    run_on_settle: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    stop_on_settle: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    r#async: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    preview_url: Option<Trimmed<{ usize::MAX }>>,
+    #[serde(default, deserialize_with = "present")]
+    auto_open_preview: Option<bool>,
+}
+
+const PATH_MAX: usize = 512;
+
+/// `trimmedNonEmpty`: at most `MAX` UTF-16 units before trimming, not empty after.
+struct Trimmed<const MAX: usize>(String);
+
+impl<'de, const MAX: usize> Deserialize<'de> for Trimmed<MAX> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        let trimmed = conn_support::text::js_trim(&raw);
+        if trimmed.is_empty() || raw.encode_utf16().count() > MAX {
+            return Err(serde::de::Error::custom(
+                "expected a trimmed non-empty string",
+            ));
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+}
+
+/// `Schema.optionalKey`: the key may be missing, but `null` is not a value.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+fn scripts<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<ProjectFileScript>>, D::Error> {
+    let scripts = Vec::deserialize(d)?;
+    if scripts.len() > 50 {
+        return Err(serde::de::Error::custom("at most 50 scripts"));
+    }
+    Ok(Some(scripts))
+}
+
+/// `readWorktreeSparsePatterns`: the non-cone patterns named by `t3.json`'s
+/// `worktreeSparsePatternsPath` at `rev`, or `None` for a full checkout. A named file that
+/// is not in `rev` fails the worktree, so it never checks out everything by mistake.
+async fn sparse_patterns(cwd: &Path, rev: &str, ref_name: &str) -> VcsResult<Option<Vec<u8>>> {
+    let Some(Trimmed(named)) = project_file(cwd, rev)
+        .await
+        .and_then(|file| file.worktree_sparse_patterns_path)
+    else {
+        return Ok(None);
+    };
+    // Git reads `<rev>:./path` from the working folder, so keep it repository-relative.
+    let relative = named.trim_start_matches("./");
+    let read = if relative.split('/').any(|part| part == "..") {
+        None
+    } else {
+        let spec = format!("{rev}:{relative}");
+        match git(OPERATION, cwd, ["cat-file", "blob", spec.as_str()])
+            .run()
+            .await
+        {
+            Ok(out) => Some(out.stdout),
+            Err(ProcessError::Exit { .. }) => None,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    read.map(Some).ok_or_else(|| {
+        invalid(
+            cwd,
+            format!(
+                "t3.json names the sparse-checkout pattern file \"{named}\", which is not a file in {ref_name}."
+            ),
+        )
+    })
+}
+
+/// Limits a `--no-checkout` worktree to `patterns`, then checks it out.
+async fn sparse_checkout(path: &Path, workers: &str, patterns: Vec<u8>) -> VcsResult<()> {
+    git(
+        OPERATION,
+        path,
+        ["sparse-checkout", "set", "--no-cone", "--stdin"],
+    )
+    .stdin(patterns)
+    .run()
+    .await?;
+    git(
+        OPERATION,
+        path,
+        [
+            "-c".to_owned(),
+            format!("checkout.workers={workers}"),
+            "checkout".into(),
+        ],
+    )
+    .timeout(Duration::from_secs(3600))
+    .max_stdout(1_000_000, OnLimit::Truncate)
+    .run()
+    .await?;
+    Ok(())
+}
+
+/// `worktreeSubmodules`: how a new worktree fills its submodules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Submodules {
+    None,
+    TopLevel,
+    Recursive,
+}
+
+/// Where a [`Submodules`] value came from, as setup reports a disabled one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// The settings, or the default when neither names one.
+    Settings,
+    ProjectFile,
+}
+
+impl Origin {
+    pub fn label(self) -> &'static str {
+        match self {
+            Origin::Settings => "settings",
+            Origin::ProjectFile => "t3.json",
+        }
+    }
+}
+
+impl Submodules {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(Self::None),
+            "top-level" => Some(Self::TopLevel),
+            "recursive" => Some(Self::Recursive),
+            _ => None,
+        }
+    }
+}
+
+/// `resolveProjectFileBackedSetting("worktreeSubmodules", …)` for a new worktree: the setting
+/// (`None` inherits), else `t3.json` at `HEAD`, else recursive. `None` when `HEAD` has no
+/// `.gitmodules`. Both files are read from `HEAD`: sparse patterns can leave them out.
+pub async fn submodule_mode(
+    worktree: &Path,
+    setting: Option<&str>,
+) -> Option<(Submodules, Origin)> {
+    let listed = repo::succeeds(git(
+        "GitVcsDriver.createWorktree.findSubmodules",
+        worktree,
+        ["cat-file", "-e", "HEAD:.gitmodules"],
+    ))
+    .await
+    .unwrap_or(false);
+    if !listed {
+        return None;
+    }
+    if let Some(mode) = setting.and_then(Submodules::parse) {
+        return Some((mode, Origin::Settings));
+    }
+    let from_file = project_file(worktree, "HEAD")
+        .await
+        .and_then(|file| file.worktree_submodules);
+    Some(match from_file {
+        Some(mode) => (mode, Origin::ProjectFile),
+        None => (Submodules::Recursive, Origin::Settings),
+    })
+}
+
+/// [`submodule_mode`], then [`update_submodules`]: what a new worktree outside thread setup
+/// does with its submodules. A failure is logged and the worktree kept, as in T3.
+pub async fn populate_submodules(worktree: &Path, setting: Option<&str>) {
+    if let Some((mode, _)) = submodule_mode(worktree, setting).await
+        && let Err(error) = update_submodules(worktree, mode).await
+    {
+        eprintln!(
+            "conn-vcs: worktree submodule checkout failed; submodules may be incomplete: {error}"
+        );
+    }
+}
+
+/// Initializes and checks out a new worktree's submodules. A failure leaves the worktree, as
+/// T3 does: the caller reports it, and the submodules that did clone are checked out anyway.
+pub async fn update_submodules(worktree: &Path, mode: Submodules) -> VcsResult<()> {
+    let update = |paths: Vec<String>| async move {
+        let mut args = vec!["submodule".to_owned(), "update".into(), "--init".into()];
+        if mode == Submodules::Recursive {
+            args.push("--recursive".into());
+        }
+        if !paths.is_empty() {
+            args.extend(["--force".into(), "--".into()]);
+            args.extend(paths);
+        }
+        git(
+            "GitVcsDriver.createWorktree.updateSubmodules",
+            worktree,
+            args,
+        )
+        .timeout(Duration::from_secs(3600))
+        .max_stdout(1_000_000, OnLimit::Truncate)
+        .run()
+        .await
+        .map(drop)
+        .map_err(VcsError::from)
+    };
+    if mode == Submodules::None {
+        return Ok(());
+    }
+    let result = match git(
+        "GitVcsDriver.createWorktree.initSubmodules",
+        worktree,
+        ["submodule", "init"],
+    )
+    .run()
+    .await
+    {
+        Ok(_) => update(Vec::new()).await,
+        Err(e) => Err(e.into()),
+    };
+    if result.is_err() {
+        // One failed clone stops git before any checkout: check out the ones that cloned.
+        let listed = repo::optional_text(git(
+            "GitVcsDriver.createWorktree.listSubmodules",
+            worktree,
+            [
+                "config",
+                "-z",
+                "--blob",
+                "HEAD:.gitmodules",
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ],
+        ))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+        // Records are `submodule.<name>.path\n<path>`.
+        let paths: Vec<PathBuf> = listed
+            .split('\0')
+            .filter_map(|record| record.split_once('\n').map(|(_, path)| PathBuf::from(path)))
+            .collect();
+        let root = worktree.to_owned();
+        let cloned: Vec<String> = tokio::task::spawn_blocking(move || {
+            paths
+                .into_iter()
+                .filter(|path| root.join(path).join(".git").exists())
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect()
+        })
+        .await
+        .unwrap_or_default();
+        if !cloned.is_empty() {
+            let _ = update(cloned).await;
+        }
+    }
+    result
+}
+
+/// Entries `git worktree remove` can leave behind without a checkout
+/// (`LEFTOVER_WORKTREE_ENTRIES`).
+const LEFTOVER_ENTRIES: [&str; 2] = ["node_modules", ".next"];
+
+/// `restoreMissingWorktree` (T3 `workspace/restoreMissingWorktree.ts`): checks `branch` out
+/// again at `path` when the folder is gone or holds only leftover dependency folders, which
+/// are cleared first. Returns whether it recreated the checkout. The caller decides that
+/// `path` is a managed worktree of `project_root`.
+pub async fn restore_missing_worktree(
+    project_root: &Path,
+    path: &Path,
+    branch: &str,
+) -> VcsResult<bool> {
+    let folder = path.to_owned();
+    let missing = tokio::task::spawn_blocking(move || clear_leftover_folder(&folder))
+        .await
+        .map_err(|e| invalid(project_root, e.to_string()))?
+        .map_err(|e| invalid(project_root, e.to_string()))?;
+    if !missing {
+        return Ok(false);
+    }
+    recreate_worktree(project_root, path, branch).await?;
+    Ok(true)
+}
+
+/// Whether `path` needs a checkout: it does not exist, or held only leftovers (now removed).
+/// The folder itself stays: it may be a running process's working folder.
+fn clear_leftover_folder(path: &Path) -> std::io::Result<bool> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries.collect::<Result<Vec<_>, _>>()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(_) => return Ok(false),
+    };
+    let leftover = entries.iter().all(|entry| {
+        let name = entry.file_name();
+        LEFTOVER_ENTRIES.iter().any(|l| name == *l) && entry.file_type().is_ok_and(|t| t.is_dir())
+    });
+    if !leftover || path.join(".git").exists() {
+        return Ok(false);
+    }
+    for entry in entries {
+        std::fs::remove_dir_all(entry.path())?;
+    }
+    Ok(true)
+}
+
+/// `restoreMissingWorktree.recreate`: the local branch when it survives; else its pushed copy
+/// (`refs/remotes/<remote>/<branch>`), read without a fetch; else a new branch from the
+/// project's current branch, the remote's default commit, or `HEAD`.
+async fn recreate_worktree(project_root: &Path, path: &Path, branch: &str) -> VcsResult<()> {
+    refuse_option_like(project_root, branch)?;
+    git(OPERATION, project_root, ["worktree", "prune"])
+        .run()
+        .await?;
+    let target = path.to_string_lossy().into_owned();
+    let add = |args: Vec<String>| async move {
+        let mut full = vec!["worktree".to_owned(), "add".to_owned()];
+        full.extend(args);
+        git(OPERATION, project_root, full)
+            .timeout(Duration::from_secs(3600))
+            .max_stdout(1_000_000, OnLimit::Truncate)
+            .run()
+            .await
+            .map(drop)
+            .map_err(VcsError::from)
+    };
+    if repo::ref_exists(project_root, &format!("refs/heads/{branch}")).await? {
+        return add(vec!["--".into(), target, branch.to_owned()]).await;
+    }
+    let remote = repo::primary_remote(project_root).await.ok().flatten();
+    if let Some(remote) = &remote {
+        let pushed = format!("refs/remotes/{remote}/{branch}");
+        if repo::ref_exists(project_root, &pushed).await? {
+            return add(vec![
+                "-b".into(),
+                branch.to_owned(),
+                "--".into(),
+                target,
+                pushed,
+            ])
+            .await;
+        }
+    }
+    let (start, base) = match repo::current_branch(project_root).await? {
+        Some(current) => {
+            let full = format!("refs/heads/{current}");
+            (full.clone(), Some(full))
+        }
+        None => match remote {
+            Some(remote)
+                if repo::ref_exists(project_root, &format!("refs/remotes/{remote}/HEAD"))
+                    .await? =>
+            {
+                let head = format!("refs/remotes/{remote}/HEAD");
+                // The commit, so the new branch does not track the default branch.
+                let commit = repo::resolve_commit(project_root, &head)
+                    .await?
+                    .ok_or_else(|| {
+                        invalid(project_root, "the remote default branch has no commit")
+                    })?;
+                (commit, Some(head))
+            }
+            _ if repo::has_head_commit(project_root).await? => ("HEAD".to_owned(), None),
+            _ => {
+                return Err(invalid(
+                    project_root,
+                    format!(
+                        "Could not recreate branch '{branch}' at {}: the project workspace has no commit to start it from.",
+                        path.display()
+                    ),
+                ));
+            }
+        },
+    };
+    git(
+        OPERATION,
+        project_root,
+        ["branch", "--no-track", "--", branch, start.as_str()],
+    )
+    .run()
+    .await?;
+    add(vec!["--".into(), target, branch.to_owned()]).await?;
+    if let Some(base) = base {
+        record_base(project_root, branch, &base).await;
+    }
+    Ok(())
+}
+
+/// Records `base` as the new branch's base (`branch.<new>.t3-merge-base`), for Changes totals.
+async fn record_base(cwd: &Path, new: &str, base: &str) {
+    let Some((branch_name, full)) = resolve_branch_base(cwd, base).await else {
+        return;
+    };
+    let _ = git(
+        OPERATION,
+        cwd,
+        [
+            "config".to_owned(),
+            format!("branch.{new}.t3-merge-base"),
+            branch_name,
+        ],
+    )
+    .run()
+    .await;
+    if full.starts_with("refs/remotes/") {
+        let _ = git(
+            OPERATION,
+            cwd,
+            [
+                "config".to_owned(),
+                format!("branch.{new}.t3-merge-base-ref"),
+                full,
+            ],
+        )
+        .run()
+        .await;
+    }
 }
 
 /// `(branch name, full ref)` of a base given as a local or remote branch.
@@ -574,6 +1104,78 @@ pub async fn delete_branch(cwd: &Path, branch: &str, removal: Removal) -> VcsRes
     .run()
     .await?;
     Ok(())
+}
+
+/// Removes a worktree a launch made, then its branch: the branch goes only once the worktree
+/// is gone, so an `Err` leaves both, and says why.
+pub async fn discard(cwd: &Path, path: &Path, branch: &str) -> VcsResult<()> {
+    remove_worktree(cwd, path, Removal::Force).await?;
+    delete_branch(cwd, branch, Removal::Force).await
+}
+
+/// Whether this Git takes `git worktree add --lock --reason`.
+async fn supports_lock_reason(cwd: &Path) -> bool {
+    match git(OPERATION, cwd, ["worktree", "add", "-h"])
+        .allow_exit(&[129])
+        .run()
+        .await
+    {
+        Ok(out) => out.stdout_text().contains("--reason") || out.stderr.contains("--reason"),
+        Err(e) => e.stderr().contains("--reason"),
+    }
+}
+
+/// Unlocks the worktree whose lock carries exactly `reason`, if one does. Reads Git's
+/// registration files, as the TypeScript server does: Git before 2.36 has no `list -z`.
+async fn unlock_registration(cwd: &Path, reason: &str) -> VcsResult<()> {
+    let registrations = common_dir(cwd).await?.join("worktrees");
+    let reason = reason.to_owned();
+    let found = tokio::task::spawn_blocking(move || {
+        let line = |text: String| {
+            let text = text.strip_suffix('\n').unwrap_or(&text);
+            text.strip_suffix('\r').unwrap_or(text).to_owned()
+        };
+        std::fs::read_dir(registrations)
+            .ok()?
+            .flatten()
+            .find_map(|entry| {
+                let admin = entry.path();
+                let locked = std::fs::read_to_string(admin.join("locked")).ok()?;
+                if line(locked) != reason {
+                    return None;
+                }
+                // Relative to the registration under `worktree.useRelativePaths`.
+                let gitdir = admin.join(line(std::fs::read_to_string(admin.join("gitdir")).ok()?));
+                let path = gitdir.parent()?.to_owned();
+                Some(std::fs::canonicalize(&path).unwrap_or(path))
+            })
+    })
+    .await
+    .map_err(|e| invalid(cwd, e.to_string()))?;
+    if let Some(path) = found {
+        git(
+            "GitVcsDriver.createWorktree.unlock",
+            cwd,
+            [
+                "worktree".to_owned(),
+                "unlock".into(),
+                "--".into(),
+                path.to_string_lossy().into_owned(),
+            ],
+        )
+        .run()
+        .await?;
+    }
+    Ok(())
+}
+
+/// [`discard`] for a checkout a cancel cut short: first unlocks it when Git still holds the
+/// claim's lock, since `git worktree remove --force` refuses a locked worktree.
+pub async fn discard_claim(cwd: &Path, claim: &Claim, branch: &str) -> VcsResult<()> {
+    if let Some(reason) = &claim.lock_reason {
+        unlock_registration(cwd, reason).await?;
+    }
+    discard(cwd, &claim.path, branch).await
 }
 
 /// Every live worktree of the repository, the main checkout first.

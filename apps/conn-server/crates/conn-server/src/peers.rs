@@ -1078,6 +1078,19 @@ impl PeerLinks {
     }
 
     async fn call_once(self: &Arc<Self>, call: &PeerCall) -> Result<Value, Answered> {
+        let answer = self.call_as(call, &call.tool).await;
+        // A peer from before the `conn_*` rename knows its tools only by their `t3_*` names.
+        if let Err(Answered::Refused(refused)) = &answer
+            && let Some(rest) = call.tool.strip_prefix("conn_")
+            && refused.message == format!("Tool '{}' not found", call.tool)
+        {
+            return self.call_as(call, &format!("t3_{rest}")).await;
+        }
+        answer
+    }
+
+    /// One `tools/call` of `call` on the peer, under the tool name `tool`.
+    async fn call_as(self: &Arc<Self>, call: &PeerCall, tool: &str) -> Result<Value, Answered> {
         let resolved = self.resolve(&call.environment_id).await.map_err(|error| {
             let code = match error.reason {
                 "unknown_link" => "invalid_request",
@@ -1121,7 +1134,7 @@ impl PeerLinks {
             }
         };
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": call.tool, "arguments": Value::Object(call.arguments.clone())}});
+            "params": {"name": tool, "arguments": Value::Object(call.arguments.clone())}});
         let send = |session: String| {
             let mut headers = headers.clone();
             headers.push(("mcp-session-id", session));
@@ -1920,6 +1933,22 @@ mod tests {
         descriptors: Vec<(u16, String)>,
         tool_text: &'static str,
     ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        fake_peer_with(
+            descriptors,
+            Arc::new(move |_| {
+                json!({"jsonrpc": "2.0", "id": 1, "result": {
+                    "content": [{"type": "text", "text": tool_text}],
+                }})
+            }),
+        )
+        .await
+    }
+
+    /// `fake_peer`, with `reply` building the whole `tools/call` answer from the tool name.
+    async fn fake_peer_with(
+        descriptors: Vec<(u16, String)>,
+        reply: Arc<dyn Fn(&str) -> Value + Send + Sync>,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
         use std::sync::atomic::Ordering;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1928,7 +1957,8 @@ mod tests {
         let counted = probes.clone();
         tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
-                let (counted, descriptors) = (counted.clone(), descriptors.clone());
+                let (counted, descriptors, reply) =
+                    (counted.clone(), descriptors.clone(), reply.clone());
                 tokio::spawn(async move {
                     let mut bytes = Vec::new();
                     let mut buf = [0u8; 4096];
@@ -1970,10 +2000,8 @@ mod tests {
                                 200,
                                 "application/json",
                                 "",
-                                json!({"jsonrpc": "2.0", "id": 1, "result": {
-                                    "content": [{"type": "text", "text": tool_text}],
-                                }})
-                                .to_string(),
+                                reply(request["params"]["name"].as_str().unwrap_or_default())
+                                    .to_string(),
                             ),
                             _ => (202, "application/json", "", String::new()),
                         }
@@ -2024,6 +2052,73 @@ mod tests {
         assert_eq!(
             peers.probe(&url).await.unwrap_err().reason,
             "not_a_t3_environment"
+        );
+    }
+
+    /// A peer from before the `conn_*` rename answers "not found" for a `conn_*` name; the
+    /// call is sent once more under its `t3_*` name. A tool unknown under both names stays
+    /// refused.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_peer_before_the_rename_gets_the_t3_name() {
+        let (peers, _) = links_with_a_running_thread("legacy").await;
+        let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = asked.clone();
+        let (url, _) = fake_peer_with(
+            vec![(200, good_descriptor().to_string())],
+            Arc::new(move |name| {
+                seen.lock().unwrap().push(name.to_owned());
+                if name == "t3_thread_read" {
+                    // The old peer runs the tool: its own refusal comes back.
+                    json!({"jsonrpc": "2.0", "id": 1, "result": {"isError": true,
+                        "content": [{"type": "text", "text": json!({"code": "invalid_request",
+                            "message": "Thread 'thread_x' was not found."}).to_string()}]}})
+                } else {
+                    json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32602,
+                        "message": format!("Tool '{name}' not found")}})
+                }
+            }),
+        )
+        .await;
+        let now = now_ms();
+        peers
+            .change(move |rows| {
+                rows.push(Row {
+                    environment_id: "environment:peer".into(),
+                    secret_name: "peer-link-test".into(),
+                    label: "Peer".into(),
+                    urls: vec![url],
+                    access: "auto".into(),
+                    linked_at_ms: now,
+                    expires_at_ms: now + 60_000,
+                    last_reached_at_ms: None,
+                    last_error: None,
+                })
+            })
+            .await
+            .unwrap();
+        conn_support::secret_store::write(&peers.secrets_dir, "peer-link-test", b"token").unwrap();
+        let call = |tool: &str| PeerCall {
+            environment_id: "environment:peer".into(),
+            tool: tool.into(),
+            arguments: Map::new(),
+            limits: conn_mcp::PeerLimits {
+                runtime_mode: "full-access".into(),
+                interaction_mode: "default".into(),
+            },
+            sender: None,
+        };
+        let read = peers.call(call("conn_thread_read")).await.unwrap_err();
+        assert_eq!(read.message, "Thread 'thread_x' was not found.");
+        let refused = peers.call(call("conn_thread_send")).await.unwrap_err();
+        assert_eq!(refused.message, "Tool 't3_thread_send' not found");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            [
+                "conn_thread_read",
+                "t3_thread_read",
+                "conn_thread_send",
+                "t3_thread_send"
+            ]
         );
     }
 

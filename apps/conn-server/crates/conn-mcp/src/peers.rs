@@ -162,6 +162,12 @@ pub(crate) fn peer_failure(error: PeerFailure) -> ToolError {
     fail(failure_code(&error.code), error.message)
 }
 
+/// `linkOriginIsFenced`: a link paired below full access, or stamped before access was
+/// recorded, fences the work it started.
+pub(crate) fn link_origin_is_fenced(origin: &Value) -> bool {
+    origin["access"].as_str() != Some("full-access")
+}
+
 impl Cx<'_> {
     fn peers(&self) -> Option<&dyn Peers> {
         self.config().peers.as_deref()
@@ -191,10 +197,7 @@ impl Cx<'_> {
 
     /// `fencingLinkOrigin`: a link paired below full access fences its work.
     pub(crate) async fn fencing_link(&self) -> Result<Option<Value>, ToolError> {
-        Ok(self
-            .link_origin()
-            .await?
-            .filter(|origin| origin["access"].as_str() != Some("full-access")))
+        Ok(self.link_origin().await?.filter(link_origin_is_fenced))
     }
 
     /// `assertNotLinked`: fenced work never changes what this environment already has.
