@@ -19,6 +19,7 @@ import {
   antigravityPermissionDisposition,
   antigravitySessionMeta,
   antigravitySessionMode,
+  antigravityThinkingConfig,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
 
@@ -301,6 +302,42 @@ describe("applyAntigravityAcpModelSelection", () => {
       expect(selections).toEqual(["model=gemini-3.8-flash-low (unlisted)"]);
     }),
   );
+});
+
+describe("antigravityThinkingConfig", () => {
+  const flatOptions = [
+    { value: "low", name: "Low" },
+    { value: "high", name: "High" },
+  ];
+
+  it("returns the option only when currentValue matches an advertised choice", () => {
+    const active = {
+      id: "thought_level",
+      name: "Thinking Level",
+      category: "thought_level",
+      type: "select",
+      currentValue: "high",
+      options: flatOptions,
+    } satisfies EffectAcpSchema.SessionConfigOption;
+    const grouped = {
+      ...active,
+      options: [{ groupId: "levels", name: "Levels", options: flatOptions }],
+    } satisfies EffectAcpSchema.SessionConfigOption;
+    const inactiveEmpty = {
+      ...active,
+      currentValue: "",
+    } satisfies EffectAcpSchema.SessionConfigOption;
+    const inactiveUnlisted = {
+      ...active,
+      currentValue: "unspecified",
+    } satisfies EffectAcpSchema.SessionConfigOption;
+
+    expect(antigravityThinkingConfig([active])).toEqual(active);
+    expect(antigravityThinkingConfig([grouped])).toEqual(grouped);
+    expect(antigravityThinkingConfig([inactiveEmpty])).toBeUndefined();
+    expect(antigravityThinkingConfig([inactiveUnlisted])).toBeUndefined();
+    expect(antigravityThinkingConfig([modelConfig])).toBeUndefined();
+  });
 });
 
 const imageAttachment = {

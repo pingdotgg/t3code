@@ -63,6 +63,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly sessionId?: string;
     readonly startupSkills?: boolean;
     readonly initialModel?: string;
+    readonly initialThinkingLevel?: string;
     readonly rejectThinkingUpdate?: boolean;
   } = {},
 ) {
@@ -137,7 +138,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
       );
       let sessionUpdate: Parameters<TextRuntime["handleSessionUpdate"]>[0] = () => Effect.void;
       let currentModel = options.initialModel ?? modelSelection.model;
-      let thinkingLevel = "high";
+      let thinkingLevel = options.initialThinkingLevel ?? "high";
 
       return {
         start: () =>
@@ -570,6 +571,13 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     },
     { name: "when not advertised", selected: "medium", expected: "high", updates: [] },
     {
+      name: "when inactive",
+      selected: "low",
+      initialThinkingLevel: "",
+      expected: "",
+      updates: [],
+    },
+    {
       name: "when rejected",
       selected: "low",
       expected: "high",
@@ -578,10 +586,11 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     },
   ])(
     "generates a title with the thinking level $name",
-    ({ selected, expected, updates, initialModel, rejectThinkingUpdate }) =>
+    ({ selected, expected, updates, initialModel, initialThinkingLevel, rejectThinkingUpdate }) =>
       Effect.gen(function* () {
         const fixture = yield* makeFixture({
           initialModel: initialModel ?? modelSelection.model,
+          ...(initialThinkingLevel === undefined ? {} : { initialThinkingLevel }),
           rejectThinkingUpdate: rejectThinkingUpdate === true,
         });
         const result = yield* fixture.textGeneration.generateThreadTitle({

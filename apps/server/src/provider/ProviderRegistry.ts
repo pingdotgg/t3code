@@ -288,10 +288,26 @@ const mergeProviderModels = (
     return retainablePreviousModels;
   }
 
+  const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    const hasRetainablePreviousCapabilities =
+      previousModel !== undefined &&
+      hasModelCapabilities(previousModel) &&
+      (!isAntigravity ||
+        (previousModel.capabilities?.optionDescriptors?.some(
+          (descriptor) =>
+            descriptor.type !== "select" ||
+            descriptor.role !== "reasoning" ||
+            descriptor.currentValue !== undefined,
+        ) ??
+          false));
+    if (
+      !hasRetainablePreviousCapabilities ||
+      hasModelCapabilities(model) ||
+      (isAntigravity && model.isDefault === true)
+    ) {
       return model;
     }
     return {

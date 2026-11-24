@@ -29,6 +29,7 @@ import {
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import { flattenSelectChoices } from "@t3tools/provider-acp/server/sessionConfig";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
@@ -249,12 +250,21 @@ export function antigravityModelOptions(
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
 
-/** Runtime 1.4 reports thinking as its own option; 1.3 encoded it in the model ID. */
+/**
+ * Runtime 1.4 reports thinking as its own option; 1.3 encoded it in the model ID.
+ * Models without a manual thinking level (such as Orchestrator) can still advertise
+ * the option with an unlisted `currentValue`; treat that as inactive.
+ */
 export function antigravityThinkingConfig(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ) {
-  const option = configOptions?.find((candidate) => candidate.category === "thought_level");
-  return option?.type === "select" ? option : undefined;
+  const option = configOptions?.find(
+    (candidate) => candidate.category === "thought_level" && candidate.type === "select",
+  );
+  if (option?.type !== "select") return undefined;
+  return flattenSelectChoices(option.options).some((choice) => choice.value === option.currentValue)
+    ? option
+    : undefined;
 }
 
 /**

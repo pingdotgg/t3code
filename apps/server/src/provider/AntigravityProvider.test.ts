@@ -361,6 +361,94 @@ describe("Antigravity model catalog", () => {
     expect(levelsOf("carbon")).toEqual(["low", "medium", "high"]);
     expect(levelsOf("fixed")).toEqual([]);
   });
+
+  it("omits thought_level when currentValue is outside its choices and clears stale cached entries", () => {
+    const options = [
+      { value: "low", name: "Low" },
+      { value: "medium", name: "Medium" },
+      { value: "high", name: "High" },
+      { value: "xhigh", name: "Extra" },
+    ];
+    const thoughtLevel = (currentValue: string) =>
+      ({
+        id: "thought_level",
+        name: "Thinking Level",
+        category: "thought_level",
+        type: "select",
+        currentValue,
+        options,
+      }) satisfies EffectAcpSchema.SessionConfigOption;
+    const modelsOption = (currentValue: string) =>
+      ({
+        ...modelConfig,
+        currentValue,
+        options: [
+          { value: "neon", name: "Neon" },
+          { value: "orchestrator", name: "Orchestrator" },
+        ],
+      }) satisfies EffectAcpSchema.SessionConfigOption;
+
+    const observed = buildAntigravityModelsFromSession(
+      { configOptions: [modelsOption("orchestrator"), thoughtLevel("")] },
+      new Map([["neon", thoughtLevel("high")]]),
+    );
+    expect(
+      observed.find((model) => model.slug === "orchestrator")?.capabilities?.optionDescriptors,
+    ).toEqual([]);
+    expect(
+      observed.find((model) => model.slug === "neon")?.capabilities?.optionDescriptors?.[0],
+    ).toMatchObject({ id: "thought_level", currentValue: "high" });
+
+    // A cache written before the fix kept thought_level without currentValue on orchestrator.
+    const provider = {
+      instanceId,
+      driver,
+      status: "ready",
+      enabled: true,
+      installed: true,
+      version: null,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-24T00:00:00.000Z",
+      slashCommands: [],
+      skills: [],
+    } as const;
+    const staleCached = {
+      ...provider,
+      models: [
+        observed.find((model) => model.slug === "neon")!,
+        {
+          slug: "orchestrator",
+          name: "Orchestrator",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "thought_level",
+                label: "Thinking Level",
+                type: "select",
+                options: options.map(({ value, name }) => ({ id: value, label: name })),
+                role: "reasoning",
+              },
+            ],
+          },
+        },
+      ],
+    } satisfies ServerProvider;
+    const afterSwitch = {
+      ...provider,
+      checkedAt: "2026-11-24T00:01:00.000Z",
+      models: buildAntigravityModelsFromSession({
+        configOptions: [modelsOption("orchestrator"), thoughtLevel("unspecified")],
+      }),
+    } satisfies ServerProvider;
+    const merged = mergeProviderSnapshot(staleCached, afterSwitch);
+    expect(
+      merged.models.find((model) => model.slug === "orchestrator")?.capabilities?.optionDescriptors,
+    ).toEqual([]);
+    expect(
+      merged.models.find((model) => model.slug === "neon")?.capabilities?.optionDescriptors?.[0],
+    ).toMatchObject({ id: "thought_level", currentValue: "high" });
+  });
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {

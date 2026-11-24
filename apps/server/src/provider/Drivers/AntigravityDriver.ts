@@ -52,7 +52,6 @@ import {
 import {
   antigravityModelOptions,
   antigravitySessionMode,
-  antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
 } from "../acp/AntigravityAcpSupport.ts";
@@ -516,7 +515,12 @@ export const AntigravityDriver: ProviderDriver<
       // Thinking levels differ per model and are reported only for the selected one.
       const configOptions = started.sessionSetupResult.configOptions ?? [];
       const current = configOptions.find((option) => option.id === "model")?.currentValue;
-      if (antigravityThinkingConfig(configOptions) !== undefined && typeof current === "string") {
+      if (
+        configOptions.some(
+          (option) => option.category === "thought_level" && option.type === "select",
+        ) &&
+        typeof current === "string"
+      ) {
         for (const model of [...antigravityModelOptions(configOptions), { value: current }]) {
           yield* runtime.setModel(model.value).pipe(Effect.ignore);
         }

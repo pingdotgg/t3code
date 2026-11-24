@@ -3116,3 +3116,152 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 });
+
+describe("AntigravityAdapterV2 thinking level", () => {
+  it.effect(
+    "skips thought_level overrides when currentValue is outside its advertised choices and rejects model drift",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        const makeModelAndThinking = (input: {
+          readonly currentModel: string;
+          readonly currentThinking: string;
+        }): ReadonlyArray<EffectAcpSchema.SessionConfigOption> => [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: input.currentModel,
+            options: [
+              { value: "gemini-test-low", name: "Gemini test low" },
+              { value: "orchestrator-test", name: "Orchestrator test" },
+            ],
+          },
+          {
+            id: "thought_level",
+            name: "Thinking Level",
+            category: "thought_level",
+            type: "select",
+            currentValue: input.currentThinking,
+            options: [
+              { value: "low", name: "Low" },
+              { value: "high", name: "High" },
+            ],
+          },
+        ];
+
+        const runOpen = (scenario: {
+          readonly targetModel: string;
+          readonly thinkingForModel: (model: string) => string;
+          readonly selectedThinking: string;
+          readonly driftModelOnThinkingWrite?: string;
+        }) =>
+          Effect.gen(function* () {
+            const configWrites: Array<readonly [string, string | boolean]> = [];
+            const instanceId = ProviderInstanceId.make("antigravity-thinking-test");
+            const adapter = yield* makeAntigravityAdapterV2({
+              instanceId,
+              selfInvocation: yield* resolveSelfInvocation(),
+              makeRuntime: (input) =>
+                makeAntigravityAcpRuntime({
+                  ...input,
+                  childProcessSpawner,
+                  spawn: {
+                    command: process.execPath,
+                    args: [mockAgentPath],
+                    cwd: input.cwd,
+                    env: { T3_ACP_ANTIGRAVITY: "1" },
+                  },
+                }).pipe(
+                  Effect.provideService(SecureRandom.SecureRandom, crypto),
+                  Effect.map((runtime): RuntimeService => {
+                    let currentModel = "gemini-test-low";
+                    let currentThinking = scenario.thinkingForModel(currentModel);
+                    const liveConfig = () =>
+                      makeModelAndThinking({ currentModel, currentThinking });
+                    return {
+                      ...runtime,
+                      getConfigOptions: Effect.sync(liveConfig),
+                      setModel: (model) =>
+                        Effect.sync(() => {
+                          currentModel = model;
+                          currentThinking = scenario.thinkingForModel(model);
+                        }),
+                      setConfigOption: (configId, value) =>
+                        Effect.sync(() => {
+                          configWrites.push([configId, value]);
+                          if (configId === "thought_level" && typeof value === "string") {
+                            currentThinking = value;
+                            if (scenario.driftModelOnThinkingWrite !== undefined) {
+                              currentModel = scenario.driftModelOnThinkingWrite;
+                            }
+                          }
+                          return { configOptions: liveConfig() };
+                        }),
+                    };
+                  }),
+                ),
+              withProcess: (_stop, task) => task,
+              defaultModel: Effect.undefined,
+            });
+            const exit = yield* adapter
+              .openSession({
+                threadId: ThreadId.make("thread-antigravity-thinking"),
+                providerSessionId: ProviderSessionId.make("provider-session-antigravity-thinking"),
+                modelSelection: {
+                  instanceId,
+                  model: scenario.targetModel,
+                  options: [{ id: "thought_level", value: scenario.selectedThinking }],
+                },
+                runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  cwd: process.cwd(),
+                }),
+              })
+              .pipe(Effect.exit);
+            return { exit, configWrites };
+          }).pipe(Effect.scoped);
+
+        // Model with unlisted thought_level currentValue: never sends thought_level.
+        const inactive = yield* runOpen({
+          targetModel: "orchestrator-test",
+          thinkingForModel: (model) => (model === "orchestrator-test" ? "" : "high"),
+          selectedThinking: "high",
+        });
+        assert.isTrue(Exit.isSuccess(inactive.exit));
+        assert.deepEqual(inactive.configWrites, []);
+
+        // Model with active thought_level currentValue: sends the requested override.
+        const active = yield* runOpen({
+          targetModel: "gemini-test-low",
+          thinkingForModel: () => "high",
+          selectedThinking: "low",
+        });
+        assert.isTrue(Exit.isSuccess(active.exit));
+        assert.deepEqual(active.configWrites, [["thought_level", "low"]]);
+
+        // If a follow-up config write silently switches the session's model, refuse to continue.
+        const drifted = yield* runOpen({
+          targetModel: "gemini-test-low",
+          thinkingForModel: () => "high",
+          selectedThinking: "low",
+          driftModelOnThinkingWrite: "orchestrator-test",
+        });
+        assert.isTrue(Exit.isFailure(drifted.exit));
+        if (Exit.isFailure(drifted.exit)) {
+          assert.include(
+            String(drifted.exit.cause),
+            "switched model from 'gemini-test-low' to 'orchestrator-test'",
+          );
+        }
+      }).pipe(Effect.provide(layerSession)),
+  );
+});
