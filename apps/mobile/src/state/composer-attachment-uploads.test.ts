@@ -17,7 +17,6 @@ const native = vi.hoisted(() => ({
   canOperate: true,
   nextId: 0,
   nextUuid: 0,
-  mint: Symbol("mint"),
   remove: Symbol("remove"),
   transfer:
     vi.fn<(uri: string, url: string, options: UploadOptions) => Promise<{ status: number }>>(),
@@ -130,43 +129,51 @@ vi.mock("./session", async () => {
     },
   };
 });
-vi.mock("./attachments", () => ({
-  attachmentEnvironment: { createUploadUrl: native.mint, remove: native.remove },
-}));
+vi.mock("./attachments", async () => {
+  const Effect = await import("effect/Effect");
+  return {
+    attachmentEnvironment: {
+      createUploadUrl: {
+        run: () =>
+          Effect.sync(() => {
+            const id = `pending-${++native.nextId}`;
+            native.server.set(id, null);
+            return { attachmentId: id, relativeUrl: `/upload/${id}`, expiresAt: 1 };
+          }),
+      },
+      remove: native.remove,
+    },
+  };
+});
 vi.mock("./assets", () => ({ assetEnvironment: { createUrl: (input: unknown) => input } }));
-vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
-  createEnvironmentRpcCommand: () => Symbol("rpc-command"),
-  executeAtomQuery: async (
-    _registry: unknown,
-    query: { input: { resource: { attachmentId: string } } },
-  ) =>
-    native.server.get(query.input.resource.attachmentId)
-      ? { _tag: "Success", value: {} }
-      : (await import("effect/reactivity")).AsyncResult.failure(
-          (await import("effect/Cause")).fail({ _tag: "AssetAttachmentNotFoundError" }),
-        ),
-  runAtomCommand: async (
-    _registry: unknown,
-    command: unknown,
-    target: { input: { attachmentId?: string } },
-  ) => {
-    if (command === native.mint) {
-      const id = `pending-${++native.nextId}`;
-      native.server.set(id, null);
-      return {
-        _tag: "Success",
-        value: { attachmentId: id, relativeUrl: `/upload/${id}`, expiresAt: 1 },
-      };
-    }
-    if (command === native.remove && target.input.attachmentId) {
-      native.deleted.push(target.input.attachmentId);
-      native.server.delete(target.input.attachmentId);
-      return { _tag: "Success", value: undefined };
-    }
-    throw new Error("Unexpected RPC command");
-  },
-}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => {
+  const Effect = await import("effect/Effect");
+  return {
+    ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+    createEnvironmentRpcCommand: () => Symbol("rpc-command"),
+    awaitAtomResult: (
+      _registry: unknown,
+      query: { input: { resource: { attachmentId: string } } },
+    ) =>
+      Effect.suspend(() =>
+        native.server.get(query.input.resource.attachmentId)
+          ? Effect.succeed({})
+          : Effect.fail({ _tag: "AssetAttachmentNotFoundError" }),
+      ),
+    runAtomCommand: async (
+      _registry: unknown,
+      command: unknown,
+      target: { input: { attachmentId?: string } },
+    ) => {
+      if (command === native.remove && target.input.attachmentId) {
+        native.deleted.push(target.input.attachmentId);
+        native.server.delete(target.input.attachmentId);
+        return { _tag: "Success", value: undefined };
+      }
+      throw new Error("Unexpected RPC command");
+    },
+  };
+});
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
