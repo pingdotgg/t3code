@@ -996,7 +996,7 @@ export class GhosttyTerminalSurface {
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(encoded);
+    if (encoded.length > 0) this.sendUserInput(encoded);
   }
 
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
@@ -1068,6 +1068,16 @@ export class GhosttyTerminalSurface {
 
   isAtBottom(): boolean {
     return this.core.isViewportActive();
+  }
+
+  /**
+   * Typed text, keys and pastes belong at the prompt, so a viewport parked in
+   * scrollback returns to the bottom first, as in xterm's scrollOnUserInput.
+   * Mouse reports, wheel-to-arrow data and terminal replies keep using onData.
+   */
+  private sendUserInput(data: string): void {
+    if (!this.isAtBottom()) this.scrollToBottom();
+    this.options.onData(data);
   }
 
   dispose(): void {
@@ -1208,7 +1218,7 @@ export class GhosttyTerminalSurface {
             this.pasteShortcutToken += 1;
             if (text.length === 0) return;
             if (this.pasteShortcutGesture === gesture) gesture.readText = text;
-            this.options.onData(this.core.encodePaste(text));
+            this.sendUserInput(this.core.encodePaste(text));
           },
           () => {},
         );
@@ -1221,7 +1231,7 @@ export class GhosttyTerminalSurface {
     this.encodedKeyCodes.add(event.code);
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    this.sendUserInput(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
@@ -1330,7 +1340,7 @@ export class GhosttyTerminalSurface {
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
+    this.sendUserInput(this.core.encodePaste(data));
   };
 
   private readonly onCompositionStart = () => {
@@ -1342,7 +1352,7 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.sendUserInput(data);
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1361,7 +1371,7 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.sendUserInput(data);
     this.input.value = "";
   };
 

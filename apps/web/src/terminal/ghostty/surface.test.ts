@@ -293,6 +293,38 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.hasSelection()).toBe(false);
   });
 
+  it("returns a scrolled-back viewport to the prompt when the user types", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write(`${"\r\n".repeat(40)}ready`);
+    expect(surface.isAtBottom()).toBe(true);
+
+    harness.canvas.dispatchEvent(
+      Object.assign(new Event("wheel", { cancelable: true }), { deltaY: -48, deltaMode: 0 }),
+    );
+    expect(surface.isAtBottom()).toBe(false);
+
+    key(surface, "a", "KeyA");
+    expect(harness.onData).toHaveBeenLastCalledWith("a");
+    expect(surface.isAtBottom()).toBe(true);
+  });
+
+  it("returns a scrolled-back viewport to the prompt when the user pastes", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write(`${"\r\n".repeat(40)}ready`);
+    harness.canvas.dispatchEvent(
+      Object.assign(new Event("wheel", { cancelable: true }), { deltaY: -48, deltaMode: 0 }),
+    );
+    expect(surface.isAtBottom()).toBe(false);
+
+    paste(surface, "echo hi");
+    expect(harness.onData).toHaveBeenLastCalledWith("echo hi");
+    expect(surface.isAtBottom()).toBe(true);
+  });
+
   it("copies on Ctrl+Shift+C when a non-Latin layout reports another letter on KeyC", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();
