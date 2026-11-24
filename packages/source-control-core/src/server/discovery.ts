@@ -200,6 +200,15 @@ function isCliRemoteRefinementSpec(
 const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
+/** Checked before a probe spawns, so a CLI that is not installed records no failed process span. */
+export const isExecutableOnPath = Effect.fnUntraced(function* (executable: string) {
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const platform = yield* HostProcess.Platform;
+  const env = yield* HostProcess.Environment;
+  const path = yield* Effect.promise(async () => resolveExecutable(executable, platform, env));
+  return path !== undefined;
+});
+
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
   readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
@@ -306,12 +315,21 @@ export function probeSourceControlProvider(input: {
     return first;
   });
 
-  // Auth waits on the version probe so a CLI that is not installed costs one failed spawn per sweep.
-  return probeCli({
-    spec,
-    process: input.process,
-    cwd: input.cwd,
-  }).pipe(
+  // A CLI that is not installed is never spawned, and auth waits until the version probe answers.
+  return isExecutableOnPath(spec.executable).pipe(
+    Effect.flatMap((found): Effect.Effect<DiscoveryProbeResult> =>
+      found
+        ? probeCli({ spec, process: input.process, cwd: input.cwd })
+        : Effect.succeed({
+            kind: spec.kind,
+            label: spec.label,
+            executable: spec.executable,
+            status: "missing",
+            version: Option.none(),
+            installHint: spec.installHint,
+            detail: Option.none(),
+          }),
+    ),
     Effect.flatMap((item): Effect.Effect<SourceControlProviderDiscoveryItem> =>
       item.status === "available"
         ? Effect.map(auth, (auth) => ({ ...item, auth }))
