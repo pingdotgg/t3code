@@ -35,6 +35,7 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useNavigation } from "@react-navigation/native";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
@@ -74,6 +75,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { threadCanArchive } from "../home/threadArchive";
+import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -929,6 +931,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
+  const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1070,7 +1074,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         },
         m,
       ),
-      { id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" },
+      ...(thread.latestRun?.completedAt != null && threadCanArchive(thread.runtime)
+        ? [{ id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" }]
+        : []),
       ...(canTurnIntoProject
         ? [
             {
@@ -1087,6 +1093,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       gt,
       m,
       props.titleRegenerationSupported,
+      thread.latestRun,
       thread.runtime,
       isRegeneratingTitle,
     ],
@@ -1106,6 +1113,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : []),
       { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
       { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
+      ...(canShareWithGuest
+        ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
+        : []),
     ];
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions(
@@ -1185,6 +1195,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
   }, [
     autoSettleMenuItems,
+    canShareWithGuest,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1234,6 +1245,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "copy-thread-id") {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
+      if (nativeEvent.event === "share-guest") {
+        navigation.navigate("ThreadGuestShare", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
       if (nativeEvent.event === "delete") handleDelete();
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
@@ -1259,6 +1276,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       m,
       onNewThreadOnBranch,
       thread,
+      navigation,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,

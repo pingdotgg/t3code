@@ -73,6 +73,7 @@ export interface IssueTarget extends IssueScopeTarget {
 
 /** An issue as the tracker sees it, before the service attaches project context. */
 export type TrackerIssueSummary = Omit<IssueSummary, "tracker" | "host" | "scope">;
+export type TrackerIssueLink = Pick<TrackerIssueSummary, "title" | "url" | "displayKey">;
 
 export interface TrackerIssuePage {
   readonly items: ReadonlyArray<TrackerIssueSummary>;
@@ -126,11 +127,18 @@ export interface IssueTrackerApi {
         readonly sort: IssueListSort;
         /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
         readonly cursor?: string | undefined;
+        /** Whether to re-read tracker metadata for a first page. */
+        readonly refresh?: boolean | undefined;
       },
   ) => Effect.Effect<TrackerIssuePage, IssueTrackerError>;
 
   /** The issue with its first page of conversation, in one read where the tracker allows. */
   readonly getIssue: (input: IssueTarget) => Effect.Effect<TrackerIssueDetail, IssueTrackerError>;
+
+  /** Confirms an issue exists and names it for a thread link. */
+  readonly getIssueLink?: (
+    input: IssueTarget,
+  ) => Effect.Effect<TrackerIssueLink, IssueTrackerError>;
 
   /** One page of older comments past a cursor `getIssue` or a previous page handed over. */
   readonly getComments: (
@@ -210,10 +218,13 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
    */
-  readonly probeCredential: (
-    token: string,
-  ) => Effect.Effect<
-    { readonly account: string; readonly scopes: ReadonlyArray<IssueTrackerScope> },
+  readonly probeCredential: (token: string) => Effect.Effect<
+    {
+      readonly account: string;
+      /** What the tracker's issue URLs name the credential's workspace by, where they name one. */
+      readonly workspace?: string | undefined;
+      readonly scopes: ReadonlyArray<IssueTrackerScope>;
+    },
     IssueTrackerError
   >;
 }

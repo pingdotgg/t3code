@@ -13,6 +13,7 @@ import {
 } from "~/components/preview/thumbButtons";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
+import { useViewportSize } from "~/hooks/useViewportSize";
 import { cn, isMacPlatform } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
@@ -22,6 +23,8 @@ import {
   resolveBrowserViewportLayout,
   resolveBrowserViewportTransform,
   resolveFittedBrowserViewport,
+  resolveHiddenBrowserViewportFitScale,
+  resolveHiddenBrowserViewportSize,
 } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
@@ -159,6 +162,7 @@ export function HostedBrowserWebview(props: {
     if (!clientSettingsHydrated || !webview || !config || !bridge) return;
     let disposed = false;
     let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let registeredWebContentsId: number | null = null;
     const register = () => {
       const lease = tabLeaseRef.current;
       if (!lease) return;
@@ -170,6 +174,7 @@ export function HostedBrowserWebview(props: {
           const webContentsId = webview.getWebContentsId();
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
+            registeredWebContentsId = webContentsId;
             withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, reportedShown()));
           }
         } catch {}
@@ -198,6 +203,13 @@ export function HostedBrowserWebview(props: {
         dismissHostPopups();
       }
     };
+    // The desktop clears a destroyed guest's id; nothing reattaches this element, so remount it.
+    const unsubscribeState = bridge.onStateChange((changedTabId, state) => {
+      if (changedTabId !== runtimeTabId || registeredWebContentsId === null) return;
+      if (state.webContentsId !== null) return;
+      registeredWebContentsId = null;
+      recoverGuest();
+    });
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
@@ -207,6 +219,7 @@ export function HostedBrowserWebview(props: {
     return () => {
       disposed = true;
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
+      unsubscribeState();
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
@@ -233,18 +246,14 @@ export function HostedBrowserWebview(props: {
     setAspectRatioLocked(aspectRatio !== null);
   };
   const content = presentation.content;
-  const hiddenWidth =
-    viewport._tag !== "fill"
-      ? viewport.width * layoutZoomFactor
-      : content
-        ? content.width / content.scale
-        : (lastRect?.width ?? 1280);
-  const hiddenHeight =
-    viewport._tag !== "fill"
-      ? viewport.height * layoutZoomFactor
-      : content
-        ? content.height / content.scale
-        : (lastRect?.height ?? 800);
+  const windowSize = useViewportSize();
+  const { width: hiddenWidth, height: hiddenHeight } = resolveHiddenBrowserViewportSize({
+    setting: viewport,
+    zoomFactor: layoutZoomFactor,
+    content,
+    lastRect,
+    windowSize,
+  });
   // Build from primitives on each side of the resize hook to keep both objects cached.
   const containerSize =
     active && lastRect ? lastRect : { width: hiddenWidth, height: hiddenHeight };
@@ -340,7 +349,16 @@ export function HostedBrowserWebview(props: {
   };
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
-  const viewportTransform = resolveBrowserViewportTransform(layout.viewportScale, fullDetail);
+  // Electron clips a guest's native surface at the window edge, so a hidden guest draws scaled to fit.
+  const fitScale =
+    active && lastRect
+      ? 1
+      : resolveHiddenBrowserViewportFitScale(
+          { width: hiddenWidth, height: hiddenHeight },
+          windowSize,
+        );
+  const viewportScale = layout.viewportScale * fitScale;
+  const viewportTransform = resolveBrowserViewportTransform(viewportScale, fullDetail);
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
     renderingActive,
@@ -374,17 +392,18 @@ export function HostedBrowserWebview(props: {
           />
         ) : null}
         <div
+          // Keyed here, not on the webview: a destroyed guest's element may already be detached.
+          key={webviewGeneration}
           className="absolute"
           style={{
-            left: layout.viewportX,
-            top: layout.viewportY,
-            width: layout.viewportWidth,
-            height: layout.viewportHeight,
+            left: layout.viewportX * fitScale,
+            top: layout.viewportY * fitScale,
+            width: layout.viewportWidth * fitScale,
+            height: layout.viewportHeight * fitScale,
             transformStyle: viewportTransform && fullDetail ? "preserve-3d" : undefined,
           }}
         >
           <webview
-            key={webviewGeneration}
             ref={setWebviewRef}
             // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
             {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
