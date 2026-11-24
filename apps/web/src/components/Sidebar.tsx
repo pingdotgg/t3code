@@ -2202,7 +2202,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       // Stored keys, not sort keys: an unpinned row gaining its implied key is not a foreign write.
       keysAtDrop:
         target.section === "active"
-          ? new Map(activeKeys.map((key) => [key, threadByKey.get(key)?.activeOrderKey ?? null]))
+          ? new Map([...threadByKey].map(([key, thread]) => [key, thread.activeOrderKey ?? null]))
           : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
     };
