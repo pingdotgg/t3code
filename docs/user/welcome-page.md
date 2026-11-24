@@ -95,15 +95,18 @@ assistant message.
 It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
-conversation so T3 Code does not remove user text. It reads one conversation at
-a time and skips files larger than 4 GiB. The message text and metadata it keeps
-may use up to 32 MiB of memory; tool output does not count. A longer Claude
-conversation keeps its first prompt and the newest messages that fit, and the
-thread says how many earlier messages it left out. A Codex or Pi conversation
-that needs more, or has more than 100,000 records, is skipped every time, so
-opening the page again does not import it. It ignores malformed records and
-conversations with no messages, such as a session opened in an editor but never
-used. It skips unreadable or unparseable conversations.
+conversation so T3 Code does not remove user text. For Claude, slash commands
+and `!` shell commands appear as you typed them; their output, background task
+notifications and interruption markers are left out, and a conversation that
+only ran commands such as `/clear`, with no reply, is skipped. It reads one
+conversation at a time and skips files larger than 4 GiB. The message text and
+metadata it keeps may use up to 32 MiB of memory; tool output does not count. A
+longer Claude conversation keeps its first prompt and the newest messages that
+fit, and the thread says how many earlier messages it left out. A Codex or Pi
+conversation that needs more, or has more than 100,000 records, is skipped every
+time, so opening the page again does not import it. It ignores malformed records
+and conversations with no messages, such as a session opened in an editor but
+never used. It skips unreadable or unparseable conversations.
 
 Each import attempt reads up to 100 conversations and 4 GiB per project.
 Conversations with no messages count toward the 4 GiB but not the 100. To

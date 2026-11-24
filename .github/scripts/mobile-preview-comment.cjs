@@ -31,6 +31,7 @@ function readState(body) {
  * the comment now shows.
  */
 function mergeState(previous, next) {
+  if (!next.client && !next.group) return previous;
   const buildOnly = Boolean(next.client) && !next.group;
   if (
     buildOnly &&

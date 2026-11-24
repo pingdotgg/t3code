@@ -342,6 +342,14 @@ describe("RpcSerialization", () => {
     ])
   })
 
+  it("ndjson decodes the next frame after a malformed frame that ended inside a multibyte character", () => {
+    const parser = RpcSerialization.ndjson.makeUnsafe()
+
+    // A malformed line, then the first byte of a two-byte character.
+    assert.throws(() => parser.decode(new Uint8Array([123, 10, 195])), RpcSerialization.NdjsonDecodeError)
+    assert.deepStrictEqual(parser.decode(new TextEncoder().encode("{\"ok\":true}\n")), [{ ok: true }])
+  })
+
   it.effect("layerNdjsonWith forwards maxBufferSize to its decoder", () =>
     Effect.gen(function*() {
       const serialization = yield* RpcSerialization.RpcSerialization

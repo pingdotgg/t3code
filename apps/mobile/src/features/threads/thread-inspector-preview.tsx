@@ -3,8 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type ReactNode } from "react";
 import { View } from "react-native";
 
-import { AppBar } from "../../components/ui/AppBar";
-import { SheetHeader } from "../../components/ui/SheetHeader";
+import { LocalPreviewScreen } from "../browser/LocalPreviewRouteScreen";
 import { DevicePreviewScreen } from "../devices/DevicePreviewRouteScreen";
 import {
   WorkspaceContentWidthContext,
@@ -14,40 +13,10 @@ import {
   ThreadInspectorNavigationContext,
   type ThreadInspectorTarget,
 } from "./thread-inspector-navigation";
+import { linkedThreadRouteParams } from "./linkedThreadRoute";
+import { LinkedThreadView } from "./LinkedThreadSheet";
+import type { ThreadInspectorPresentation } from "./thread-inspector-header";
 import { ThreadPreviewRoute } from "./thread-preview-route";
-
-/** A thread shown outside its route: in the inspector pane, or presented full screen with a close. */
-export type ThreadInspectorPresentation =
-  | { readonly onMaximize: () => void }
-  | { readonly onClose: () => void };
-
-export function ThreadInspectorHeader(
-  props: ThreadInspectorPresentation & { readonly title: string; readonly subtitle?: string },
-) {
-  if ("onMaximize" in props) {
-    return (
-      <AppBar
-        title={props.title}
-        subtitle={props.subtitle}
-        actions={[
-          {
-            accessibilityLabel: "Maximize thread",
-            icon: "arrow.up.left.and.arrow.down.right",
-            onPress: props.onMaximize,
-          },
-        ]}
-      />
-    );
-  }
-  return (
-    <SheetHeader
-      title={props.title}
-      subtitle={props.subtitle}
-      onClose={props.onClose}
-      accessibilityLabel="Close thread"
-    />
-  );
-}
 
 /** A thread shown beside or over the workspace does not take the workspace's content width. */
 export function InspectorContentScope({ children }: { readonly children: ReactNode }) {
@@ -85,7 +54,27 @@ export function ThreadInspectorPreview(props: {
   return (
     <ThreadInspectorNavigationContext value={props.onOpen}>
       <InspectorContentScope>
-        {target.type === "device" ? (
+        {target.type === "localPreview" && target.url ? (
+          <LocalPreviewScreen
+            key={`${target.environmentId}:${target.url}`}
+            environmentId={EnvironmentId.make(target.environmentId)}
+            url={target.url}
+            onClose={props.onClose}
+            onMaximize={(url) => {
+              props.onOpen({ ...target, url });
+              navigation.navigate("ThreadLocalPreview", {
+                environmentId: target.environmentId,
+                url,
+              });
+            }}
+          />
+        ) : target.type === "linkedThread" && target.linked ? (
+          <LinkedThread
+            key={`${target.linked.viaEnvironmentId}:${target.environmentId}:${target.threadId}`}
+            thread={target}
+            linked={target.linked}
+          />
+        ) : target.type === "device" ? (
           <DevicePreviewScreen
             key={`${target.environmentId}:${target.threadId}`}
             environmentId={EnvironmentId.make(target.environmentId)}
@@ -114,5 +103,36 @@ export function ThreadInspectorPreview(props: {
         )}
       </InspectorContentScope>
     </ThreadInspectorNavigationContext>
+  );
+}
+
+/** A linked environment's read-only thread in the inspector; Maximize gives it the whole screen. */
+function LinkedThread(props: {
+  readonly thread: Pick<ThreadInspectorTarget, "environmentId" | "threadId">;
+  readonly linked: NonNullable<ThreadInspectorTarget["linked"]>;
+}) {
+  const navigation = useNavigation();
+  const params = linkedThreadRouteParams(
+    {
+      environmentId: EnvironmentId.make(props.thread.environmentId),
+      threadId: ThreadId.make(props.thread.threadId),
+    },
+    {
+      viaEnvironmentId: EnvironmentId.make(props.linked.viaEnvironmentId),
+      label: props.linked.label,
+    },
+    props.linked.title ?? null,
+  );
+  return (
+    <LinkedThreadView
+      target={{
+        viaEnvironmentId: EnvironmentId.make(params.viaEnvironmentId),
+        environmentId: EnvironmentId.make(params.environmentId),
+        threadId: ThreadId.make(params.threadId),
+        label: params.label,
+        title: params.title ?? null,
+      }}
+      presentation={{ onMaximize: () => navigation.navigate("LinkedThreadFullscreen", params) }}
+    />
   );
 }
