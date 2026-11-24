@@ -21,6 +21,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { byTimestamp, relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { usePullRequestCommentTasks } from "./usePullRequestCommentTasks";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 import { discussionCommentCountLabel } from "./pullRequestDiffComments";
@@ -91,6 +92,11 @@ function TimelineComment({
   const gt = useGT();
   const messages = useMessages();
   const { themeVariables: colors } = useAppearancePreferences();
+  const tasks = usePullRequestCommentTasks(
+    params,
+    comment,
+    actions.permissions.canEditComment(comment),
+  );
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
   const content = useMemo(
     () => pullRequestDescriptionContent(parseMarkdownDocument(comment.body), [], messages),
@@ -152,8 +158,9 @@ function TimelineComment({
         >
           <View style={long && !expanded ? { maxHeight: 240, overflow: "hidden" } : undefined}>
             <PullRequestMarkdown
-              markdown={long && !expanded ? comment.body.slice(0, 1200) : comment.body}
-              imageGroupMarkdown={comment.body}
+              markdown={long && !expanded ? tasks.body.slice(0, 1200) : tasks.body}
+              imageGroupMarkdown={tasks.body}
+              onTaskListChange={tasks.toggleTask}
             />
           </View>
           {long && !expanded ? (

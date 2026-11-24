@@ -3166,6 +3166,7 @@
   "ed12185f6491f9aa": "No se pudo actualizar esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "52a848a6b739560f": "¿Cerrar esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} sin fusionar sus cambios?",
   "6447b79f23fc5446": "Resuelto: {title}",
+  "faef5657f28d1c69": "No se pudo guardar el comentario",
   "e3e1ec05d1224d36": "No se pudo guardar la descripción",
   "87586388ddab87f9": "No se pudieron actualizar los archivos vistos.",
   "2800188d5c223fa6": "No se pudo avanzar en la lista. Inténtalo de nuevo.",

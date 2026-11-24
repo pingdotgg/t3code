@@ -32,6 +32,7 @@ import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { usePullRequestCommentTasks } from "./usePullRequestCommentTasks";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
 import { usePullRequestCompletions } from "./usePullRequestCompletions";
@@ -46,6 +47,23 @@ export function PullRequestDiscussionScreen({
       params={route.params}
     />
   );
+}
+
+function DiscussionCommentBody({
+  params,
+  comment,
+  canEdit,
+}: {
+  params: PullRequestParams;
+  comment: PullRequestThreadComment;
+  canEdit: boolean;
+}) {
+  const tasks = usePullRequestCommentTasks(
+    params,
+    { id: comment.id, body: comment.body, kind: "review-comment" },
+    canEdit,
+  );
+  return <PullRequestMarkdown markdown={tasks.body} onTaskListChange={tasks.toggleTask} />;
 }
 
 function Discussion({ params }: { params: PullRequestParams & { readonly discussionId: string } }) {
@@ -271,7 +289,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                     {relativeTime(comment.createdAt, undefined, messages)}
                   </Text>
                 </View>
-                <PullRequestMarkdown markdown={comment.body} />
+                <DiscussionCommentBody
+                  params={params}
+                  comment={comment}
+                  canEdit={permissions.canEditComment({ ...comment, kind: "review-comment" })}
+                />
                 <PullRequestCommentFooter
                   params={params}
                   comment={{ ...comment, kind: "review-comment" }}

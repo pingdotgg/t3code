@@ -3172,6 +3172,7 @@
   "ed12185f6491f9aa": "Couldn't update this {term, select, mr {merge request} cr {change request} other {pull request}}",
   "52a848a6b739560f": "Close this {term, select, mr {merge request} cr {change request} other {pull request}} without merging its changes?",
   "6447b79f23fc5446": "Settled: {title}",
+  "faef5657f28d1c69": "Could not save the comment",
   "e3e1ec05d1224d36": "Could not save the description",
   "87586388ddab87f9": "Could not update viewed files.",
   "2800188d5c223fa6": "Couldn't advance the list. Try again.",

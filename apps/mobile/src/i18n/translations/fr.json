@@ -3166,6 +3166,7 @@
   "ed12185f6491f9aa": "Impossible de mettre à jour cette {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "52a848a6b739560f": "Fermer cette {term, select, mr {merge request} cr {demande de modification} other {pull request}} sans fusionner ses modifications ?",
   "6447b79f23fc5446": "Clos : {title}",
+  "faef5657f28d1c69": "Impossible d’enregistrer le commentaire",
   "e3e1ec05d1224d36": "Impossible d’enregistrer la description",
   "87586388ddab87f9": "Impossible de mettre à jour les fichiers consultés.",
   "2800188d5c223fa6": "Impossible d’avancer dans la liste. Réessayez.",

@@ -3167,6 +3167,7 @@
   "ed12185f6491f9aa": "无法更新此 {term, select, mr {MR} cr {change request} other {PR}}",
   "52a848a6b739560f": "关闭此 {term, select, mr {merge request} cr {change request} other {pull request}} 而不合并其更改？",
   "6447b79f23fc5446": "已收尾：{title}",
+  "faef5657f28d1c69": "无法保存评论",
   "e3e1ec05d1224d36": "无法保存描述",
   "87586388ddab87f9": "无法更新已查看的文件。",
   "2800188d5c223fa6": "无法推进列表。请重试。",
