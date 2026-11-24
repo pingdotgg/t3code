@@ -14,6 +14,7 @@ import {
   CommandId,
   isDelegatedAppThread,
   isListedThreadLineage,
+  isOrchestrationV2WorkActive,
   MessageId,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
@@ -44,6 +45,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -55,6 +57,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -69,9 +72,11 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
+import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
+import { checkOutput, outputRequestProblem } from "./runOutput.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -91,6 +96,7 @@ export function withCreationProvenance(
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
         initialMessage: _initialMessage,
+        workflowRun: _workflowRun,
         ...rest
       } = command;
       return { ...rest, ...provenance };
@@ -160,6 +166,8 @@ export interface ThreadManagementSendInput {
   readonly mode: ThreadManagementSendMode;
   /** Start a new provider session; the orchestrator queues it instead of steering. */
   readonly freshContext?: boolean;
+  /** Ask the run for a result as data matching this JSON Schema; it is queued, never steered. */
+  readonly outputSchema?: Readonly<Record<string, Schema.Json>>;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -187,6 +195,11 @@ export interface ThreadManagementWaitInput {
    * completion delivery will wake it again, as a delegated task's result does.
    */
   readonly untilDelegatedWorkSettled?: boolean;
+  /**
+   * Also wait until the run has the result it was asked for. A turn may end without one while
+   * its agent waits to be woken, and submit it from a later turn.
+   */
+  readonly untilOutput?: boolean;
 }
 
 export interface ThreadManagementWaitResult {
@@ -270,6 +283,20 @@ export class ThreadManagementNoSteerableRunError extends Schema.TaggedError<Thre
 ) {
   override get message(): string {
     return `Thread ${this.threadId} has no running turn that can be ${this.mode === "steer" ? "steered" : "restarted"}.`;
+  }
+}
+
+export class ThreadManagementRunOutputRejectedError extends Schema.TaggedError<ThreadManagementRunOutputRejectedError>()(
+  "ThreadManagementRunOutputRejectedError",
+  {
+    threadId: ThreadId,
+    /** One of a few fixed sentences. What a submission got wrong is in `cause`. */
+    problem: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.problem;
   }
 }
 
@@ -376,6 +403,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementRunNotFoundError,
   ThreadManagementThreadArchivedError,
   ThreadManagementNoSteerableRunError,
+  ThreadManagementRunOutputRejectedError,
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
@@ -463,6 +491,12 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  /** Stores what the thread's running turn returns, once it fits the schema that turn declared. */
+  readonly submitRunOutput: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly json: string;
+  }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -875,10 +909,19 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
       });
     }
+    const schemaProblem =
+      input.outputSchema === undefined ? null : outputRequestProblem(input.outputSchema, input);
+    if (schemaProblem !== null) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: schemaProblem,
+      });
+    }
     const steerableRun = latestSteerableRun(target);
-    // A fresh send never joins a running turn, so it needs none to steer or restart.
+    // A fresh send, or one that asks for a result, never joins a running turn.
     const mode =
-      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+      (input.freshContext || input.outputSchema !== undefined) &&
+      (input.mode === "steer" || input.mode === "restart")
         ? "queue"
         : input.mode;
     const explicitSteer = mode === "steer" || mode === "restart";
@@ -938,6 +981,7 @@ const make = Effect.gen(function* () {
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
+      ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
@@ -991,6 +1035,73 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
+  const submitRunOutput: ThreadManagementServiceShape["submitRunOutput"] = Effect.fn(
+    "ThreadManagementService.submitRunOutput",
+  )(function* (input) {
+    const records = yield* orchestrator.getThreadRecords(input.threadId, ["runs"]);
+    // A retry of a submission already taken answers for the run it went to, which a run asked for
+    // a result since may have followed. Replaying the receipt ignores the command's run and value.
+    const receipt = yield* receipts
+      .getByCommandId(input.commandId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const anyRun = records.runs[0];
+    if (Option.isSome(receipt) && receipt.value.status === "accepted" && anyRun !== undefined) {
+      const replayed = yield* orchestrator.dispatch({
+        type: "run.output.submit",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        runId: anyRun.id,
+        value: null,
+      });
+      const runId = replayed.storedEvents.find(({ event }) => event.type === "run.output-submitted")
+        ?.event.runId;
+      if (runId !== undefined) return { runId };
+    }
+    const active = latestActiveRun(records);
+    // A turn that ended without its result still owes it: the agent may have ended it to wait
+    // for something, and answer from the turn that woke it. Only the newest started run asked for
+    // one can owe it, and only while the agent's conversation still reaches it.
+    const asked = records.runs
+      .filter(
+        (candidate) =>
+          candidate.outputSchema !== undefined &&
+          candidate.status !== "queued" &&
+          !cancelledBeforeStart(candidate),
+      )
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    const owing = asked?.status === "completed" && asked.output === undefined ? asked : undefined;
+    const forgotten =
+      owing !== undefined &&
+      records.runs.some((later) => later.freshContext === true && later.ordinal > owing.ordinal) &&
+      contextBoundaryOrdinal(
+        yield* orchestrator.getThreadRecords(input.threadId, ["runs", "turnItems"]),
+      ) > owing.ordinal;
+    const owed = forgotten ? undefined : owing;
+    const run = active?.outputSchema !== undefined ? active : owed;
+    if (active === undefined || run?.outputSchema === undefined) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "This turn was not asked for a result. Reply in your message instead.",
+      });
+    }
+    const checked = yield* checkOutput(run.outputSchema, input.json);
+    if (Result.isFailure(checked)) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: checked.failure.problem,
+        ...(checked.failure.cause === undefined ? {} : { cause: checked.failure.cause }),
+      });
+    }
+    yield* dispatch({
+      type: "run.output.submit",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      runId: run.id,
+      value: checked.success,
+    });
+    return { runId: run.id };
+  });
+
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
   )(function* (input) {
@@ -1033,7 +1144,12 @@ const make = Effect.gen(function* () {
       const run = latestRestartContinuation(runs, current);
       const pending =
         isTerminalRunStatus(run.status) && (yield* orchestrator.restartContinuationPending(run));
-      return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
+      const owesOutput =
+        input.untilOutput === true &&
+        run.status === "completed" &&
+        run.outputSchema !== undefined &&
+        run.output === undefined;
+      return { run, pending, settled: isTerminalRunStatus(run.status) && !pending && !owesOutput };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;
     const delegatedWorkResult = Effect.gen(function* () {
@@ -1083,6 +1199,7 @@ const make = Effect.gen(function* () {
           [
             "run.updated",
             "thread.deleted",
+            ...(input.untilOutput === true ? (["run.output-submitted"] as const) : []),
             // What delegated work reads besides runs: tasks and their
             // deliveries, and a provider thread's background tasks.
             ...(untilDelegatedWorkSettled
@@ -1276,6 +1393,15 @@ const make = Effect.gen(function* () {
           readonly status: ThreadManagementTerminalRunStatus;
         },
       } as const;
+    }
+    if (explicitRun?.status === "queued") {
+      const dispatch = yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        runId: explicitRun.id,
+      });
+      return { type: "interrupt_requested", run: explicitRun, dispatch } as const;
     }
     const interruptibleRun = latestActiveRun(target);
     if (interruptibleRun === undefined) {
@@ -1616,6 +1742,58 @@ const make = Effect.gen(function* () {
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
   });
 
+  // Mirrors what Orchestrator's thread.stop would change; a clause missing here leaves that work running.
+  const childNeedsStop = (
+    child: ProjectionRecords<"runs" | "providerThreads" | "turnItems" | "subagents">,
+  ): boolean => {
+    if (child.thread.deletedAt !== null) return false;
+    const latestRun = child.runs.findLast((run) => run.status !== "queued");
+    const hasStoppableRun = child.runs.some(
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "queued" ||
+        run.delegatedCompletion?.delivery != null,
+    );
+    const hasPendingRecovery =
+      latestRun !== undefined &&
+      (latestRun.status === "cancelled" ||
+        (latestRun.status === "failed" &&
+          (latestRun.restartContinuationOfRunId !== undefined ||
+            child.thread.limitRecovery?.runId !== latestRun.id ||
+            child.thread.limitRecovery.autoResume !== false)));
+    const hasPendingSubagent = child.subagents.some(
+      (task) =>
+        (task.origin === "provider_native" &&
+          task.runId !== null &&
+          isOrchestrationV2WorkActive(task.status)) ||
+        (task.origin === "app_owned" &&
+          (isOrchestrationV2WorkActive(task.status) ||
+            (task.runId !== null &&
+              task.completionDelivery?.state !== "acknowledged" &&
+              task.completionDelivery?.state !== "delivered" &&
+              task.completionDelivery?.state !== "disposed"))),
+    );
+    return (
+      hasStoppableRun ||
+      hasPendingRecovery ||
+      child.thread.limitRecovery?.autoResume === true ||
+      (child.thread.pullRequests ?? []).some((link) => link.watch !== undefined) ||
+      derivePendingBackgroundWork({
+        latestRun,
+        providerThreads: child.providerThreads,
+        turnItems: child.turnItems,
+        activeProviderThreadId: child.thread.activeProviderThreadId,
+        runs: child.runs,
+      }).length > 0 ||
+      child.turnItems.some(
+        (item) => item.type === "link_request" && item.linkStatus === "pending",
+      ) ||
+      hasPendingSubagent
+    );
+  };
+
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
@@ -1623,6 +1801,15 @@ const make = Effect.gen(function* () {
     const failures: Array<
       Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
     > = [];
+    const activeChildThreadIds = new Set(
+      subagents.flatMap((task) =>
+        task.origin === "app_owned" &&
+        task.childThreadId !== null &&
+        isOrchestrationV2WorkActive(task.status)
+          ? [task.childThreadId]
+          : [],
+      ),
+    );
     const stoppedChildThreadIds = new Set<ThreadId>();
     for (const task of subagents) {
       if (task.origin !== "app_owned") continue;
@@ -1665,16 +1852,36 @@ const make = Effect.gen(function* () {
       // Follow-up tasks reuse a child thread; walk its subtree only once.
       if (stoppedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
-      yield* dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
-        threadId,
-        stopDelegatedTasks: false,
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      yield* Effect.gen(function* () {
+        let shouldStop = activeChildThreadIds.has(threadId);
+        let hasAppOwnedChildren = true;
+        if (!shouldStop) {
+          const child = yield* orchestrator.getThreadRecords(
+            threadId,
+            ["runs", "providerThreads", "turnItems", "subagents"],
+            {
+              turnItemTypes: ["command_execution", "dynamic_tool", "subagent", "link_request"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          );
+          shouldStop = childNeedsStop(child);
+          hasAppOwnedChildren = child.subagents.some(
+            (childTask) => childTask.origin === "app_owned",
+          );
+        }
+        if (shouldStop) {
+          yield* dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
+            threadId,
+            stopDelegatedTasks: false,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          });
+        }
+        if (hasAppOwnedChildren) {
+          yield* stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason });
+        }
       }).pipe(
-        Effect.andThen(
-          stopDelegatedTasks({ threadId, commandId: input.commandId, reason: input.reason }),
-        ),
         Effect.catch((error) =>
           Effect.logWarning("Unable to stop a delegated task", {
             parentThreadId: input.threadId,
@@ -1778,6 +1985,7 @@ const make = Effect.gen(function* () {
     getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
     listProjectThreads,
     sendToThread,
+    submitRunOutput,
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
@@ -1802,6 +2010,9 @@ const make = Effect.gen(function* () {
 const layerThreadWorktreeRestoreNoop = Layer.succeed(ThreadWorktreeRestore, {
   restore: Effect.fn("ThreadWorktreeRestore.restore")(function () {
     return Effect.void;
+  }),
+  takeRecreated: Effect.fn("ThreadWorktreeRestore.takeRecreated")(function () {
+    return Effect.undefined;
   }),
 });
 
