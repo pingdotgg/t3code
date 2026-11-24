@@ -190,6 +190,16 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it.each([
+    ["a whitespace run inside a line", `a${" ".repeat(1_000_000)}b`],
+    ["a run of unclosed video tags", `${"<video ".repeat(150_000)}</video>`],
+    ["a run of backticks before a line separator", `${"`".repeat(100_000)}\u2028x`],
+  ])("splits %s in one pass", (_case, body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
   it("refuses a non-http source rather than making a link out of it", () => {
     const body = '<video src="javascript:alert(1)"></video>';
     expect(split(body)).toEqual([
@@ -258,6 +268,18 @@ describe("reference links around lifted media", () => {
         `[guide]: https://example.com/first\n\n${recording}\n\nSee [the docs][guide].\n\n[GUIDE]: https://example.com/second`,
       ),
     ).toEqual([["the docs", "https://example.com/first"]]);
+  });
+
+  it("renders the body whole when its definitions would be repeated past the budget", () => {
+    const definitions = Array.from(
+      { length: 400 },
+      (_, index) => `[d${index}]: https://example.com/${"x".repeat(60)}${index}`,
+    ).join("\n");
+    const uses = Array.from({ length: 1200 }, () => `[use][d1]\n${recording}`).join("\n");
+    const body = `\n${definitions}\n\n${uses}\n`;
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body.trim(), sourceOffset: 1 },
+    ]);
   });
 
   it("leaves a definition shown in code as code", () => {

@@ -1064,6 +1064,39 @@ it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
     }),
 );
 
+it.effect("pins a quick merge to the head it judged mergeable unless the caller showed one", () =>
+  Effect.gen(function* () {
+    const pinned: Array<string | undefined> = [];
+    const client = {
+      [WS_METHODS.pullRequestsDetail]: () =>
+        Effect.succeed({
+          state: "open",
+          isDraft: false,
+          headSha: "checked-head",
+          capabilities: { actions: ["merge"] },
+          viewerPermissions: { actions: ["merge"] },
+        }),
+      [WS_METHODS.pullRequestsRunAction]: (input: { expectedHeadSha?: string }) =>
+        Effect.sync(() => void pinned.push(input.expectedHeadSha)),
+    } as unknown as WsRpcProtocolClient;
+    const { atoms, registry } = yield* makeTestRuntime(client);
+    const input = {
+      projectId: ProjectId.make("project-1"),
+      repository: "acme/web",
+      number: 1,
+      action: "merge" as const,
+      resolveMergeMethod: () => "squash" as const,
+    };
+    for (const shown of [{}, { expectedHeadSha: "shown-head" }]) {
+      yield* atoms.runAction.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...input, ...shown },
+      });
+    }
+    expect(pinned).toEqual(["checked-head", "shown-head"]);
+  }),
+);
+
 it.effect("keeps a close batch ordered and continues after a refused close", () =>
   Effect.gen(function* () {
     const calls: number[] = [];
