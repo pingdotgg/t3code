@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as RelayTracing from "@t3tools/shared/relayTracing";
@@ -7,9 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 
-import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { relayLayer } from "./relayTracing.ts";
+import { allowedFor, relayLayer } from "./relayTracing.ts";
 
 const tracesTo = (policy?: ManagedPolicyDocument) =>
   Effect.service(RelayTracing.RelayClientTracer).pipe(
@@ -17,15 +15,7 @@ const tracesTo = (policy?: ManagedPolicyDocument) =>
       relayLayer(
         { serviceName: "t3code-server", runtime: "node", client: "environment-server" },
         { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
-      ).pipe(
-        Layer.provide(ManagedPolicy.layerTest(policy)),
-        Layer.provide(
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-relay-tracing-" }).pipe(
-            Layer.provide(NodeServices.layer),
-          ),
-        ),
-        Layer.provide(FetchHttpClient.layer),
-      ),
+      ).pipe(Layer.provide(ManagedPolicy.layerTest(policy)), Layer.provide(FetchHttpClient.layer)),
     ),
     Effect.map(Option.isSome),
   );
@@ -42,3 +32,14 @@ it.effect("a policy with telemetry off stops relay tracing to T3 Connect", () =>
     );
   }),
 );
+
+it("reports the server's relay tracing policy to clients", () => {
+  assert.isTrue(allowedFor({}, undefined));
+  assert.isFalse(allowedFor({ T3CODE_TELEMETRY_ENABLED: "false" }, undefined));
+  assert.isFalse(
+    allowedFor(
+      {},
+      { organization: "Example Corp", lockedSettings: [], limits: { telemetry: false } },
+    ),
+  );
+});
