@@ -609,7 +609,9 @@ and the agent it runs can use Git however the environment allows. A project
 that [lays out its worktrees with its own command](multi-repo-projects.md#lay-the-folder-out-yourself)
 runs that command on the host, so creating a worktree there from the client also
 needs `orchestration:operate` or `terminal:operate`; without one of them,
-removing a worktree skips the project's `remove` command.
+removing a worktree skips the project's `remove` command. The command also has
+to be [approved](multi-repo-projects.md#approve-the-commands) first, from a
+client with `terminal:operate`.
 
 Settings changes, provider management, environment maintenance, access
 management, and T3 Connect preferences can each be granted separately. Setting

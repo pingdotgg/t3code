@@ -159,6 +159,8 @@ const make = Effect.gen(function* () {
           userId,
           environmentId,
           managedEndpointNamespace: config.managedEndpointNamespace,
+          // The account is gone, so its hosts' connectors are dropped rather than waited out.
+          forceDisconnect: true,
         }).pipe(Effect.provideContext(unlinkContext)),
       { discard: true },
     ).pipe(Effect.mapError(fail("deprovision")));

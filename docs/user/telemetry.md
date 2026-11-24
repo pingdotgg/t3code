@@ -95,8 +95,10 @@ but an error message can quote a value the app was handling.
 To stop sending them, turn off **Send crash reports** in **Settings > About T3 Code > Diagnostics**.
 
 The mobile app also sends relay connection traces when its build has tracing configured. These
-carry an identifier for the current app session. Turning off **Send crash reports** stops these
-traces too. Server environment variables and managed policy do not disable mobile tracing.
+carry an identifier for the current app session. To stop them, turn off **Send connection traces**
+in **Settings > About T3 Code > Diagnostics**, or on the T3 Connect setup sheet shown after you
+sign in. This is separate from crash reports. Server environment variables and managed policy do
+not disable mobile tracing.
 
 ## Agent activity for mobile notifications
 
