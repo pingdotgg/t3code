@@ -298,8 +298,6 @@ pub struct ShellState {
     pub synchronized: bool,
     /// Where the snapshot cut the Settled shelf, and the older settled threads read since.
     older: OlderSettled,
-    /// Threads that sit under another thread's row, from the last change that could move them.
-    delegated: HashSet<String>,
     requests: HashMap<String, PendingSubagentRequest>,
     /// The Settled paging of the other environments merged in (`extend_with_environment`).
     foreign: Vec<ForeignOlder>,
@@ -592,7 +590,7 @@ impl ShellState {
     /// The thread whose sidebar row stands for `thread_id` (`resolveListedAncestorThreadRef`):
     /// itself when the sidebar lists it, else its nearest ancestor it lists, so a subagent, a side
     /// chat or a delegated task that is open keeps its parent's row current. A chain that breaks
-    /// (a parent the shell does not know or has archived, or a loop) stands for the thread itself.
+    /// (a parent the shell does not know, or a loop) stands for the thread itself.
     #[must_use]
     pub fn listed_ancestor<'a>(&'a self, thread_id: &str) -> Option<&'a str> {
         let start = self.find_thread(thread_id)?;
@@ -601,10 +599,9 @@ impl ShellState {
         // The bound only ends a chain that loops without revisiting.
         for _ in 0..64 {
             let parent_id = if is_listed_lineage(&thread.lineage) {
-                // A delegated task whose parent is not listed keeps its own row.
                 match thread.delegated_from.as_ref() {
-                    Some(from) if self.delegated.contains(&thread.id) => from.thread_id.as_str(),
-                    _ => return Some(thread.id.as_str()),
+                    Some(from) => from.thread_id.as_str(),
+                    None => return Some(thread.id.as_str()),
                 }
             } else {
                 match thread.lineage.parent_thread_id.as_deref() {
@@ -627,7 +624,7 @@ impl ShellState {
     /// shown under the thread that delegated it (`isShownUnderParent`).
     #[must_use]
     pub fn is_listed(&self, thread: &ThreadShell) -> bool {
-        is_listed_lineage(&thread.lineage) && !self.delegated.contains(&thread.id)
+        is_listed_lineage(&thread.lineage) && thread.delegated_from.is_none()
     }
 
     /// What `thread_id`'s subagents, side chats and delegated tasks ask of the user
@@ -692,27 +689,9 @@ impl ShellState {
         found
     }
 
-    /// Recomputes what depends on other threads: tasks shown under their parent
-    /// (`delegatedUnderParentAtom`) and the requests rolled up to a parent.
+    /// Recomputes the requests rolled up to each parent.
     pub(crate) fn refresh_derived(&mut self) {
         self.requests = rolled_up_requests(&self.threads);
-        self.delegated = self
-            .threads
-            .iter()
-            .filter(|thread| thread.delegated_from.is_some() && is_listed_lineage(&thread.lineage))
-            .filter(|thread| {
-                // An archived parent leaves navigation, and a subagent or side-chat parent has no
-                // row of its own; either way its task stays listed on its own.
-                thread
-                    .delegated_from
-                    .as_ref()
-                    .and_then(|from| self.thread(&from.thread_id))
-                    .is_some_and(|parent| {
-                        parent.archived_at.is_none() && is_listed_lineage(&parent.lineage)
-                    })
-            })
-            .map(|thread| thread.id.clone())
-            .collect();
     }
 
     /// Returns `true` when `thread` belongs in the Settled shelf (`settledAt` or `archivedAt` set).
@@ -1335,7 +1314,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delegated_task_whose_parent_is_archived_or_unknown_keeps_its_own_row() {
+    fn delegated_children_remain_openable_and_unlisted_with_an_archived_or_absent_parent() {
         let delegated = |parent: &'static str| {
             move |t: &mut Value| {
                 t["delegatedFrom"] =
@@ -1348,17 +1327,19 @@ mod tests {
                     t["archivedAt"] = json!("2026-11-14T09:00:00.000Z")
                 }),
                 thread_json("orphan", "p", delegated("elsewhere")),
+                thread_json("settled-child", "p", |t| {
+                    delegated("elsewhere")(t);
+                    t["settledAt"] = json!("2026-11-15T09:00:00.000Z");
+                }),
                 thread_json("task", "p", delegated("archived-parent")),
             ],
             None,
         );
-        let mut listed: Vec<String> = state
-            .top_level_active_threads()
-            .map(|t| t.id.clone())
-            .collect();
-        listed.sort();
-        assert_eq!(listed, ["orphan", "task"]);
-        assert_eq!(state.listed_ancestor("task"), Some("task"));
+        assert!(state.top_level_active_threads().next().is_none());
+        assert!(state.find_thread("orphan").is_some());
+        assert!(state.find_thread("settled-child").is_some());
+        assert_eq!(ids(&state.all_settled_threads()), ["archived-parent"]);
+        assert_eq!(state.listed_ancestor("task"), Some("archived-parent"));
     }
 
     fn settled(id: &str, at: &str) -> Value {

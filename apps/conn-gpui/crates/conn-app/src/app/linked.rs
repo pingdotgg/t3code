@@ -52,6 +52,8 @@ pub(super) struct LinkedEnvironments {
     urls: HashMap<String, String>,
     /// The environment the open thread's subscription lives on; `None` is the primary one.
     subscribed_env: Option<String>,
+    /// A child opened from its parent before the linked shell lists it.
+    opened_child: Option<(String, String)>,
     /// The environment the chat and right panel were last pointed at; `None` is the primary one.
     chat_env: Option<String>,
     /// What each linked environment says it is (`EnvironmentMachineKind`), from its server config.
@@ -214,9 +216,46 @@ impl ConnApp {
     /// The environment a thread of the merged list lives on; `None` is the primary one.
     pub(crate) fn linked_environment_of_thread(&self, thread_id: &str) -> Option<&str> {
         let origins = self.linked.origins();
-        origins
-            .is_linked_thread(thread_id)
-            .then(|| origins.environment_of_thread(thread_id))
+        if origins.is_linked_thread(thread_id) {
+            return Some(origins.environment_of_thread(thread_id));
+        }
+        self.linked
+            .opened_child
+            .as_ref()
+            .filter(|(child, _)| child == thread_id && self.shell.find_thread(thread_id).is_none())
+            .map(|(_, environment)| environment.as_str())
+    }
+
+    pub(super) fn open_remote_child(
+        &mut self,
+        environment: &str,
+        child: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let primary = self.primary_environment_id();
+        if self.shell.find_thread(child).is_some() {
+            let owner = self.linked_environment_of_thread(child).unwrap_or(&primary);
+            if owner != environment {
+                self.chat.update(cx, |chat, cx| {
+                    chat.set_error(
+                        Some("This thread ID is also in another environment.".to_owned()),
+                        cx,
+                    )
+                });
+                return;
+            }
+        } else if environment != primary && self.linked_connection(environment).is_none() {
+            self.chat.update(cx, |chat, cx| {
+                chat.set_error(
+                    Some("Connect to the child’s environment to open its thread.".to_owned()),
+                    cx,
+                )
+            });
+            return;
+        }
+        self.linked.opened_child =
+            (environment != primary).then(|| (child.to_owned(), environment.to_owned()));
+        self.select_thread(child, cx);
     }
 
     /// The environment a project of the merged list lives on; `None` is the primary one.
@@ -885,6 +924,7 @@ impl ConnApp {
         self.linked.set = None;
         self.linked.shells = LinkedShells::default();
         self.linked.origins = Origins::default();
+        self.linked.opened_child = None;
         self.linked.statuses.clear();
         self.linked.dirty.clear();
         if let Some(store) = &self.linked.store {

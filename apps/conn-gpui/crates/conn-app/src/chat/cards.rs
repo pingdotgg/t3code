@@ -1391,7 +1391,7 @@ impl ChatView {
         role: &str,
         status: TurnItemStatus,
         summary: Option<&str>,
-        remote_label: Option<&str>,
+        remote_child: Option<&conn_contract::OrchestrationV2RemoteTaskChild>,
         started_at: Option<&str>,
         completed_at: Option<&str>,
         cx: &mut Context<'_, Self>,
@@ -1509,8 +1509,8 @@ impl ChatView {
             .text_size(px(UI_FONT_PX))
             .line_height(px(16.0))
             .text_color(muted);
-        if let Some(remote) = remote_label {
-            line2 = line2.child(div().flex_none().child(format!("on {remote}")));
+        if let Some(remote) = remote_child {
+            line2 = line2.child(div().flex_none().child(format!("on {}", remote.label)));
         }
         line2 = line2.child(div().min_w_0().truncate().child(match model_text {
             Some(model) => format!("{model} · {time_text}"),
@@ -1542,8 +1542,12 @@ impl ChatView {
             card = card.child(self.render_subagent_summary(id, detail, detail_color, cx));
         }
 
-        if let Some(child) = child_thread_id {
+        if let Some(child) = remote_child
+            .map(|remote| remote.thread_id.as_str())
+            .or(child_thread_id)
+        {
             let child = child.to_owned();
+            let environment_id = remote_child.map(|remote| remote.environment_id.clone());
             card = card
                 .a11y_button(
                     SharedString::from(format!("chat.subagent.{id}")),
@@ -1552,10 +1556,18 @@ impl ChatView {
                 .cursor_pointer()
                 .hover(move |s| s.bg(card_hover))
                 .on_click(cx.listener(move |_, _, _, cx| {
-                    cx.emit(ChatEvent::OpenThread(child.clone()));
+                    cx.emit(ChatEvent::OpenThread {
+                        thread_id: child.clone(),
+                        environment_id: environment_id.clone(),
+                    });
                 }));
         }
 
+        #[cfg(test)]
+        let card = {
+            use gpui_kit::TestSupportExt as _;
+            card.test_support()
+        };
         div()
             .w_full()
             .min_w_0()

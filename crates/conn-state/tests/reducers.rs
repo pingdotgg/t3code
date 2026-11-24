@@ -2532,7 +2532,7 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
             status: TurnItemStatus::Running,
             // The card renders the Markdown; `plain_subagent_detail` gives web's one plain line.
             summary: Some("Reading [main.rs](src/main.rs)\n- `cargo test`".to_owned()),
-            remote_label: None,
+            remote_child: None,
             created_at: Some("2026-11-22T10:00:05.000Z".to_owned()),
             started_at: Some("2026-11-22T10:00:00.000Z".to_owned()),
             completed_at: None,
@@ -2552,6 +2552,7 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
             "driver": "codex",
             "providerInstanceId": "codex",
             "childThreadId": null,
+            "remoteChild": {"threadId":"child-mini","environmentId":"env-mini","label":"mini"},
             "prompt": "Review the diff",
             "progress": "Still reading",
             "result": "Child task ended with status completed"
@@ -2563,10 +2564,11 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
             state.entries.first(),
             Some(TimelineEntry::Subagent {
                 child_thread_id: None,
+                remote_child: Some(remote),
                 summary: None,
                 status: TurnItemStatus::Completed,
                 ..
-            })
+            }) if remote.thread_id == "child-mini" && remote.environment_id == "env-mini"
         ),
         "generic child-end result hides the detail, got {:?}",
         state.entries

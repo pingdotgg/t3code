@@ -181,8 +181,8 @@ pub enum TimelineEntry {
         status: TurnItemStatus,
         /// One-line progress or result detail.
         summary: Option<String>,
-        /// Linked environment label when the child runs remotely (`on <label>`).
-        remote_label: Option<String>,
+        /// The environment and thread to open when this child ran on another machine.
+        remote_child: Option<conn_contract::OrchestrationV2RemoteTaskChild>,
         created_at: Option<String>,
         started_at: Option<String>,
         completed_at: Option<String>,
@@ -1929,7 +1929,7 @@ fn map_subagent(item: SubagentItem) -> Option<TimelineEntry> {
         role: item.driver,
         status: item.status,
         summary,
-        remote_label: item.remote_child.map(|remote| remote.label),
+        remote_child: item.remote_child,
         created_at: Some(item.updated_at),
         started_at: item.started_at,
         completed_at: item.completed_at,
