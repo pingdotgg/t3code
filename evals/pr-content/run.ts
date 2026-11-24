@@ -44,6 +44,7 @@ const fixtures = [
     source: "Reported PR title replaced by a babysitting failure, November 2026",
     launchArgs: undefined,
     titlePrefix: undefined,
+    producedBy: undefined,
     policy: undefined,
     commitSummary: "abc123 Retire legacy models",
     conventionalTitle: undefined,
@@ -55,6 +56,7 @@ const fixtures = [
     source: "Control for the babysitting regression",
     launchArgs: undefined,
     titlePrefix: undefined,
+    producedBy: undefined,
     policy: undefined,
     commitSummary: "abc123 Retire legacy models",
     conventionalTitle: undefined,
@@ -67,6 +69,20 @@ const fixtures = [
     launchArgs:
       "--config 'developer_instructions=\"Repository PR title policy: every generated PR title MUST start with the exact prefix TEAM:. Preserve this prefix in the returned title JSON field.\"'",
     titlePrefix: "TEAM:",
+    producedBy: undefined,
+    policy: undefined,
+    commitSummary: "abc123 Retire legacy models",
+    conventionalTitle: undefined,
+    threadContext:
+      "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.",
+  },
+  {
+    id: "producer-attribution",
+    source: "PR writer credited itself instead of the thread's model and harness, issue #26892",
+    launchArgs:
+      "--config 'developer_instructions=\"End every PR body with a line naming the model and harness that made the change.\"'",
+    titlePrefix: undefined,
+    producedBy: [{ model: "acme-coder-2", harness: "Claude" }],
     policy: undefined,
     commitSummary: "abc123 Retire legacy models",
     conventionalTitle: undefined,
@@ -78,6 +94,7 @@ const fixtures = [
     source: "pingdotgg/t3code#40562: Conventional Commits style dropped the prefix from PR titles",
     launchArgs: undefined,
     titlePrefix: undefined,
+    producedBy: undefined,
     policy: conventionalCommitsTextGenerationPolicy,
     commitSummary:
       "abc123 feat(models): add retirement dates for legacy models\ndef456 feat(models): name a successor for each retired model",
@@ -89,6 +106,7 @@ const fixtures = [
     source: "Control for #40562: plain commit subjects keep a plain PR title",
     launchArgs: undefined,
     titlePrefix: undefined,
+    producedBy: undefined,
     policy: conventionalCommitsTextGenerationPolicy,
     commitSummary:
       "abc123 Add retirement dates for legacy models\ndef456 Name a successor for each retired model",
@@ -133,6 +151,7 @@ await Effect.runPromise(
           diffPatch:
             'diff --git a/src/models.ts b/src/models.ts\n--- a/src/models.ts\n+++ b/src/models.ts\n@@ -1 +1,3 @@\n export const legacyModel = {\n+  retirementDate: "2026-10-23",\n+  successor: "replacement-model",\n };',
           threadContext: fixture.threadContext,
+          producedBy: fixture.producedBy,
           policy: fixture.policy,
         });
         results.push({
@@ -143,6 +162,9 @@ await Effect.runPromise(
             gradePrContent(generated) &&
             (fixture.titlePrefix === undefined ||
               generated.title.startsWith(fixture.titlePrefix)) &&
+            (fixture.producedBy === undefined ||
+              (fixture.producedBy.every(({ model }) => generated.body.includes(model)) &&
+                !generated.body.includes(model))) &&
             (fixture.conventionalTitle === undefined ||
               hasConventionalCommitPrefix(generated.title) === fixture.conventionalTitle),
         });

@@ -66,6 +66,7 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
 }));
 
 import { OpenInPicker } from "./OpenInPicker";
+import type { FileManagerAction } from "./OpenInPicker.logic";
 import {
   registerOpenFavoriteEditorCommand,
   useOpenFavoriteEditorShortcut,
@@ -98,7 +99,11 @@ async function setup() {
   async function renderPicker(
     availableEditors: readonly EditorId[] = editors,
     panel = false,
-    { openInCwd = "/work/project", openInCwdIsFile = false, revealFileManager = false } = {},
+    {
+      openInCwd = "/work/project",
+      openInCwdIsFile = false,
+      fileManagerAction = "open" as FileManagerAction,
+    } = {},
   ) {
     await act(async () => {
       for (const listener of state.listeners) listener();
@@ -109,7 +114,7 @@ async function setup() {
           availableEditors={availableEditors}
           openInCwd={openInCwd}
           openInCwdIsFile={openInCwdIsFile}
-          revealFileManager={revealFileManager}
+          fileManagerAction={fileManagerAction}
           displayMode={panel ? "panel" : "toolbar"}
           compact={!panel}
         />
@@ -198,7 +203,7 @@ describe("default app", () => {
     await renderPicker(["vscode", "file-manager"], false, {
       openInCwd: "/work/project/README.md",
       openInCwdIsFile: true,
-      revealFileManager: true,
+      fileManagerAction: "reveal",
     });
     await click(byLabel("Choose editor"));
     const defaultApp = await vi.waitFor(() => {
@@ -213,6 +218,34 @@ describe("default app", () => {
       input: { cwd: "/work/project/README.md", editor: "file-manager" },
     });
     expect(state.setPreferred).not.toHaveBeenCalled();
+  });
+});
+
+describe("file manager", () => {
+  it("waits for the path's type, then shows a file in its folder", async () => {
+    await using fixture = await setup();
+    const { renderPicker, primaryButton, click, pressOpenFavorite } = fixture;
+    state.allowed.add(selected);
+    const openInCwd = "/work/project/notes.md";
+    await renderPicker(["file-manager"], false, { openInCwd, fileManagerAction: "unavailable" });
+
+    expect(primaryButton().disabled).toBe(true);
+    await click(primaryButton());
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+    expect(state.run).not.toHaveBeenCalled();
+
+    // A failed open is not announced, so no timer outlives the test.
+    state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No file manager"))));
+    await renderPicker(["file-manager"], false, { openInCwd, fileManagerAction: "reveal" });
+    await click(primaryButton());
+    expect(state.run.mock.calls).toEqual([
+      [
+        {
+          environmentId: selected,
+          input: { cwd: openInCwd, editor: "file-manager", reveal: true },
+        },
+      ],
+    ]);
   });
 });
 

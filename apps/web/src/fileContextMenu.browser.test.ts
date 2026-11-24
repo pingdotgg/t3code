@@ -2,7 +2,7 @@ import { m } from "./i18n/messages";
 import { EnvironmentId } from "@t3tools/contracts";
 import { createElement, useEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { render, stubGlobal } from "../test/render";
+import { render } from "../test/render";
 
 import {
   buildFileContextMenuItems,
@@ -13,10 +13,6 @@ import {
 
 const boundaries = vi.hoisted(() => ({ openInEditor: vi.fn(), toast: vi.fn() }));
 
-vi.mock("@effect/atom-react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@effect/atom-react")>()),
-  useAtomValue: () => undefined,
-}));
 vi.mock("./state/use-atom-command", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./state/use-atom-command")>()),
   useAtomCommand: () => boundaries.openInEditor,
@@ -32,6 +28,7 @@ const BASE_TARGET: FileContextMenuTarget = {
   workspaceRoot: "/workspace/project",
 };
 const EMPTY_CAPABILITIES = { revealLabel: undefined, canOpenDefault: false, editorIds: [] };
+const editorIcons = new Map();
 
 describe("resolveFileContextMenuAbsolutePath", () => {
   it("joins workspace-relative diff paths onto the workspace root", () => {
@@ -95,6 +92,7 @@ describe("resolveFileContextMenuAbsolutePath", () => {
 describe("buildFileContextMenuItems", () => {
   it("offers open, reveal, and an open-with submenu when all are available", () => {
     const items = buildFileContextMenuItems({
+      editorIcons,
       resolve: m,
       target: BASE_TARGET,
       capabilities: {
@@ -120,6 +118,7 @@ describe("buildFileContextMenuItems", () => {
 
   it("keeps copy actions available alongside reveal without editors", () => {
     const items = buildFileContextMenuItems({
+      editorIcons,
       resolve: m,
       target: BASE_TARGET,
       capabilities: {
@@ -140,6 +139,7 @@ describe("buildFileContextMenuItems", () => {
   it("offers both copy actions without host file capabilities", () => {
     expect(
       buildFileContextMenuItems({
+        editorIcons,
         resolve: m,
         target: BASE_TARGET,
         capabilities: EMPTY_CAPABILITIES,
@@ -158,6 +158,7 @@ describe("buildFileContextMenuItems", () => {
   it("still offers relative-path copying when the absolute path cannot be resolved", () => {
     expect(
       buildFileContextMenuItems({
+        editorIcons,
         resolve: m,
         target: { ...BASE_TARGET, workspaceRoot: undefined },
         capabilities: {
@@ -178,6 +179,7 @@ describe("buildFileContextMenuItems", () => {
 
   it("offers path copying for a sibling project without enabling host file actions", () => {
     const items = buildFileContextMenuItems({
+      editorIcons,
       resolve: m,
       target: {
         ...BASE_TARGET,
@@ -212,7 +214,7 @@ describe("file context menu copying", () => {
     vi.clearAllMocks();
     writeText.mockResolvedValue(undefined);
     menu = undefined;
-    return stubGlobal("navigator", { clipboard: { writeText } });
+    return vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
   }
 
   it("copies the displayed relative path without a connection or server config", async () => {
