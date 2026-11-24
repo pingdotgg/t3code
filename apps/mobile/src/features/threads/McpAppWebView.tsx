@@ -47,7 +47,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
+import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppContentHeight, mcpAppInlineFrame } from "./mcpAppSizing";
 
 const ROW_BOTTOM_MARGIN = 8;
 
@@ -128,7 +128,8 @@ export function ThreadMcpApp(props: {
   readonly height?: number;
 }) {
   const gt = useGT();
-  const [height, setHeight] = useState(MCP_APP_INLINE_MAX_HEIGHT);
+  const [contentHeight, setContentHeight] = useState(MCP_APP_INLINE_MAX_HEIGHT);
+  const { height, clipped } = mcpAppInlineFrame(contentHeight);
   const [documentKey, setDocumentKeyState] = useState(0);
   // The view keeps its first URL: a re-minted one would reload the app.
   const [uri, setUri] = useState<string | null>(null);
@@ -140,7 +141,7 @@ export function ThreadMcpApp(props: {
   const [app, setApp] = useState(props.app);
   if (!mcpAppReferencesEqual(app, props.app)) {
     setApp(props.app);
-    setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+    setContentHeight(MCP_APP_INLINE_MAX_HEIGHT);
     setUri(null);
     setLoaded(false);
     setNavigatedAway(false);
@@ -179,7 +180,7 @@ export function ThreadMcpApp(props: {
       return;
     }
     setLoaded(false);
-    setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+    setContentHeight(MCP_APP_INLINE_MAX_HEIGHT);
     // Use the asset query's refreshed token when creating a replacement view.
     if (asset._tag === "Success") setUri(asset.url);
     setGeneration(1);
@@ -187,7 +188,7 @@ export function ThreadMcpApp(props: {
   const [secret] = useState(uuidv4);
   const reopenDocument = () => {
     setLoaded(false);
-    setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+    setContentHeight(MCP_APP_INLINE_MAX_HEIGHT);
     setNavigatedAway(false);
     if (asset._tag === "Success") setUri(asset.url);
     setDocumentKeyState((value) => value + 1);
@@ -286,7 +287,7 @@ export function ThreadMcpApp(props: {
     if (view === null) return;
     const reloadInline = () => {
       setLoaded(false);
-      setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+      setContentHeight(MCP_APP_INLINE_MAX_HEIGHT);
       setNavigatedAway(false);
       const current = latest.current.asset;
       if (current._tag === "Success") setUri(current.url);
@@ -506,8 +507,8 @@ export function ThreadMcpApp(props: {
       },
       onSizeChanged: (size) => {
         if (latest.current.props.displayMode === "fullscreen") return;
-        const nextHeight = mcpAppInlineHeight(size.height);
-        if (nextHeight !== undefined) setHeight(nextHeight);
+        const nextHeight = mcpAppContentHeight(size.height);
+        if (nextHeight !== undefined) setContentHeight(nextHeight);
       },
     });
     setHost(documentHost);
@@ -566,7 +567,12 @@ export function ThreadMcpApp(props: {
   }
 
   return (
-    <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
+    <View
+      style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}
+      className={
+        !fullscreen && clipped ? "overflow-hidden rounded-lg border border-border" : undefined
+      }
+    >
       {navigatedAway ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-sm text-foreground-muted">
