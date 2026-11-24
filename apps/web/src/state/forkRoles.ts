@@ -13,6 +13,7 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { usePrimaryEnvironmentId } from "./environments";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
 import { threadEnvironment } from "./threads";
@@ -28,6 +29,11 @@ const rolesListAtom = (environmentId: EnvironmentId) =>
 
 function useForkRoles(environmentId: EnvironmentId | null) {
   return useEnvironmentQuery(environmentId === null ? null : rolesListAtom(environmentId)).data;
+}
+
+// ponytail: warms only the primary environment's roles for the first Role menu; a linked one still loads cold.
+export function useForkRolesPrefetch() {
+  useForkRoles(usePrimaryEnvironmentId());
 }
 
 export function useForkRole(environmentId: EnvironmentId, roleId: string | null) {

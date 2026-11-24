@@ -8,7 +8,7 @@ import { createElement, lazy, Suspense, useState } from "react";
 
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { cn } from "../lib/utils";
-import { useForkRole } from "../state/forkRoles";
+import { useForkRole, useForkRolesPrefetch } from "../state/forkRoles";
 import { resolveRolesSection } from "./Sidebar.forkRoles.logic";
 import { SortableSidebarMarker } from "./sidebar/SidebarListMarkers";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -23,6 +23,7 @@ export function useRolesSection(
 ) {
   const [expanded, setExpanded] = useLocalStorage(ROLES_EXPANDED_KEY, true, Schema.Boolean);
   const [showAll, setShowAll] = useState(false);
+  useForkRolesPrefetch();
   const section = resolveRolesSection(roles, { expanded, showAll, routeThreadKey });
   return {
     ...section,
