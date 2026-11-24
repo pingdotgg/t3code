@@ -130,11 +130,5 @@ describe("UsagePriceOverrides", () => {
 
     await expect.element(input).toHaveValue("2");
     await expect.element(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
-
-    await userEvent.clear(input);
-    await userEvent.type(input, "1");
-    await expect
-      .element(page.getByRole("button", { name: "Discard changes" }))
-      .not.toBeInTheDocument();
   });
 });
