@@ -1,7 +1,7 @@
-import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -13,6 +13,7 @@ import { parseMuseVersion } from "./maintenance.ts";
 import {
   discoverMuseModels,
   museModelCapabilities,
+  resolveMuseProbeTimeoutMs,
   resolveMuseStartupTimeoutMs,
 } from "./modelCatalog.ts";
 import {
@@ -65,6 +66,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
   if (!settings.enabled) return yield* makePendingMuseProvider(settings);
+  const platform = yield* HostProcess.Platform;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const museEnvironment = providerProbeEnvironment(environment ?? makeMuseEnvironment());
   const snapshot = (probe: ProviderProbeResult, models: ReadonlyArray<ServerProviderModel> = []) =>
@@ -89,9 +91,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       }),
     );
   }).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("muse", DEFAULT_TIMEOUT_MS, museEnvironment),
-    ),
+    Effect.timeoutOption(resolveMuseProbeTimeoutMs(DEFAULT_TIMEOUT_MS, platform, museEnvironment)),
     Effect.result,
   );
 
@@ -135,7 +135,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
   const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
     // Startup shares the override, so the catalog keeps its 4 seconds on top of it.
-    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 4_000),
+    Effect.timeoutOption(resolveMuseStartupTimeoutMs(platform, museEnvironment) + 4_000),
     Effect.result,
   );
   if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {
