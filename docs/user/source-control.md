@@ -11,8 +11,7 @@ committed it, or fixed a conflict in it. Use the branch comparison to review eve
 against your base branch. Restore still returns the complete saved workspace.
 
 In a [project with several repositories](multi-repo-projects.md),
-a turn's changed files are grouped by repository, and the Diff pane shows every repository the
-turn changed. Use the repository picker next to the source picker to narrow the diff to one of
+the Diff pane shows every repository the turn changed. Use the repository picker next to the source picker to narrow the diff to one of
 them. Paths in the diff start at the thread's folder, so the same file name in two repositories
 stays apart. This works when the project folder itself is not a Git repository; the branch
 comparison and uncommitted changes read one repository at a time, chosen from the same picker.
@@ -235,6 +234,11 @@ Where you can edit a description, you can also tick its checkboxes from the Summ
 (the Overview tab on mobile).
 GitLab calls these merge requests.
 
+A merge or review applies to the commits you opened the pull request on. When someone pushes
+meanwhile, the web and desktop apps offer **Load new commits**; until you do, a merge or review is refused and your
+review draft is kept. Merging from a thread's pull request row, or from the list, lands the head that
+row had when you confirmed.
+
 Save a filter setup with **Views → Save current view** on the Pull Requests page. For example, choose
 **Reviewing** (**Your review** on mobile) and save it as "PRs Requesting My Review". Choose a saved view to restore its search,
 filters, sort order, and server/project scope. After changing filters, use **Update saved view** to
@@ -422,9 +426,11 @@ reads its teams through the account you picked them under.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
-comment, edit the title and description, change labels and assignees, react, and close or
-reopen (with a close reason where the tracker records one) when the tracker and your account
-allow it. An issue read through a project that does not own its repository is shown read-only.
+comment, edit the title and description, change labels and assignees, react, and move it to
+another state when the tracker and your account allow it. Where a GitHub repository has issue
+statuses (Backlog, Todo, In progress, and so on), those are the states you move between, as a
+Linear team's workflow states are; elsewhere you close or reopen, with a close reason where the
+tracker records one. An issue read through a project that does not own its repository is shown read-only.
 
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**
