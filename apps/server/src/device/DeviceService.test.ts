@@ -104,6 +104,37 @@ it.effect.each([400, 500])(
     }),
 );
 
+it.effect.each([true, false])(
+  "recovers a captured Android process only when hub shutdown fails (%s)",
+  (ok) =>
+    Effect.gen(function* () {
+      const steps: string[] = [];
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.sync(() => {
+            steps.push("hub");
+            return HttpClientResponse.fromWeb(request, Response.json({ ok }));
+          }),
+        ),
+        run: () => Effect.die("A recovered shutdown needs no adb fallback"),
+        platformAvailable: () => Effect.succeed(true),
+        prepareAndroidShutdown: (serial) =>
+          Effect.sync(() => {
+            steps.push(serial);
+            return () =>
+              Effect.sync(() => {
+                steps.push("recover");
+                return true;
+              });
+          }),
+      });
+      yield* operations.shutdown({ platform: "android", id: "emulator-5554" });
+      expect(steps).toEqual(ok ? ["emulator-5554", "hub"] : ["emulator-5554", "hub", "recover"]);
+    }),
+);
+
 it.effect("lists adb-attached physical devices when the hub cannot run avdmanager", () =>
   Effect.gen(function* () {
     // expo-device-hub returns no Android devices at all once `avdmanager list avd` fails.
