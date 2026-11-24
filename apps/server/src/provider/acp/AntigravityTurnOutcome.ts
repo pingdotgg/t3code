@@ -35,6 +35,8 @@ const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
 const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+// Antigravity 1.5 may state the reset only in the message: "... Resets in 4m42s.".
+const RESETS_IN = /\bResets in ((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?!\w|\.\d)/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
 const GO_DURATION_UNIT_MS: Record<string, number> = {
   ns: 1e-6,
@@ -113,7 +115,8 @@ function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | unde
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
-  const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
+  const delay =
+    RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1] ?? RESETS_IN.exec(text)?.[1];
   if (delay === undefined || now === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {

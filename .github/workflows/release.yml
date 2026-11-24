@@ -1103,6 +1103,9 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
+    # npm's trusted publisher for `t3` names this environment, which admits only
+    # main and v* tags.
+    environment: production
     permissions:
       contents: read
       id-token: write
@@ -1191,9 +1194,6 @@ jobs:
       T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
@@ -1231,9 +1231,14 @@ jobs:
       - name: Refresh release lockfile
         run: vp install --lockfile-only --ignore-scripts
 
+      # The Vercel secrets are on this step only, not on the install above.
       - id: deploy
         name: Build staged deployment
         shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -euo pipefail
 
@@ -1364,8 +1369,6 @@ jobs:
       deployment_url: ${{ steps.deploy.outputs.deployment_url }}
       project_id: ${{ steps.deploy.outputs.project_id }}
     env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
@@ -1382,9 +1385,13 @@ jobs:
         with:
           install-args: --filter=@t3tools/marketing...
 
+      # The Vercel secrets are on this step only, not on the install above.
       - id: deploy
         name: Build staged deployment
         shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
         run: |
           set -euo pipefail
 
@@ -1464,6 +1471,8 @@ jobs:
             --token "$VERCEL_TOKEN" \
             --scope "${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
 
+  # Commits the version bump as the Release App. It installs nothing and runs no
+  # dependency code, so that token never shares a runner with any.
   finalize:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
@@ -1471,13 +1480,14 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
+      # No owner input: the token covers this repository only, with contents write.
       - id: app_token
         name: Mint release app token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
+          permission-contents: write
 
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -1501,32 +1511,19 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      - name: Setup dependencies
-        uses: ./.github/actions/setup-ci-deps
-        with:
-          install-args: --filter=@t3tools/scripts... --filter=@t3tools/oxlint-plugin-t3code...
-
-      - id: update_versions
-        name: Update version strings
+      # Rewrites the version string in place: the manifests stay formatted, and
+      # the lockfile records no workspace package version.
+      - name: Update version strings
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION" --github-output
-
-      - name: Format package.json files
-        if: steps.update_versions.outputs.changed == 'true'
-        run: vp fmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
-
-      - name: Refresh lockfile
-        if: steps.update_versions.outputs.changed == 'true'
-        run: vp install --lockfile-only --ignore-scripts
+        run: node .github/scripts/set-release-version.cjs "$RELEASE_VERSION"
 
       - name: Commit and push version bump
-        if: steps.update_versions.outputs.changed == 'true'
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json; then
             echo "No version changes to commit."
             exit 0
           fi
@@ -1534,7 +1531,7 @@ jobs:
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
           git commit --no-verify -m "chore(release): prepare $RELEASE_TAG"
 
           # main moves while this job runs, so a rejected push rebases and retries.
