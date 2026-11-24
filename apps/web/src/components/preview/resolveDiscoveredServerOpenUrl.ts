@@ -31,16 +31,18 @@ export async function resolveDiscoveredServerOpenUrl<E>(input: {
     return url;
   }
   if (parsed.protocol !== "http:" || !isLoopbackHost(parsed.hostname)) return url;
-  const result = await input
-    .probeTls({
-      environmentId: input.threadRef.environmentId,
-      input: { host: input.port.host, port: input.port.port },
-    })
-    .catch(() => null);
-  if (result?._tag !== "Success" || !result.value.tls) return url;
+  // Probe the listener the URL will open, not the discovered record's host: a configured
+  // URL can name a different loopback address (127.0.0.1 vs localhost) than the record.
   // `http://localhost:80` drops the default port when parsed, so record the effective
   // port before switching schemes or the upgrade would target 443.
   const port = parsed.port === "" ? "80" : parsed.port;
+  const result = await input
+    .probeTls({
+      environmentId: input.threadRef.environmentId,
+      input: { host: parsed.hostname, port: Number(port) },
+    })
+    .catch(() => null);
+  if (result?._tag !== "Success" || !result.value.tls) return url;
   parsed.protocol = "https:";
   parsed.port = port;
   return parsed.toString();

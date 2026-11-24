@@ -66,6 +66,38 @@ describe("resolveDiscoveredServerOpenUrl", () => {
     ).toBe("https://localhost:80/");
   });
 
+  it("probes the URL's hostname and effective port, not the discovered host", async () => {
+    // A configured URL can name a different loopback address than the discovered record
+    // (127.0.0.1 vs localhost), and those can reach different listeners: a localhost
+    // listener serving TLS must not upgrade the working IPv4 URL to HTTPS.
+    const probeTls = vi.fn<ProbeDiscoveredServerTlsMutation>(async (args) =>
+      AsyncResult.success({ tls: args.input.host === "localhost" }),
+    );
+    expect(
+      await resolveDiscoveredServerOpenUrl({
+        threadRef,
+        port: { ...server("http://127.0.0.1:3000/app"), host: "localhost" },
+        probeTls,
+      }),
+    ).toBe("http://127.0.0.1:3000/app");
+    expect(probeTls).toHaveBeenCalledWith({
+      environmentId: threadRef.environmentId,
+      input: { host: "127.0.0.1", port: 3000 },
+    });
+    // A bare URL still probes the effective port 80.
+    expect(
+      await resolveDiscoveredServerOpenUrl({
+        threadRef,
+        port: { ...server("http://127.0.0.1"), host: "localhost", port: 80 },
+        probeTls,
+      }),
+    ).toBe("http://127.0.0.1");
+    expect(probeTls).toHaveBeenLastCalledWith({
+      environmentId: threadRef.environmentId,
+      input: { host: "127.0.0.1", port: 80 },
+    });
+  });
+
   it("keeps http:// when the probe fails or throws", async () => {
     const failing = vi.fn<ProbeDiscoveredServerTlsMutation>(async () =>
       AsyncResult.failure(Cause.fail(new Error("boom"))),
