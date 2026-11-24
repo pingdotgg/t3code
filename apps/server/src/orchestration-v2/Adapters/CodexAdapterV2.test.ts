@@ -9233,20 +9233,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
             {
               type: "emit_inbound",
-              label: "item/started/recovered",
+              label: "error/retry-before-recovery",
               frame: {
-                method: "item/started",
+                method: "error",
                 params: {
                   threadId: nativeThreadId,
                   turnId: nativeTurnId,
-                  startedAtMs: 1782622440500,
-                  item: {
-                    type: "agentMessage",
-                    id: "msg-recovered",
-                    text: "",
-                    phase: "commentary",
-                    memoryCitation: null,
-                  },
+                  willRetry: true,
+                  error: tokenRefusalRetry,
                 },
               },
             },
@@ -9260,6 +9254,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   turnId: nativeTurnId,
                   itemId: "msg-recovered",
                   delta: "Working on it.",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-after-recovery",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... 3/5",
+                    codexErrorInfo: "other",
+                    additionalDetails: uncredentialedStream,
+                  },
                 },
               },
             },
@@ -9335,10 +9346,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.deepEqual(errorItems, [
           { status: "running", code: "managed_token_refresh" },
           { status: "running", code: "managed_token_refresh" },
-          { status: "completed", code: "managed_token_refresh" },
+          { status: "running", code: "managed_token_timeout" },
+          { status: "completed", code: "managed_token_timeout" },
+          { status: "running", code: "other" },
           { status: "running", code: "managed_token_timeout" },
         ]);
-        assert.equal(lookups, 2);
+        assert.equal(lookups, 4);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

@@ -2200,7 +2200,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (reported === undefined) return failure;
           const status = codexErrorHttpStatus(errorInfo);
           if (status !== null && status !== 401) return failure;
-          if (context.tokenRefusal === undefined && status === 401) {
+          // Each 401 reads the session's latest refusal; a report without a status keeps the last one.
+          if (status === 401) {
             const refusal = yield* recentTokenRefusal;
             if (refusal !== undefined) context.tokenRefusal = refusal;
           }
