@@ -471,6 +471,93 @@ it.effect("a launch with a model its provider does not advertise creates no thre
   }),
 );
 
+it.effect(
+  "a launch rejects options its model does not declare and normalizes legacy ultracode effort",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const providers: ServerProvider[] = [
+        {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          version: null,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [
+            {
+              slug: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    role: "reasoning",
+                    label: "Effort",
+                    type: "select",
+                    options: [
+                      { id: "high", label: "High" },
+                      { id: "xhigh", label: "Extra High" },
+                    ],
+                  },
+                  { id: "ultracode", label: "Ultracode", type: "boolean" },
+                ],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        providers,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const launchWith = (options: NonNullable<ModelSelection["options"]>) =>
+        toolkit
+          .handle("t3_thread_launch", {
+            title: "Options check",
+            projectId,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-opus-5-5",
+              options,
+            },
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((result) => result.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+
+      expect(yield* launchWith([{ id: "thought_level", value: "high" }])).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("Unknown option thought_level"),
+      });
+      expect(launched).toHaveLength(0);
+
+      yield* launchWith([{ id: "effort", value: "ultracode" }]);
+      expect(launched.map((launch) => launch.modelSelection.options)).toEqual([
+        [
+          { id: "effort", value: "xhigh" },
+          { id: "ultracode", value: true },
+        ],
+      ]);
+    }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
