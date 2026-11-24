@@ -18,8 +18,8 @@ vi.mock("@effect/atom-react", () => ({
     environment: { platform: { os: "linux" } },
   }),
 }));
-vi.mock(import("gt-react"), async (original) => ({
-  ...(await original()),
+vi.mock("gt-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("gt-react")>()),
   useMessages: () => (text: string) => text,
 }));
 vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.openInEditor }));
