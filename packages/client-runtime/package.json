@@ -47,6 +47,10 @@
       "types": "./src/contractLabels.ts",
       "default": "./src/contractLabels.ts"
     },
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
     "./locales": {
       "types": "./src/locales.ts",
       "default": "./src/locales.ts"
@@ -58,6 +62,10 @@
     "./image-attachment-size": {
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
+    },
+    "./diff-file-order": {
+      "types": "./src/diffFileOrder.ts",
+      "default": "./src/diffFileOrder.ts"
     },
     "./handoff": {
       "types": "./src/handoff.ts",
@@ -99,9 +107,25 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./feedback-request": {
+      "types": "./src/feedbackRequest.ts",
+      "default": "./src/feedbackRequest.ts"
+    },
+    "./link-batch": {
+      "types": "./src/linkBatch.ts",
+      "default": "./src/linkBatch.ts"
+    },
     "./link-request": {
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
+    },
+    "./linked-thread": {
+      "types": "./src/linkedThread.ts",
+      "default": "./src/linkedThread.ts"
+    },
+    "./side-thread": {
+      "types": "./src/sideThread.ts",
+      "default": "./src/sideThread.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
@@ -111,6 +135,10 @@
       "types": "./src/scheduledTaskTimeZone.ts",
       "default": "./src/scheduledTaskTimeZone.ts"
     },
+    "./scheduled-task-worktree": {
+      "types": "./src/scheduledTaskWorktree.ts",
+      "default": "./src/scheduledTaskWorktree.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
@@ -118,6 +146,10 @@
     "./authorization": {
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
+    },
+    "./connect-device-notices": {
+      "types": "./src/connectDeviceNotices.ts",
+      "default": "./src/connectDeviceNotices.ts"
     },
     "./environment": {
       "types": "./src/environment/index.ts",
@@ -250,6 +282,10 @@
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
+    },
+    "./state/thread-stream": {
+      "types": "./src/state/threadStream.ts",
+      "default": "./src/state/threadStream.ts"
     },
     "./state/thread-history-merge": {
       "types": "./src/state/threadHistoryMerge.ts",
@@ -402,6 +438,10 @@
     "./state/thread-checkpoints": {
       "types": "./src/state/threadCheckpoints.ts",
       "default": "./src/state/threadCheckpoints.ts"
+    },
+    "./state/thread-repositories": {
+      "types": "./src/state/threadRepositories.ts",
+      "default": "./src/state/threadRepositories.ts"
     },
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",
@@ -626,11 +666,16 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./pull-request-references": {
+      "types": "./src/pullRequestReferences.ts",
+      "default": "./src/pullRequestReferences.ts"
     }
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "bench": "vp test bench"
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",
@@ -652,16 +697,16 @@
     "effect": "catalog:",
     "gt-i18n": "1.0.40",
     "jszip": "3.10.1",
-    "remark-gfm": "catalog:",
-    "remark-parse": "catalog:",
     "three": "0.180.0",
-    "unbash": "^5.0.0",
-    "unified": "catalog:"
+    "unbash": "^5.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/mdast": "^4.0.4",
     "@types/three": "0.180.0",
+    "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
+    "unified": "catalog:",
     "vite-plus": "catalog:"
   }
 }

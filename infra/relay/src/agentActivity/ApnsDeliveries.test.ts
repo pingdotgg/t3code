@@ -156,6 +156,7 @@ function layerFor(input: {
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly currentActivityStates?: ReadonlyArray<RelayAgentActivityState>;
+  readonly activityRecheckFails?: boolean;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
@@ -175,13 +176,20 @@ function layerFor(input: {
             input.activityStates !== undefined
               ? Effect.succeed([...input.activityStates])
               : Effect.succeed([state]),
-          getForUserThread: ({ environmentId, threadId }) =>
-            Effect.succeed(
-              (input.currentActivityStates ?? input.activityStates ?? [state]).find(
-                (current) =>
-                  current.environmentId === environmentId && current.threadId === threadId,
-              ) ?? null,
-            ),
+          getForUserThread: ({ userId, environmentId, threadId }) =>
+            input.activityRecheckFails
+              ? Effect.fail(
+                  new AgentActivityRows.AgentActivityRowListPersistenceError({
+                    userId,
+                    cause: new Error("database unavailable"),
+                  }),
+                )
+              : Effect.succeed(
+                  (input.currentActivityStates ?? input.activityStates ?? [state]).find(
+                    (current) =>
+                      current.environmentId === environmentId && current.threadId === threadId,
+                  ) ?? null,
+                ),
         } satisfies AgentActivityRows.AgentActivityRows["Service"]),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
           send: (body) =>
@@ -688,8 +696,13 @@ describe("ApnsDeliveries", () => {
     },
   );
 
-  it.effect("processes signed push notification jobs through APNs and records attempts", () => {
+  it.effect.each([
+    { name: "records the APNs attempt", activityRecheckFails: false },
+    { name: "skips the job when the activity recheck fails", activityRecheckFails: true },
+  ])("processes signed push notification jobs: $name", ({ activityRecheckFails }) => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    let apnsRequests = 0;
+    const waiting = { ...state, phase: "waiting_for_input" as const };
     const payload = makeApnsDeliveryJobPayload({
       kind: "push_notification",
       userId: target.user_id,
@@ -702,6 +715,8 @@ describe("ApnsDeliveries", () => {
         environmentId: "env",
         threadId: "thread",
         deepLink: "/",
+        phase: waiting.phase,
+        updatedAt: waiting.updatedAt,
       },
       createdAt: "1970-01-01T00:00:00.000Z",
       expiresAt: "1970-01-01T00:10:00.000Z",
@@ -712,7 +727,10 @@ describe("ApnsDeliveries", () => {
       payload,
     });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 })));
+      Effect.sync(() => {
+        apnsRequests += 1;
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
@@ -720,7 +738,7 @@ describe("ApnsDeliveries", () => {
 
       expect(result.kind).toBe("push_notification");
       expect(result.ok).toBe(true);
-      expect(result.apnsStatus).toBe(200);
+      expect(apnsRequests).toBe(activityRecheckFails ? 0 : 1);
       expect(attempts).toMatchObject([
         {
           kind: "push_notification",
@@ -729,7 +747,9 @@ describe("ApnsDeliveries", () => {
           environmentId: "env",
           threadId: "thread",
           deviceId: target.device_id,
-          apnsStatus: 200,
+          ...(activityRecheckFails
+            ? { apnsReason: "Stale agent activity state skipped." }
+            : { apnsStatus: 200 }),
         },
       ]);
     }).pipe(
@@ -743,6 +763,8 @@ describe("ApnsDeliveries", () => {
             },
           ],
           config: signingConfig,
+          currentActivityStates: [waiting],
+          activityRecheckFails,
           execute,
         }),
       ),

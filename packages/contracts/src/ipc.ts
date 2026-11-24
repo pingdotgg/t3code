@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -29,6 +29,8 @@ export interface ContextMenuItem<T extends string = string> {
   disabled?: boolean;
   header?: boolean;
   icon?: string;
+  /** PNG data URL; takes precedence over `icon`. */
+  iconImage?: string;
   separatorBefore?: boolean;
   checked?: boolean;
   children?: readonly ContextMenuItem<T>[];
@@ -46,6 +48,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly iconImage?: string;
   readonly separatorBefore?: boolean;
   readonly checked?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
@@ -59,6 +62,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  iconImage: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
   checked: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
@@ -292,6 +296,8 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
   /** Off only because a managed policy rules out this channel; switching channels turns it on. */
   channelBlockedByPolicy?: true;
+  /** The check failed only because this build's track differs from the saved `channel`. */
+  trackMismatch?: { readonly buildChannel: DesktopUpdateChannel };
 }
 
 export interface DesktopUpdateReleaseNote {
@@ -336,6 +342,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
   channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
+  trackMismatch: Schema.optionalKey(Schema.Struct({ buildChannel: DesktopUpdateChannelSchema })),
 });
 
 export const DesktopCliCommandStateSchema = Schema.Struct({
@@ -672,7 +679,7 @@ export interface DesktopPreviewRecordingInputEvent {
 
 export interface DesktopPreviewWebviewConfig {
   partition: string;
-  /** Sandboxed with contextIsolation off so the picker preload can read the React DevTools hook. */
+  /** Sandboxed and context-isolated; the picker preload reaches React through a function it runs in the page. */
   webPreferences: string;
   /** Absolute file:// preload URL; null requires disabling element picking. */
   preloadUrl: string | null;
@@ -1002,6 +1009,22 @@ export const DesktopPreviewTunnelAccessResolutionInputSchema = Schema.Struct({
   url: Schema.NullOr(Schema.String),
 });
 
+/** A loopback port of another environment, reachable on this machine's 127.0.0.1. */
+export const DesktopPortForwardSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
+  /** The same as `remotePort` unless that port was taken here. */
+  localPort: PortSchema,
+});
+export type DesktopPortForward = typeof DesktopPortForwardSchema.Type;
+
+export const DesktopSharesLoopbackInputSchema = Schema.Struct({ environmentId: EnvironmentId });
+
+export const DesktopPortForwardInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
+});
+
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Omit to clear every profile; otherwise only this profile's partition. */
@@ -1065,6 +1088,22 @@ export const DesktopMediaReadSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
+
+/** `value` is the resolved locale from `prepare` and the transcript from `transcribe`. */
+export const DesktopAppleSpeechResultSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), value: Schema.String }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    code: Schema.Literals(["unavailable", "unsupported-locale", "failed"]),
+  }),
+]);
+export type DesktopAppleSpeechResult = typeof DesktopAppleSpeechResultSchema.Type;
+
+export const DesktopAppleSpeechTranscribeInputSchema = Schema.Struct({
+  locale: Schema.String.check(Schema.isMaxLength(64)),
+  // 16 kHz mono Float32 PCM, at most five minutes.
+  pcm: Schema.Uint8Array,
+});
 
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
@@ -1206,6 +1245,12 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview: DesktopPreviewBridge;
+  /** On-device dictation through macOS 26 SpeechAnalyzer; absent in older desktop builds. */
+  appleSpeech?: {
+    supportedLocales: () => Promise<readonly string[]>;
+    prepare: (locale: string) => Promise<DesktopAppleSpeechResult>;
+    transcribe: (input: { locale: string; pcm: Uint8Array }) => Promise<DesktopAppleSpeechResult>;
+  };
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
@@ -1324,6 +1369,13 @@ export interface DesktopPreviewBridge {
     listener: (request: DesktopPreviewTunnelAccessRequest) => void,
   ) => () => void;
   resolveTunnelAccess: (requestId: string, url: string | null) => Promise<void>;
+  /** Forwards an environment's loopback port to this machine until stopped or the app quits. */
+  forwardPort: (environmentId: EnvironmentId, remotePort: number) => Promise<DesktopPortForward>;
+  stopPortForward: (environmentId: EnvironmentId, remotePort: number) => Promise<void>;
+  listPortForwards: () => Promise<ReadonlyArray<DesktopPortForward>>;
+  /** Whether the environment runs on this machine, where its ports need no forward. */
+  sharesLoopback: (environmentId: EnvironmentId) => Promise<boolean>;
+  onPortForwards: (listener: (forwards: ReadonlyArray<DesktopPortForward>) => void) => () => void;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;

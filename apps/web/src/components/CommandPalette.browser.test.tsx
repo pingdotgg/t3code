@@ -5,7 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useCommandPaletteStore } from "../commandPaletteStore";
+import { dispatchCommandPalette, useCommandPaletteStore } from "../commandPaletteStore";
 import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
@@ -15,6 +15,7 @@ import { CommandPalette } from "./CommandPalette";
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
   threads: [] as ReadonlyArray<Thread>,
+  activeThread: undefined as Thread | undefined,
   delegatedUnderParent: new Set<string>() as ReadonlySet<string>,
   handleNewThread: vi.fn(async () => undefined),
 }));
@@ -38,6 +39,7 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
     ...actual,
     useHandleNewThread: () => ({
       ...actual.useHandleNewThread(),
+      activeThread: entities.activeThread,
       handleNewThread: entities.handleNewThread,
     }),
   };
@@ -56,6 +58,7 @@ function setup(state: Partial<typeof entities> = {}) {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
+  entities.activeThread = state.activeThread;
   entities.delegatedUnderParent = state.delegatedUnderParent ?? new Set();
   entities.handleNewThread.mockClear();
 }
@@ -248,6 +251,45 @@ describe("CommandPalette open intents", () => {
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/parent"));
   });
 
+  it("starts a thread in an open copy when the current project's copy is archived", async () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/example/acme",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/acme.git",
+      },
+    };
+    const archived = {
+      ...makeProject("acme"),
+      repositoryIdentity,
+      archivedAt: "2026-03-02T00:00:00.000Z",
+    };
+    const open = {
+      ...makeProject("acme"),
+      environmentId: EnvironmentId.make("remote"),
+      repositoryIdentity,
+    };
+    setup({
+      projects: [archived, open],
+      activeThread: makeThreadFixture({
+        environmentId: archived.environmentId,
+        projectId: archived.id,
+      }),
+    });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({ open: "new-thread-in" });
+    await page.getByRole("option", { name: /acme/i }).click();
+
+    await vi.waitFor(() =>
+      expect(entities.handleNewThread).toHaveBeenCalledWith({
+        environmentId: open.environmentId,
+        projectId: open.id,
+      }),
+    );
+  });
+
   it("numbers filtered New thread in... rows from 1 and jumps to them", async () => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     setup({ projects: [makeProject("server"), makeProject("lima")] });
@@ -265,5 +307,81 @@ describe("CommandPalette open intents", () => {
         projectId: ProjectId.make("lima"),
       }),
     );
+  });
+
+  it("leaves a submenu only on a fresh, unmodified Backspace", async () => {
+    setup({ projects: [makeProject("Acme"), makeProject("Beta")] });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    const rootInput = page.getByPlaceholder("Search commands, projects, and threads...");
+    await expect.element(rootInput).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    await expect
+      .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
+      .toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Enter}");
+
+    const submenuInput = page.getByPlaceholder("Search...");
+    await expect.element(submenuInput).toHaveFocus();
+
+    for (const init of [
+      { repeat: true },
+      { ctrlKey: true },
+      { isComposing: true },
+    ] satisfies ReadonlyArray<KeyboardEventInit>) {
+      const event = new KeyboardEvent("keydown", {
+        key: "Backspace",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      await act(() => submenuInput.element().dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+      await expect.element(submenuInput).toBeVisible();
+    }
+
+    await userEvent.keyboard("{Backspace}");
+    await expect.element(rootInput).toHaveFocus();
+  });
+
+  it("ignores repeated Escape keydowns after stepping back from file search", async () => {
+    setup();
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    const palette = page.getByTestId("command-palette");
+    await expect.element(palette).toHaveAttribute("data-palette-mode", "command");
+
+    await act(() => {
+      dispatchCommandPalette({
+        _tag: "OpenChildSearch",
+        mode: "files",
+        context: { query: "", linkedThreadSearch: null },
+      });
+    });
+    await expect.element(palette).toHaveAttribute("data-palette-mode", "files");
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(palette).toHaveAttribute("data-palette-mode", "command");
+    await expect
+      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .toHaveFocus();
+
+    await act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          repeat: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(useCommandPaletteStore.getState().open).toBe(true);
+    await expect.element(palette).toHaveAttribute("data-palette-mode", "command");
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(palette).not.toBeInTheDocument();
   });
 });

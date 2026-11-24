@@ -7,6 +7,9 @@ import {
   EventId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -1943,7 +1946,7 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("starts and finishes a delegated task without reading the parent's history", () =>
+it.effect("starts, finishes and follows up a task without reading the parent's history", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -2019,10 +2022,11 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       });
     }
 
-    // Keep the statements of the task start and finish operations, not of the recovery around them.
+    // Keep the statements of the task start, finish and follow-up, not of the recovery around them.
     const taskSpans = [
       "orchestrationV2.dispatch.delegatedTaskRequest",
       "Orchestrator.finalizeAppOwnedSubagent",
+      "test.followUp",
     ];
     const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
     const recordStatements = Effect.provideService(
@@ -2103,9 +2107,38 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       ["completed", "claimed", "completed", "completed", [task.id]],
     );
 
-    // Start and finish read the task's own records, so their VM steps, which are deterministic,
-    // must stay flat on a copy with a long parent history. Left out: the counts that number the
-    // task and its wake, which walk one index.
+    // A person's follow-up to the finished child binds a new task to the parent's running run.
+    yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("follow-up-long-parent"),
+        threadId: childThreadId,
+        messageId: MessageId.make("message:long-parent:follow-up"),
+        text: "One more thing",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.withSpan("test.followUp"), recordStatements);
+    const followedUp = yield* projections.getThreadRecords(parentThreadId, [
+      "subagents",
+      "turnItems",
+    ]);
+    const followUp = followedUp.subagents.find((candidate) => candidate.id !== task.id);
+    assert.deepEqual(
+      [
+        followUp?.runId,
+        followedUp.turnItems.find(
+          (item) => item.type === "subagent" && item.subagentId === followUp?.id,
+        )?.providerTurnId,
+      ],
+      [parentRun.id, providerTurnId],
+    );
+
+    // Start, finish and follow-up read the task's own records and the run it binds to, so their VM
+    // steps, which are deterministic, must stay flat on a copy with a long parent history. Left out:
+    // the counts that number the task and its wake, which walk one index.
     const copyPath = "file:/delegated-task-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
@@ -2146,6 +2179,9 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       "target_thread_id",
     ]);
     addHistory("runs", "run_id");
+    // The history's runs have ended; only the parent's own run is still going.
+    copy.exec(`UPDATE orchestration_v2_projection_runs
+      SET status = 'completed', completed_at = requested_at WHERE run_id LIKE '%:history:%'`);
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
@@ -3150,4 +3186,101 @@ it.effect(
       }
       assert.equal(yield* captureReads, quietParent);
     }).pipe(Effect.provide(layerTest)),
+);
+
+/** A copy of `value` whose `id` getter counts its reads. */
+const countingIdReads = <T extends { readonly id: string }>(
+  value: T,
+  reads: { count: number },
+): T =>
+  Object.defineProperty({ ...value }, "id", {
+    enumerable: true,
+    get: () => {
+      reads.count += 1;
+      return value.id;
+    },
+  });
+
+// The owner's active attempt is the newest and no provider turn is tagged with it, so the lookup
+// falls back to the turn the attempt names. The last two turns are untagged and share one id.
+it.each([
+  { ownerAttempt: "names no provider turn", providerTurnId: null, findsFirstLegacy: false },
+  {
+    ownerAttempt: "names a provider turn listed twice",
+    providerTurnId: "legacy",
+    findsFirstLegacy: true,
+  },
+  { ownerAttempt: "is missing", providerTurnId: null, findsFirstLegacy: false },
+] as const)(
+  "finds a run's provider turn in at most 2·(T + A) id reads when its attempt $ownerAttempt",
+  ({ ownerAttempt, providerTurnId, findsFirstLegacy }) => {
+    const size = 2_000;
+    const reads = { count: 0 };
+    const providerThreadId = ProviderThreadId.make("provider-thread:lookup");
+    const attempts = Array.from({ length: size }, (_, index) =>
+      countingIdReads<OrchestrationV2RunAttempt>(
+        {
+          id: RunAttemptId.make(`attempt:lookup:${index}`),
+          runId: RunId.make(`run:lookup:${index}`),
+          attemptOrdinal: 1,
+          rootNodeId: NodeId.make(`node:lookup:${index}`),
+          providerInstanceId: instanceId,
+          providerThreadId,
+          providerTurnId:
+            index < size - 1
+              ? ProviderTurnId.make(`provider-turn:lookup:${index}`)
+              : providerTurnId === null
+                ? null
+                : ProviderTurnId.make(`provider-turn:lookup:${providerTurnId}`),
+          reason: "initial",
+          status: index < size - 1 ? "completed" : "pending",
+          startedAt: null,
+          completedAt: null,
+        },
+        reads,
+      ),
+    );
+    const providerTurns = Array.from({ length: size }, (_, index) => {
+      const untagged = index >= size - 2;
+      return countingIdReads<OrchestrationV2ProviderTurn>(
+        {
+          id: ProviderTurnId.make(`provider-turn:lookup:${untagged ? "legacy" : index}`),
+          providerThreadId,
+          nodeId: NodeId.make(`node:lookup:${index}`),
+          runAttemptId: untagged ? null : RunAttemptId.make(`attempt:lookup:${index}`),
+          nativeTurnRef: null,
+          ordinal: index + 1,
+          status: "completed",
+          startedAt: null,
+          completedAt: null,
+        },
+        reads,
+      );
+    });
+    const owner: OrchestrationV2Run = {
+      id: RunId.make(`run:lookup:${size - 1}`),
+      threadId: ThreadId.make("thread:lookup"),
+      ordinal: size,
+      providerInstanceId: instanceId,
+      modelSelection,
+      providerThreadId,
+      userMessageId: MessageId.make("message:lookup"),
+      rootNodeId: NodeId.make(`node:lookup:${size - 1}`),
+      activeAttemptId:
+        ownerAttempt === "is missing"
+          ? RunAttemptId.make("attempt:lookup:missing")
+          : RunAttemptId.make(`attempt:lookup:${size - 1}`),
+      status: "starting",
+      requestedAt: DateTime.makeUnsafe(0),
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+
+    const turn = Orchestrator.providerTurnForRun({ attempts, providerTurns }, owner);
+
+    assert.strictEqual(turn, findsFirstLegacy ? providerTurns[size - 2] : undefined);
+    assert.isAtMost(reads.count, 2 * (size + size));
+  },
 );
