@@ -316,17 +316,20 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
 ): C {
   return {
     ...command,
-    run: async (registry, target) => {
-      const edit = editOf(registry, target);
-      if (edit === null) return command.run(registry, target);
-      const edits = pullRequestPendingEditsAtom(target.environmentId);
-      registry.update(edits, (current) => [...current, edit]);
-      try {
-        return await command.run(registry, target);
-      } finally {
-        registry.update(edits, (current) => current.filter((entry) => entry !== edit));
-      }
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        const edit = editOf(registry, target);
+        if (edit === null) return command.run(registry, target);
+        const edits = pullRequestPendingEditsAtom(target.environmentId);
+        return Effect.acquireUseRelease(
+          Effect.sync(() => registry.update(edits, (current) => [...current, edit])),
+          () => command.run(registry, target),
+          () =>
+            Effect.sync(() =>
+              registry.update(edits, (current) => current.filter((entry) => entry !== edit)),
+            ),
+        );
+      }),
   } satisfies AtomCommand<Target, A, E>;
 }
 
@@ -1129,7 +1132,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             detail: cause instanceof Error ? cause.message : "Could not choose a merge method.",
           }),
       });
-      preparedInput = { ...actionInput, mergeMethod };
+      // Without a head the caller showed, pin to the one this read judged mergeable.
+      preparedInput = {
+        ...actionInput,
+        mergeMethod,
+        ...(actionInput.expectedHeadSha === undefined && detail.headSha !== undefined
+          ? { expectedHeadSha: detail.headSha }
+          : {}),
+      };
     }
     return yield* routedRequest(WS_METHODS.pullRequestsRunAction, {
       ...preparedInput,

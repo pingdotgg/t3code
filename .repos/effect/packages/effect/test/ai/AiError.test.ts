@@ -5,6 +5,50 @@ import { HttpClientError, HttpClientRequest } from "effect/http"
 
 describe("AiError", () => {
   describe("reason types", () => {
+    it("exposes each reason's _tag and retryability", () => {
+      const cases: ReadonlyArray<readonly [AiError.AiErrorReason, string, boolean]> = [
+        [new AiError.RateLimitError({}), "RateLimitError", true],
+        [new AiError.QuotaExhaustedError({}), "QuotaExhaustedError", false],
+        [new AiError.AuthenticationError({ kind: "InvalidKey" }), "AuthenticationError", false],
+        [new AiError.ContentPolicyError({ description: "violation" }), "ContentPolicyError", false],
+        [new AiError.InvalidRequestError({}), "InvalidRequestError", false],
+        [new AiError.InternalProviderError({ description: "Server error" }), "InternalProviderError", true],
+        [new AiError.InvalidOutputError({ description: "Invalid JSON" }), "InvalidOutputError", true],
+        [
+          new AiError.StructuredOutputError({ description: "Invalid JSON", responseText: "{\"invalid\":}" }),
+          "StructuredOutputError",
+          true
+        ],
+        [new AiError.UnsupportedSchemaError({ description: "Unions" }), "UnsupportedSchemaError", false],
+        [new AiError.UnknownError({}), "UnknownError", false],
+        [new AiError.ToolNotFoundError({ toolName: "T", availableTools: [] }), "ToolNotFoundError", true],
+        [
+          new AiError.ToolParameterValidationError({ toolName: "T", description: "Expected string" }),
+          "ToolParameterValidationError",
+          true
+        ],
+        [
+          new AiError.InvalidToolResultError({ toolName: "T", description: "missing field" }),
+          "InvalidToolResultError",
+          false
+        ],
+        [
+          new AiError.ToolResultEncodingError({ toolName: "T", toolResult: {}, description: "Cannot encode" }),
+          "ToolResultEncodingError",
+          false
+        ],
+        [
+          new AiError.ToolConfigurationError({ toolName: "T", description: "Invalid ID" }),
+          "ToolConfigurationError",
+          false
+        ]
+      ]
+      assert.deepStrictEqual(
+        cases.map(([error]) => [error._tag, error.isRetryable]),
+        cases.map(([, tag, retryable]) => [tag, retryable])
+      )
+    })
+
     describe("NetworkError", () => {
       it("keeps only the method and url from request errors", () => {
         const request = HttpClientRequest.get("https://example.com/models").pipe(
@@ -44,47 +88,22 @@ describe("AiError", () => {
     })
 
     describe("RateLimitError", () => {
-      it("should be retryable", () => {
-        const error = new AiError.RateLimitError({})
-        assert.isTrue(error.isRetryable)
-      })
-
       it("should format message with retryAfter", () => {
         const error = new AiError.RateLimitError({
           retryAfter: Duration.seconds(60)
         })
         assert.match(error.message, /Retry after/)
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.RateLimitError({})
-        assert.strictEqual(error._tag, "RateLimitError")
-      })
     })
 
     describe("QuotaExhaustedError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.QuotaExhaustedError({})
-        assert.isFalse(error.isRetryable)
-      })
-
       it("should format message correctly", () => {
         const error = new AiError.QuotaExhaustedError({})
         assert.match(error.message, /Quota exhausted/)
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.QuotaExhaustedError({})
-        assert.strictEqual(error._tag, "QuotaExhaustedError")
-      })
     })
 
     describe("AuthenticationError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.AuthenticationError({ kind: "InvalidKey" })
-        assert.isFalse(error.isRetryable)
-      })
-
       it("should format message based on kind", () => {
         const invalidKey = new AiError.AuthenticationError({ kind: "InvalidKey" })
         assert.match(invalidKey.message, /InvalidKey/)
@@ -97,11 +116,6 @@ describe("AiError", () => {
 
         const insufficientPermissions = new AiError.AuthenticationError({ kind: "InsufficientPermissions" })
         assert.match(insufficientPermissions.message, /InsufficientPermissions/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.AuthenticationError({ kind: "Unknown" })
-        assert.strictEqual(error._tag, "AuthenticationError")
       })
 
       it("should render the description after the kind suggestion when present", () => {
@@ -136,11 +150,6 @@ describe("AiError", () => {
     })
 
     describe("ContentPolicyError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.ContentPolicyError({ description: "hate speech detected" })
-        assert.isFalse(error.isRetryable)
-      })
-
       it("should format message with description", () => {
         const error = new AiError.ContentPolicyError({
           description: "Input contains prohibited content"
@@ -148,22 +157,9 @@ describe("AiError", () => {
         assert.match(error.message, /Content policy violation/)
         assert.match(error.message, /Input contains prohibited content/)
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.ContentPolicyError({ description: "violation" })
-        assert.strictEqual(error._tag, "ContentPolicyError")
-      })
     })
 
     describe("InvalidRequestError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.InvalidRequestError({
-          parameter: "temperature",
-          constraint: "must be between 0 and 2"
-        })
-        assert.isFalse(error.isRetryable)
-      })
-
       it("should format message with parameter details", () => {
         const error = new AiError.InvalidRequestError({
           parameter: "temperature",
@@ -174,21 +170,9 @@ describe("AiError", () => {
         assert.match(error.message, /must be between 0 and 2/)
         assert.match(error.message, /Value 5 is invalid/)
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.InvalidRequestError({})
-        assert.strictEqual(error._tag, "InvalidRequestError")
-      })
     })
 
     describe("InternalProviderError", () => {
-      it("should be retryable", () => {
-        const error = new AiError.InternalProviderError({
-          description: "Server error"
-        })
-        assert.isTrue(error.isRetryable)
-      })
-
       it("should format message with description", () => {
         const error = new AiError.InternalProviderError({
           description: "Unexpected server failure"
@@ -196,23 +180,9 @@ describe("AiError", () => {
         assert.match(error.message, /Internal provider error/)
         assert.match(error.message, /Unexpected server failure/)
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.InternalProviderError({
-          description: "Server error"
-        })
-        assert.strictEqual(error._tag, "InternalProviderError")
-      })
     })
 
     describe("InvalidOutputError", () => {
-      it("should be retryable", () => {
-        const error = new AiError.InvalidOutputError({
-          description: "Invalid JSON structure"
-        })
-        assert.isTrue(error.isRetryable)
-      })
-
       it("should format message with description", () => {
         const error = new AiError.InvalidOutputError({
           description: "Expected string but got number"
@@ -237,13 +207,6 @@ describe("AiError", () => {
             }
           }
         }))
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.InvalidOutputError({
-          description: "Test error"
-        })
-        assert.strictEqual(error._tag, "InvalidOutputError")
-      })
     })
 
     describe("InvalidResponseError", () => {
@@ -278,11 +241,6 @@ describe("AiError", () => {
     })
 
     describe("UnknownError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.UnknownError({})
-        assert.isFalse(error.isRetryable)
-      })
-
       it("should format message with description", () => {
         const error = new AiError.UnknownError({
           description: "Something unexpected happened"
@@ -294,22 +252,9 @@ describe("AiError", () => {
         const error = new AiError.UnknownError({})
         assert.strictEqual(error.message, "Unknown error")
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.UnknownError({})
-        assert.strictEqual(error._tag, "UnknownError")
-      })
     })
 
     describe("ToolNotFoundError", () => {
-      it("should be retryable", () => {
-        const error = new AiError.ToolNotFoundError({
-          toolName: "UnknownTool",
-          availableTools: ["GetWeather", "GetTime"]
-        })
-        assert.isTrue(error.isRetryable)
-      })
-
       it("should format message with available tools", () => {
         const error = new AiError.ToolNotFoundError({
           toolName: "UnknownTool",
@@ -326,174 +271,54 @@ describe("AiError", () => {
         })
         assert.match(error.message, /Available tools: none/)
       })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.ToolNotFoundError({
-          toolName: "Test",
-          availableTools: []
-        })
-        assert.strictEqual(error._tag, "ToolNotFoundError")
-      })
     })
 
     describe("ToolParameterValidationError", () => {
-      it("should be retryable", () => {
-        const error = new AiError.ToolParameterValidationError({
-          toolName: "GetWeather",
-          description: "Expected string"
-        })
-        assert.isTrue(error.isRetryable)
-      })
-
-      it("should format message with tool name", () => {
-        const error = new AiError.ToolParameterValidationError({
-          toolName: "GetWeather",
-          description: "Expected string"
-        })
-        assert.match(error.message, /Invalid parameters for tool 'GetWeather'/)
-      })
-
-      it("should format message with validation message", () => {
+      it("should format message with tool name and validation message", () => {
         const error = new AiError.ToolParameterValidationError({
           toolName: "GetWeather",
           description: "Expected string, got number"
         })
+        assert.match(error.message, /Invalid parameters for tool 'GetWeather'/)
         assert.match(error.message, /Expected string, got number/)
-      })
-
-      it("should construct when validated params contain non-JSON values", () => {
-        const error = new AiError.ToolParameterValidationError({
-          toolName: "GetWeather",
-          description: `Expected finite number, got NaN at ["city"]`
-        })
-        assert.strictEqual(error._tag, "ToolParameterValidationError")
-        assert.match(error.message, /NaN/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.ToolParameterValidationError({
-          toolName: "Test",
-          description: "Error"
-        })
-        assert.strictEqual(error._tag, "ToolParameterValidationError")
       })
     })
 
     describe("InvalidToolResultError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.InvalidToolResultError({
-          toolName: "GetWeather",
-          description: "missing required field"
-        })
-        assert.isFalse(error.isRetryable)
-      })
-
-      it("should format message with tool name", () => {
-        const error = new AiError.InvalidToolResultError({
-          toolName: "GetWeather",
-          description: "missing required field"
-        })
-        assert.match(error.message, /Tool 'GetWeather' returned invalid result/)
-      })
-
-      it("should format message with description", () => {
+      it("should format message with tool name and description", () => {
         const error = new AiError.InvalidToolResultError({
           toolName: "GetWeather",
           description: "missing 'temperature' field"
         })
+        assert.match(error.message, /Tool 'GetWeather' returned invalid result/)
         assert.match(error.message, /missing 'temperature' field/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.InvalidToolResultError({
-          toolName: "Test",
-          description: "invalid result"
-        })
-        assert.strictEqual(error._tag, "InvalidToolResultError")
       })
     })
 
     describe("ToolResultEncodingError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.ToolResultEncodingError({
-          toolName: "GetWeather",
-          toolResult: { temp: 72 },
-          description: "Cannot encode"
-        })
-        assert.isFalse(error.isRetryable)
-      })
-
-      it("should format message with tool name", () => {
-        const error = new AiError.ToolResultEncodingError({
-          toolName: "GetWeather",
-          toolResult: { temp: 72 },
-          description: "Cannot encode"
-        })
-        assert.match(error.message, /Failed to encode result for tool 'GetWeather'/)
-      })
-
-      it("should format message with validation message", () => {
+      it("should format message with tool name and description", () => {
         const error = new AiError.ToolResultEncodingError({
           toolName: "GetWeather",
           toolResult: { circular: "ref" },
           description: "Cannot encode circular reference"
         })
+        assert.match(error.message, /Failed to encode result for tool 'GetWeather'/)
         assert.match(error.message, /Cannot encode circular reference/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.ToolResultEncodingError({
-          toolName: "Test",
-          toolResult: {},
-          description: "Error"
-        })
-        assert.strictEqual(error._tag, "ToolResultEncodingError")
       })
     })
 
     describe("ToolConfigurationError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.ToolConfigurationError({
-          toolName: "OpenAiCodeInterpreter",
-          description: "Invalid container ID format"
-        })
-        assert.isFalse(error.isRetryable)
-      })
-
-      it("should format message with tool name", () => {
-        const error = new AiError.ToolConfigurationError({
-          toolName: "OpenAiCodeInterpreter",
-          description: "Invalid container ID format"
-        })
-        assert.match(error.message, /Invalid configuration for tool 'OpenAiCodeInterpreter'/)
-      })
-
-      it("should format message with description", () => {
+      it("should format message with tool name and description", () => {
         const error = new AiError.ToolConfigurationError({
           toolName: "OpenAiWebSearch",
           description: "search_context_size must be between 1 and 10"
         })
+        assert.match(error.message, /Invalid configuration for tool 'OpenAiWebSearch'/)
         assert.match(error.message, /search_context_size must be between 1 and 10/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.ToolConfigurationError({
-          toolName: "Test",
-          description: "Error"
-        })
-        assert.strictEqual(error._tag, "ToolConfigurationError")
       })
     })
 
     describe("StructuredOutputError", () => {
-      it("should be retryable", () => {
-        const error = new AiError.StructuredOutputError({
-          description: "Invalid JSON structure",
-          responseText: "{\"invalid\":}"
-        })
-        assert.isTrue(error.isRetryable)
-      })
-
       it("should format message with description", () => {
         const error = new AiError.StructuredOutputError({
           description: "Expected a valid JSON object",
@@ -501,14 +326,6 @@ describe("AiError", () => {
         })
         assert.match(error.message, /Structured output validation failed/)
         assert.match(error.message, /Expected a valid JSON object/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.StructuredOutputError({
-          description: "Test error",
-          responseText: "{\"foo\":\"bar\"}"
-        })
-        assert.strictEqual(error._tag, "StructuredOutputError")
       })
 
       it.effect("should create from SchemaError", () =>
@@ -531,26 +348,12 @@ describe("AiError", () => {
     })
 
     describe("UnsupportedSchemaError", () => {
-      it("should not be retryable", () => {
-        const error = new AiError.UnsupportedSchemaError({
-          description: "Unions are not supported"
-        })
-        assert.isFalse(error.isRetryable)
-      })
-
       it("should format message with description", () => {
         const error = new AiError.UnsupportedSchemaError({
           description: "Unions are not supported in Anthropic structured output"
         })
         assert.match(error.message, /Unsupported schema/)
         assert.match(error.message, /Unions are not supported in Anthropic structured output/)
-      })
-
-      it("should have _tag set correctly", () => {
-        const error = new AiError.UnsupportedSchemaError({
-          description: "Test error"
-        })
-        assert.strictEqual(error._tag, "UnsupportedSchemaError")
       })
     })
   })
@@ -598,15 +401,6 @@ describe("AiError", () => {
       })
       assert.match(error.message, /OpenAI\.completion:/)
       assert.match(error.message, /Rate limit exceeded/)
-    })
-
-    it("should have _tag set correctly", () => {
-      const error = new AiError.AiError({
-        module: "Test",
-        method: "test",
-        reason: new AiError.UnknownError({})
-      })
-      assert.strictEqual(error._tag, "AiError")
     })
   })
 

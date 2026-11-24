@@ -14,13 +14,13 @@ const finishReasonMap: Record<string, Response.FinishReason> = {
 /** @internal */
 export const resolveFinishReason = (
   finishReason: string,
-  isJsonResponse: boolean = false
+  hasStructuredOutputTool: boolean = false
 ): Response.FinishReason => {
   const reason = Object.hasOwn(finishReasonMap, finishReason) ? finishReasonMap[finishReason] : undefined
   if (Predicate.isUndefined(reason)) {
     return "unknown"
   }
-  if (isJsonResponse && reason === "tool-calls") {
+  if (hasStructuredOutputTool && reason === "tool-calls") {
     return "stop"
   }
   return reason
