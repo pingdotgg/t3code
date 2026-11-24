@@ -879,6 +879,7 @@ mod tests {
             environment: env.clone(),
             scheduled_tasks: std::sync::OnceLock::new(),
             devices: std::sync::OnceLock::new(),
+            previews: std::sync::OnceLock::new(),
             settle_cleanups: Arc::default(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
@@ -957,6 +958,17 @@ mod tests {
         let config = server_config(&env, Vec::new()).unwrap();
         assert!(config["keybindings"].as_array().unwrap().len() > 10);
         assert_eq!(config["auth"]["policy"], "remote-reachable");
+        // The mobile gates read these from `server.getConfig` as from the descriptor.
+        for flag in [
+            "freshContext",
+            "oneTimeSchedules",
+            "scheduledTaskThreadModes",
+            "threadPullRequestWatch",
+            "issueLinkedThreads",
+            "commandOutputStreaming",
+        ] {
+            assert_eq!(config["environment"]["capabilities"][flag], true, "{flag}");
+        }
         let before = conn_support::time::iso_from_ms(conn_support::time::now_ms());
         let server_time = config["serverTime"].as_str().unwrap();
         assert!(

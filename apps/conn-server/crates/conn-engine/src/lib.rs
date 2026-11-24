@@ -299,6 +299,14 @@ pub struct ProvisionedWorktree {
     pub branch: String,
 }
 
+/// The query of `GET /api/orchestration/shell` (`answerShellSnapshot`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HttpShellQuery {
+    pub omit_idle_subagents: bool,
+    pub omit_older_settled: bool,
+    pub resume_from: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThreadClose {
     Archived,
@@ -435,6 +443,16 @@ pub trait Engine: Send + Sync {
 
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
+        unsupported("the shell snapshot")
+    }
+
+    /// `GET /api/orchestration/shell` with the client's query: `None` when the shell stream
+    /// can resume from `resume_from` (the client keeps its rows), else the snapshot trimmed as
+    /// a fresh `subscribeShell` with the same options trims it.
+    fn http_shell_snapshot(
+        &self,
+        _options: HttpShellQuery,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetShellSnapshotError>>> {
         unsupported("the shell snapshot")
     }
 
