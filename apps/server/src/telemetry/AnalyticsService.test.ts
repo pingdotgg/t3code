@@ -469,7 +469,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
-  it.effect("does not send batch requests when telemetry is disabled", () =>
+  it.effect.each([
+    ["opted out", { T3CODE_TELEMETRY_ENABLED: false }],
+    ["unset", {}],
+  ] as const)("does not send batch requests when telemetry is %s", ([, enabled]) =>
     Effect.gen(function* () {
       const capturedPaths: Array<string> = [];
       const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -478,7 +481,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: false,
+          ...enabled,
           T3CODE_TELEMETRY_KEY: "phc_test_key",
           T3CODE_TELEMETRY_HOST: "http://localhost",
         }),
