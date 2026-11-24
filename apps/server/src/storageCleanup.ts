@@ -1663,6 +1663,7 @@ const make = Effect.gen(function* () {
                 root: taskFolder.root,
                 force: false,
                 forget: deleted,
+                projectCommands: TaskFolders.linkRunsProjectCommands(thread.linkOrigin),
                 inspect: (checkout) =>
                   worktreeAdminDir(checkout.worktreePath).pipe(
                     Effect.map((adminDir) => adminDirs.set(checkout.worktreePath, adminDir)),
@@ -1811,6 +1812,16 @@ const make = Effect.gen(function* () {
               remote === null
                 ? "no commits beyond the project branch"
                 : "no commits beyond the default branch";
+          // A subagent's isolated branch ships through its parent's pull request or a direct
+          // merge, never a pull request of its own, so a finished one counts once on the default.
+          const subagentFinished =
+            settings.worktreeOnMerge &&
+            thread.lineage.relationshipToParent === "subagent" &&
+            settledThread !== undefined;
+          if (!eligible && integrated && remote !== null && subagentFinished) {
+            eligible = true;
+            removalReason = "work is on the default branch";
+          }
           if (!eligible && remote !== null && settings.worktreeOnMerge && thread.branch !== null) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
@@ -1823,6 +1834,39 @@ const make = Effect.gen(function* () {
               integrated,
             });
             if (eligible) removalReason = "pull request was merged";
+          }
+          // Squash and rebase merges leave a subagent's commits off the default branch, so
+          // its work counts as shipped when a parent's merged pull request head contains it.
+          if (!eligible && subagentFinished && remote !== null) {
+            const seen = new Set<string>([thread.id]);
+            let child: Pick<OrchestrationV2ThreadShell, "lineage"> = thread;
+            while (!eligible && child.lineage.relationshipToParent === "subagent") {
+              const parent = threadsById.get(child.lineage.parentThreadId!);
+              if (parent === undefined || seen.has(parent.id)) break;
+              seen.add(parent.id);
+              child = parent;
+              if (parent.branch === null || parent.branch === thread.branch) continue;
+              const pullRequest = yield* gitManager.branchPullRequest(
+                { cwd: worktreePath, branch: parent.branch },
+                { refresh: true, includeHeadRepository: true },
+              );
+              const headSha = pullRequest?.headSha;
+              if (
+                pullRequest?.state !== "merged" ||
+                pullRequest.baseRef !== branch ||
+                typeof headSha !== "string" ||
+                !/^[0-9a-f]{40,64}$/i.test(headSha)
+              )
+                continue;
+              const shipped = yield* git.execute({
+                operation: "StorageCleanup.shippedThroughParent",
+                cwd: worktreePath,
+                args: ["merge-base", "--is-ancestor", head.commitSha, headSha],
+                allowNonZeroExit: true,
+              });
+              eligible = shipped.exitCode === 0;
+              if (eligible) removalReason = "parent's pull request was merged";
+            }
           }
           if (!eligible && remote === null)
             return keep(integrated ? notDueReason : "has commits beyond the project branch");
