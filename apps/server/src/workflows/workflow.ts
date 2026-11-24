@@ -67,6 +67,8 @@ export class RunContext extends Context.Service<
     readonly forStep: (name: string) => Context.Context<InStep>;
     /** The steps running now, which a cancelled run's cleanup waits for. */
     readonly inFlight: InFlight;
+    /** Have the engine see the agent turn behind the open wait `wait` through, and wake it. */
+    readonly watchTurn: (wait: string) => Effect.Effect<void>;
   }
 >()("t3/workflows/workflow/RunContext") {}
 
@@ -101,7 +103,7 @@ export const claim = (name: string, cleanup = false) =>
 
 /** An error as one line for a person, with what caused it when the error only wraps something. */
 export const text = (error: unknown): string => {
-  if (typeof error === "string") return error.slice(0, 2000);
+  if (typeof error === "string") return WorkflowStore.detailCut(error);
   if (typeof error !== "object" || error === null) return String(error);
   // Also an error that came back from the journal, which is its fields and no longer an Error.
   const fields = error as {
@@ -115,9 +117,8 @@ export const text = (error: unknown): string => {
       : typeof fields.reason === "string"
         ? fields.reason
         : "Unknown error";
-  return (fields.cause === undefined ? message : `${message}: ${text(fields.cause)}`).slice(
-    0,
-    2000,
+  return WorkflowStore.detailCut(
+    fields.cause === undefined ? message : `${message}: ${text(fields.cause)}`,
   );
 };
 
@@ -537,7 +538,7 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
         name: `wait/${name}/again/${again}`,
         execute: Effect.gen(function* () {
           yield* run.store.waitReopened(run.runId, name, token);
-          yield* run.store.stepDetail(run.runId, name, problem.slice(0, 2000));
+          yield* run.store.stepDetail(run.runId, name, WorkflowStore.detailCut(problem));
           yield* deliverEarly(next, token);
         }),
       });
@@ -868,6 +869,9 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             names: new Set(),
             forStep: (name) => forStep(store, keyValues, link, forge, runId, name),
             inFlight: link.inFlight,
+            watchTurn: Effect.fn("RunContext.watchTurn")(function* (wait: string) {
+              if (link.current !== undefined) yield* link.current.watchTurn(runId, wait);
+            }),
           }),
         ),
       );
