@@ -184,6 +184,18 @@ describe("buildThreadActionItems", () => {
     expect(runThread).toHaveBeenCalledWith(remote);
   });
 
+  it("reuses each unchanged thread's search subject when items are rebuilt", () => {
+    const threads = [makeThread()];
+    const build = () =>
+      buildThreadActionItems({
+        threads,
+        projectByKey: new Map(),
+        icon: null,
+        runThread: async (_thread) => undefined,
+      });
+    expect(build()[0]?.threadSearch).toBe(build()[0]?.threadSearch);
+  });
+
   it("ranks thread title matches ahead of contextual project-name matches", () => {
     const threadItems = buildThreadActionItems({
       threads: [
