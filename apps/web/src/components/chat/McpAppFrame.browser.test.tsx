@@ -152,6 +152,7 @@ describe("McpAppFrame", () => {
     async (url, surface) => {
       __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, pullRequestLinksOpenInApp: true });
       useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+      setup(APP_HTML);
       const initialized = nextInitializedFrom();
       await using screen = await render(
         <McpAppFrame
