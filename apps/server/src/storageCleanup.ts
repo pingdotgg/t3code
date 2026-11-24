@@ -515,7 +515,8 @@ const make = Effect.gen(function* () {
       }
       return { bytes, reason: null };
     },
-    Effect.timeout("30 seconds"),
+    // No time limit: the entry cap bounds the walk, and a removal that timed out would
+    // repeat the whole walk on every sweep without ever deleting the worktree.
     Effect.orElseSucceed(() => ({ bytes: null, reason: "worktree could not be fully inspected" })),
   );
 
@@ -682,9 +683,15 @@ const make = Effect.gen(function* () {
       if (orphanSizes.has(key)) continue;
       const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
       if (!firstMeasurement && remaining <= 0) break;
-      const measured = yield* measureWorktree(path).pipe(
-        firstMeasurement ? Effect.asSome : Effect.timeoutOption(remaining),
-      );
+      const measured = yield* firstMeasurement
+        ? measureWorktree(path).pipe(
+            Effect.timeoutOrElse({
+              duration: "30 seconds",
+              orElse: () => Effect.succeed({ bytes: null }),
+            }),
+            Effect.asSome,
+          )
+        : measureWorktree(path).pipe(Effect.timeoutOption(remaining));
       firstMeasurement = false;
       if (Option.isSome(measured)) orphanSizes.set(key, measured.value.bytes);
     }
