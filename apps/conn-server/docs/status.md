@@ -1423,6 +1423,7 @@ builder with a test that fails without the fix.
 - **Release `conn-server-v0.4.2`**: Conn naming in agent instructions, tool titles and server
   messages (#210), `delegate_task` isolation `"worktree"` (#211); the version bump is its own PR.
 - **Release `conn-server-v0.5.0`**: sessions that last until revoked, `clients/extend` and self `logout` (#336), the T3-parity audit fixes (#266-#332), and a Developer-ID-signed macOS app in each release (#334); the version bump is its own PR.
+- **Release `conn-server-v0.5.1`**: existing peer links extend themselves to until-revoked, with no re-pair (#338); the version bump is its own PR.
 
 ## Partly followed to Conn `444f032be7` (the 2026-11-18 sync)
 
