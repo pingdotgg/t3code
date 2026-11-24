@@ -2267,6 +2267,13 @@ describe("mobile composer drafts", () => {
     expect(withRememberedModelOptions({ ...picked, options: [] }).options).toEqual([
       { id: "effort", value: "high" },
     ]);
+    expect(
+      withRememberedModelOptions({ ...picked, options: [{ id: "ultracode", value: false }] })
+        .options,
+    ).toEqual([
+      { id: "effort", value: "high" },
+      { id: "ultracode", value: false },
+    ]);
   });
 
   it("flush waits for pending hydration instead of clobbering disk", async () => {

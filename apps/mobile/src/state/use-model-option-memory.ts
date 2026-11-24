@@ -72,12 +72,11 @@ export function withRememberedModelOptions<
   if (stored === undefined) {
     return selection;
   }
-  // Memory never holds Ultracode, so a selection keeps its own.
+  // Ultracode is chosen per thread, so a selection keeps its own value over the remembered one.
+  const own = (selection.options ?? []).filter((option) => option.id === "ultracode");
   const remembered = [
-    ...stored,
-    ...(selection.options ?? []).filter(
-      (option) => option.id === "ultracode" && option.value === true,
-    ),
+    ...(own.length > 0 ? stored.filter((option) => option.id !== "ultracode") : stored),
+    ...own,
   ];
   if (JSON.stringify(remembered) === JSON.stringify(selection.options ?? [])) {
     return selection;
