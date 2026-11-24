@@ -391,7 +391,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                 });
             return runtimeCoordinator
               .publishLiveConfiguration(options.instanceId, published)
-              .pipe(Effect.as(catalogKey.length > 0 ? catalogKey : undefined));
+              .pipe(Effect.as(catalogKey.length > 0 ? catalogKey : null));
           },
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);

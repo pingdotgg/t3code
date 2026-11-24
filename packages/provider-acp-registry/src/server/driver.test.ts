@@ -1678,7 +1678,8 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
           "new-b",
         ]);
 
-        // A newer live session published while a probe is in flight still wins.
+        // A newer live update published while a probe is in flight is preserved after probe reconciliation.
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-a", "probed-c"]));
         resolveGate = {
           entered: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
@@ -1687,24 +1688,29 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         yield* instance.snapshot.refresh;
         yield* Deferred.await(resolveGate.entered);
 
-        const liveWins = yield* waitForModels(["old-a", "live-newer"]);
-        yield* coordinator.publishLiveConfiguration(
-          instanceId,
-          normalizeAcpRegistryLiveConfiguration([], undefined, {
-            currentModelId: "old-a",
+        const optionsOnlyLive = normalizeAcpRegistryLiveConfiguration(
+          [],
+          undefined,
+          {
+            currentModelId: "probed-c",
             availableModels: [
               { modelId: "old-a", name: "old-a" },
-              { modelId: "live-newer", name: "live-newer" },
+              { modelId: "probed-c", name: "probed-c" },
             ],
-          }),
+          },
+          { includeCatalog: false },
         );
-        expect(Option.isSome(yield* Fiber.join(liveWins))).toBe(true);
-        yield* Deferred.succeed(resolveGate.release, undefined);
+        yield* coordinator.publishLiveConfiguration(instanceId, optionsOnlyLive);
 
-        expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
-          "old-a",
-          "live-newer",
-        ]);
+        const reconciled = yield* waitForModels(["old-a", "probed-c"]);
+        yield* Deferred.succeed(resolveGate.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(reconciled))).toBe(true);
+        // The live update that arrived mid-probe was not cleared by the older probe.
+        expect(Option.isSome(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
+        expect(
+          (yield* instance.snapshot.getSnapshot).models.find((m) => m.slug === "probed-c")
+            ?.isDefault,
+        ).toBe(true);
       }),
   );
 

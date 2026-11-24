@@ -2384,7 +2384,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 modelState,
                 { lastCatalogKey: key },
               );
-              if (typeof nextKey === "string") {
+              if (nextKey === null || typeof nextKey === "string") {
                 yield* Ref.update(lastPublishedCatalogKey, (current) =>
                   current.epoch === epoch ? { epoch, key: nextKey } : current,
                 );

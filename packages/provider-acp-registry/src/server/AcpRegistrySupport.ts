@@ -1080,8 +1080,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               fetchedAtMs: invalidatedMidFlight ? state.fetchedAtMs : completedAt,
               failedAtMs: invalidatedMidFlight ? state.failedAtMs : undefined,
               lastFailure: invalidatedMidFlight ? state.lastFailure : undefined,
-              fetchRevision: state.fetchRevision + 1,
-              attemptRevision: state.attemptRevision + 1,
+              fetchRevision: invalidatedMidFlight ? state.fetchRevision : state.fetchRevision + 1,
+              attemptRevision: invalidatedMidFlight
+                ? state.attemptRevision
+                : state.attemptRevision + 1,
             };
           });
           return { index: outcome.index, changed };
@@ -1094,7 +1096,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             fetchedAtMs: invalidatedMidFlight ? state.fetchedAtMs : undefined,
             failedAtMs: invalidatedMidFlight ? state.failedAtMs : completedAt,
             lastFailure: invalidatedMidFlight ? state.lastFailure : outcome.error,
-            attemptRevision: state.attemptRevision + 1,
+            attemptRevision: invalidatedMidFlight
+              ? state.attemptRevision
+              : state.attemptRevision + 1,
           };
         });
         if (outcome._tag === "fallback") {
