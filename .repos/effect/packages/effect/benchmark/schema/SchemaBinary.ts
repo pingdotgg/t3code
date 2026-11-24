@@ -75,6 +75,15 @@ const largeRows = Array.from({ length: repeatedRecordStreamSize }, (_, index) =>
   requiresManualReview: index % 17 === 0
 }))
 
+// A blob two struct levels deep, like an RPC envelope.
+const BlobEnvelope = Schema.Struct({
+  id: Schema.String,
+  tag: Schema.String,
+  payload: Schema.Struct({ name: Schema.String, data: Schema.Uint8Array })
+})
+
+const blob = new Uint8Array(256 * 1024).map((_, index) => (index * 31 + 7) & 0xFF)
+
 const metrics = (count: number) =>
   Object.fromEntries(Array.from({ length: count }, (_, index) => [`metric-${index}`, index * 1.25]))
 
@@ -158,6 +167,17 @@ const protobufRoot = protobuf.parse(`
   message LargePayload {
     repeated LargeRow values = 1;
   }
+
+  message BlobPayload {
+    string name = 1;
+    bytes data = 2;
+  }
+
+  message BlobEnvelope {
+    string id = 1;
+    string tag = 2;
+    BlobPayload payload = 3;
+  }
 `).root
 
 interface ProtobufFixture {
@@ -225,6 +245,20 @@ const largePayloadProtobufFixture: ProtobufFixture = {
 }
 
 const largeRowProtobufFixture = directProtobufFixture("LargeRow")
+
+// protobufjs decodes `bytes` as a Node Buffer; view it as a plain Uint8Array.
+const asUint8Array = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length)
+
+const blobEnvelopeProtobufType = protobufRoot.lookupType("BlobEnvelope")
+
+const blobEnvelopeProtobufFixture: ProtobufFixture = {
+  type: blobEnvelopeProtobufType,
+  encodeInput: (value) => value as object,
+  decodeOutput: (message) => {
+    const envelope = protobufObject<typeof BlobEnvelope.Type>(blobEnvelopeProtobufType, message)
+    return { ...envelope, payload: { ...envelope.payload, data: asUint8Array(envelope.payload.data) } }
+  }
+}
 
 const cases = [
   {
@@ -297,6 +331,16 @@ const cases = [
     schema: LargePayload,
     value: largeRows,
     protobuf: largePayloadProtobufFixture
+  }
+] as const
+
+// Single-value only: streams of 256 KiB frames would dominate the run.
+const blobCases = [
+  {
+    name: "256 KiB blob / two levels deep",
+    schema: BlobEnvelope,
+    value: { id: "request-7", tag: "Upload", payload: { name: "blob.bin", data: blob } },
+    protobuf: blobEnvelopeProtobufFixture
   }
 ] as const
 
@@ -403,7 +447,7 @@ const prepare = <S extends Schema.ConstraintCodec<unknown, unknown>>(
   }
 }
 
-const prepared = cases.map((testCase) => ({
+const prepared = [...cases, ...blobCases].map((testCase) => ({
   name: testCase.name,
   ...prepare(testCase.schema, testCase.value, testCase.protobuf)
 }))

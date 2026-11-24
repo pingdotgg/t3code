@@ -149,8 +149,7 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
-    // Azure keeps labels on work items rather than on the pull request.
-    labels: [],
+    labels: pullRequest.labels,
   };
 }
 
@@ -465,8 +464,15 @@ export const make = Effect.gen(function* () {
                 Effect.orElseSucceed(() => 0),
               );
         const checks = yield* readChecks(input, pullRequest).pipe(Effect.orElseSucceed(() => []));
+        const labels =
+          location === null
+            ? pullRequest.labels
+            : yield* cli
+                .listLabels({ cwd: input.cwd, location, number: input.number })
+                .pipe(Effect.orElseSucceed(() => pullRequest.labels));
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
+          labels,
           body: pullRequest.body,
           ...(headSha === undefined ? {} : { headSha }),
           changedFiles,

@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - The private-network gate guards the node:http server.
+import type * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -10,6 +12,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { QrCode } from "@t3tools/shared/qrCode";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -48,6 +51,9 @@ export const isLoopbackHost = (host: string | undefined): boolean => {
 const VIRTUAL_INTERFACE =
   /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge[1-9]\d\d)/;
 
+// VirtualBox and VMware host-only adapters on Windows. Their names are mutable; Linux bridges can inherit these MACs.
+export const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
+
 /**
  * systemd-nspawn's `ve-*`/`vz-*` and NixOS containers' `vb-*` name host-side
  * veths after the machine. Windows aliases are user-renameable, so these
@@ -81,6 +87,44 @@ export const acceptsPrivateNetworkConnection = (socket: {
     (address) => address !== undefined && isPrivateNetworkAddress(address),
   );
 
+const CLOSED_CONNECTION_LOG_INTERVAL_NANOS = 60_000_000_000n;
+
+/**
+ * Closing is silent to the client, so closed connections are logged with both
+ * addresses: the first at once, then at most one line a minute with a count, so
+ * a connect flood from outside cannot grow the service log without bound.
+ */
+// Untraced: the captured context would otherwise tie every later warning to a span that ended at startup.
+export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
+  server: NodeHttp.Server,
+) {
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+  let nextLogAt: bigint | undefined;
+  let closedSinceLastLog = 0;
+  server.on("connection", (socket) => {
+    if (acceptsPrivateNetworkConnection(socket)) return;
+    // Read before destroy: Node forgets localAddress once the handle closes.
+    const addresses = { localAddress: socket.localAddress, remoteAddress: socket.remoteAddress };
+    socket.destroy();
+    runSync(
+      Effect.gen(function* () {
+        // Monotonic: a wall clock set backwards must not silence the warnings.
+        const now = yield* Clock.monotonicTimeNanos;
+        if (nextLogAt !== undefined && now < nextLogAt) {
+          closedSinceLastLog += 1;
+          return;
+        }
+        nextLogAt = now + CLOSED_CONNECTION_LOG_INTERVAL_NANOS;
+        yield* Effect.logWarning("closed a connection outside the private network", {
+          ...addresses,
+          ...(closedSinceLastLog > 0 ? { closedSinceLastLog } : {}),
+        });
+        closedSinceLastLog = 0;
+      }),
+    );
+  });
+});
+
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   NetAddress.isUnspecified(address.address)
     ? "127.0.0.1"
@@ -93,6 +137,15 @@ const isIpv4Family = (family: string | number): boolean => family === "IPv4" || 
 
 const isIpv6Family = (family: string | number): boolean => family === "IPv6" || family === 6;
 
+// A startup URL names the address the server bound; `localhost` can resolve to the other
+// address family, where this server is not listening.
+const loopbackAddressFor = (host: string | undefined): string =>
+  host !== undefined && normalizeHost(host) === "::" ? "::1" : "127.0.0.1";
+
+/** The origin a browser on this machine uses to reach a server bound to `host`. */
+export const resolveLocalOrigin = (host: string | undefined, port: number): string =>
+  `http://${formatHostForUrl(host && !isWildcardHost(host) ? normalizeHost(host) : loopbackAddressFor(host))}:${port}`;
+
 const resolveHeadlessConnectionHost = (
   host: string | undefined,
   interfaces: NetworkInterfacesMap,
@@ -100,7 +153,7 @@ const resolveHeadlessConnectionHost = (
   platform: NodeJS.Platform,
 ): string => {
   if (!host) {
-    return "localhost";
+    return loopbackAddressFor(host);
   }
 
   if (!isWildcardHost(host)) {
@@ -114,7 +167,9 @@ const resolveHeadlessConnectionHost = (
     (entry) =>
       !entry.internal &&
       isIpv4Family(entry.family) &&
-      (!privateNetworkOnly || isPrivateNetworkAddress(entry.address)),
+      (!privateNetworkOnly ||
+        (isPrivateNetworkAddress(entry.address) &&
+          !(platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)))),
   );
   // A tailnet or other CGNAT address reaches fewer devices than the LAN one.
   const externalIpv4 = privateNetworkOnly
@@ -125,13 +180,13 @@ const resolveHeadlessConnectionHost = (
     return externalIpv4.address;
   }
   if (privateNetworkOnly) {
-    return "localhost";
+    return loopbackAddressFor(host);
   }
 
   const externalIpv6 = interfaceEntries.find(
     (entry) => !entry.internal && isIpv6Family(entry.family),
   );
-  return externalIpv6 ? normalizeHost(externalIpv6.address) : "localhost";
+  return externalIpv6 ? normalizeHost(externalIpv6.address) : loopbackAddressFor(host);
 };
 
 export const resolveHeadlessConnectionString = (
@@ -201,6 +256,13 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
     `App link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
+    ...(isLoopbackHost(new URL(accessInfo.connectionString).hostname)
+      ? []
+      : [
+          "",
+          "Warning: this address uses plain HTTP. Anyone on the same network can read the",
+          "token and control this machine. Use it over a VPN or tailnet you trust.",
+        ]),
     "",
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",

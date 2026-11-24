@@ -6,6 +6,7 @@ import {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetMissingError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -15,11 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  isCommandAvailable,
-  resolveSpawnCommand,
-  withPathDirectoryListings,
-} from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -40,6 +37,7 @@ export {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetMissingError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -51,12 +49,14 @@ interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly detached?: boolean;
+  readonly waitForExit?: boolean;
 }
 
 interface ProcessLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly options: ChildProcess.CommandOptions;
+  readonly waitForExit?: boolean;
 }
 
 interface TargetPathAndPosition {
@@ -142,17 +142,37 @@ function resolveCommandEditorArgs(
   target: string,
   isDirectory: boolean,
   projectRoot: string | undefined,
+  position: LaunchEditorInput["position"],
 ): ReadonlyArray<string> {
-  const parsedTarget = parseTargetPathAndPosition(target);
+  const parsedTarget =
+    position === undefined
+      ? parseTargetPathAndPosition(target)
+      : Option.fromUndefinedOr(position.line).pipe(
+          Option.map((line) => ({
+            path: target,
+            line: String(line),
+            column: Option.fromUndefinedOr(position.column).pipe(Option.map(String)),
+          })),
+        );
+  const positionedTarget = Option.match(parsedTarget, {
+    onNone: () => target,
+    onSome: ({ path, line, column }) => [path, line, ...Option.toArray(column)].join(":"),
+  });
 
   switch (editor.launchStyle) {
     case "direct-path":
-      return [target];
+      return [positionedTarget];
     case "goto":
       // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.
       if (isDirectory) return ["--new-window", target];
-      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
+      // VS Code splits every numeric colon segment, including ones inside the filename.
+      if (
+        position !== undefined &&
+        target.split(":").some((segment) => !Number.isNaN(Number(segment)))
+      )
+        return [target];
+      return Option.isSome(parsedTarget) ? ["--goto", positionedTarget] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
@@ -483,7 +503,7 @@ const readEditorEnv = Effect.fn("externalLauncher.readEditorEnv")(function* () {
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcess.Platform;
   const env = yield* readEditorEnv();
-  return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
+  return yield* buildAvailableEditors(platform, env);
 });
 
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
@@ -526,6 +546,18 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  const target = input.cwd;
+  let position = input.position;
+  if (editorDef.id === "zed" && position?.line !== undefined) {
+    // Zed resolves existing paths before positions, so ambiguous spellings must stay literal.
+    const collision =
+      /:\d+(?=:|$)/.test(target) ||
+      (yield* (yield* FileSystem.FileSystem)
+        .exists(`${target}:${position.line}${position.column ? `:${position.column}` : ""}`)
+        .pipe(Effect.orElseSucceed(() => true)));
+    if (collision) position = {};
+  }
+
   if (editorDef.commands) {
     const resolved = yield* resolveEditorCommand(editorDef, env);
     if (Option.isNone(resolved)) {
@@ -537,7 +569,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     const { command, baseArgs } = resolved.value;
     const isDirectory =
       editorDef.launchStyle === "goto" &&
-      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+      (yield* (yield* FileSystem.FileSystem).stat(target).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
       ));
@@ -547,7 +579,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       command,
       args: [
         ...baseArgs,
-        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+        ...resolveCommandEditorArgs(editorDef, target, isDirectory, input.projectRoot, position),
       ],
     };
   }
@@ -561,8 +593,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
-  const target = input.cwd;
   if (input.reveal === true) {
+    // Explorer answers /select of a missing path by opening its default folder, not the parent.
+    const exists = yield* (yield* FileSystem.FileSystem)
+      .exists(target)
+      .pipe(Effect.orElseSucceed(() => true));
+    if (!exists) {
+      return yield* new ExternalLauncherRevealTargetMissingError({ editor: editorDef.id, target });
+    }
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 
@@ -627,7 +665,14 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform === "darwin") {
-    return { editor: "file-manager", target, command: "open", args: ["-R", target] };
+    // `open -R` reports targets Finder cannot reveal only through its exit status.
+    return {
+      editor: "file-manager",
+      target,
+      command: "open",
+      args: ["-R", target],
+      waitForExit: true,
+    };
   }
 
   if (platform === "win32") {
@@ -845,7 +890,7 @@ const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSession
   Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
 );
 
-const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
+const launchProcess = Effect.fn("externalLauncher.launchProcess")(function* (
   launch: ProcessLaunch,
   onError: (cause: unknown) => ExternalLauncherError,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
@@ -857,6 +902,14 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
     env: { ...env, ...launch.options.env },
     extendEnv: false,
   });
+
+  if (launch.waitForExit) {
+    const exitCode = yield* spawner.exitCode(command).pipe(Effect.mapError(onError));
+    if (exitCode !== 0) {
+      return yield* onError(new Error(`${launch.command} exited with status ${exitCode}`));
+    }
+    return;
+  }
 
   yield* spawner.spawn(command).pipe(
     Effect.flatMap((handle) => handle.unref),
@@ -870,7 +923,7 @@ const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
   target: string,
 ): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   const launch = yield* resolveBrowserLaunch(target);
-  return yield* launchAndUnref(
+  return yield* launchProcess(
     launch,
     (cause) =>
       new ExternalLauncherBrowserSpawnError({
@@ -901,10 +954,11 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   if (spawnCommand.shell && launch.args.some((arg) => WINDOWS_SHIM_UNSAFE_ARG_PATTERN.test(arg))) {
     return yield* new ExternalLauncherUnsupportedTargetError({ editor: launch.editor });
   }
-  yield* launchAndUnref(
+  yield* launchProcess(
     {
       command: spawnCommand.command,
       args: spawnCommand.args,
+      waitForExit: launch.waitForExit ?? false,
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
