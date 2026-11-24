@@ -119,6 +119,10 @@ export function createEnvironmentPresentationAtoms<E>(input: {
     }).pipe(Atom.withLabel(`environment-presentation:${environmentId}`)),
   );
 
+  const connectionPhaseAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(presentationAtom(environmentId))?.connection.phase),
+  );
+
   let previous: ReadonlyMap<EnvironmentId, EnvironmentPresentation> = new Map();
   const presentationsAtom = Atom.make((get) => {
     const next = new Map<EnvironmentId, EnvironmentPresentation>();
@@ -194,6 +198,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
 
   return {
     presentationAtom,
+    connectionPhaseAtom,
     presentationsAtom,
     serverConfigsAtom,
     providersByEnvironmentAtom,

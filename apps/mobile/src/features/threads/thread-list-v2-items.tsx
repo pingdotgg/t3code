@@ -111,6 +111,21 @@ const NEEDS_YOU_TONE = {
   dotClassName: "bg-warning-foreground",
 };
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
+  connecting: {
+    label: msg("Connecting", { $context: "connection status" }),
+    className: "text-foreground-muted",
+    dotClassName: "bg-foreground-tertiary",
+  },
+  reconnecting: {
+    label: msg("Reconnecting", { $context: "connection status" }),
+    className: "text-foreground-muted",
+    dotClassName: "bg-foreground-tertiary",
+  },
+  offline: {
+    label: msg("Offline", { $context: "connection status" }),
+    className: "text-foreground-muted",
+    dotClassName: "bg-foreground-tertiary",
+  },
   approval: {
     label: msg("Approval", { $context: "thread status, waiting for approval" }),
     ...NEEDS_YOU_TONE,
