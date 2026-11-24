@@ -594,3 +594,61 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
 });
+
+it("does not show a delegated subagent still starting with the idle status dot", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const startedAt = DateTime.makeUnsafe("2026-11-24T07:44:39.792Z");
+  const childThreadId = ThreadId.make("starting-child");
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        id: NodeId.make("starting-agent"),
+        threadId: projection.thread.id,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "codex",
+        providerInstanceId: "codex",
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarise the README",
+        title: "Starting child",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt,
+        completedAt: null,
+        updatedAt: startedAt,
+      },
+    ],
+  };
+  state.relatedShells = [
+    {
+      id: childThreadId,
+      title: "Starting child",
+      forkedFrom: null,
+      lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
+      activityRunStatus: "starting",
+      status: "starting",
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  const row = screen.getByRole("button", { name: /^Starting child/ });
+  await expect.element(row).toBeVisible();
+  const dot = row.element().querySelector<HTMLElement>("span.rounded-full[aria-hidden=true]");
+  expect(dot).not.toBeNull();
+  // The parent's timeline card shows this same subagent as running with the bg-info dot.
+  expect(dot!.className).not.toContain("bg-muted-foreground");
+});
