@@ -10,6 +10,8 @@ import {
   UploadIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { useRef, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import {
@@ -627,12 +629,12 @@ export function ThemeLibrary({
     );
   };
 
-  const notifyThemeRemovalFailure = () => {
+  const notifyThemeRemovalFailure = (reason?: string) => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
         title: gt("Couldn’t remove theme"),
-        description: gt("Try again."),
+        description: reason ?? gt("Try again."),
       }),
     );
   };
@@ -668,7 +670,11 @@ export function ThemeLibrary({
       });
       setIsRemovingTheme(false);
       if (removed._tag === "Failure") {
-        notifyThemeRemovalFailure();
+        const error = Option.getOrNull(Cause.findErrorOption(removed.cause));
+        // The server's refusal says what went wrong, such as a themes directory it cannot write.
+        notifyThemeRemovalFailure(
+          error?._tag === "EnvironmentThemeError" ? error.message : undefined,
+        );
         return;
       }
     }
