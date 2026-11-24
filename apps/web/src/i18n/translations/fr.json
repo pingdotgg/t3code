@@ -12869,5 +12869,7 @@
   "bdf338cdff4118f0": "Transcription",
   "644eafa9048b62df": "{count, plural, =1 {1er essai} =2 {2e essai} =3 {3e essai} other {{count}e essai}}",
   "389f2563b5b763fd": "Étapes rapides",
-  "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant"
+  "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant",
+  "a3f488b311b42bbf": "Actions sur la sélection",
+  "a60a03c2d5907920": "Lire à partir d'ici"
 }

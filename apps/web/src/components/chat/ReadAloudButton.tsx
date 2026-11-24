@@ -7,6 +7,13 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 
+/** Shows `title` and the error when reading message `id` failed. */
+export function toastReadAloudError(id: string, title: string) {
+  const result = readAloudController.getSnapshot();
+  if (result.id === id && result.status === "error")
+    toastManager.add({ type: "error", title, description: result.error });
+}
+
 export function ReadAloudButton({ id, text }: { id: string; text: string }) {
   const settings = useClientSettings((value) => value.readAloud);
   const state = useSyncExternalStore(
@@ -42,13 +49,7 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
               if (stoppable) return readAloudController.stop();
               if (active && state.status === "paused") await readAloudController.resume();
               else await readAloudController.start(id, text, settings);
-              const result = readAloudController.getSnapshot();
-              if (result.id === id && result.status === "error")
-                toastManager.add({
-                  type: "error",
-                  title: gt("Could not read aloud"),
-                  description: result.error,
-                });
+              toastReadAloudError(id, gt("Could not read aloud"));
             }}
           >
             <Icon className="size-3" />

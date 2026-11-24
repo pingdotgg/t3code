@@ -1,5 +1,5 @@
 import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
-import type { ReadAloudCue } from "@t3tools/shared/read-aloud";
+import { readAloudSourceAtShown, type ReadAloudCue } from "@t3tools/shared/read-aloud";
 import { readAloudController } from "./readAloud";
 
 const BLOCK_HIGHLIGHT = "t3-read-aloud-block";
@@ -13,6 +13,9 @@ const FOLLOW_PAUSE_MS = 3_000;
 const FOLLOW_BAND = { top: 0.2, bottom: 0.8, target: 0.4 };
 /** The elements read aloud as one block each; matches `rehypeSpeechOffsets`. */
 const SPEECH_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, tr";
+/** Elements that keep their own clicks: links, controls, code blocks, and math. */
+const INTERACTIVE_SELECTOR =
+  "a, button, input, textarea, select, summary, label, pre, [role=button], [role=link], [contenteditable=true], .katex";
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
 const roots = new Map<string, HTMLElement>();
@@ -111,6 +114,48 @@ function blockElementByText(root: HTMLElement, block: ReadAloudHighlight["block"
   return null;
 }
 
+/**
+ * The markdown offset where reading from a point in message `id`'s rendered markdown starts, such
+ * as a clicked block or the start of a selection, or null when the point maps to no spoken word.
+ * A block's own source range wins; Words leaves most blocks without one, so their words are matched
+ * to the reply's instead.
+ */
+export function readAloudSourceAt(id: string, markdown: string, node: Node, offset: number) {
+  const root = roots.get(id);
+  if (!root?.isConnected || !root.contains(node)) return null;
+  const element = node instanceof Element ? node : node.parentElement;
+  const block = element?.closest<HTMLElement>(SPEECH_BLOCK_SELECTOR);
+  const start = block && root.contains(block) ? block.dataset.speechStart : undefined;
+  if (start !== undefined) return Number(start);
+  const text = spokenText(root);
+  const at = textOffset(text, node, offset);
+  return at === null ? null : readAloudSourceAtShown(markdown, text.value, at);
+}
+
+/**
+ * While message `id` is read aloud, a plain click on one of its blocks reads from that block.
+ * Clicks that select text, follow links, or use controls and code blocks keep their behavior.
+ */
+export function jumpReadAloudOnClick(id: string, markdown: string, event: MouseEvent) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.detail > 1 ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    !readAloudController.isReading(id) ||
+    window.getSelection()?.isCollapsed === false
+  )
+    return null;
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(INTERACTIVE_SELECTOR)) return null;
+  const block = target.closest<HTMLElement>(SPEECH_BLOCK_SELECTOR);
+  const from = block ? readAloudSourceAt(id, markdown, block, 0) : null;
+  return from === null ? null : readAloudController.jump(id, from);
+}
+
 type SpokenText = {
   readonly value: string;
   readonly nodes: ReadonlyArray<{ readonly node: Text; readonly at: number }>;
@@ -128,6 +173,17 @@ function spokenText(block: HTMLElement): SpokenText {
     value += node.data;
   }
   return { value, nodes };
+}
+
+/** The offset in `text` of a DOM point, or of the first spoken text after it. */
+function textOffset(text: SpokenText, node: Node, offset: number) {
+  const at = document.createRange();
+  at.setStart(node, offset);
+  for (const entry of text.nodes) {
+    if (entry.node === node) return entry.at + Math.min(offset, entry.node.length);
+    if (at.comparePoint(entry.node, 0) > 0) return entry.at;
+  }
+  return null;
 }
 
 /** The cue's place in the rendered text: its `occurrence`-th appearance, counted as the cue was. */

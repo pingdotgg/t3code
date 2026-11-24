@@ -191,7 +191,11 @@ import {
 } from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 import { readAloudController } from "../speech/readAloud";
-import { readAloudHighlightRoot } from "../speech/readAloudHighlight";
+import {
+  jumpReadAloudOnClick,
+  readAloudHighlightRoot,
+  readAloudSourceAt,
+} from "../speech/readAloudHighlight";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
   const original =
@@ -240,6 +244,44 @@ it("paints the block and the repeated word being read aloud, and clears them on 
   await reading;
   expect(painted("t3-read-aloud-word")).toEqual([]);
   expect(painted("t3-read-aloud-block")).toEqual([]);
+});
+
+it("reads from a clicked block or a selected point only while that reply is read", async () => {
+  const markdown =
+    "Intro.\n\nSecond **part** here.\n\n- First item\n- Second item\n\n```sh\nls\n```";
+  await using screen = await render(
+    <div
+      ref={readAloudHighlightRoot("reply")}
+      onClick={(event) => void jumpReadAloudOnClick("reply", markdown, event.nativeEvent)}
+    >
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const settings = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "system" as const };
+  const blockRead = async () => {
+    await act(() => readAloudWords.emit({ start: 0, end: 1 }));
+    return readAloudController.getHighlight()?.block.start;
+  };
+  const paragraph = screen.getByText("here.", { exact: false });
+  await paragraph.click();
+  expect(readAloudController.isReading("reply")).toBe(false);
+
+  const reading = readAloudController.start("reply", markdown, settings);
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  // Words gives paragraphs no source range, so their words find the block.
+  await paragraph.click();
+  await vi.waitFor(async () => expect(await blockRead()).toBe(markdown.indexOf("Second")));
+  await screen.getByText("Second item").click();
+  await vi.waitFor(async () => expect(await blockRead()).toBe(markdown.indexOf("Second item")));
+  // Code blocks keep their clicks.
+  await screen.getByText("ls").click();
+  expect(await blockRead()).toBe(markdown.indexOf("Second item"));
+
+  const part = screen.getByText("part").element().firstChild;
+  expect(part && readAloudSourceAt("reply", markdown, part, 2)).toBe(markdown.indexOf("part"));
+  expect(readAloudSourceAt("other", markdown, document.body, 0)).toBeNull();
+  readAloudController.stop();
+  await reading;
 });
 
 function setup() {
