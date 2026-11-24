@@ -25,6 +25,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
+import { turnItemsSinceContextBoundary } from "./contextBoundary.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
@@ -147,7 +148,7 @@ export function visibleConversationItems(
 
 type ForkHistorySource = Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "attempts">;
 
-/** Visible rows of `source`'s own runs through `throughRun`, plus its v1 imported rows. */
+/** Visible rows of `source`'s own runs through `throughRun` since its latest `/clear` boundary. */
 const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHistoryItems")(
   function* (
     projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords" | "getForkSourceRunIds">,
@@ -158,32 +159,30 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
     const inheritedRunIds = fork.lineage.sideChat
       ? null
       : new Set(yield* projectionStore.getForkSourceRunIds(fork.id));
+    const throughRuns = source.runs
+      .filter((run) => run.ordinal <= throughRun.ordinal && (inheritedRunIds?.has(run.id) ?? true))
+      .map((run) =>
+        run.status === "rolled_back" && inheritedRunIds !== null
+          ? {
+              ...run,
+              status: run.startedAt === null ? ("cancelled" as const) : ("completed" as const),
+            }
+          : run,
+      );
     const { turnItems } = yield* projectionStore.getThreadRecords(source.thread.id, ["turnItems"], {
       turnItemRunIds: [
-        ...source.runs
-          .filter(
-            (run) =>
-              run.ordinal <= throughRun.ordinal &&
-              (inheritedRunIds === null || inheritedRunIds.has(run.id)),
-          )
-          .map((run) => run.id),
+        ...throughRuns.map((run) => run.id),
         ...(source.thread.historyOrigin === "v1_import" ? [null] : []),
       ],
     });
-    return visibleConversationItems(
-      {
-        ...source,
-        runs: source.runs.map((run) =>
-          run.status === "rolled_back" && inheritedRunIds?.has(run.id)
-            ? {
-                ...run,
-                status: run.startedAt === null ? ("cancelled" as const) : ("completed" as const),
-              }
-            : run,
-        ),
-      },
-      turnItems,
-    );
+    const bounded = turnItemsSinceContextBoundary({ runs: throughRuns, turnItems });
+    return {
+      items: visibleConversationItems(
+        { runs: throughRuns, attempts: source.attempts },
+        bounded.turnItems,
+      ),
+      cleared: bounded.boundary > 0,
+    };
   },
 );
 
@@ -209,7 +208,9 @@ export const readInheritedHandoffItems = Effect.fn(
       .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
     const forkRun = source?.runs.find((run) => run.id === runId);
     if (source === null || forkRun === undefined) break;
-    segments.unshift(yield* readOwnHistoryItems(projectionStore, source, forkRun, current));
+    const own = yield* readOwnHistoryItems(projectionStore, source, forkRun, current);
+    segments.unshift(own.items);
+    if (own.cleared) break;
     current = source.thread;
   }
   return segments.flat();
@@ -224,10 +225,9 @@ export const readForkHistoryItems = Effect.fn(
   throughRun: Pick<OrchestrationV2Run, "ordinal">,
   fork: OrchestrationV2AppThread,
 ) {
-  return [
-    ...(yield* readInheritedHandoffItems(projectionStore, source.thread)),
-    ...(yield* readOwnHistoryItems(projectionStore, source, throughRun, fork)),
-  ];
+  const own = yield* readOwnHistoryItems(projectionStore, source, throughRun, fork);
+  if (own.cleared) return own.items;
+  return [...(yield* readInheritedHandoffItems(projectionStore, source.thread)), ...own.items];
 });
 
 function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
