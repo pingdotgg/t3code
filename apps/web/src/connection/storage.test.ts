@@ -1,15 +1,20 @@
 import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
+  RelayConnectionRegistration,
+  RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { afterEach, vi } from "vite-plus/test";
 
 import * as ConnectionStorage from "./storage";
@@ -148,6 +153,56 @@ describe("IndexedDB connection recovery", () => {
 
       expect(first.close).not.toHaveBeenCalled();
       expect(second.close).toHaveBeenCalledOnce();
+    }),
+  );
+});
+
+describe("IndexedDB that cannot be opened", () => {
+  it.effect("lists no saved connections once an open that never settles times out", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      // A pending deleteDatabase in another tab leaves this open without any event.
+      vi.stubGlobal("indexedDB", { open: () => new EventTarget() });
+
+      const listed = yield* Effect.gen(function* () {
+        const targets = yield* Persistence.ConnectionTargetStore;
+        const fiber = yield* targets.list.pipe(Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        const result = fiber.pollUnsafe();
+        // Without a bounded open the fiber still holds the database lock; free it so the layer closes.
+        yield* Fiber.interrupt(fiber);
+        return result;
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+
+      expect(listed, "listing saved connections is still waiting on IndexedDB").toBeDefined();
+      expect(Exit.isSuccess(listed!) && listed.value).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps connections registered this page load in memory when the open fails", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const open = vi.fn(() => {
+        const request = Object.assign(new EventTarget(), {
+          result: undefined,
+          error: new DOMException("Internal error opening backing store", "UnknownError"),
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("error")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+      const target = new RelayConnectionTarget({
+        environmentId: EnvironmentId.make("env"),
+        label: "Remote",
+      });
+
+      yield* Effect.gen(function* () {
+        const targets = yield* Persistence.ConnectionTargetStore;
+        const registrations = yield* Persistence.ConnectionRegistrationStore;
+        expect(yield* targets.list).toEqual([]);
+        yield* registrations.register(new RelayConnectionRegistration({ target }), [target]);
+        expect(yield* targets.list).toEqual([target]);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );
 });
