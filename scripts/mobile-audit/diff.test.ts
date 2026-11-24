@@ -1,10 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off - Image rendering test writes temporary PNGs directly.
-
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import sharp from "sharp";
-import { describe, expect, it } from "vite-plus/test";
 
 import { renderBeforeAfterComparison } from "./annotate.ts";
 import {
@@ -156,35 +155,31 @@ describe("mobile-audit diff", () => {
     expect(md).toContain("![android connections-new before vs after](android-connections-new.png)");
   });
 
-  it("composites a side-by-side annotated PNG for Retina 3x iOS screenshots", async () => {
-    const tmp = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "mobile-audit-test-"));
-    try {
-      const beforePng = NodePath.join(tmp, "before.png");
-      const afterPng = NodePath.join(tmp, "after.png");
-      const outPng = NodePath.join(tmp, "comparison.png");
+  it.effect("composites a side-by-side annotated PNG for Retina 3x iOS screenshots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* fs.makeTempDirectoryScoped({ prefix: "mobile-audit-test-" });
+      const beforePng = path.join(tmp, "before.png");
+      const afterPng = path.join(tmp, "after.png");
+      const outPng = path.join(tmp, "comparison.png");
 
-      await sharp({
-        create: {
-          width: 1206,
-          height: 2622,
-          channels: 4,
-          background: { r: 255, g: 255, b: 255, alpha: 1 },
-        },
-      })
-        .png()
-        .toFile(beforePng);
-      await sharp({
-        create: {
-          width: 1206,
-          height: 2622,
-          channels: 4,
-          background: { r: 255, g: 255, b: 255, alpha: 1 },
-        },
-      })
-        .png()
-        .toFile(afterPng);
+      const blankPng = yield* Effect.promise(() =>
+        sharp({
+          create: {
+            width: 1206,
+            height: 2622,
+            channels: 4,
+            background: { r: 255, g: 255, b: 255, alpha: 1 },
+          },
+        })
+          .png()
+          .toBuffer(),
+      );
+      yield* fs.writeFile(beforePng, blankPng);
+      yield* fs.writeFile(afterPng, blankPng);
 
-      const result = await renderBeforeAfterComparison({
+      const result = yield* renderBeforeAfterComparison({
         beforePng,
         beforeBoxes: [{ x: 111, y: 431, width: 260, height: 23, tag: "23.3pt", color: "#ef4444" }],
         beforeTitle: "BEFORE (main)",
@@ -196,13 +191,12 @@ describe("mobile-audit diff", () => {
         outPath: outPng,
       });
 
-      const outMeta = await sharp(outPng).metadata();
+      const outBytes = yield* fs.readFile(outPng);
+      const outMeta = yield* Effect.promise(() => sharp(outBytes).metadata());
       expect(outMeta.format).toBe("png");
       expect(outMeta.width).toBe(result.width);
       expect(outMeta.height).toBe(result.height);
       expect(outMeta.width).toBe(1128);
-    } finally {
-      await NodeFSP.rm(tmp, { recursive: true, force: true });
-    }
-  });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

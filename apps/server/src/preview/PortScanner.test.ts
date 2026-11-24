@@ -685,7 +685,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            if (input.command === "tasklist.exe") {
+            if (input.command === String.raw`C:\Windows\System32\tasklist.exe`) {
               return Effect.succeed(
                 processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
               );
@@ -706,6 +706,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
           },
         }),
         Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Environment, {}),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
       ),
     ),
@@ -833,6 +834,56 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
       expect(requests).toEqual([configuredUrl]);
       expect(commands).toEqual([]);
       expect(fileReads).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips the DevTools port of a browser an agent's tool launched on %s",
+  (platform) => {
+    const appPort = 43_126;
+    const devToolsPort = 43_127;
+    const agentEnvironment = `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`;
+    const procFiles: Record<string, string> = {
+      "/proc/4242/environ": agentEnvironment,
+      "/proc/4242/cmdline": "node\0server.js\0",
+      "/proc/6000/environ": agentEnvironment,
+      "/proc/6000/cmdline": "/opt/google/chrome/chrome\0--remote-debugging-port=0\0about:blank\0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procFiles[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.succeed(
+                processOutput(
+                  input.command === "lsof"
+                    ? `p4242\ncnode\nn127.0.0.1:${appPort}\np6000\ncchrome\nn127.0.0.1:${devToolsPort}\n`
+                    : `  4242 1 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                        `  6000 1 /opt/google/chrome/chrome --remote-debugging-port=0 about:blank PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`,
+                ),
+              ),
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.reject(new Error()))),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toMatchObject([
+        { port: appPort, pid: 4242, agent: { threadId: "thread-agent" } },
+      ]);
     }).pipe(Effect.provide(layer));
   },
 );
@@ -1003,6 +1054,76 @@ effectIt.effect("stops only a job's own process group", () =>
     expect(PortScanner.agentCommandsInGroup(variables, table.get(600)!).size).toBe(0);
   }),
 );
+
+effectIt.effect.each([
+  {
+    case: "its parent's arguments",
+    leader: { command: "node server.js", env: "COMMAND=cmd-a" },
+    parent: { command: "/bin/bash -c set -m; COMMAND=cmd-a node server.js & wait", env: "" },
+    stops: ["cmd-a"],
+  },
+  {
+    case: "its own arguments",
+    leader: { command: "node server.js COMMAND=cmd-a", env: "" },
+    parent: { command: "/bin/bash -c node server.js & wait", env: "" },
+    stops: [],
+  },
+])("on macOS, a stop names the command in the leader's environment, not $case", (scenario) => {
+  const port = 43_127;
+  // macOS `ps -E` prints the environment after the arguments; plain `ps` prints only the arguments.
+  const command = (row: { command: string; env: string }, withEnvironment: boolean) =>
+    withEnvironment
+      ? `${row.command} PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-a ${row.env}`.trim()
+      : row.command;
+  const layer = layerScanner.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command === "lsof") {
+              return Effect.succeed(processOutput(`p4242\ncnode\nn127.0.0.1:${port}\n`));
+            }
+            if (input.args[0] === "-A") {
+              return Effect.succeed(
+                processOutput(`4242 4300 4242\n4300 4200 4300\n4200 ${process.pid} 4200\n`),
+              );
+            }
+            const withEnvironment = input.args.includes("-E");
+            const withParent = input.args.includes("pid=,ppid=,command=");
+            return Effect.succeed(
+              processOutput(
+                `  4242${withParent ? " 4300" : ""} ${command(scenario.leader, withEnvironment)}\n` +
+                  `  4300${withParent ? " 4200" : ""} ${command(scenario.parent, withEnvironment)}\n`,
+              ),
+            );
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const signal = vi.spyOn(ProcessGroup, "signalProcessGroup").mockImplementation(() => {
+      throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => signal.mockRestore()));
+    const scanner = yield* PortScanner.PortDiscovery;
+    scanner.trackAgent();
+    const stops: string[] = [];
+    yield* scanner.watchAgentCommandStops({
+      variable: "COMMAND",
+      onStop: (stopped) => Effect.sync(() => stops.push(stopped)),
+      onStopAbandoned: () => Effect.void,
+    });
+    expect(yield* scanner.scan()).toMatchObject([{ pid: 4242, agent: { threadId: "thread-a" } }]);
+    yield* scanner.stopServer({ pid: 4242, port });
+    expect(signal).toHaveBeenCalledExactlyOnceWith(4242, "SIGTERM");
+    expect(stops).toEqual(scenario.stops);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
 
 const AGENT_SERVER_SCRIPT = `
 const server = require("node:http").createServer((_, response) => {

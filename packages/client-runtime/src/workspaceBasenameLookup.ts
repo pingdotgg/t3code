@@ -1,6 +1,7 @@
 import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
+  isNetworkPath,
   isWindowsAbsolutePath,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
@@ -118,7 +119,7 @@ function pickStrippedWorkspaceMatch(
 }
 
 /**
- * The absolute path of the one file a chat link names across other project roots, or null when
+ * The absolute path of the one file a chat link names across project roots, or null when
  * no root has it or roots name different files. Agents cite paths relative to their repo.
  * Nested project roots list the same file more than once, which still names one file.
  */
@@ -131,6 +132,9 @@ export function pickProjectLinkMatch(
 ): string | null {
   const target = relativePath.trim();
   const isBasename = needsWorkspaceBasenameLookup(target);
+  const folded = target.toLowerCase();
+  const isFoldedMatch = (entry: WorkspaceEntryCandidate) =>
+    entry.kind === "file" && basenameOfPath(entry.path).toLowerCase() === folded;
   const matches = new Map<string, string>();
   let rootHits = 0;
   const addMatch = (path: string) => {
@@ -140,10 +144,10 @@ export function pickProjectLinkMatch(
   };
   for (const { root, entries } of searches) {
     if (isBasename) {
-      const match = pickWorkspaceBasenameMatch(target, entries);
-      if (match === null) continue;
+      if (!entries.some(isFoldedMatch)) continue;
       rootHits += 1;
-      addMatch(resolveWorkspaceFilePath(match, root));
+      const match = pickWorkspaceBasenameMatch(target, entries);
+      if (match !== null) addMatch(resolveWorkspaceFilePath(match, root));
     } else {
       for (const match of workspaceQualifiedPathMatches(target, root, entries)) {
         addMatch(resolveWorkspaceFilePath(match, root));
@@ -152,12 +156,9 @@ export function pickProjectLinkMatch(
   }
   if (isBasename && rootHits > 1) {
     // A root's pick, or a root left ambiguous by case, can hide another file elsewhere.
-    const folded = target.toLowerCase();
     for (const { root, entries } of searches) {
       for (const entry of entries) {
-        if (entry.kind === "file" && basenameOfPath(entry.path).toLowerCase() === folded) {
-          addMatch(resolveWorkspaceFilePath(entry.path, root));
-        }
+        if (isFoldedMatch(entry)) addMatch(resolveWorkspaceFilePath(entry.path, root));
       }
     }
   }
@@ -229,6 +230,8 @@ function literalDirectory(operand: string): string | null {
   const path = /^["']/.test(operand) ? operand.slice(1, -1) : operand;
   // The shell would expand these, and only it knows to what.
   if (!isAbsolutePath(path) || /[$`*?[\]{}"']/.test(path)) return null;
+  // Search roots are local directories; the server stats each one.
+  if (isNetworkPath(path)) return null;
   return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
 }
 
