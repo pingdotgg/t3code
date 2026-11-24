@@ -437,10 +437,11 @@ const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverMode
       { discard: true },
     ).pipe(
       Effect.timeoutOption(MODEL_DISCOVERY_TIMEOUT),
-      // Some agents save the selected model as the user's default.
+      // Some agents save the selected model as the user's default. A switch that timed out
+      // may still have landed while the runtime reports the original, so always resend.
       Effect.ensuring(
         runtime
-          .setConfigOption(modelOption.id, originalModelId)
+          .setConfigOption(modelOption.id, originalModelId, { resendCurrentValue: true })
           .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
       ),
     );
