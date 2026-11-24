@@ -279,3 +279,34 @@ it("does not flush past a paste whose event has not reached JS", async () => {
   await act(async () => native.deliver!(caretMove));
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Before pasted");
 });
+
+it("pastes rich-text links as Markdown in a composer without a draft", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const changes: string[] = [];
+  const root = createRoot(document.createElement("div"));
+  await act(async () =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <ComposerEditor value="" onChangeText={(text) => changes.push(text)} />
+      </RegistryContext.Provider>,
+    ),
+  );
+  native.eventCount += 1;
+  await act(async () =>
+    (
+      native.props as unknown as { onComposerPasteContext: (event: unknown) => void }
+    ).onComposerPasteContext({
+      nativeEvent: {
+        value: "See ",
+        selection: { start: 4, end: 4 },
+        eventCount: native.eventCount,
+        resetGeneration: native.resetGeneration,
+        text: "the repo",
+        html: '<a href="https://example.com/repo">the repo</a>',
+        fragment: "",
+      },
+    }),
+  );
+  expect(changes.at(-1)).toBe("See [the repo](https://example.com/repo)");
+  await act(async () => root.unmount());
+});

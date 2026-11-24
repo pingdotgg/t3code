@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { addPastedHtmlLinks } from "@t3tools/shared/pastedHtmlLinks";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
@@ -98,15 +99,24 @@ export function ComposerEditor({
   const contextImports = useAtomValue(composerContextImportsAtom);
   const importing = draftKey ? contextImports[draftKey] === true : false;
   const pasteContext = async (
-    clipboard: Parameters<NonNullable<NativeComposerEditorProps["onPasteContext"]>>[0],
+    nativeClipboard: Parameters<NonNullable<NativeComposerEditorProps["onPasteContext"]>>[0],
   ) => {
-    if (
-      !draftKey ||
-      appAtomRegistry.get(composerContextImportsAtom)[draftKey] ||
-      props.readOnly ||
-      props.editable === false
-    )
+    if (props.readOnly || props.editable === false) return;
+    const clipboard = {
+      ...nativeClipboard,
+      text: addPastedHtmlLinks(nativeClipboard.text, nativeClipboard.html),
+    };
+    if (!draftKey) {
+      // Without a draft there is no context to import; paste the text where native paste would.
+      const { value, selection } = clipboard;
+      props.onChangeText(
+        value.slice(0, selection.start) + clipboard.text + value.slice(selection.end),
+      );
+      const caret = selection.start + clipboard.text.length;
+      props.onSelectionChange?.({ start: caret, end: caret });
       return;
+    }
+    if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return;
     const insertion = { text: clipboard.value, ...clipboard.selection };
     const operation = startComposerDraftOperation(draftKey);
     const { signal } = operation;

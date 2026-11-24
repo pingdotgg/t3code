@@ -13,6 +13,9 @@ internal object T3ComposerClipboard {
   fun hasThreadLink(text: String): Boolean =
     text.contains("t3-thread://v2/") || text.contains("https://app.t3.codes/threads/")
 
+  // Rich text keeps link destinations only in its HTML; JS turns them into Markdown links.
+  fun hasHtmlLink(html: String): Boolean = html.contains("<a ", ignoreCase = true)
+
   fun write(context: Context, text: String, fragment: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     val payload = try {

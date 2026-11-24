@@ -235,6 +235,19 @@ class ComposerPasteTest {
   }
 
   @Test
+  fun regularPasteSendsRichTextLinksToJsForMarkdownConversion() {
+    val html = "<span>See </span><a href=\"https://example.com/repo\">the repo</a>"
+    clipboard.setPrimaryClip(ClipData.newHtmlText("test", "See the repo", html))
+    editor.setSelection(0)
+    val payloads = mutableListOf<Map<String, String>>()
+    editor.pasteContextListener = { payloads.add(it) }
+
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(listOf("See the repo" to html), payloads.map { it["text"] to it["html"] })
+    assertEquals("", editor.text.toString())
+  }
+
+  @Test
   fun shortcutPastesStructuredClipboardAsText() {
     clipboard.setPrimaryClip(
       ClipData.newHtmlText(

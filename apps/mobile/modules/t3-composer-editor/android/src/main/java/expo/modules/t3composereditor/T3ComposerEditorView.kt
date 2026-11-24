@@ -908,11 +908,14 @@ internal class SelectionAwareEditText(
     return when {
       payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
       pasteImagesOrInterceptedText() -> true
-      isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
-        pasteContext(payload)
+      isSingleItemClip() && hasLinkForJs(payload) -> pasteContext(payload)
       else -> false
     }
   }
+
+  private fun hasLinkForJs(payload: Map<String, String>): Boolean =
+    T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ||
+      T3ComposerClipboard.hasHtmlLink(payload["html"].orEmpty())
 
   // read() sees only the first item; native paste keeps every item of a longer clip.
   private fun isSingleItemClip(): Boolean {

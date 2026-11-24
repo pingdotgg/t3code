@@ -9,6 +9,11 @@ enum T3ComposerClipboard {
     text.contains("t3-thread://v2/") || text.contains("https://app.t3.codes/threads/")
   }
 
+  // Rich text keeps link destinations only in its HTML; JS turns them into Markdown links.
+  static func hasHtmlLink(_ html: String) -> Bool {
+    html.range(of: "<a ", options: .caseInsensitive) != nil
+  }
+
   static func write(text: String, fragment: String) {
     var items: [String: Any] = ["public.utf8-plain-text": text]
     if let data = fragment.data(using: .utf8),
