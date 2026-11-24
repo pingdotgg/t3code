@@ -24,6 +24,7 @@ import {
   NodeSelection,
   Plugin,
   PluginKey,
+  Selection,
   TextSelection,
   type Transaction,
 } from "@tiptap/pm/state";
@@ -147,6 +148,7 @@ import {
   importPastedComposerText,
   readPastedComposerContext,
   readPastedPlainText,
+  readPastedComposerText,
 } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import {
@@ -159,6 +161,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  readPasteText: (clipboardData: DataTransfer, atEnd?: boolean) => string;
   readSelectionRange: () => { start: number; end: number };
   captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
@@ -1165,6 +1168,7 @@ function ComposerPromptEditorTiptapInner(
     view: EditorView,
     clipboardData: DataTransfer,
     newLineAt?: number,
+    isPaste = false,
   ): boolean => {
     const pastedText = readPastedPlainText(clipboardData);
     if (!pastedText) return false;
@@ -1180,28 +1184,31 @@ function ComposerPromptEditorTiptapInner(
       );
       return true;
     }
+    const pasteText =
+      isPaste && !literalText ? readPastedComposerText(clipboardData, false) : pastedText;
     // Shown Markdown source is parsed when the caret leaves, so paste one line into it as text.
     const sourceType = view.state.schema.marks[MARKDOWN_SOURCE_MARK];
     const { from: pasteFrom, to: pasteTo, $from: $pasteFrom } = view.state.selection;
     if (
       !onNewLine &&
       sourceType?.isInSet($pasteFrom.marks()) &&
-      !pastedText.includes("\n") &&
-      collectComposerPromptInlineTokens(`${pastedText}\n`).length === 0
+      !pasteText.includes("\n") &&
+      collectComposerPromptInlineTokens(`${pasteText}\n`).length === 0
     ) {
       view.dispatch(
         markAsClipboardEdit(
-          view.state.tr.insertText(pastedText, pasteFrom, pasteTo),
+          view.state.tr.insertText(pasteText, pasteFrom, pasteTo),
           "paste",
         ).scrollIntoView(),
       );
       return true;
     }
     const importFragment = readCallbacks().importContextFragment;
-    let text =
+    const importedText =
       !literalText && importFragment
         ? importPastedComposerText(clipboardData, importFragment)
         : pastedText;
+    let text = importedText === pastedText ? pasteText : importedText;
     const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
     const isChip = (token: (typeof tokens)[number] | undefined) =>
       token?.type === "mention" ||
@@ -1566,7 +1573,7 @@ function ComposerPromptEditorTiptapInner(
             (literalText || !readPastedComposerContext(clipboardData)?.records.length)
           )
             return false;
-          if (!insertClipboardText(view, clipboardData)) return false;
+          if (!insertClipboardText(view, clipboardData, undefined, true)) return false;
           event.preventDefault();
           return true;
         },
@@ -1882,6 +1889,14 @@ function ComposerPromptEditorTiptapInner(
                 snapshotRef.current.value,
                 snapshotRef.current.value.length,
               ),
+        );
+      },
+      readPasteText: (clipboardData, atEnd) => {
+        const state = editor?.state;
+        const selection = state && (atEnd ? Selection.atEnd(state.doc) : state.selection);
+        return readPastedComposerText(
+          clipboardData,
+          literalText || selection?.$from.parent.type.spec.code === true,
         );
       },
       readSelectionRange: () => {

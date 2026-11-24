@@ -324,7 +324,10 @@ export interface ChatComposerHandle {
     text: string,
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
   ) => boolean;
-  pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  pasteTextAtEnd: (
+    clipboardData: DataTransfer,
+    options: { bypassAutoAttachment: boolean },
+  ) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -3055,7 +3058,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       htmlHasImageAndText: htmlImageContent === "image-and-text",
     });
     if (imagesBesideText.length > 0) void addComposerAttachments(imagesBesideText);
-    if (!foldPastedText(plainText, bypassAutoAttachment)) {
+    const text = bypassAutoAttachment
+      ? plainText
+      : (composerEditorRef.current?.readPasteText(event.clipboardData) ?? plainText);
+    if (!foldPastedText(text, bypassAutoAttachment)) {
       return;
     }
 
@@ -3321,21 +3327,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
-      pasteTextAtEnd: (text: string, options) => {
+      pasteTextAtEnd: (clipboardData, options) => {
         if (speechInput.freezesEditor) return false;
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        const bypassAutoAttachment = options.bypassAutoAttachment || shortcutArmed;
+        const plainText = clipboardData.getData("text/plain");
+        if (
+          !bypassAutoAttachment &&
+          !isLiteralPendingAnswer &&
+          readPastedComposerContext(clipboardData)?.records.length
+        ) {
+          return insertComposerTextAtEndStable(plainText, { clipboardData });
+        }
+        const text = bypassAutoAttachment
+          ? plainText
+          : (composerEditorRef.current?.readPasteText(clipboardData, true) ?? plainText);
         const promptLength = promptRef.current.length;
         if (
-          !foldPastedText(text, bypassAutoAttachment, {
-            start: promptLength,
-            end: promptLength,
-          })
+          foldPastedText(text, bypassAutoAttachment, { start: promptLength, end: promptLength })
         ) {
-          return false;
+          focusComposer();
+          return true;
         }
-        focusComposer();
-        return true;
+        return insertComposerTextAtEndStable(text);
       },
       citeAssistantText: (citation, sourceAnchor) =>
         insertComposerTextStable(

@@ -237,6 +237,61 @@ function escapeProse(text: string): string {
   });
 }
 
+/** Restores link destinations only when the HTML and plain clipboard describe the same text. */
+export function restorePastedMarkdownLinks(plain: string, html: string): string {
+  if (!plain || !/<a[\s>]/i.test(html)) return plain;
+  // Template contents stay inert, including resources and custom elements.
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const fragment = template.content;
+  const destinations = new Map<Node, string>();
+  for (const element of fragment.querySelectorAll("script, style")) element.remove();
+  for (const anchor of fragment.querySelectorAll("a[href]")) {
+    const href = anchor.getAttribute("href")?.trim() ?? "";
+    if (!/^(?:https?:\/\/|mailto:)/i.test(href)) continue;
+    let url: URL;
+    try {
+      url = new URL(href);
+    } catch {
+      continue;
+    }
+    const label = document.createTextNode(anchor.textContent ?? "");
+    anchor.replaceWith(label);
+    destinations.set(label, url.href);
+  }
+  if (destinations.size === 0) return plain;
+
+  // Match visible characters in order. The plain rendition owns line breaks and spacing.
+  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
+  const characters = plain.matchAll(/\S/g);
+  const parts: string[] = [];
+  let resultEnd = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    let start: number | undefined;
+    let end = 0;
+    for (const character of (node.textContent ?? "").matchAll(/\S/g)) {
+      const match = characters.next().value;
+      if (match?.[0] !== character[0]) return plain;
+      start ??= match.index;
+      end = match.index + 1;
+    }
+    const href = destinations.get(node);
+    if (href === undefined || start === undefined) continue;
+    const label = plain.slice(start, end);
+    if (label === href) continue;
+    const prefix = plain.slice(resultEnd, start).replace(/(?<!\\)((?:\\\\)*)!$/, "$1\\!");
+    parts.push(prefix, markdownAnchor(escapeProse(label.replace(/\n/g, " ")), href, false));
+    resultEnd = end;
+  }
+  if (!characters.next().done || parts.length === 0) return plain;
+  return parts.join("") + plain.slice(resultEnd);
+}
+
+function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
+  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
+  return `[${label}](${destination})`;
+}
+
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   const markdownCopy = anchor.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return escapeTablePipes(markdownCopy, inTableCell);
@@ -251,8 +306,7 @@ function serializeAnchor(anchor: Element, inTableCell: boolean): string {
   // GFM autolinks a bare address only when it fits this shape.
   if (href === `mailto:${shown}` && /^[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?<=[a-zA-Z])$/.test(shown))
     return shown;
-  const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  return `[${label}](${destination})`;
+  return markdownAnchor(label, href, inTableCell);
 }
 
 /**
