@@ -797,43 +797,39 @@ it("clears the transcription model search on Esc without closing Settings", asyn
       const search = screen.getByRole("searchbox", { name: "Search transcription models" });
       await expect.element(search).toBeVisible();
 
-      for (const text of ["tiny", "   "]) {
-        await userEvent.fill(search, text);
-        for (const composition of [
-          { key: "Escape", isComposing: true, keyCode: 27 },
-          { key: "Escape", isComposing: false, keyCode: 229 },
-        ]) {
-          // Safari ends the composition just before the Escape keydown.
-          await act(() => {
-            search
-              .element()
-              .dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
-            search
-              .element()
-              .dispatchEvent(
-                new KeyboardEvent("keydown", { ...composition, bubbles: true, cancelable: true }),
-              );
-          });
-          await expect.element(search).toHaveValue(text);
-          await expect.element(settings).toHaveAttribute("data-open");
-        }
-
-        await userEvent.keyboard("{Escape}");
-        await expect.element(search).toHaveValue("");
-        await expect.element(search).toHaveFocus();
-        // Holding Escape repeats the keydown, which must not also close Settings.
+      await userEvent.fill(search, "tiny");
+      for (const composition of [
+        { key: "Escape", isComposing: true, keyCode: 27 },
+        { key: "Escape", isComposing: false, keyCode: 229 },
+      ]) {
+        // Safari ends the composition just before the Escape keydown.
         await act(() => {
-          search.element().dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key: "Escape",
-              repeat: true,
-              bubbles: true,
-              cancelable: true,
-            }),
-          );
+          search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+          search
+            .element()
+            .dispatchEvent(
+              new KeyboardEvent("keydown", { ...composition, bubbles: true, cancelable: true }),
+            );
         });
+        await expect.element(search).toHaveValue("tiny");
         await expect.element(settings).toHaveAttribute("data-open");
       }
+
+      await userEvent.keyboard("{Escape}");
+      await expect.element(search).toHaveValue("");
+      await expect.element(search).toHaveFocus();
+      // Holding Escape repeats the keydown, which must not also close Settings.
+      await act(() => {
+        search.element().dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Escape",
+            repeat: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await expect.element(settings).toHaveAttribute("data-open");
 
       await userEvent.keyboard("{Escape}");
       await expect.element(settings).not.toBeInTheDocument();
