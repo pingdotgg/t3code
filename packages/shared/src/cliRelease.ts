@@ -3,13 +3,19 @@ import * as Schema from "effect/Schema";
 
 import { compareSemverVersions } from "./semver.ts";
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
-export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+// The fork publishes its own releases; upstream syncs must keep these pointing at the fork.
+const CLI_RELEASE_REPOSITORY = "pseudoseed/t3code_dev";
+const CLI_RELEASE_TAG_PREFIX = "pseudocode-v";
+export const FORK_REPOSITORY_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}`;
+export const CLI_RELEASES_PAGE_URL = `${FORK_REPOSITORY_URL}/releases`;
+const CLI_INSTALL_SCRIPTS_URL = `https://raw.githubusercontent.com/${CLI_RELEASE_REPOSITORY}/main/scripts`;
+export const CLI_INSTALL_SH_URL = `${CLI_INSTALL_SCRIPTS_URL}/install.sh`;
+export const CLI_INSTALL_PS1_URL = `${CLI_INSTALL_SCRIPTS_URL}/install.ps1`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
-// Keep archive keys aligned with the Linux matrix, Windows ARM64 build, and cli_archive rows in release.yml,
-// and with the SSH runner's host check in packages/ssh/src/tunnel.ts.
+// Keys build-cli-archive can produce, aligned with the SSH runner's host check in packages/ssh/src/tunnel.ts.
+// A release's SHA256SUMS lists the ones it actually publishes.
 // Node single-executables do not support darwin-x64 and segfault at startup.
 const CLI_ARCHIVE_PLATFORM_KEYS = [
   "darwin-arm64",
@@ -44,11 +50,16 @@ export function cliArchiveFileName(version: string, platformKey: CliArchivePlatf
 
 const CLI_RELEASE_DEFAULT_BASE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
 
+export function cliReleaseTag(version: string): string {
+  return `${CLI_RELEASE_TAG_PREFIX}${version}`;
+}
+
+/** The directory holding release `version`'s files. */
 export function cliReleaseDownloadBaseUrl(
   version: string,
   baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
 ): string {
-  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/v${version}`;
+  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/${cliReleaseTag(version)}`;
 }
 
 /** `segments` added to `baseUrl`'s path, keeping its query, such as a signed mirror URL's token. */
@@ -64,7 +75,11 @@ export function cliReleaseAssetUrl(
   fileName: string,
   baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
 ): string {
-  return releaseAssetUrl(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL, `v${version}`, fileName);
+  return releaseAssetUrl(
+    baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL,
+    cliReleaseTag(version),
+    fileName,
+  );
 }
 
 export function parseChecksums(text: string): ReadonlyMap<string, string> {
@@ -79,11 +94,8 @@ export function parseChecksums(text: string): ReadonlyMap<string, string> {
 }
 
 export type CliReleaseChannel = "stable" | "nightly" | "preview";
-export const CLI_RELEASE_CHANNELS: ReadonlyArray<CliReleaseChannel> = [
-  "stable",
-  "nightly",
-  "preview",
-];
+// The fork publishes no nightly or preview builds, so only Stable can be followed.
+export const CLI_RELEASE_CHANNELS = ["stable"] as const satisfies ReadonlyArray<CliReleaseChannel>;
 
 export function cliReleaseChannelOf(version: string): CliReleaseChannel {
   const channel = /^[^-+]+-(nightly|preview)\.\d{8}\.\d+$/.exec(version)?.[1];
@@ -146,8 +158,9 @@ export function newestCliReleaseVersion(
 ): string | undefined {
   for (const release of releases) {
     if (release.draft) continue;
-    const version = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
-    if (version === undefined) continue;
+    if (!release.tag_name.startsWith(CLI_RELEASE_TAG_PREFIX)) continue;
+    const version = release.tag_name.slice(CLI_RELEASE_TAG_PREFIX.length);
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) continue;
     if (cliReleaseChannelOf(version) === channel) return version;
   }
   return undefined;

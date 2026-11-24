@@ -1,7 +1,7 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { CLI_RELEASES_PAGE_URL, FORK_REPOSITORY_URL } from "@t3tools/shared/cliRelease";
 
-const DOWNLOAD_URL = "https://github.com/pseudoseed/t3code_dev/releases/latest";
-const ISSUE_URL = "https://github.com/pseudoseed/t3code_dev/issues/new";
+const ISSUE_URL = `${FORK_REPOSITORY_URL}/issues/new`;
 const LAST_FAILURE_KEY = "t3code:boot-failed-at";
 const REPEAT_FAILURE_MS = 5 * 60_000;
 const MAX_CAUSES = 3;
@@ -293,19 +293,11 @@ export function showBootError(error: unknown) {
   issue.searchParams.set("environment", `${environment.surface}, ${environment.platform}`);
   const link = (href: string, textContent: string) =>
     element("a", { href, textContent, target: "_blank", rel: "noreferrer" });
-  const nightly = environment.channel === "nightly";
 
   const more = element("details", { open: isRepeatFailure(Date.now()) }, [
     element("summary", { textContent: "More options if it keeps failing" }),
     ...(bridge
-      ? [
-          link(
-            DOWNLOAD_URL,
-            nightly
-              ? "Download and reinstall the latest nightly build"
-              : "Download and reinstall PseudoCode",
-          ),
-        ]
+      ? [link(`${CLI_RELEASES_PAGE_URL}/latest`, "Download and reinstall PseudoCode")]
       : []),
     element("div", {}, [
       details,

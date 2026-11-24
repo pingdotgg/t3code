@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Signed, notarized, stapled macOS DMG for the PseudoCode fork.
+# Signed, notarized, stapled macOS DMG for the PseudoCode fork, plus the darwin-arm64 t3 CLI
+# archive and SHA256SUMS that SSH installs and `t3 update` download from the same release.
 #
 #   ship-mac.sh
 #
@@ -69,6 +70,37 @@ spctl --assess --verbose=4 --type exec "$APP"
 cleanup
 trap - EXIT
 
+# SSH installs and `t3 update` fetch SHA256SUMS and t3-<version>-<platform> from this release
+# tag. Only darwin-arm64 builds on a Mac: Linux archives need a Linux host (ldd, dpkg,
+# patchelf, libatomic) and Windows needs cargo-xwin, so those hosts get a clear "no archive"
+# error instead of a download.
+CLI_DIR=release/cli
+CLI_ARCHIVE="$CLI_DIR/t3-$VERSION-darwin-arm64.tar.gz"
+CLI_SUMS="$CLI_DIR/SHA256SUMS"
+CLI_LOG="$(mktemp -t pseudocode-cli)"
+RESOURCE_MONITOR_DIR="$(mktemp -d)"
+mkdir -p "$RESOURCE_MONITOR_DIR/darwin-arm64"
+cp native/resource-monitor/target/aarch64-apple-darwin/release/t3-resource-monitor \
+  "$RESOURCE_MONITOR_DIR/darwin-arm64/"
+
+echo
+echo "Building the t3 CLI archive. Log: $CLI_LOG"
+node apps/server/scripts/cli.ts build-exe 2>&1 | tee "$CLI_LOG"
+T3CODE_CLI_MAC_SIGN_IDENTITY="$(security find-identity -v -p codesigning |
+  sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)" \
+  node scripts/build-cli-archive.ts --platform mac --arch arm64 --version "$VERSION" \
+  --resource-monitor-dir "$RESOURCE_MONITOR_DIR" --output-dir "$CLI_DIR" 2>&1 | tee -a "$CLI_LOG"
+rm -rf "$RESOURCE_MONITOR_DIR"
+
+# A bare executable cannot be stapled, so Apple's online ticket is the only proof; without it
+# macOS kills t3 on first run on another machine.
+if ! grep -q "Notarized t3" "$CLI_LOG"; then
+  echo "The t3 CLI archive was NOT notarized. See $CLI_LOG." >&2
+  exit 1
+fi
+node scripts/smoke-cli-archive.ts --archive "$CLI_ARCHIVE" --expect-version "$VERSION"
+(cd "$CLI_DIR" && shasum -a 256 "$(basename "$CLI_ARCHIVE")" > SHA256SUMS)
+
 # Publish after verification, never before: an unnotarized DMG on a release page
 # is worse than no DMG, because macOS refuses to open it and the download looks
 # like the product is broken.
@@ -80,7 +112,7 @@ REPO="$T3CODE_DESKTOP_UPDATE_REPOSITORY"
 # "Check for updates" needs more than the DMG. electron-updater reads
 # `latest-mac.yml` to learn the version, then downloads the zip, so a release
 # holding only a DMG looks to the app like no release at all.
-ASSETS=(release/latest-mac.yml "$DMG" "$DMG.blockmap" "$ZIP" "$ZIP.blockmap")
+ASSETS=(release/latest-mac.yml "$DMG" "$DMG.blockmap" "$ZIP" "$ZIP.blockmap" "$CLI_ARCHIVE" "$CLI_SUMS")
 for asset in "${ASSETS[@]}"; do
   if [ ! -f "$asset" ]; then
     echo "Missing update artifact: $asset" >&2
@@ -105,7 +137,7 @@ else
     --draft \
     --target "$COMMIT" \
     --title "PseudoCode $VERSION" \
-    --notes "Desktop build for macOS. Signed and notarized."
+    --notes "Desktop build and t3 CLI for macOS arm64. Signed and notarized."
 fi
 
 echo

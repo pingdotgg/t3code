@@ -329,6 +329,7 @@ const MacSigningConfig = Config.all({
   appleApiKey: Config.String("APPLE_API_KEY").pipe(Config.option),
   appleApiKeyId: Config.String("APPLE_API_KEY_ID").pipe(Config.option),
   appleApiIssuer: Config.String("APPLE_API_ISSUER").pipe(Config.option),
+  appleKeychainProfile: Config.String("APPLE_KEYCHAIN_PROFILE").pipe(Config.option),
 });
 
 export class CliArchiveNotarizationRejectedError extends Schema.TaggedError<CliArchiveNotarizationRejectedError>()(
@@ -348,17 +349,22 @@ const NotarySubmission = Schema.Struct({
 const rejectedNotaryStatuses: ReadonlySet<string> = new Set(["Invalid", "Rejected"]);
 const decodeNotarySubmission = Schema.decodeEffect(Schema.fromJsonString(NotarySubmission));
 
-/** Notarization runs only for a Developer ID identity with all three App Store Connect key values. */
+/** Notarization runs only for a Developer ID identity with a notarytool keychain profile or all three App Store Connect key values. */
 const resolveNotaryCredentials = Effect.fn("resolveNotaryCredentials")(function* () {
   const signing = yield* MacSigningConfig;
   const identity = Option.getOrUndefined(signing.identity)?.trim() || "-";
   const key = Option.getOrUndefined(signing.appleApiKey);
   const keyId = Option.getOrUndefined(signing.appleApiKeyId);
   const issuer = Option.getOrUndefined(signing.appleApiIssuer);
+  const profile = Option.getOrUndefined(signing.appleKeychainProfile)?.trim();
   const credentials =
-    identity !== "-" && key && keyId && issuer
-      ? Option.some(["--key", key, "--key-id", keyId, "--issuer", issuer])
-      : Option.none<ReadonlyArray<string>>();
+    identity === "-"
+      ? Option.none<ReadonlyArray<string>>()
+      : profile
+        ? Option.some(["--keychain-profile", profile])
+        : key && keyId && issuer
+          ? Option.some(["--key", key, "--key-id", keyId, "--issuer", issuer])
+          : Option.none<ReadonlyArray<string>>();
   return { identity, credentials };
 });
 
@@ -455,7 +461,7 @@ export const signMacArchiveContents = Effect.fn("signMacArchiveContents")(functi
   }
   if (Option.isNone(credentials)) {
     yield* Effect.logWarning(
-      "[cli-archive] Developer ID signed but not notarized (missing APPLE_API_KEY*).",
+      "[cli-archive] Developer ID signed but not notarized (missing APPLE_KEYCHAIN_PROFILE or APPLE_API_KEY*).",
     );
     return;
   }
@@ -490,11 +496,13 @@ export const awaitCliNotarization = Effect.fn("awaitCliNotarization")(function* 
   if (Option.isNone(credentials)) {
     if (submitted) {
       return yield* new CliArchiveInputMissingError({
-        inputPath: "T3CODE_CLI_MAC_SIGN_IDENTITY and APPLE_API_KEY*",
+        inputPath: "T3CODE_CLI_MAC_SIGN_IDENTITY and APPLE_KEYCHAIN_PROFILE or APPLE_API_KEY*",
         hint: `${submissionFile} names a submission, but its credentials are not set.`,
       });
     }
-    yield* Effect.log("[cli-archive] No notarization to await (signing or APPLE_API_KEY* unset).");
+    yield* Effect.log(
+      "[cli-archive] No notarization to await (signing or notary credentials unset).",
+    );
     return;
   }
   if (!submitted) {
