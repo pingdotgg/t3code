@@ -15,7 +15,7 @@ import type { MFunctionType } from "gt-i18n/types";
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
 export type ComposerThreadCandidate = ThreadSearchShell &
-  Pick<EnvironmentThreadShell, "archivedAt" | "lineage">;
+  Pick<EnvironmentThreadShell, "archivedAt" | "lineage" | "latestUserMessageAt">;
 
 export interface ComposerThreadItem {
   readonly id: string;

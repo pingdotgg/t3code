@@ -184,6 +184,28 @@ describe("buildThreadActionItems", () => {
     expect(runThread).toHaveBeenCalledWith(remote);
   });
 
+  it("reuses the cached threadSearch subject for unchanged thread shells across calls", () => {
+    const thread = makeThread({ title: "Fix palette caching", branch: "perf/cache" });
+    const projectByKey = new Map([
+      [`${thread.environmentId}:${thread.projectId}`, { title: "T3 Code" }],
+    ]);
+    const runThread = vi.fn(async () => {});
+    const first = buildThreadActionItems({
+      threads: [thread],
+      projectByKey,
+      icon: null,
+      runThread,
+    });
+    const second = buildThreadActionItems({
+      threads: [thread],
+      projectByKey,
+      icon: null,
+      runThread,
+    });
+    expect(first[0]?.threadSearch).toBeDefined();
+    expect(first[0]?.threadSearch).toBe(second[0]?.threadSearch);
+  });
+
   it("ranks thread title matches ahead of contextual project-name matches", () => {
     const threadItems = buildThreadActionItems({
       threads: [

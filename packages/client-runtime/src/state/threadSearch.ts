@@ -204,17 +204,19 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
 
 export type ThreadSearchShell = Pick<
   EnvironmentThreadShell,
-  | "environmentId"
-  | "id"
-  | "title"
-  | "branch"
-  | "createdAt"
-  | "updatedAt"
-  | "latestUserMessageAt"
-  | "latestUserAuthoredMessageAt"
-  | "opens"
+  "environmentId" | "id" | "title" | "branch" | "createdAt" | "updatedAt"
 > &
-  Partial<Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">>;
+  Partial<
+    Pick<
+      EnvironmentThreadShell,
+      | "latestUserMessageAt"
+      | "latestUserAuthoredMessageAt"
+      | "opens"
+      | "pullRequests"
+      | "linkedPullRequest"
+      | "branchPullRequest"
+    >
+  >;
 
 /**
  * What the web and mobile palettes rank a thread shell by. Pass the

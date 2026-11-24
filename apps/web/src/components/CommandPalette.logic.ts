@@ -496,15 +496,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         value: `thread:${thread.environmentId}:${thread.id}`,
         threadRef: { environmentId: thread.environmentId, threadId: thread.id },
         searchTerms: [thread.title],
-        threadSearch: threadSearchSubject(
-          {
-            ...thread,
-            latestUserMessageAt: thread.latestUserMessageAt ?? null,
-            opens: thread.opens ?? null,
-          },
-          projectTitle,
-          input.environmentLabelOf?.(thread),
-        ),
+        threadSearch: threadSearchSubject(thread, projectTitle, input.environmentLabelOf?.(thread)),
         title: thread.title,
         description,
         timestamp: formatRelativeTimeLabel(
