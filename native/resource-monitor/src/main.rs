@@ -679,12 +679,25 @@ fn select_tracked_pids(rows: &[(u32, u32, u64)], roots: &HashSet<u32>) -> HashSe
     tracked
 }
 
-const SCRIPT_RUNTIMES: [&str; 3] = ["node", "bun", "deno"];
+const SCRIPT_EXTENSIONS: [&str; 8] = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
 
-fn is_script_runtime(executable: &str) -> bool {
+/// The subcommands a JavaScript runtime takes ahead of the script, package script or package it
+/// runs. `None` for any other executable.
+fn script_runtime_subcommands(executable: &str) -> Option<&'static [&'static str]> {
     let file_name = executable.rsplit(['/', '\\']).next().unwrap_or(executable);
     let file_name = file_name.to_ascii_lowercase();
-    SCRIPT_RUNTIMES.contains(&file_name.strip_suffix(".exe").unwrap_or(&file_name))
+    match file_name.strip_suffix(".exe").unwrap_or(&file_name) {
+        "node" => Some(&[]),
+        "bun" => Some(&["run", "x"]),
+        "deno" => Some(&["run", "task"]),
+        _ => None,
+    }
+}
+
+fn has_script_extension(argument: &str) -> bool {
+    argument
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| SCRIPT_EXTENSIONS.contains(&extension))
 }
 
 fn is_process_type_argument(argument: &str) -> bool {
@@ -712,12 +725,28 @@ fn command_label<Argument: AsRef<std::ffi::OsStr>>(arguments: &[Argument], name:
         [executable, ..] => executable,
     };
     let mut label = executable.to_owned();
-    if let Some(script) = arguments.get(1)
-        && is_script_runtime(executable)
-        && !script.starts_with('-')
-    {
-        label.push(' ');
-        label.push_str(script);
+    if let Some(subcommands) = script_runtime_subcommands(executable) {
+        let mut rest = arguments.get(1..).unwrap_or_default();
+        if let Some((first, after)) = rest.split_first()
+            && subcommands.contains(&first.as_ref())
+        {
+            label.push(' ');
+            label.push_str(first);
+            rest = after;
+        }
+        // A flag may take the next argument as its value, so past a flag only a file with a
+        // script extension counts as the script.
+        let script = match rest.iter().position(|argument| !argument.starts_with('-')) {
+            Some(0) => rest.first(),
+            Some(index) => rest
+                .get(index)
+                .filter(|script| has_script_extension(script)),
+            None => None,
+        };
+        if let Some(script) = script {
+            label.push(' ');
+            label.push_str(script);
+        }
     }
     if let Some(process_type) = arguments
         .iter()
@@ -1520,6 +1549,62 @@ mod tests {
                 "C:\\Program Files\\nodejs\\Node.EXE cli.js",
             ),
             (vec!["bun", "--eval", "value"], "bun", "bun"),
+            (vec!["node", "--eval", "value", "cli.js"], "node", "node"),
+            (
+                vec![
+                    "node",
+                    "--no-warnings",
+                    "--max-old-space-size=4096",
+                    "cli.js",
+                    "serve",
+                ],
+                "node",
+                "node cli.js",
+            ),
+            (vec!["node", "--import", "loader", "cli.ts"], "node", "node"),
+            (vec!["node", "run", "value"], "node", "node run"),
+            (
+                vec!["deno", "run", "/opt/pi/cli.ts", "value"],
+                "deno",
+                "deno run /opt/pi/cli.ts",
+            ),
+            (
+                vec![
+                    "deno",
+                    "run",
+                    "-A",
+                    "--allow-net=example.com",
+                    "main.ts",
+                    "value",
+                ],
+                "deno",
+                "deno run main.ts",
+            ),
+            (
+                vec!["deno", "run", "--config", "deno.json", "main.ts"],
+                "deno",
+                "deno run",
+            ),
+            (
+                vec!["deno", "task", "dev", "value"],
+                "deno",
+                "deno task dev",
+            ),
+            (vec!["deno", "main.ts", "run"], "deno", "deno main.ts"),
+            (
+                vec!["/usr/local/bin/bun", "run", "/opt/pi/cli.js", "value"],
+                "bun",
+                "/usr/local/bin/bun run /opt/pi/cli.js",
+            ),
+            (vec!["bun", "run", "dev", "value"], "bun", "bun run dev"),
+            (
+                vec!["bun", "run", "--watch", "cli.tsx", "value"],
+                "bun",
+                "bun run cli.tsx",
+            ),
+            (vec!["bun", "x", "package", "value"], "bun", "bun x package"),
+            (vec!["bun", "run"], "bun", "bun run"),
+            (vec!["bun", "task", "value"], "bun", "bun task"),
             (vec!["sh", "-c", "node cli.js"], "sh", "sh"),
             (
                 vec!["/opt/T3 Code/t3code", "--type=renderer", "--field=value"],
