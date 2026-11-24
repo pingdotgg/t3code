@@ -1789,7 +1789,6 @@
   "3a0bf3d17f31584e": "Nuevo hilo en {project}",
   "4b4b64cc95acb8da": "Nuevo hilo en...",
   "3f581e98c86df72a": "Nuevo hilo sin proyecto",
-  "e510d9a7b684fbfe": "Analizar un problema",
   "44e13c9deb30e03c": "Buscar en el hilo actual",
   "2a5cc71a171eca12": "Buscar en la página del navegador",
   "f496ce44f0581269": "Copiar enlace del prompt",
@@ -2873,11 +2872,6 @@
   "52163ddccc1eb594": "Ajuste guardado en algunos entornos",
   "fee07035b4a2a1c3": "Guardado en {environments}.",
   "2a1ecf7863e204aa": "Abrir en el panel lateral",
-  "8a7ee5752bb91550": "No se pudo copiar. Escribe {command} en su lugar.",
-  "7dfdfa116c6a9d86": "No se pudo iniciar el análisis",
-  "25fe0f5f3ef3bb02": "{description} Ejecuta {command} en una terminal de esa máquina en su lugar.",
-  "eb9ecb0cb72121a0": "Esta máquina no puede iniciar hilos sin un proyecto.",
-  "32e2dbf6abe8c748": "Iniciando el análisis…",
   "ce5c66ae967fd7c8": "Acciones del hilo no disponibles",
   "d4f0043ab9348e2c": "Este hilo aún no se ha cargado.",
   "de2cfd4a757c656a": "No se puede archivar mientras el proveedor está activo.",
@@ -4515,22 +4509,7 @@
   "ed3b9ada396031c5": "Normal",
   "75cdbffdefbbae3a": "Modo Ultrafast activado",
   "79c3a186139f8c86": "Modo rápido activado",
-  "a772b49a38a3db40": "¿Qué salió mal?",
-  "b29e1856c4aab31f": "Esta máquina",
   "e7588632064e0364": "Copiado",
-  "996f7752fa033da6": [
-    "o ejecuta",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "275a97b4af3c6482": "Copiar comando, para una terminal",
   "2b07985d23563374": "Se reanuda {time}",
   "a4b4e5eb6d313af9": "Se restableció {time}",
   "c0c3aa756405c1df": "Se restablece {time}",
@@ -12559,7 +12538,6 @@
   "44347a7fb8f70ef0": "Disconnected here, but Cloud Connect still lists it. Remove it in Account.",
   "a00d713209d15b3d": "Sign in to Cloud Connect before enabling this.",
   "6df9a53701b75aec": "This connection needs the relay configuration permission to configure Cloud Connect.",
-  "bb620277afbff4ce": "An agent investigates a PseudoCode problem and helps file an issue",
   "1703dd2beb008eaa": "Use PseudoCode in another app (MCP)",
   "9ee298a8c883a96a": "PseudoCode environment",
   "a80e0e94d2713773": "Browser previews are only available in the PseudoCode desktop app.",
@@ -12575,7 +12553,6 @@
   "a5f4ce3ef2b42aa1": "Install update and restart PseudoCode?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
   "23d4f6679393a4fc": "Sign in to Cloud Connect to connect this environment.",
   "bdc157deec345b0a": "The Cloud Connect session is unavailable.",
-  "b1cdaa8a36a20b22": "PseudoCode could not open a new thread.",
   "4b4266c5181a0128": "Open PseudoCode in the desktop app to use the in-app preview.",
   "84ec20b8f19ee279": "Sent by PseudoCode",
   "70a90b32d097f5b8": "Subagents: inherit",
@@ -12597,7 +12574,6 @@
       "v": "v"
     }
   ],
-  "dd5669b4f6acf6ef": "The agent reads PseudoCode's logs and source here, and asks before it applies a fix or posts anything.",
   "f12fb729099bd0f6": "Could not load the script.",
   "098882d04e22c027": "Loading script…",
   "73685ecd8455cd07": "Install PseudoCode on your phone and sign in to Cloud Connect to get push notifications and Live Activities.",

@@ -9,8 +9,6 @@ Enforce [CONTRIBUTING.md](../../../CONTRIBUTING.md), the authoritative eligibili
 close PRs with established violations and send eligible PRs to Macroscope for deeper review.
 Carry out authorized moderation through completion, without per-PR approval requests.
 This skill does not define automatic closure rules for issues or discussions.
-End-user `npx t3 triage` diagnostics belong to
-[the support playbook](../../../.github/triage/PLAYBOOK.md).
 
 ## Determine invocation mode and scope
 

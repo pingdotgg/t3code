@@ -1516,11 +1516,6 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
-    prepareTriage: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:prepare-triage",
-      tag: WS_METHODS.serverPrepareTriage,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
-    }),
     databaseStorage,
     databaseCompactionRecommendations,
     reclaimDatabaseSpace: createEnvironmentRpcCommand(runtime, {

@@ -24,7 +24,6 @@ const testState = vi.hoisted(() => {
     readonly promotedTo: null;
     readonly threadId: string;
   } | null = null;
-  let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
   const router = {
     state: {
       location: { href: "/" },
@@ -40,24 +39,12 @@ const testState = vi.hoisted(() => {
   const draftStore = {
     getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() =>
-      openDraftRoute === null
-        ? { ...draftSession, promotedTo: null, startFromOrigin: false }
-        : {
-            logicalProjectKey: "remote-project",
-            promotedTo: null,
-            threadId: "thread-open",
-            createdAt: "2026-01-01T00:00:00.000Z",
-            runtimeMode: "full-access",
-            interactionMode: "default",
-          },
-    ),
+    getDraftSession: vi.fn(() => ({ ...draftSession, promotedTo: null, startFromOrigin: false })),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
-    setPrompt: vi.fn(),
   };
 
   return {
@@ -81,12 +68,6 @@ const testState = vi.hoisted(() => {
     disconnect(environmentId: string) {
       connectedEnvironmentIds = connectedEnvironmentIds.filter((id) => id !== environmentId);
     },
-    get openDraftRoute() {
-      return openDraftRoute;
-    },
-    openEmptyDraft(draftId: string) {
-      openDraftRoute = { kind: "draft", draftId };
-    },
     get targetSettings() {
       return targetSettings;
     },
@@ -98,7 +79,6 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
-      openDraftRoute = null;
       draftSession = {
         envMode: "local",
         worktreePath: null,
@@ -116,7 +96,6 @@ const testState = vi.hoisted(() => {
       router.navigate.mockClear();
       draftStore.setDraftThreadContext.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
-      draftStore.setPrompt.mockClear();
       projectFileRead = new Promise<ProjectFile>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -252,9 +231,7 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({
-  resolveThreadRouteTarget: () => testState.openDraftRoute,
-}));
+vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -344,41 +321,9 @@ describe.each([
 
     expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
   });
-
-  it("sets the prompt before the draft shows", async () => {
-    testState.reset(draft);
-    const opened = await useNewThreadHandler()(
-      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { prompt: "Read the playbook. " },
-    );
-
-    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
-      opened?.draftId,
-      "Read the playbook. ",
-    );
-    expect(testState.draftStore.setPrompt.mock.invocationCallOrder[0]).toBeLessThan(
-      testState.router.navigate.mock.invocationCallOrder[0] ?? 0,
-    );
-  });
 });
 
 describe("useNewThreadHandler", () => {
-  it("seeds the prompt into the empty draft that is already open", async () => {
-    testState.reset(null);
-    testState.openEmptyDraft("draft-open");
-
-    const opened = await useNewThreadHandler()(
-      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { prompt: "Read the playbook. " },
-    );
-
-    expect(opened?.draftId).toBe("draft-open");
-    expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
-      "draft-open",
-      "Read the playbook. ",
-    );
-  });
-
   it("opens the draft without waiting on a project file from an offline machine", async () => {
     testState.reset(null, { envMode: null, startFromOrigin: false });
     testState.disconnect("environment-ssh");

@@ -196,7 +196,6 @@ export const T3_CLI_COMMANDS: ReadonlyArray<string> = [
   "t3 policy check",
   "t3 policy templates",
   "t3 policy settings",
-  "t3 triage",
   "t3 connect",
   "t3 connect link",
   "t3 connect login",

@@ -1788,7 +1788,6 @@
   "3a0bf3d17f31584e": "{project}에서 새 스레드",
   "4b4b64cc95acb8da": "다음에서 새 스레드...",
   "3f581e98c86df72a": "프로젝트 없이 새 스레드",
-  "e510d9a7b684fbfe": "이슈 분류",
   "44e13c9deb30e03c": "현재 스레드에서 찾기",
   "2a5cc71a171eca12": "브라우저 페이지에서 찾기",
   "f496ce44f0581269": "프롬프트 링크 복사",
@@ -2872,11 +2871,6 @@
   "52163ddccc1eb594": "일부 환경에만 설정이 저장됨",
   "fee07035b4a2a1c3": "{environments}에 저장되었습니다.",
   "2a1ecf7863e204aa": "사이드 패널에서 열기",
-  "8a7ee5752bb91550": "복사할 수 없습니다. 대신 {command}을(를) 입력하세요.",
-  "7dfdfa116c6a9d86": "분류를 시작할 수 없습니다",
-  "25fe0f5f3ef3bb02": "{description} 대신 해당 머신의 터미널에서 {command}을(를) 실행하세요.",
-  "eb9ecb0cb72121a0": "이 머신에서는 프로젝트 없이 스레드를 시작할 수 없습니다.",
-  "32e2dbf6abe8c748": "분류를 시작하는 중…",
   "ce5c66ae967fd7c8": "스레드 작업을 사용할 수 없음",
   "d4f0043ab9348e2c": "이 스레드를 아직 불러오지 않았습니다.",
   "de2cfd4a757c656a": "제공자가 활성 상태인 동안에는 보관할 수 없습니다.",
@@ -4503,22 +4497,7 @@
   "ed3b9ada396031c5": "보통",
   "75cdbffdefbbae3a": "초고속 모드 켜짐",
   "79c3a186139f8c86": "고속 모드 켜짐",
-  "a772b49a38a3db40": "무엇이 잘못되었나요?",
-  "b29e1856c4aab31f": "이 머신",
   "e7588632064e0364": "복사됨",
-  "996f7752fa033da6": [
-    "또는 실행: ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "275a97b4af3c6482": "터미널용 명령 복사",
   "2b07985d23563374": "{time}에 재개",
   "a4b4e5eb6d313af9": "{time}에 초기화됨",
   "c0c3aa756405c1df": "{time}에 초기화",
@@ -12506,7 +12485,6 @@
   "44347a7fb8f70ef0": "Disconnected here, but Cloud Connect still lists it. Remove it in Account.",
   "a00d713209d15b3d": "Sign in to Cloud Connect before enabling this.",
   "6df9a53701b75aec": "This connection needs the relay configuration permission to configure Cloud Connect.",
-  "bb620277afbff4ce": "An agent investigates a PseudoCode problem and helps file an issue",
   "1703dd2beb008eaa": "Use PseudoCode in another app (MCP)",
   "9ee298a8c883a96a": "PseudoCode environment",
   "a80e0e94d2713773": "Browser previews are only available in the PseudoCode desktop app.",
@@ -12522,7 +12500,6 @@
   "a5f4ce3ef2b42aa1": "Install update and restart PseudoCode?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
   "23d4f6679393a4fc": "Sign in to Cloud Connect to connect this environment.",
   "bdc157deec345b0a": "The Cloud Connect session is unavailable.",
-  "b1cdaa8a36a20b22": "PseudoCode could not open a new thread.",
   "4b4266c5181a0128": "Open PseudoCode in the desktop app to use the in-app preview.",
   "84ec20b8f19ee279": "Sent by PseudoCode",
   "70a90b32d097f5b8": "Subagents: inherit",
@@ -12544,7 +12521,6 @@
       "v": "v"
     }
   ],
-  "dd5669b4f6acf6ef": "The agent reads PseudoCode's logs and source here, and asks before it applies a fix or posts anything.",
   "f12fb729099bd0f6": "Could not load the script.",
   "098882d04e22c027": "Loading script…",
   "73685ecd8455cd07": "Install PseudoCode on your phone and sign in to Cloud Connect to get push notifications and Live Activities.",
