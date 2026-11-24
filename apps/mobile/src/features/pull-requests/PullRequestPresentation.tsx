@@ -83,7 +83,13 @@ function HostAvatar(props: {
   const asset = useAssetUrlState(props.environmentId, props.resource);
   return (
     <AvatarImage
-      uri={asset._tag === "Success" ? asset.url : null}
+      uri={
+        asset._tag === "Success"
+          ? asset.url
+          : asset._tag === "Failure"
+            ? (props.actor?.avatarUrl ?? null)
+            : null
+      }
       cacheKey={
         asset._tag === "Success"
           ? assetImageCacheKey(props.environmentId, props.resource)
@@ -101,7 +107,7 @@ function AvatarImage(props: {
   readonly actor: PullRequestActor | null;
   readonly size: number;
 }) {
-  const size = props.size;
+  const { size } = props;
   return props.uri ? (
     <Image
       source={props.cacheKey ? { uri: props.uri, cacheKey: props.cacheKey } : { uri: props.uri }}

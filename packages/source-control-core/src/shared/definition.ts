@@ -123,7 +123,7 @@ export interface ChangeRequestCheckoutInput {
   readonly repositoryUrl?: string | null | undefined;
 }
 
-/** Media a host serves only to a request carrying a credential, as `mediaUrl` reads it. */
+/** Media a client may not be able to load itself, as `mediaUrl` reads it. */
 export interface SourceControlMediaUrl {
   /** The canonical URL to fetch, the same for every spelling of one file. */
   readonly fetchUrl: string;
@@ -387,8 +387,8 @@ export interface SourceControlDefinition {
    */
   readonly canonicalRepositoryKey?: (key: string) => string | null;
   /**
-   * Null when `url` is not media this host keeps behind a credential. A client cannot load such
-   * media itself, so it asks the server, whose driver for this host fetches it.
+   * Null when `url` is not media this host keeps behind a credential or where a remote client may
+   * not reach it. A client asks the server for such media, whose driver for this host fetches it.
    */
   readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
   /**
