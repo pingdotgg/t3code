@@ -534,26 +534,34 @@ await import(pathToFileURL(agentPath).href);
       const fs = yield* FileSystem.FileSystem;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-title-" });
       const requestLogPath = NodePath.join(directory, "requests.ndjson");
+      let failResolution = false;
       const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
         search: () => Effect.die("unused search"),
         prepare: () => Effect.die("unused prepare"),
         inspect: () => Effect.die("unused inspect"),
         uninstallManagedBinary: () => Effect.die("unused uninstall"),
         resolve: () =>
-          Effect.succeed({
-            distribution: "local" as const,
-            spawn: {
-              command: "node",
-              args: [mockAgentPath],
-              env: {
-                ...process.env,
-                T3_ACP_SESSION_LIFECYCLE: "1",
-                T3_ACP_V2_MANAGEMENT: "1",
-                T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-                T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Migrate Sessions to Postgres"}',
-              },
-            },
-          }),
+          failResolution
+            ? Effect.fail(
+                new AcpRegistrySupport.AcpRegistryError({
+                  reason: "runner_unavailable",
+                  detail: "private provider failure",
+                }),
+              )
+            : Effect.succeed({
+                distribution: "local" as const,
+                spawn: {
+                  command: "node",
+                  args: [mockAgentPath],
+                  env: {
+                    ...process.env,
+                    T3_ACP_SESSION_LIFECYCLE: "1",
+                    T3_ACP_V2_MANAGEMENT: "1",
+                    T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+                    T3_ACP_PROMPT_RESPONSE_TEXT: '{"title":"Migrate Sessions to Postgres"}',
+                  },
+                },
+              }),
       });
       const textGeneration = makeAcpRegistryTextGeneration(
         {
@@ -576,6 +584,18 @@ await import(pathToFileURL(agentPath).href);
       });
 
       expect(result.title).toBe("Migrate Sessions to Postgres");
+      failResolution = true;
+      const failure = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Generate a title",
+          modelSelection: { instanceId, model: "default" },
+        })
+        .pipe(Effect.result);
+      expect(failure).toMatchObject({
+        _tag: "Failure",
+        failure: { detail: "The ACP text generation request failed." },
+      });
       const requests = (yield* fs.readFileString(requestLogPath))
         .split("\n")
         .filter((line) => line.length > 0)

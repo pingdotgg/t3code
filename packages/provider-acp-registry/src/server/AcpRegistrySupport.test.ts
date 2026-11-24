@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -298,7 +299,10 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       }).pipe(Effect.provideService(HostProcess.Environment, environment));
       const resolved = yield* resolver.resolve(
-        decodeAcpRegistrySettings({ source: "local", commandPath }),
+        decodeAcpRegistrySettings({
+          source: "local",
+          commandPath: (yield* Path.Path).relative(process.cwd(), commandPath),
+        }),
         "/workspace",
       );
 
@@ -351,6 +355,7 @@ describe("AcpRegistrySupport", () => {
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(SpawnExecutableResolution, () => executable),
+          Effect.provide(NodePath.layerWin32),
         );
 
       const bare = decodeAcpRegistrySettings({ source: "local", commandPath: "cmdc" });

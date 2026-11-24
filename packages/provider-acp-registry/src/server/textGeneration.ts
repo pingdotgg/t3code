@@ -95,7 +95,7 @@ export const makeAcpRegistryTextGeneration = (
             ? cause
             : new TextGenerationError({
                 operation: request.operation,
-                detail: `ACP request failed: ${cause.message}`,
+                detail: "The ACP text generation request failed.",
                 cause,
               }),
         ),

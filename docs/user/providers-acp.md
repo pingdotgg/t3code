@@ -132,8 +132,10 @@ so the next turn after a rollback starts a fresh agent session and T3 Code sends
 conversation, without the turns you rolled back.
 
 Select an ACP model in **Settings → Threads → Text generation model** to use it for generated text,
-such as thread titles, commit messages, branch names, and pull request descriptions. Each request
-opens a disposable session outside the project checkout.
+such as thread titles, commit messages, and pull request descriptions. Branch names use this model
+unless a source-control writer model is configured. Each request opens a separate session outside
+the project checkout. T3 requests session deletion when the agent supports it. The agent controls
+whether it retains session history.
 
 ## Advanced configuration
 
