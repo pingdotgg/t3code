@@ -6836,6 +6836,8 @@
   "45674081908ac8aa": "Comando de checkout copiado",
   "d2970574ef7860d0": "Copiar la rama de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "45c92416a82cf22c": "Nombre de la rama copiado",
+  "43a18c0bc37988f4": "Se enviaron nuevos commits. Una fusión o revisión sigue aplicándose a {sha}.",
+  "c930a7ffa49054f0": "Cargar nuevos commits",
   "63e533a9db74e8dc": "Comprobaciones",
   "4f7ca990d538a8bc": "Comentarios no disponibles",
   "95601ce075194611": "{count, plural, one {{formatted} comentario} other {{formatted} comentarios}}",

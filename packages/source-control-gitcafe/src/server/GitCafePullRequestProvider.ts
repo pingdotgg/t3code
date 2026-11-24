@@ -1349,7 +1349,7 @@ export const make = Effect.gen(function* () {
           body: {
             verdict: input.verdict === "request-changes" ? "request_changes" : input.verdict,
             ...(input.body.length === 0 ? {} : { body: input.body }),
-            commitOid: pull.headOid,
+            commitOid: input.expectedHeadSha ?? pull.headOid,
             expectedVersion: pull.version,
             requestId: yield* randomUuidV4,
           },
