@@ -128,6 +128,7 @@ overrides:
   react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
+  gt-react-native: 11.4.18
   app-builder-lib: 26.16.1
   electron-updater: 6.8.9
   expo-modules-core: 58.0.30
@@ -285,6 +286,11 @@ patchedDependencies:
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
+  # Android: a language change applies at once instead of reading back the old locale
+  # before the async native write lands.
+  gt-react-native@11.4.18: patches/gt-react-native@11.4.18.patch
+  # The MCP Events extension (SEP-3415) on effect/ai, until Effect ships it.
+  effect@4.1.5: patches/effect@4.1.5.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
