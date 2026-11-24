@@ -3715,6 +3715,63 @@ async fn a_steer_to_another_provider_restarts_there() {
     assert!(injected[0].1.to_string().contains("hang"));
 }
 
+/// Steer on a queued message keeps that message's provider: a queued Codex message promoted
+/// while Claude runs restarts on Codex, as a direct steer does.
+#[tokio::test(flavor = "current_thread")]
+async fn a_promoted_steer_on_another_provider_restarts_there() {
+    let db = TempDb::new("promote-switch");
+    let (engine, claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut queued = message_with(
+        "t1",
+        "c3",
+        "queued for codex",
+        json!({"type": "queue_after_active"}),
+        None,
+    );
+    queued["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, queued).await;
+    dispatch(
+        &engine,
+        json!({"type": "queued-message.promote-to-steer", "commandId": "c4", "threadId": "t1",
+            "queuedRunId": "run:t1:2", "targetRunId": "run:t1:1"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    let codex_run = p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| {
+            r["userMessageId"] == "message:c3"
+                && r["providerInstanceId"] == "codex"
+                && r["status"] != "cancelled"
+        })
+        .unwrap_or_else(|| panic!("no Codex run for the promoted message: {}", p["runs"]))
+        .clone();
+    let p = run_to_end(&engine, "t1", codex_run["id"].as_str().unwrap()).await;
+    assert_eq!(p["runs"][0]["status"], "interrupted");
+    assert_eq!(*crate::lock(&codex.prompts), ["queued for codex"]);
+    assert!(
+        !crate::lock(&claude.prompts)
+            .iter()
+            .any(|prompt| prompt.contains("queued for codex"))
+    );
+    assert!(
+        crate::lock(&codex.injected)[0]
+            .1
+            .to_string()
+            .contains("hang")
+    );
+}
+
 /// A switch to a provider that cannot take the history is refused with T3's text
 /// (`ensureContextHandoff`), and the thread keeps no run of it.
 #[tokio::test(flavor = "current_thread")]

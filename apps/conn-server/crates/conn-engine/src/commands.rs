@@ -1237,6 +1237,7 @@ fn queued_run_edit(tx: &mut Tx<'_>, command: Value) -> Outcome {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromoteToSteer {
+    command_id: String,
     thread_id: String,
     queued_run_id: String,
     target_run_id: String,
@@ -1265,6 +1266,25 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
         return reject(format!("Message {message_id} does not exist."));
     };
     finish_run(tx, &c.thread_id, &c.queued_run_id, "cancelled", None)?;
+    // Queued on another instance: the message restarts there, as a direct steer does.
+    let selection = &queued["modelSelection"];
+    if selection["instanceId"].is_string()
+        && selection["instanceId"] != target["providerInstanceId"]
+    {
+        let mut command = json!({
+            "type": "message.dispatch", "commandId": c.command_id, "threadId": c.thread_id,
+            "messageId": message_id, "text": message["text"], "attachments": message["attachments"],
+            "modelSelection": selection, "createdBy": message["createdBy"],
+            "creationSource": message["creationSource"],
+            "dispatchMode": {"type": "steer_active", "targetRunId": c.target_run_id},
+        });
+        for field in ["context", "notification", "scheduledTaskId"] {
+            if message[field].is_object() || message[field].is_string() {
+                command[field] = message[field].clone();
+            }
+        }
+        return message_dispatch(tx, command);
+    }
     let dispatch = MessageDispatch {
         command_id: String::new(),
         thread_id: c.thread_id.clone(),
