@@ -1410,7 +1410,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
               if (prompts.length > 1) {
                 yield* Deferred.succeed(steered, undefined);
                 yield* Deferred.await(releaseSteer);
-                return { stopReason: "end_turn" as const };
+                return { stopReason: cancels > 0 ? ("cancelled" as const) : ("end_turn" as const) };
               }
               if (options?.initialToolCalls !== undefined) {
                 for (const toolUpdate of options.initialToolCalls) {
@@ -2199,6 +2199,65 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.notInclude(subagentStatuses, "interrupted");
       assert.equal(subagentStatuses.at(-1), "idle");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // Stop cancels the steer prompt before agy answers it; the steer must not read as delivered.
+  it.effect("reports a steer the agent never answered before Stop", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, {
+        agentVersion: "1.5.11",
+        holdsFirstPrompt: true,
+      });
+      const { session, providerThread, command, startTurn, until } = opened;
+      yield* startTurn(1, false);
+      const started = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      const providerTurnId = started.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+      const steerId = MessageId.make("message-antigravity-unanswered-steer");
+      const steerText = "Also update the README";
+      yield* session.steerTurn({
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+        providerThread,
+        providerTurnId,
+        message: {
+          messageId: steerId,
+          text: steerText,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      assert.lengthOf(opened.prompts, 2);
+
+      const stopped = yield* session
+        .interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true })
+        .pipe(Effect.forkScoped);
+      // The harness stubs session/cancel, so settle the held steer prompt as agy would.
+      yield* opened.releaseSteer;
+      yield* Fiber.join(stopped);
+      const run = [...started, ...(yield* until((event) => event.type === "turn.terminal"))];
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "interrupted");
+      const reported = run.some(
+        (event) =>
+          (event.type === "steer.updated" &&
+            event.messageId === steerId &&
+            event.status !== "completed") ||
+          (event.type === "turn_item.updated" &&
+            event.turnItem.type === "system_notice" &&
+            JSON.stringify(event.turnItem).includes(steerText)),
+      );
+      assert.isTrue(
+        reported,
+        "Stop ended the turn before agy answered the steer, yet nothing reports it unanswered",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 
