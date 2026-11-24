@@ -27,6 +27,7 @@ import {
   latestRunError,
   launchModelSelection,
   readLatestMessages,
+  readOutputSchema,
   resolveProject,
   threadCommand,
   type ThreadTools,
@@ -524,17 +525,44 @@ it.effect("start rejects a repeated --option before reaching the server", () =>
   ),
 );
 
-/** Serves t3_thread_read pages the way the server does: positions count every item. */
+it.effect("--output-schema reads a ~/ path from the home directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-schema-" });
+    yield* fs.writeFileString(path.join(home, "schema.json"), '{"type":"object"}');
+
+    const output = yield* readOutputSchema(Option.some("~/schema.json")).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, home),
+    );
+
+    assert.deepStrictEqual(output, { outputSchema: { type: "object" } });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/** Serves t3_thread_read pages the way the server does: positions count every item, and a cursorless read is the newest page. */
 const timelineTools = (types: ReadonlyArray<string>) => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
     const args = input as { readonly afterPosition?: number; readonly limit: number };
+    const isMessage = (item: (typeof items)[number]) =>
+      ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
+    if (args.afterPosition === undefined) {
+      const page = items.filter(isMessage).slice(-args.limit);
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: null,
+        hasMore: false,
+      });
+    }
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
-    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
+    for (let position = args.afterPosition + 1; position < items.length; position++) {
       const item = items[position]!;
-      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
+      if (isMessage(item)) {
         matching.push(item);
         if (matching.length > args.limit) break;
       }

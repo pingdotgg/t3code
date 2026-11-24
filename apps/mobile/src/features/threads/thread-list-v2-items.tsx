@@ -1070,6 +1070,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         },
         m,
       ),
+      ...(thread.latestRun?.completedAt != null && threadCanArchive(thread.runtime)
+        ? [{ id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" }]
+        : []),
       ...(canTurnIntoProject
         ? [
             {
@@ -1086,6 +1089,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       gt,
       m,
       props.titleRegenerationSupported,
+      thread.latestRun,
       thread.runtime,
       isRegeneratingTitle,
     ],
@@ -1105,7 +1109,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : []),
       { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
       { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
-      { id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" },
       ...(canShareWithGuest
         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
         : []),

@@ -1735,6 +1735,34 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("stops typing long text at the request's deadline and says how far it got", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      page.evaluate.mockImplementation(async () => true as never);
+      let now = 1_700_000_000_000;
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+      // Each piece of keys takes 10 seconds here: over the request's 5, under the 15-second default.
+      const type = vi.fn(async (_text: string) => void (now += 10_000));
+      Object.assign(page, { keyboard: { type } });
+      const failure = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "type",
+          input: { text: "a".repeat(200) },
+          timeoutMs: 5_000,
+        })
+        .pipe(Effect.flip);
+      expect(failure._tag).toBe("PreviewAutomationTimeoutError");
+      expect(failure.message).toMatch(/after 64 of 200 characters/);
+      expect(type.mock.calls).toEqual([["a".repeat(64)]]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("reports a pending dialog without evaluating the page and resolves it explicitly", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2140,6 +2168,41 @@ it.effect("a request whose frame is not available yet is not a main navigation",
         input: {},
       });
       expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an app link's aborted request leaves the page it was clicked on", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const navigation = (url: string, redirectedFrom: unknown = null) => ({
+        url: () => url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        redirectedFrom: () => redirectedFrom,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      });
+      const loading = Effect.map(
+        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} }),
+        (status) => status.loading,
+      );
+      // Chromium hands the link to the OS, aborts the request and keeps the current page.
+      const direct = navigation("obsidian://open?vault=notes");
+      page.emit("request", direct);
+      page.emit("requestfailed", direct);
+      expect(yield* loading).toBe(false);
+
+      // A page that redirects to an app link ends its navigation there; the redirect itself finished.
+      const open = navigation("https://example.com/open");
+      page.emit("request", open);
+      expect(yield* loading).toBe(true);
+      const redirected = navigation("obsidian://open?vault=notes", open);
+      page.emit("request", redirected);
+      page.emit("requestfailed", redirected);
+      expect(yield* loading).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

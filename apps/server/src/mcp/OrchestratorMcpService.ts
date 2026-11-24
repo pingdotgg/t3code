@@ -1184,6 +1184,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "secret_request":
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
+    case "feedback_request":
+      return `Asked the user to approve a ${item.preview.kind} report about ${item.preview.subject} for the T3 team: ${item.feedbackStatus}.`;
     case "link_request":
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.url ?? "an environment"} (${item.linkedAccess}).`
@@ -2548,6 +2550,7 @@ const make = Effect.gen(function* () {
             : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
+          requireExisting: true,
           title: input.title ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
@@ -3679,11 +3682,7 @@ const make = Effect.gen(function* () {
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-      // Client callers (the CLI) page forward from a cursorless read.
-      const newestFirst =
-        input.beforePosition !== undefined ||
-        (input.afterPosition === undefined &&
-          (scope.thread !== undefined || scope.client?.linked === true));
+      const newestFirst = input.beforePosition !== undefined || input.afterPosition === undefined;
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
