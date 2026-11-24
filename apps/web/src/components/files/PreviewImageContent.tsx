@@ -24,12 +24,12 @@ export default function PreviewImageContent(props: {
     const node = ref.current;
     if (!node) return;
     // clientWidth rounds a fractional pane size up, and an image fitted to it overflows the pane.
-    // The computed size keeps the fraction and ignores the transform of an opening dialog.
+    // The computed size keeps the fraction; it reads "auto" while an ancestor is display:none.
     const update = () => {
       const size = getComputedStyle(node);
       setViewport({
-        width: Math.floor(Number.parseFloat(size.width)),
-        height: Math.floor(Number.parseFloat(size.height)),
+        width: Math.floor(Number.parseFloat(size.width) || 0),
+        height: Math.floor(Number.parseFloat(size.height) || 0),
       });
     };
     update();
