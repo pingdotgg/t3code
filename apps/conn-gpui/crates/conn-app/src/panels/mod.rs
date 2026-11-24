@@ -1,23 +1,29 @@
 //! Right-panel surfaces for `conn-app`: Conn tab header, Files explorer + source preview,
 //! Diff viewer, local PTY Terminal, and Browser surface.
 
+mod address;
 pub(crate) mod annotations;
 mod api;
 mod browser;
+mod browser_context_menu;
 pub(crate) mod chrome;
 mod color;
 mod database;
 mod device;
 mod diff;
 mod diff_parser;
+mod file_kind;
+pub(crate) mod file_path;
 mod files;
 pub(crate) mod header;
 mod highlight;
+mod laravel_toolbar;
 mod linked_items;
 mod mcp;
 mod pull_request;
 mod tasks;
 mod terminal;
+pub(crate) mod terminal_demo;
 pub(crate) mod terminal_drawer;
 mod terminal_palette;
 mod tree;
@@ -42,6 +48,7 @@ use self::device::DevicePanel;
 use self::diff::DiffPanel;
 use self::files::FilesPanel;
 use self::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
+use self::laravel_toolbar::LaravelToolbarEvent;
 use self::linked_items::LinkedItemsPanel;
 use self::mcp::McpPanel;
 use self::pull_request::PullRequestPanel;
@@ -56,6 +63,8 @@ pub(crate) enum RightPanelEvent {
     OpenFile(String),
     /// A surface asked to show another surface (e.g. Linked items opening a pull request).
     OpenTab(RightPanelTab),
+    /// The Files panel asked to add a file mention to the composer's draft.
+    InsertMention(String),
     /// A surface asked to send an agent prompt to the active thread (e.g. PR agent actions).
     SendPrompt(String),
     /// Browser or Device panel emitted a project annotation queue action.
@@ -124,9 +133,25 @@ impl RightPanel {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let files = cx.new(|cx| FilesPanel::new(tokens.clone(), connection.clone(), window, cx));
-        cx.subscribe(&files, |_, _, event: &files::FilesEvent, cx| match event {
-            files::FilesEvent::OpenFile(path) => cx.emit(RightPanelEvent::OpenFile(path.clone())),
-        })
+        cx.subscribe(
+            &files,
+            |this, _, event: &files::FilesEvent, cx| match event {
+                files::FilesEvent::OpenFile(path) => {
+                    cx.emit(RightPanelEvent::OpenFile(path.clone()))
+                }
+                files::FilesEvent::RevealFolder => {
+                    cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Files))
+                }
+                files::FilesEvent::AddToChat(mention) => {
+                    cx.emit(RightPanelEvent::InsertMention(mention.clone()));
+                }
+                files::FilesEvent::OpenInBrowser(url) => {
+                    this.browser
+                        .update(cx, |browser, cx| browser.navigate(url.clone(), cx));
+                    cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Browser));
+                }
+            },
+        )
         .detach();
         let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection.clone()));
         let terminal = cx.new(|cx| TerminalPanel::new(tokens.clone(), cx));
@@ -139,7 +164,32 @@ impl RightPanel {
             },
         )
         .detach();
+        // "Open in Database" on a query of the debug bar.
+        let toolbar = browser.read(cx).laravel_toolbar();
+        cx.subscribe(
+            &toolbar,
+            |this, _, event: &LaravelToolbarEvent, cx| match event {
+                LaravelToolbarEvent::OpenQuery(sql) => {
+                    this.database
+                        .update(cx, |panel, cx| panel.set_agent_sql(sql.clone(), cx));
+                    cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Database));
+                }
+            },
+        )
+        .detach();
         let api = cx.new(|cx| ApiPanel::new(tokens.clone(), window, cx));
+        let api_toolbar = api.read(cx).laravel_toolbar();
+        cx.subscribe(
+            &api_toolbar,
+            |this, _, event: &LaravelToolbarEvent, cx| match event {
+                LaravelToolbarEvent::OpenQuery(sql) => {
+                    this.database
+                        .update(cx, |panel, cx| panel.set_agent_sql(sql.clone(), cx));
+                    cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Database));
+                }
+            },
+        )
+        .detach();
         let database = cx.new(|cx| DatabasePanel::new(tokens.clone(), window, cx));
         let mcp = cx.new(|cx| McpPanel::new(tokens.clone(), window, cx));
         let tasks = cx.new(|cx| TasksPanel::new(tokens.clone(), window, cx));
@@ -375,6 +425,16 @@ impl RightPanel {
         cx.notify();
     }
 
+    /// The Conn server (Orbit environment) the thread runs on.
+    pub fn set_environment(&mut self, environment_id: String, cx: &mut Context<'_, Self>) {
+        self.api.update(cx, |api, cx| {
+            api.set_environment(environment_id.clone(), cx)
+        });
+        self.browser.update(cx, |browser, cx| {
+            browser.set_environment(environment_id, cx)
+        });
+    }
+
     /// Updates the active project, workspace root, and thread context.
     pub fn set_context(
         &mut self,
@@ -401,6 +461,8 @@ impl RightPanel {
         }
         if self.thread_id != thread_id {
             self.thread_id = thread_id.clone();
+            self.files
+                .update(cx, |p, _| p.set_thread(thread_id.clone()));
             self.diff
                 .update(cx, |p, cx| p.set_thread(thread_id.clone(), cx));
         }
@@ -474,6 +536,11 @@ impl RightPanel {
         cx.notify();
     }
 
+    /// Reveals `line` of the file tab now showing (or loading) and flashes it.
+    pub fn reveal_line(&mut self, line: usize, cx: &mut Context<'_, Self>) {
+        self.files.update(cx, |p, cx| p.reveal_line(line, cx));
+    }
+
     /// Shows the file at `path` (project-relative) as its own surface, as Conn's `file` tab.
     pub fn set_file(&mut self, path: String, cx: &mut Context<'_, Self>) {
         let surface = PanelSurface::File(path.clone());
@@ -483,7 +550,7 @@ impl RightPanel {
         self.add_menu_open = false;
         self.tab = RightPanelTab::File;
         self.file = Some(path.clone());
-        self.files.update(cx, |p, cx| p.show_preview(path, cx));
+        self.files.update(cx, |p, cx| p.show_preview_at(path, cx));
         self.sync_surface_visibility(cx);
         cx.notify();
     }
@@ -728,10 +795,14 @@ fn for_each_project_panel(
     panel.mcp.update(cx, |p, cx| {
         p.set_project(project_key.clone(), workspace_root.clone(), cx);
     });
-    panel.tasks.update(cx, |p, cx| {
-        p.set_project(project_key.clone(), workspace_root, cx);
-    });
     panel.browser.update(cx, |p, cx| {
-        p.set_project(project_key, cx);
+        p.set_project(project_key.clone(), cx);
+        p.set_workspace_root(workspace_root.clone(), cx);
+    });
+    panel
+        .api
+        .update(cx, |p, cx| p.set_workspace_root(workspace_root.clone(), cx));
+    panel.tasks.update(cx, |p, cx| {
+        p.set_project(project_key, workspace_root, cx);
     });
 }

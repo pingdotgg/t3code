@@ -25,6 +25,8 @@ tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "r
 # examples/idle_memory.rs: live heap bytes of one idle session (the version conn-engine's
 # memory_load example uses). Dev only; not in the server binary.
 stats_alloc = "0.1"
+# A paused clock for the 90 s model refresh limit; tests only.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

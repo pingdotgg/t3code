@@ -147,6 +147,38 @@ pub(crate) fn settings_section(
         .child(group)
 }
 
+/// A titled region with no card around its content: the title, then `content` as it is. The
+/// terminal example uses it, as its own box carries the border (Nick, #336).
+#[must_use]
+pub(crate) fn settings_bare_section(
+    title: &str,
+    content: AnyElement,
+    tokens: &Tokens,
+    geometry: &ShellGeometry,
+) -> Stateful<Div> {
+    let slug = title.to_ascii_lowercase().replace(' ', "-");
+    div()
+        .id(SharedString::from(format!("settings-section-{slug}")))
+        .a11y_region(
+            SharedString::from(format!("settings.section.{slug}")),
+            title.to_owned(),
+        )
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .w_full()
+        .child(
+            div()
+                .px(px(4.0))
+                .text_size(px(geometry.ui_font_size_px))
+                .line_height(px(geometry.ui_line_height_px))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(hsla(tokens.foreground))
+                .child(title.to_owned()),
+        )
+        .child(content)
+}
+
 /// One square row (`rounded-none`) inside a raised [`settings_section`].
 ///
 /// Trailing controls align with the title line (`items_start`), and secondary

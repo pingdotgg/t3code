@@ -995,6 +995,11 @@ pub(crate) fn render_queue_popover(
     card = card.child(div().w_full().h(px(1.0)).bg(divider)).child(
         h_flex()
             .id("ann-queue-watch-row")
+            .a11y_switch(
+                "panel.annotations.queue.watch",
+                "Watch for annotations",
+                state.watching,
+            )
             .items_center()
             .justify_between()
             .gap(px(12.0))

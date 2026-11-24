@@ -123,7 +123,7 @@ fn surface_icon_color(surface: &PanelSurface, tokens: &Tokens, fallback: Hsla) -
 }
 
 /// Icon asset for a right-panel tab: superheroicons 16/solid through Conn's manifest
-/// (`Globe2` browser, `Webhook`, `Database`, `ListTodo` checklist, `TerminalSquare`, `Files`,
+/// (`Globe` browser (globe with grid), `Webhook`, `Database`, `ListTodo` checklist, `TerminalSquare`, `Files`,
 /// `FileDiff`, pull request, link, `Smartphone`), and the MCP brand mark.
 #[must_use]
 pub(crate) fn panel_tab_icon_path(tab: RightPanelTab) -> &'static str {
@@ -131,7 +131,7 @@ pub(crate) fn panel_tab_icon_path(tab: RightPanelTab) -> &'static str {
         RightPanelTab::Files => "superhero/files.svg",
         RightPanelTab::Diff => "superhero/file-diff.svg",
         RightPanelTab::Terminal => "superhero/terminal-window.svg",
-        RightPanelTab::Browser => "superhero/browser.svg",
+        RightPanelTab::Browser => "superhero/globe.svg",
         RightPanelTab::Api => "superhero/webhook.svg",
         RightPanelTab::Database => "superhero/database.svg",
         RightPanelTab::Mcp => "brand/mcp.svg",

@@ -273,7 +273,6 @@ async fn streams_resume_after_a_sequence() {
     assert_eq!(replayed["kind"], "event");
     assert_eq!(replayed["event"]["type"], "thread.visited");
     assert_eq!(next(&mut thread).await["kind"], "synchronized");
-
     let mut shell = engine
         .subscribe_shell(
             from_json(json!({"afterSequence": 0, "requestCompletionMarker": true})).unwrap(),
@@ -298,6 +297,246 @@ async fn streams_resume_after_a_sequence() {
         .await
         .unwrap();
     assert_eq!(next(&mut shell).await, json!({"kind": "snapshot-required"}));
+
+    // A client that missed the deletion resumes into `thread.deleted`, as on T3.
+    let visited = dispatch(
+        &engine,
+        json!({"type": "thread.visit", "commandId": "c3",
+        "threadId": "t1", "visitedAt": "2026-11-13T09:01:00.000Z"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1", "afterSequence": visited, "requestCompletionMarker": true})).unwrap())
+        .await
+        .unwrap();
+    // crates/conn-state/tests/fixtures/thread_deleted_replay.json records this item.
+    assert_eq!(next(&mut thread).await["event"]["type"], "thread.deleted");
+    drop(thread);
+    assert!(
+        engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .is_err()
+    );
+    assert!(
+        engine
+            .subscribe_thread(from_json(json!({"threadId": "nope", "afterSequence": 0})).unwrap())
+            .await
+            .is_err()
+    );
+
+    // A replay over 1 MiB stored gets a snapshot (`THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES`).
+    dispatch(&engine, create("t3", "b1")).await;
+    let before = dispatch(
+        &engine,
+        json!({"type": "thread.visit", "commandId": "b2", "threadId": "t3",
+        "visitedAt": "2026-11-13T09:04:00.000Z"}),
+    )
+    .await;
+    let large = dispatch(
+        &engine,
+        json!({"type": "thread.visit", "commandId": "b3", "threadId": "t3",
+        "visitedAt": "2026-11-13T09:05:00.000Z"}),
+    )
+    .await;
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE events SET event = json_set(event, '$.payload.pad', ?1) WHERE seq = ?2",
+            rusqlite::params!["x".repeat(1_100_000), large as i64],
+        )
+        .unwrap();
+    let mut resumed = engine
+        .subscribe_thread(from_json(json!({"threadId": "t3", "afterSequence": before})).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(next(&mut resumed).await["kind"], "snapshot");
+    drop(resumed);
+
+    // A cursor older than the replay bound needs a snapshot, which a deleted thread has not.
+    dispatch(&engine, create("t2", "e1")).await;
+    let early = dispatch(
+        &engine,
+        json!({"type": "thread.visit", "commandId": "e2", "threadId": "t2",
+        "visitedAt": "2026-11-13T09:02:00.000Z"}),
+    )
+    .await;
+    for n in 0..130 {
+        dispatch(
+            &engine,
+            json!({"type": "thread.visit", "commandId": format!("e-visit-{n}"),
+            "threadId": "t2", "visitedAt": "2026-11-13T09:03:00.000Z"}),
+        )
+        .await;
+    }
+    let mut resumed = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2", "afterSequence": early})).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(next(&mut resumed).await["kind"], "snapshot");
+    drop(resumed);
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "e3", "threadId": "t2"}),
+    )
+    .await;
+    assert!(
+        engine
+            .subscribe_thread(from_json(json!({"threadId": "t2", "afterSequence": early})).unwrap())
+            .await
+            .is_err()
+    );
+
+    // A thread deleted and created again under its ID resumes from a snapshot: the replay
+    // holds `thread.created` and the thread exists (`ws.ts`, `hasCreateEvent`).
+    dispatch(&engine, create("t4", "r1")).await;
+    let seen = dispatch(
+        &engine,
+        json!({"type": "thread.visit", "commandId": "r2", "threadId": "t4",
+        "visitedAt": "2026-11-13T09:06:00.000Z"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "r3", "threadId": "t4"}),
+    )
+    .await;
+    dispatch(&engine, create("t4", "r4")).await;
+    let mut resumed = engine
+        .subscribe_thread(from_json(json!({"threadId": "t4", "afterSequence": seen})).unwrap())
+        .await
+        .unwrap();
+    let first = next(&mut resumed).await;
+    assert_eq!(first["kind"], "snapshot", "{first}");
+    assert!(
+        first["projection"]["thread"]["deletedAt"].is_null(),
+        "{first}"
+    );
+}
+
+/// Appends copies of `event` (a stored `message.updated`) with the given text sizes and
+/// streaming flags straight to the store, after its last event. Returns the cursor before them.
+fn append_message_updates(db: &TempDb, event: &Value, copies: &[(usize, bool)]) -> u64 {
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let last: i64 = conn
+        .query_row("SELECT MAX(seq) FROM events", [], |row| row.get(0))
+        .unwrap();
+    for (n, (size, streaming)) in copies.iter().enumerate() {
+        let seq = last + 1 + n as i64;
+        let mut copy = event.clone();
+        copy["id"] = json!(format!("event:{seq}"));
+        copy["payload"]["text"] = json!("x".repeat(*size));
+        copy["payload"]["streaming"] = json!(streaming);
+        conn.execute(
+            "INSERT INTO events (seq, thread_id, type, streaming, event) VALUES (?1, 't1', 'message.updated', ?2, ?3)",
+            rusqlite::params![seq, streaming, copy.to_string()],
+        )
+        .unwrap();
+    }
+    last as u64
+}
+
+/// T3 bounds a resume's replay twice at 1 MiB (`ws.ts`): the stored payload JSON of the
+/// events after the cursor, then the items it would send once streamed updates of one
+/// message are coalesced (`coalesceLiveUpdatedEvents`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_resume_bounds_stored_payloads_and_coalesced_items_as_t3() {
+    const LIMIT: usize = 1_048_576;
+    let db = TempDb::new("resume-bytes");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    until_run_ends(&mut stream).await;
+    drop(stream);
+    drop(engine);
+    let event: Value = {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        let text: String = conn
+            .query_row(
+                "SELECT event FROM events WHERE type = 'message.updated'
+                 AND json_extract(event, '$.payload.role') = 'assistant' ORDER BY seq DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str(&text).unwrap()
+    };
+    let sized = |size: usize, streaming: bool| {
+        let mut copy = event.clone();
+        copy["payload"]["text"] = json!("x".repeat(size));
+        copy["payload"]["streaming"] = json!(streaming);
+        copy
+    };
+    // Text size per copy so the payload or the sent item is exactly `bytes` long.
+    let payload_overhead = sized(0, true)["payload"].to_string().len();
+    let item_overhead = |seq: u64| {
+        let mut copy = sized(0, false);
+        copy["id"] = json!(format!("event:{seq}"));
+        json!({"kind": "event", "sequence": seq, "event": copy})
+            .to_string()
+            .len()
+    };
+    let db = &db;
+    let resume = |after: u64| async move {
+        let (engine, _) = open(db);
+        let mut resumed = engine
+            .subscribe_thread(
+                from_json(json!({"threadId": "t1", "afterSequence": after,
+                "requestCompletionMarker": true}))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let mut items = vec![];
+        loop {
+            let item = next(&mut resumed).await;
+            if item["kind"] == "synchronized" {
+                return items;
+            }
+            items.push(item);
+        }
+    };
+
+    // Eight streamed updates of one message: their payloads are exactly 1 MiB, the items
+    // before coalescing are more, and the one kept after coalescing fits.
+    let each = LIMIT / 8 - payload_overhead;
+    let after = append_message_updates(db, &event, &[(each, true); 8]);
+    let items = resume(after).await;
+    assert_eq!(items.len(), 1, "coalesced to the last update");
+    assert_eq!(items[0]["kind"], "event");
+    assert_eq!(items[0]["sequence"], after + 8);
+
+    // One stored byte more: a snapshot, although the coalesced replay would fit.
+    let mut copies = [(each, true); 8];
+    copies[7].0 += 1;
+    let after = append_message_updates(db, &event, &copies);
+    assert_eq!(resume(after).await[0]["kind"], "snapshot");
+
+    // One final update whose item is exactly 1 MiB replays; one byte more does not.
+    let last = {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.query_row("SELECT MAX(seq) FROM events", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap() as u64
+    };
+    let size = LIMIT - item_overhead(last + 1);
+    let after = append_message_updates(db, &event, &[(size, false)]);
+    let items = resume(after).await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["kind"], "event");
+    let after = append_message_updates(db, &event, &[(size + 1, false)]);
+    assert_eq!(resume(after).await[0]["kind"], "snapshot");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -386,6 +625,131 @@ async fn a_failed_turn_shows_its_error() {
     assert_eq!(
         shell["threads"][0]["lastError"],
         "The fake provider failed."
+    );
+}
+
+/// `RunExecutionService`'s provider stop reason: a turn a hook stopped ends completed, with
+/// the hook's reason kept as a "Stopped by the provider" warning on its run. The work log
+/// shows it after a reload; an ordinary completed turn gets none.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_stop_reason_stays_on_the_completed_run() {
+    let db = TempDb::new("stop-reason");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hook-stop")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "plain")).await;
+    until_run_ends(&mut thread).await;
+    drop(thread);
+    drop(engine);
+
+    let (engine, _) = open(&db);
+    let p = projection(&engine, "t1").await;
+    let warnings: Vec<(Value, Value, Value, Value)> = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "system_notice")
+        .map(|item| {
+            (
+                item["runId"].clone(),
+                item["title"].clone(),
+                item["level"].clone(),
+                item["message"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        warnings,
+        [(
+            json!("run:t1:1"),
+            json!("Stopped by the provider"),
+            json!("warning"),
+            json!(crate::fake::HOOK_STOP_REASON)
+        )]
+    );
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".to_owned(), "completed".to_owned()),
+            ("run:t1:2".to_owned(), "completed".to_owned())
+        ]
+    );
+    // `subagentProjection.ts` finds the notice by `runSignalTurnItem`'s id.
+    let id = conn_support::ids::join_id(
+        "turn-item",
+        &["run", "run:t1:1", "signal", "provider-stop-reason"],
+    );
+    assert_eq!(item_of(&p, &id)["message"], crate::fake::HOOK_STOP_REASON);
+}
+
+/// `RunExecutionService`'s interrupted terminal: the Stop result takes the stored Stop
+/// request's reason, else the provider's stop reason, and never shows a stop-reason warning.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_stop_reason_backs_the_stop_result() {
+    let db = TempDb::new("stop-reason-interrupt");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hook-interrupt")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "hook-hang")).await;
+    until_provider_turn(&mut thread).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    dispatch(&engine, stop("t1", "c4")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:1:interrupt-result")["message"],
+        crate::fake::HOOK_STOP_REASON
+    );
+    assert_eq!(
+        item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
+        "Stopped by user"
+    );
+    let notices = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["type"] == "system_notice")
+        .count();
+    assert_eq!(notices, 0, "an interrupted run shows no warning");
+}
+
+/// `subagentResultForRun`: a delegated child a hook stopped before any answer gives its
+/// parent the hook's reason, not an empty result.
+#[tokio::test(flavor = "current_thread")]
+async fn a_hook_stopped_child_gives_its_parent_the_reason() {
+    let db = TempDb::new("stop-reason-child");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, delegate("d1", "hook-stop", None)).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    let parent = projection(&engine, "t1").await;
+    let expected = format!(
+        "Child task completed without an assistant result.\n\n{}",
+        crate::fake::HOOK_STOP_REASON
+    );
+    assert_eq!(parent["subagents"][0]["result"], expected.as_str());
+    assert_eq!(
+        item_of(&parent, "turn-item:delegated-task:d1")["result"],
+        expected.as_str()
     );
 }
 
@@ -3077,6 +3441,8 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     }];
     config.providers = vec![provider.clone()];
     config.host = Some(host.clone());
+    let clock = Arc::new(crate::ManualClock::at(1_800_000_000_000));
+    config.clock = clock.clone();
     let engine = SqliteEngine::open(config).unwrap();
     dispatch(&engine, create("t1", "c1")).await;
     let image = json!({"type": "image", "id": "pending-1", "name": "a.png",
@@ -3103,6 +3469,41 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
         tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({"id":"page", "type":"dynamic_tool", "toolName":"html_render", "output":{"htmlRender":{"attachmentId":"t1-00000000-0000-4000-8000-000000000001-html", "title":"Page", "height":100}}})))?;
         tx.commit(None)
     }).await.unwrap();
+    // Each settle names its settlement by the committed `settledAt`: a repeat keeps it, and
+    // a settlement after an unsettle is a new one.
+    for (command, kind) in [
+        ("s1", "thread.settle"),
+        ("s2", "thread.settle"),
+        ("s3", "thread.unsettle"),
+        ("s4", "thread.settle"),
+    ] {
+        clock.advance(Duration::from_secs(1));
+        dispatch(
+            &engine,
+            json!({"type": kind, "commandId": command, "threadId": "t1", "reason": "user"}),
+        )
+        .await;
+    }
+    while host.closed.lock().unwrap().len() < 3 {
+        host.closed_event.notified().await;
+    }
+    let settled: Vec<_> = host
+        .closed
+        .lock()
+        .unwrap()
+        .drain(..)
+        .map(|(_, c)| c)
+        .collect();
+    let at =
+        |seconds: i64| conn_support::time::iso_from_millis(1_800_000_000_000 + seconds * 1_000);
+    assert_eq!(
+        settled,
+        [
+            crate::ThreadClose::Settled { settled_at: at(1) },
+            crate::ThreadClose::SettledAgain { settled_at: at(1) },
+            crate::ThreadClose::Settled { settled_at: at(4) },
+        ]
+    );
     dispatch(
         &engine,
         json!({"type": "thread.archive", "commandId": "c4", "threadId": "t1"}),
@@ -4359,7 +4760,9 @@ async fn lane_order_is_reservation_order() {
         reason,
     };
     let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
-    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled));
+    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled {
+        settled_at: String::new(),
+    }));
     let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
     drop(given_up);
     last.start();
@@ -4535,7 +4938,9 @@ async fn stop_before_the_start_runs_never_starts_the_provider() {
     let inner = engine.inner();
     let blocker = inner.reserve_effect(crate::commands::Effect::ThreadClosed {
         thread_id: "t1".into(),
-        reason: crate::ThreadClose::Settled,
+        reason: crate::ThreadClose::Settled {
+            settled_at: String::new(),
+        },
     });
     dispatch(&engine, message("t1", "c3", "hello again")).await;
     dispatch(&engine, stop("t1", "c4")).await;

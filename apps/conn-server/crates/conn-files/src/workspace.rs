@@ -227,8 +227,21 @@ pub fn read_file(
         let cwd = paths::resolve_cwd(&input.cwd, None);
         let (target, relative) =
             paths::resolve_within_root(&cwd, requested).ok_or_else(FileFailure::outside_root)?;
-        let real_root = fs::canonicalize(&cwd)
-            .map_err(|e| FileFailure::op(Operation::RealpathWorkspaceRoot, &target, &cwd, e))?;
+        let real_root = match fs::canonicalize(&cwd) {
+            Ok(root) => root,
+            // Storage cleanup removes idle worktrees but keeps their path, so nothing below exists.
+            Err(e) if allow_missing && e.kind() == io::ErrorKind::NotFound => {
+                return Ok(absent(relative));
+            }
+            Err(e) => {
+                return Err(FileFailure::op(
+                    Operation::RealpathWorkspaceRoot,
+                    &target,
+                    &cwd,
+                    e,
+                ));
+            }
+        };
         let (real, exists) = if allow_missing {
             realpath_allow_missing(&target)
         } else {
@@ -268,27 +281,22 @@ pub fn read_file(
         return Err(FileFailure::plain(Failure::PathNotFile, Some(&real_target)));
     }
     let size = meta.len();
-    let mut bytes = Vec::with_capacity(size.min(READ_FILE_MAX_BYTES) as usize);
+    // Read no more than `stat` reported, as T3 does: bytes appended after the stat could
+    // split a character while `truncated` is still false, and that file would read as binary.
+    let limit = size.min(READ_FILE_MAX_BYTES);
+    let mut bytes = Vec::with_capacity(limit as usize);
     (&mut file)
-        .take(READ_FILE_MAX_BYTES)
+        .take(limit)
         .read_to_end(&mut bytes)
         .map_err(|e| FileFailure::op(Operation::Read, &real_target, &real_target, e))?;
-    if bytes.contains(&0) {
-        return Err(FileFailure::plain(Failure::BinaryFile, Some(&real_target)));
-    }
     let truncated = size > READ_FILE_MAX_BYTES;
-    if truncated {
-        // A streaming decoder drops a character the byte limit split.
-        let valid = match std::str::from_utf8(&bytes) {
-            Ok(_) => bytes.len(),
-            Err(e) if e.error_len().is_none() => e.valid_up_to(),
-            Err(_) => bytes.len(),
-        };
-        bytes.truncate(valid);
-    }
+    // A file that shrank after the stat ends early: its last character was not cut by the limit.
+    let cut_at_limit = truncated && bytes.len() as u64 == limit;
+    let contents = decode_text(bytes, cut_at_limit)
+        .ok_or_else(|| FileFailure::plain(Failure::BinaryFile, Some(&real_target)))?;
     Ok(ProjectReadFileResult {
         relative_path,
-        contents: String::from_utf8_lossy(&bytes).into_owned(),
+        contents,
         byte_length: size as i64,
         truncated,
         exists: None,
@@ -526,4 +534,42 @@ pub fn browse(
         parent_path: display(parent),
         entries,
     })
+}
+
+/// Strict text decoding for the editor. NUL or invalid UTF-8 is binary: U+FFFD in the editor
+/// would overwrite the original bytes on save. Only a read cut by the byte limit may end in a
+/// split character, and that character is dropped.
+fn decode_text(bytes: Vec<u8>, cut_at_limit: bool) -> Option<String> {
+    if bytes.contains(&0) {
+        return None;
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => Some(text),
+        Err(e) if cut_at_limit && e.utf8_error().error_len().is_none() => {
+            let valid = e.utf8_error().valid_up_to();
+            let mut bytes = e.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).ok()
+        }
+        Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::decode_text;
+
+    #[test]
+    fn only_a_read_cut_by_the_limit_drops_a_split_character() {
+        let split = b"A\xE2\x82".to_vec();
+        assert_eq!(decode_text(split.clone(), true).as_deref(), Some("A"));
+        // A file that shrank below the limit ended early: an incomplete suffix is binary.
+        assert_eq!(decode_text(split, false), None);
+        assert_eq!(decode_text(b"caf\xE9\n".to_vec(), true), None);
+        assert_eq!(decode_text(b"a\0b".to_vec(), false), None);
+        assert_eq!(
+            decode_text("café".as_bytes().to_vec(), false).as_deref(),
+            Some("café")
+        );
+    }
 }

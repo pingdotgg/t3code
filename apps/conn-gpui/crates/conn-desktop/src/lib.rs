@@ -9,6 +9,7 @@
 pub mod api_request;
 pub mod control;
 pub mod database;
+pub mod laravel_toolbar;
 pub mod mcp;
 pub mod operator;
 pub mod orbit;

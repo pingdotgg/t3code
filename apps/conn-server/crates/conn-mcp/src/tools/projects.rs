@@ -280,13 +280,6 @@ pub(super) async fn capabilities(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
 }
 
-/// A provider entry for `instance_id`, from `ServerConfig.providers`.
-pub(super) fn provider(cx: &Cx<'_>, instance_id: &str) -> Option<Value> {
-    (cx.config().providers)()
-        .into_iter()
-        .find(|p| p["instanceId"] == instance_id)
-}
-
 /// The first ready provider and its first model: a client's default when the project has none.
 pub(super) fn default_model_selection(cx: &Cx<'_>) -> Option<Value> {
     (cx.config().providers)()
