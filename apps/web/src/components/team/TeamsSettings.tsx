@@ -83,12 +83,22 @@ function CopyableLinkRow({
   );
 }
 
+interface GeneratedInviteBanner {
+  readonly environmentId: EnvironmentId;
+  readonly serverBaseUrl: string;
+  readonly result: TeamInviteCreatedResult;
+}
+
 function resolveShareableWebAppBaseUrl(): string {
   if (typeof window === "undefined" || isElectron) {
     return configuredHostedAppUrl();
   }
   const { protocol, hostname, origin } = window.location;
-  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const isLoopback =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
   if ((protocol === "https:" || protocol === "http:") && !isLoopback) {
     return origin;
   }
@@ -163,7 +173,7 @@ export function TeamsSettings() {
   const [inviteRole, setInviteRole] = useState<TeamRole>("regular");
   const [invitePseudo, setInvitePseudo] = useState("");
   const [creatingInvite, setCreatingInvite] = useState(false);
-  const [latestInvite, setLatestInvite] = useState<TeamInviteCreatedResult | null>(null);
+  const [latestInvite, setLatestInvite] = useState<GeneratedInviteBanner | null>(null);
   const [revokingInviteId, setRevokingInviteId] = useState<string | null>(null);
 
   const [joinLinkInput, setJoinLinkInput] = useState("");
@@ -261,10 +271,12 @@ export function TeamsSettings() {
   const handleCreateInvite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (selectedEnvironmentId === null) return;
+    const targetEnvironmentId = selectedEnvironmentId;
+    const targetServerBaseUrl = serverBaseUrl;
     const trimmedPseudo = invitePseudo.trim();
     setCreatingInvite(true);
     const result = await runCreateInvite({
-      environmentId: selectedEnvironmentId,
+      environmentId: targetEnvironmentId,
       input: {
         role: effectiveInviteRole,
         ...(trimmedPseudo.length > 0
@@ -275,7 +287,11 @@ export function TeamsSettings() {
     });
     setCreatingInvite(false);
     if (result._tag === "Success") {
-      setLatestInvite(result.value);
+      setLatestInvite({
+        environmentId: targetEnvironmentId,
+        serverBaseUrl: targetServerBaseUrl,
+        result: result.value,
+      });
       setInvitePseudo("");
       toastManager.add({
         type: "success",
@@ -291,16 +307,21 @@ export function TeamsSettings() {
 
   const handleRevokeInvite = async (inviteId: (typeof teamState.invites)[number]["id"]) => {
     if (selectedEnvironmentId === null) return;
+    const targetEnvironmentId = selectedEnvironmentId;
     setRevokingInviteId(inviteId);
     const result = await runRevokeInvite({
-      environmentId: selectedEnvironmentId,
+      environmentId: targetEnvironmentId,
       input: { inviteId },
     });
     setRevokingInviteId(null);
     if (result._tag === "Success") {
-      if (latestInvite?.invite.id === inviteId) {
-        setLatestInvite(null);
-      }
+      setLatestInvite((current) =>
+        current &&
+        current.environmentId === targetEnvironmentId &&
+        current.result.invite.id === inviteId
+          ? null
+          : current,
+      );
       toastManager.add({
         type: "success",
         title: gt("Invite revoked"),
@@ -330,28 +351,33 @@ export function TeamsSettings() {
     });
   };
 
-  const latestDeepLink =
-    latestInvite && serverBaseUrl
-      ? buildTeamJoinDeepLink({
-          serverUrl: serverBaseUrl,
-          token: latestInvite.token,
-          ...(latestInvite.invite.prefilledPseudo
-            ? { prefilledPseudo: latestInvite.invite.prefilledPseudo }
-            : {}),
-        })
+  const activeLatestInvite =
+    latestInvite !== null &&
+    latestInvite.environmentId === selectedEnvironmentId &&
+    latestInvite.serverBaseUrl.length > 0
+      ? latestInvite
       : null;
 
-  const latestWebLink =
-    latestInvite && serverBaseUrl
-      ? buildTeamJoinWebUrl({
-          appBaseUrl: resolveShareableWebAppBaseUrl(),
-          serverUrl: serverBaseUrl,
-          token: latestInvite.token,
-          ...(latestInvite.invite.prefilledPseudo
-            ? { prefilledPseudo: latestInvite.invite.prefilledPseudo }
-            : {}),
-        })
-      : null;
+  const latestDeepLink = activeLatestInvite
+    ? buildTeamJoinDeepLink({
+        serverUrl: activeLatestInvite.serverBaseUrl,
+        token: activeLatestInvite.result.token,
+        ...(activeLatestInvite.result.invite.prefilledPseudo
+          ? { prefilledPseudo: activeLatestInvite.result.invite.prefilledPseudo }
+          : {}),
+      })
+    : null;
+
+  const latestWebLink = activeLatestInvite
+    ? buildTeamJoinWebUrl({
+        appBaseUrl: resolveShareableWebAppBaseUrl(),
+        serverUrl: activeLatestInvite.serverBaseUrl,
+        token: activeLatestInvite.result.token,
+        ...(activeLatestInvite.result.invite.prefilledPseudo
+          ? { prefilledPseudo: activeLatestInvite.result.invite.prefilledPseudo }
+          : {}),
+      })
+    : null;
 
   return (
     <SettingsPageContainer>
@@ -367,7 +393,6 @@ export function TeamsSettings() {
                   if (typeof value === "string") {
                     setSelectedEnvironmentIdOverride(value as EnvironmentId);
                     setMyPseudoDraft(null);
-                    setLatestInvite(null);
                   }
                 }}
               >

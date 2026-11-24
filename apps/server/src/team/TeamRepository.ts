@@ -168,18 +168,28 @@ const mapTurnMetaRow = (row: TurnMetaRow): TeamTurnAttribution => ({
   createdAt: row.created_at,
 });
 
-const isUniqueConstraintError = (cause: unknown): boolean => {
+const errorChainIncludes = (cause: unknown, needle: string): boolean => {
   const seen = new Set<unknown>();
-  let current: unknown = cause;
-  while (typeof current === "object" && current !== null && !seen.has(current)) {
+  const stack: Array<unknown> = [cause];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current !== "object" || current === null || seen.has(current)) continue;
     seen.add(current);
     const message =
       "message" in current && typeof current.message === "string" ? current.message : "";
-    if (message.includes("UNIQUE constraint failed")) return true;
-    current = "cause" in current ? current.cause : "reason" in current ? current.reason : null;
+    if (message.includes(needle)) return true;
+    if ("cause" in current && current.cause !== undefined && current.cause !== null) {
+      stack.push(current.cause);
+    }
+    if ("reason" in current && current.reason !== undefined && current.reason !== null) {
+      stack.push(current.reason);
+    }
   }
   return false;
 };
+
+const isUniqueConstraintError = (cause: unknown): boolean =>
+  errorChainIncludes(cause, "UNIQUE constraint failed");
 
 export class TeamRepository extends Context.Service<
   TeamRepository,
@@ -336,8 +346,7 @@ const make = Effect.gen(function* () {
           Effect.mapError((cause) => {
             if (isTeamAlreadyConfiguredError(cause)) return cause;
             if (isUniqueConstraintError(cause)) {
-              const message = String(cause);
-              if (message.includes("team_workspaces")) {
+              if (errorChainIncludes(cause, "team_workspaces")) {
                 return new TeamAlreadyConfiguredError({});
               }
               return new TeamPseudoAlreadyTakenError({ pseudo: input.owner.pseudo });

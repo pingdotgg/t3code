@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/reactivity";
 
 import {
@@ -247,6 +248,16 @@ export const redeemTeamInviteAndConnectEffect = Effect.fn("clientRuntime.team.re
       }),
     };
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+    const existingEntry = (yield* SubscriptionRef.get(registry.entries)).get(
+      descriptor.environmentId,
+    );
+    if (existingEntry !== undefined && existingEntry.target._tag === "PrimaryConnectionTarget") {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail:
+          "This team server is already managed locally by this app and cannot be overwritten with a team invite.",
+      });
+    }
     // Reject spoofed addresses before spending a one-time team invite token.
     yield* registry.assertKnownAddress({
       ...provisionalRoute,

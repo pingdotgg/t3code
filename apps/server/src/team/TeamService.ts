@@ -658,17 +658,23 @@ const make = Effect.gen(function* () {
         logAndMapInternalError("redeemInvite.bindSession"),
       );
 
-    const updatedInvite = yield* repository
-      .getInviteById(invite.id)
-      .pipe(Effect.mapError(toInternalError));
+    const updatedInvite = yield* repository.getInviteById(invite.id).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.redeemInvite post-commit invite read failed", {
+          inviteId: invite.id,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamRepository.StoredTeamInviteRecord>()),
+    );
     yield* publish({ version: 1, type: "memberUpserted", payload: member });
-    if (Option.isSome(updatedInvite)) {
-      yield* publish({
-        version: 1,
-        type: "inviteUpserted",
-        payload: stripInviteHash(updatedInvite.value),
-      });
-    }
+    yield* publish({
+      version: 1,
+      type: "inviteUpserted",
+      payload: Option.isSome(updatedInvite)
+        ? stripInviteHash(updatedInvite.value)
+        : { ...stripInviteHash(invite), uses: invite.uses + 1 },
+    });
 
     const expiresInSeconds = Math.max(
       1,

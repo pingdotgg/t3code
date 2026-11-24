@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
@@ -24,6 +25,7 @@ import type * as ThreadManagement from "../../../orchestration-v2/ThreadManageme
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as TeamService from "../../../team/TeamService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -211,6 +213,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               creationSource: "mcp",
             })
             .pipe(Effect.mapError(dispatchFailure));
+          const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+          if (Option.isSome(maybeTeam)) {
+            yield* maybeTeam.value.recordThreadInheritedFromParent({
+              parentThreadId: projection.thread.id,
+              threadId: targetThreadId,
+            });
+          }
           return { sequence: result.sequence, targetThreadId };
         }),
     ),

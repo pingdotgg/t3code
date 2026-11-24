@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type TeamStateStreamEvent,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -265,6 +266,11 @@ describe("TeamService", () => {
       const failures = [exitA, exitB].filter((exit) => exit._tag === "Failure");
       expect(successes).toHaveLength(1);
       expect(failures).toHaveLength(1);
+      const failureError = Cause.squash(failures[0]!.cause);
+      expect(failureError).toMatchObject({
+        _tag: "TeamOperationError",
+        code: "already_configured",
+      });
     }).pipe(Effect.provide(makeTestLayer())),
   );
 

@@ -115,6 +115,7 @@ import {
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
@@ -3409,6 +3410,16 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
+              const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+              if (Option.isSome(maybeTeam)) {
+                yield* maybeTeam.value.recordThreadInheritedFromParent({
+                  parentThreadId: scope.thread.threadId,
+                  threadId,
+                  ...(initialMessage !== undefined
+                    ? { turnId: `msg:${initialMessage.messageId}` }
+                    : {}),
+                });
+              }
               // A receipt can appear after target resolution; use the committed thread's selection.
               const resolvedModelSelection = (yield* threadManagement
                 .getThreadRecords(threadId, [])
