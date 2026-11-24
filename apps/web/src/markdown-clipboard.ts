@@ -245,14 +245,9 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
   template.innerHTML = html;
   const fragment = template.content;
   const destinations = new Map<Node, string>();
-  for (const element of fragment.querySelectorAll("script, style, [hidden], [style]")) {
-    if (
-      element.matches("script, style, [hidden]") ||
-      ((element instanceof HTMLElement || element instanceof SVGElement) &&
-        (element.style.display === "none" || element.style.visibility === "hidden"))
-    ) {
-      element.remove();
-    }
+  for (const element of fragment.querySelectorAll("script, style, [hidden]")) element.remove();
+  for (const element of fragment.querySelectorAll<HTMLElement | SVGElement>("[style]")) {
+    if (element.style.display === "none" || element.style.visibility === "hidden") element.remove();
   }
   for (const anchor of fragment.querySelectorAll("a[href]")) {
     const href = anchor.getAttribute("href")?.trim() ?? "";
