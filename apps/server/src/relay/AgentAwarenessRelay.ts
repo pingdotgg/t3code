@@ -118,6 +118,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.pin-reordered":
     case "thread.active-reordered":
     case "thread.tags-updated":
+    case "thread.role-set": // fork: roles
     case "thread.visited":
     case "thread.visit-recorded":
     case "thread.marked-unread":

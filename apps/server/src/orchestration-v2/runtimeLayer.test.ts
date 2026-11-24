@@ -3800,6 +3800,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(taggedShell.updatedAt),
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
+      yield* orchestrator.dispatch({
+        type: "thread.role.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-role-set"),
+        threadId,
+        roleId: "needs-you",
+      });
+      const roleShell = shellOf(yield* orchestrator.getShellSnapshot());
+      assert.equal(roleShell.roleId, "needs-you");
+      assert.equal(
+        DateTime.toEpochMillis(roleShell.updatedAt),
+        DateTime.toEpochMillis(untaggedShell.updatedAt),
+      );
 
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
@@ -3822,6 +3834,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(autoSettledProjection.thread.settledOverride, "settled");
       assert.isNull(autoSettledProjection.thread.activeOrderKey);
+      assert.equal(autoSettledProjection.thread.roleId, "needs-you");
+      assert.equal(shellOf(yield* orchestrator.getShellSnapshot()).roleId, "needs-you");
+      yield* orchestrator.dispatch({
+        type: "thread.role.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-role-clear"),
+        threadId,
+        roleId: null,
+      });
+      assert.isUndefined(shellOf(yield* orchestrator.getShellSnapshot()).roleId);
       yield* orchestrator.dispatch({
         type: "thread.unsettle",
         commandId: CommandId.make("runtime-layer-lifecycle-auto-unsettle"),

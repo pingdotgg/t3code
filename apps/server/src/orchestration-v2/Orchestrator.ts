@@ -659,6 +659,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "thread.role.set": // fork: roles
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -4405,6 +4406,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.tag.set"
+          | "thread.role.set" // fork: roles
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -5119,6 +5121,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : current.filter((tag) => tag !== command.tag),
           };
         }
+        // fork: roles
+        case "thread.role.set":
+          return { ...thread, roleId: command.roleId };
         case "thread.mark-unread": {
           // Retire the wake before rewinding the visit, preserving its settlement timer.
           const snoozeExpired =
@@ -5587,6 +5592,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.tag.set":
           return "thread.tags-updated" as const;
+        case "thread.role.set": // fork: roles
+          return "thread.role-set" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
@@ -16009,6 +16016,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.tag.set":
+      case "thread.role.set": // fork: roles
       case "thread.mark-unread":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
