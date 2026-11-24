@@ -2437,7 +2437,14 @@ async fn older_settled_threads_page_and_trim() {
     let (engine, _) = open(&db);
     for n in 0..30 {
         let id = format!("s{n:02}");
-        dispatch(&engine, create(&id, &format!("c{id}"))).await;
+        let mut command = create(&id, &format!("c{id}"));
+        // One older settled thread and one in the shell share a title word.
+        match n {
+            3 => command["title"] = json!("Osprey release notes"),
+            27 => command["title"] = json!("Osprey launch"),
+            _ => {}
+        }
+        dispatch(&engine, command).await;
         dispatch(
             &engine,
             json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
@@ -2459,6 +2466,37 @@ async fn older_settled_threads_page_and_trim() {
         "2026-01-01T00:00:05.000Z"
     );
     assert_eq!(snapshot["olderSettled"]["counts"][0]["count"], 5);
+
+    // The phone's HTTP reload trims as the socket does, and a current cursor keeps its rows.
+    let query = |omit: bool, resume_from: Option<u64>| crate::HttpShellQuery {
+        omit_idle_subagents: omit,
+        omit_older_settled: omit,
+        resume_from,
+    };
+    let http = engine.http_shell_snapshot(query(true, None)).await.unwrap();
+    assert_eq!(http, Some(snapshot.clone()));
+    let full = engine
+        .http_shell_snapshot(query(false, None))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(full["threads"].as_array().unwrap().len(), 30);
+    assert!(full.get("olderSettled").is_none());
+    let sequence = snapshot["snapshotSequence"].as_u64().unwrap();
+    assert_eq!(
+        engine
+            .http_shell_snapshot(query(true, Some(sequence)))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        engine
+            .http_shell_snapshot(query(true, Some(sequence + 1)))
+            .await
+            .unwrap(),
+        Some(snapshot.clone())
+    );
 
     let page = call(
         &engine,
@@ -2482,6 +2520,268 @@ async fn older_settled_threads_page_and_trim() {
     .await
     .unwrap();
     assert_eq!(counts["counts"][0]["count"], 5);
+
+    // The scheduled-task picker searches the omitted thread by title (`searchOlderSettled`):
+    // only older settled rows come back, in the requested projects.
+    let search = |query: &str, projects: Value, titles_only: bool| {
+        let engine = &engine;
+        let query = query.to_owned();
+        async move {
+            call(
+                engine,
+                "orchestration.searchThreads",
+                json!({"query": query, "titlesOnly": titles_only, "projectIds": projects,
+                       "olderSettledBefore": "2026-01-01T00:00:05.000Z"}),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let ids = |found: &Value| -> Vec<Value> {
+        found["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].clone())
+            .collect()
+    };
+    let found = search("osprey release", json!([project_id()]), true).await;
+    assert_eq!(ids(&found), [json!("s03")]);
+    assert_eq!(found["matches"], json!([]));
+    assert!(found["snapshotSequence"].as_u64().is_some());
+    assert_eq!(
+        ids(&search("Osprey", json!([project_id()]), true).await),
+        [json!("s03")]
+    );
+    assert!(ids(&search("osprey", json!(["another-project"]), true).await).is_empty());
+    // A mixed query still searches messages; without the cutoff no rows come back.
+    let mixed = search("osprey notes", json!([project_id()]), false).await;
+    assert_eq!(ids(&mixed), [json!("s03")]);
+    let plain = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "osprey"}),
+    )
+    .await
+    .unwrap();
+    assert!(plain.get("threads").is_none());
+}
+
+async fn settle_threads(engine: &SqliteEngine, ids: impl IntoIterator<Item = String>) {
+    for (n, id) in ids.into_iter().enumerate() {
+        dispatch(engine, create(&id, &format!("c{id}"))).await;
+        dispatch(
+            engine,
+            json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
+                   "settledAt": format!("2026-01-01T00:00:{n:02}.000Z")}),
+        )
+        .await;
+    }
+}
+
+fn trimmed_query(resume_from: Option<u64>) -> crate::HttpShellQuery {
+    crate::HttpShellQuery {
+        omit_idle_subagents: true,
+        omit_older_settled: true,
+        resume_from,
+    }
+}
+
+/// The trimmed shell over the socket, which the HTTP route must match.
+async fn trimmed_shell(engine: &SqliteEngine) -> Value {
+    let mut shell = engine
+        .subscribe_shell(
+            from_json(json!({"omitOlderSettled": true, "omitIdleSubagents": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let snapshot = next(&mut shell).await["snapshot"].clone();
+    let http = engine
+        .http_shell_snapshot(trimmed_query(None))
+        .await
+        .unwrap();
+    assert_eq!(http, Some(snapshot.clone()), "HTTP and the socket agree");
+    snapshot
+}
+
+fn shell_ids(snapshot: &Value) -> Vec<String> {
+    snapshot["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// `shellTrimFacts`: with fewer than 25 settled threads the oldest is the cut, so none is older.
+#[tokio::test(flavor = "current_thread")]
+async fn a_small_project_keeps_every_settled_thread() {
+    for (settled, shown, older) in [(1, 1, 0), (24, 24, 0), (25, 25, 0), (26, 25, 1)] {
+        let db = TempDb::new(&format!("settled-small-{settled}"));
+        let (engine, _) = open(&db);
+        settle_threads(&engine, (0..settled).map(|n| format!("s{n:02}"))).await;
+        let snapshot = trimmed_shell(&engine).await;
+        assert_eq!(shell_ids(&snapshot).len(), shown, "{settled} settled");
+        let counted: u64 = snapshot["olderSettled"]["counts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["count"].as_u64())
+            .sum();
+        assert_eq!(counted, older, "{settled} settled");
+        let oldest_kept = 0.max(settled as i64 - 25);
+        assert_eq!(
+            snapshot["olderSettled"]["before"],
+            format!("2026-01-01T00:00:{oldest_kept:02}.000Z"),
+            "{settled} settled"
+        );
+    }
+}
+
+/// `remoteTaskParentIds`: the owner of a task in a linked environment stays in a trimmed shell,
+/// an idle subagent or an older settled thread alike.
+#[tokio::test(flavor = "current_thread")]
+async fn the_owner_of_a_remote_task_stays_in_a_trimmed_shell() {
+    let db = TempDb::new("settled-remote");
+    let (engine, _) = open(&db);
+    settle_threads(&engine, (0..26).map(|n| format!("s{n:02}"))).await;
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, delegate("d1", "look around", None)).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    let before = shell_ids(&trimmed_shell(&engine).await);
+    assert!(!before.contains(&"s00".to_owned()));
+    assert!(!before.contains(&child.to_owned()));
+    for owner in ["s00", child] {
+        let row = json!({"id": format!("node:remote:{owner}"), "threadId": owner,
+            "origin": "app_owned", "childThreadId": null, "status": "running",
+            "remoteChild": {"environmentId": "env:b", "threadId": "thread:b", "label": "B"}});
+        let inner = engine.inner().clone();
+        let owner = owner.to_owned();
+        inner
+            .write(move |tx| {
+                tx.append(crate::store::Draft::new(&owner, "subagent.updated", row))
+                    .map(|_| ())
+            })
+            .await
+            .unwrap();
+    }
+    let after = shell_ids(&trimmed_shell(&engine).await);
+    assert!(after.contains(&"s00".to_owned()), "{after:?}");
+    assert!(after.contains(&child.to_owned()), "{after:?}");
+}
+
+async fn head_sequence(engine: &SqliteEngine) -> u64 {
+    engine.shell_snapshot().await.unwrap()["snapshotSequence"]
+        .as_u64()
+        .unwrap()
+}
+
+/// `canResumeShellFrom`: at most 1,000 events and 8 MiB of them behind, for the socket and
+/// the HTTP route alike.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shell_resumes_at_most_a_thousand_events_back() {
+    let db = TempDb::new("shell-resume-cap");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let append = |count: usize, output: String| {
+        let inner = engine.inner().clone();
+        async move {
+            inner
+                .write(move |tx| {
+                    for n in 0..count {
+                        let item = json!({"id": format!("turn-item:x{n}"), "threadId": "t1",
+                            "runId": null, "nodeId": null, "providerThreadId": null,
+                            "providerTurnId": null, "nativeItemRef": null, "parentItemId": null,
+                            "ordinal": n, "status": "completed", "title": null, "startedAt": null,
+                            "completedAt": null, "updatedAt": "2026-01-01T00:00:00.000Z",
+                            "type": "command_execution", "input": "ls", "output": output});
+                        tx.append(crate::store::Draft::new("t1", "turn-item.updated", item))?;
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap()
+        }
+    };
+    let resumes = |after: u64| {
+        let engine = &engine;
+        async move {
+            let http = engine
+                .http_shell_snapshot(trimmed_query(Some(after)))
+                .await
+                .unwrap()
+                .is_none();
+            let mut shell = engine
+                .subscribe_shell(
+                    from_json(json!({"afterSequence": after, "httpSnapshotFallback": true,
+                        "requestCompletionMarker": true}))
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            let socket = next(&mut shell).await["kind"] != "snapshot-required";
+            assert_eq!(http, socket, "HTTP and the socket agree at {after}");
+            http
+        }
+    };
+    let start = head_sequence(&engine).await;
+    append(1001, String::new()).await;
+    let head = head_sequence(&engine).await;
+    assert_eq!(head - start, 1001);
+    assert!(resumes(head).await);
+    assert!(resumes(head - 1000).await);
+    assert!(!resumes(head - 1001).await);
+    // Nine events of 1 MiB each are past the budget.
+    append(9, "x".repeat(1024 * 1024)).await;
+    let big = head_sequence(&engine).await;
+    assert!(resumes(big - 7).await);
+    assert!(!resumes(big - 9).await);
+}
+
+/// `searchOlderSettled`: message hits outside the older settled rows do not use up its five.
+#[tokio::test(flavor = "current_thread")]
+async fn older_settled_search_skips_ineligible_message_hits() {
+    let db = TempDb::new("settled-search-eligible");
+    let (engine, _) = open(&db);
+    let ids: Vec<String> = (0..30).map(|n| format!("s{n:02}")).collect();
+    for id in &ids {
+        dispatch(&engine, create(id, &format!("c{id}"))).await;
+    }
+    // Oldest first: the older settled thread's hit ranks below five newer ones.
+    for id in ["s00", "s25", "s26", "s27", "s28", "s29"] {
+        dispatch(&engine, message(id, &format!("m{id}"), "zebrafish")).await;
+        run_to_end(&engine, id, &format!("run:{id}:1")).await;
+    }
+    for (n, id) in ids.iter().enumerate() {
+        dispatch(
+            &engine,
+            json!({"type": "thread.settle", "commandId": format!("x{id}"), "threadId": id,
+                   "settledAt": format!("2026-01-01T00:00:{n:02}.000Z")}),
+        )
+        .await;
+    }
+    let found = call(
+        &engine,
+        "orchestration.searchThreads",
+        json!({"query": "zebrafish", "olderSettledBefore": "2026-01-01T00:00:05.000Z"}),
+    )
+    .await
+    .unwrap();
+    let threads: Vec<_> = found["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].clone())
+        .collect();
+    assert_eq!(threads, [json!("s00")], "{}", found["matches"]);
 }
 
 #[tokio::test(flavor = "current_thread")]

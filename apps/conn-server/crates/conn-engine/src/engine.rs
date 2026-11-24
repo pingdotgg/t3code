@@ -1709,6 +1709,30 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn http_shell_snapshot(
+        &self,
+        options: crate::HttpShellQuery,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetShellSnapshotError>>> {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Option<Value>, String> {
+                    if let Some(after) = options.resume_from
+                        && store.shell_resumable(after)?
+                    {
+                        return Ok(None);
+                    }
+                    store
+                        .shell_snapshot_trimmed(
+                            options.omit_idle_subagents,
+                            options.omit_older_settled,
+                        )
+                        .map(Some)
+                })
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
     fn projects_snapshot(
         &self,
     ) -> BoxFuture<'_, Result<Vec<Value>, EngineError<GetShellSnapshotError>>> {
