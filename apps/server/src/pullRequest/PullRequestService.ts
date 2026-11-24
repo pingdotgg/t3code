@@ -59,6 +59,7 @@ import {
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerCandidatesInput,
+  type PullRequestLabelCandidatesInput,
   type PullRequestReviewerRequestInput,
   type PullRequestLabelCandidateList,
   type PullRequestLabelChangeInput,
@@ -315,7 +316,7 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReviewerRequestInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly labelCandidates: (
-      input: PullRequestRef,
+      input: PullRequestLabelCandidatesInput,
     ) => Effect.Effect<PullRequestLabelCandidateList, PullRequestError>;
     readonly setLabels: (
       input: PullRequestLabelChangeInput,
@@ -2873,6 +2874,7 @@ export const make = Effect.gen(function* () {
                     repository: project.repository,
                     host: project.host,
                     number: input.number,
+                    query: input.query,
                   }).pipe(Effect.mapError(toPullRequestError("labelCandidates"))),
           ),
         );

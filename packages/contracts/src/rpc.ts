@@ -257,6 +257,7 @@ import {
   PullRequestSummary,
   PullRequestReviewerCandidateList,
   PullRequestReviewerCandidatesInput,
+  PullRequestLabelCandidatesInput,
   PullRequestReviewerRequestInput,
   PullRequestLabelCandidateList,
   PullRequestLabelChangeInput,
@@ -1421,7 +1422,7 @@ const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequestsReques
 });
 
 const WsPullRequestsLabelCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsLabelCandidates, {
-  payload: PullRequestRef,
+  payload: PullRequestLabelCandidatesInput,
   success: PullRequestLabelCandidateList,
   error: PullRequestRpcError,
 });
