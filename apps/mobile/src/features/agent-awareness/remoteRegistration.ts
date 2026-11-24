@@ -162,6 +162,8 @@ interface DeviceRegistrationInput {
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
   readonly preferencesOverride?: Partial<Preferences>;
+  /** Send even when the saved record matches, because the relay reported the device missing. */
+  readonly force?: boolean;
 }
 
 function mergeAgentAwarenessRegistrationPreferences(
@@ -390,6 +392,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
 const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWithRelay")(function* (
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
+  force = false,
 ): Effect.fn.Return<void, AgentAwarenessRegistrationError, AgentAwarenessRegistrationServices> {
   if (expectedGeneration !== deviceRegistrationGeneration) {
     return;
@@ -432,6 +435,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     (androidDeviceReplayedAt === null ||
       now - androidDeviceReplayedAt >= ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS);
   if (
+    !force &&
     persisted &&
     persisted.identity === identity &&
     persisted.signature === signature &&
@@ -765,6 +769,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       preferences,
     }),
     expectedGeneration,
+    input.force,
   );
 });
 
@@ -989,6 +994,7 @@ const registerLiveActivityPushTokenValue = Effect.fn(
   ) {
     return true;
   }
+  const generation = deviceRegistrationGeneration;
   const storage = yield* MobileStorage.MobileStorage;
   const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
     Effect.mapError(
@@ -1005,12 +1011,17 @@ const registerLiveActivityPushTokenValue = Effect.fn(
   });
   const registered = yield* register.pipe(
     // The relay pruned this device, so the saved record no longer proves it is registered.
-    Effect.catchIf(isDeviceNotRegisteredError, () =>
-      storage.clearAgentAwarenessRegistrationRecord.pipe(
-        Effect.ignore,
-        Effect.andThen(registerDevice()),
-        Effect.andThen(register),
-      ),
+    // A sign-out or account switch meanwhile must not re-send this token under the new account.
+    Effect.catchIf(isDeviceNotRegisteredError, (error) =>
+      generation !== deviceRegistrationGeneration
+        ? Effect.fail(error)
+        : registerDevice({ force: true }, generation).pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                generation === deviceRegistrationGeneration ? register : Effect.fail(error),
+              ),
+            ),
+          ),
     ),
   );
   if (registered) {

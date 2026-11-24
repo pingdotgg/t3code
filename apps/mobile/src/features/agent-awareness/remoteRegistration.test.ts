@@ -253,10 +253,7 @@ const layerPersistenceTest = Layer.merge(
           try: () => saveAgentAwarenessRegistrationRecord(record),
           catch: storageFailure,
         }),
-      clearAgentAwarenessRegistrationRecord: Effect.tryPromise({
-        try: () => clearAgentAwarenessRegistrationRecord(),
-        catch: storageFailure,
-      }),
+      clearAgentAwarenessRegistrationRecord: unexpectedStorage(),
       loadRecentThreadShortcuts: unexpectedStorage(),
       saveRecentThreadShortcuts: unexpectedStorage,
     }),
