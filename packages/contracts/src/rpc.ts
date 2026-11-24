@@ -1038,8 +1038,8 @@ const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourc
   error: EnvironmentAuthorizationError,
 });
 
-// fork: roles
 const WsForkRolesListRpc = Rpc.make(WS_METHODS.forkRolesList, {
+  // fork: roles
   payload: Schema.Struct({}),
   success: ForkRolesListResult,
   error: EnvironmentAuthorizationError,
