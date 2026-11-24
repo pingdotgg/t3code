@@ -45,6 +45,13 @@ import {
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
@@ -480,6 +487,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const [selectedPublishProvider, setSelectedPublishProvider] =
     useState<SourceControlProviderKind | null>(null);
   const [publishRepositoryOverride, setPublishRepositoryOverride] = useState<string | null>(null);
+  const [selectedPublishHost, setSelectedPublishHost] = useState<string | null>(null);
   const [publishVisibility, setPublishVisibility] =
     useState<SourceControlRepositoryVisibility>("private");
   const [publishRemoteName, setPublishRemoteName] = useState("origin");
@@ -542,17 +550,30 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       ? offeredSelection
       : (firstReadyPublishProvider ?? offeredSelection ?? sourceControlClients.get(undefined).kind);
   const selectedPublishProviderReadiness = publishProviderReadiness(publishProvider);
-  const publishAccount = publishAccountByProvider.get(publishProvider) ?? null;
+  const currentPublishProvider = publishProviderOption(publishProvider);
+  const publishAuth = publishSourceControlProviders.find(
+    (provider) => provider.kind === publishProvider,
+  )?.auth;
+  // Only hosts the provider would actually publish to can be picked.
+  const publishHostAccounts = new Map<string, string>();
+  for (const entry of publishAuth?.accounts ?? []) {
+    if (
+      entry.authenticated &&
+      !publishHostAccounts.has(entry.host) &&
+      currentPublishProvider.definition.publishHost(entry.host) === entry.host
+    ) {
+      publishHostAccounts.set(entry.host, entry.account);
+    }
+  }
+  const signedInPublishHost =
+    selectedPublishHost !== null && publishHostAccounts.has(selectedPublishHost)
+      ? selectedPublishHost
+      : Option.getOrNull(publishAuth?.host ?? Option.none());
+  const publishHost = currentPublishProvider.definition.publishHost(signedInPublishHost);
+  const publishAccount =
+    publishHostAccounts.get(publishHost) ?? publishAccountByProvider.get(publishProvider) ?? null;
   const publishRepositoryPrefill = publishAccount ? `${publishAccount}/` : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
-  const currentPublishProvider = publishProviderOption(publishProvider);
-  const publishHost = currentPublishProvider.definition.publishHost(
-    Option.getOrNull(
-      sourceControlDiscovery.data?.sourceControlProviders.find(
-        (provider) => provider.kind === publishProvider,
-      )?.auth.host ?? Option.none(),
-    ),
-  );
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
   const publishWizardSteps = [gt("Provider"), gt("Repository"), gt("Summary")] as const;
@@ -585,6 +606,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
         provider: publishProvider,
         repository: publishRepository.trim(),
         visibility: publishVisibility,
+        ...(publishHostAccounts.has(publishHost) ? { host: publishHost } : {}),
         remoteName: publishRemoteName.trim() || "origin",
         protocol: publishProtocol,
       });
@@ -607,6 +629,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const resetState = () => {
     setPublishRemoteName("origin");
     setPublishRepositoryOverride(null);
+    setSelectedPublishHost(null);
     setPublishWizardStep(0);
     setPublishAdvancedOpen(false);
     setPublishError(null);
@@ -655,6 +678,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               value={publishProvider}
               onValueChange={(value) => {
                 setSelectedPublishProvider(value as SourceControlProviderKind);
+                setSelectedPublishHost(null);
                 setPublishRepositoryOverride(null);
               }}
               aria-labelledby="publish-provider-cards-label"
@@ -723,6 +747,39 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           </div>
 
           <div className={cn("space-y-5", publishWizardStep !== 1 && "hidden")}>
+            {publishHostAccounts.size > 1 ? (
+              <div className="space-y-2">
+                <label
+                  htmlFor="publish-repository-host"
+                  className="text-xs font-medium text-foreground"
+                >
+                  <T context="server a repository is created on">Host</T>
+                </label>
+                <Select
+                  value={publishHost}
+                  items={Object.fromEntries(
+                    [...publishHostAccounts.keys()].map((host) => [host, host]),
+                  )}
+                  onValueChange={(value) => {
+                    if (typeof value !== "string") return;
+                    setSelectedPublishHost(value);
+                    setPublishRepositoryOverride(null);
+                  }}
+                  disabled={publishRepositoryAction.isPending}
+                >
+                  <SelectTrigger id="publish-repository-host">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {[...publishHostAccounts.keys()].map((host) => (
+                      <SelectItem key={host} value={host}>
+                        {host}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <label
                 htmlFor="publish-repository-path"

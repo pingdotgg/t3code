@@ -337,6 +337,7 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
+      readonly host?: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
     readonly createMergeRequest: (input: {
@@ -767,10 +768,13 @@ export const make = Effect.gen(function* () {
     }),
     createRepository: Effect.fn("GitLabCli.createRepository")(function (input) {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
+      // Without a host, glab picks one from the checkout's remotes or its own default.
+      const hostArgs = input.host === undefined ? [] : ["--hostname", input.host];
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
         ? execute({
             cwd: input.cwd,
-            args: ["api", `namespaces/${encodeURIComponent(namespacePath)}`],
+            host: input.host,
+            args: ["api", ...hostArgs, `namespaces/${encodeURIComponent(namespacePath)}`],
           }).pipe(
             Effect.map((result) => result.stdout.trim()),
             Effect.flatMap((raw) =>
@@ -795,8 +799,10 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((resolvedNamespaceId) =>
           execute({
             cwd: input.cwd,
+            host: input.host,
             args: [
               "api",
+              ...hostArgs,
               "--method",
               "POST",
               "projects",

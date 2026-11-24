@@ -538,6 +538,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         repository: input.repository.trim(),
         visibility: input.visibility,
+        ...(input.host === undefined ? {} : { host: input.host }),
       });
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const remoteName = yield* git.ensureRemote({

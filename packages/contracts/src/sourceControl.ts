@@ -87,6 +87,8 @@ export const SourceControlPublishRepositoryInput = Schema.Struct({
   provider: SourceControlProviderKind,
   repository: TrimmedNonEmptyString,
   visibility: SourceControlRepositoryVisibility,
+  /** The signed-in host to create the repository on. Without it, the provider's own default. */
+  host: Schema.optional(TrimmedNonEmptyString),
   remoteName: Schema.optional(TrimmedNonEmptyString),
   protocol: Schema.optional(SourceControlCloneProtocol),
 });

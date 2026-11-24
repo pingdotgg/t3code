@@ -273,6 +273,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     provider: SourceControlProviderKind;
     repository: string;
     visibility: SourceControlRepositoryVisibility;
+    host?: string;
     remoteName: string;
     protocol: SourceControlCloneProtocol;
   }) => {

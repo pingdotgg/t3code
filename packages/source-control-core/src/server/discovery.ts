@@ -43,8 +43,14 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
-  /** Asked in order while the answer is signed out; one counts only when it finds a sign-in. */
-  readonly authRetryArgs?: (environment: NodeJS.ProcessEnv) => ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Asked in order after `authArgs`; one counts only when it finds a sign-in. After a signed-in
+   * first answer, a retry only adds the accounts it lists.
+   */
+  readonly authRetryArgs?: (
+    environment: NodeJS.ProcessEnv,
+    first: SourceControlProviderAuth,
+  ) => ReadonlyArray<ReadonlyArray<string>>;
   /** Environment overrides for one auth or remote probe. */
   readonly probeEnv?: (
     args: ReadonlyArray<string>,
@@ -298,10 +304,11 @@ export function probeSourceControlProvider(input: {
   const auth = Effect.gen(function* () {
     const environment = yield* HostProcess.Environment;
     const first = yield* runAuth(spec.authArgs, environment);
-    if (first.status !== "unauthenticated") return first;
-    for (const retryArgs of spec.authRetryArgs?.(environment) ?? []) {
+    for (const retryArgs of spec.authRetryArgs?.(environment, first) ?? []) {
       const retry = yield* runAuth(retryArgs, environment);
-      if (retry.status === "authenticated") return retry;
+      if (retry.status !== "authenticated") continue;
+      if (first.status !== "authenticated") return retry;
+      return retry.accounts === undefined ? first : { ...first, accounts: retry.accounts };
     }
     return first;
   });

@@ -58,7 +58,8 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
 
 function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
-  const authenticatedHost = findAuthenticatedGitLabHost(parseGitLabAuthStatusHosts(output));
+  const hosts = parseGitLabAuthStatusHosts(output);
+  const authenticatedHost = findAuthenticatedGitLabHost(hosts);
   const account =
     authenticatedHost?.account ??
     matchFirst(output, [
@@ -69,7 +70,22 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   const host = authenticatedHost?.host ?? parseCliHost(output);
 
   if (account) {
-    return providerAuth({ status: "authenticated", account, host });
+    const accounts = hosts.flatMap((entry) =>
+      entry.account === null
+        ? []
+        : [
+            {
+              host: entry.host,
+              account: entry.account,
+              active: entry.host === host,
+              authenticated: true,
+            },
+          ],
+    );
+    return {
+      ...providerAuth({ status: "authenticated", account, host }),
+      ...(accounts.length === 0 ? {} : { accounts }),
+    };
   }
 
   if (input.exitCode !== 0) {
@@ -146,16 +162,22 @@ export const discovery = {
   versionArgs: ["--version"],
   // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com; older
   // glab lists every host and rejects --all. --all waits on every host, so ask it only after
-  // the current host reports signed out.
+  // the current host reports signed out, or to list the other hosts publishing can pick from.
   authArgs: ["auth", "status"],
   // A probe that names no host covers every host glab has a login for, so it runs without the
   // environment token; the default host is asked with it last, by name.
-  authRetryArgs: (environment) => [
-    ["auth", "status", "--all"],
-    ...(GitLabCli.hasEnvironmentToken(environment)
-      ? [["auth", "status", "--hostname", GitLabCli.defaultHost(environment)]]
-      : []),
-  ],
+  authRetryArgs: (environment, first) => {
+    if (first.status === "unauthenticated") {
+      return [
+        ["auth", "status", "--all"],
+        ...(GitLabCli.hasEnvironmentToken(environment)
+          ? [["auth", "status", "--hostname", GitLabCli.defaultHost(environment)]]
+          : []),
+      ];
+    }
+    const onlyHost = first.accounts?.length === 1 ? first.accounts[0]?.host : undefined;
+    return onlyHost !== undefined && onlyHost !== "gitlab.com" ? [["auth", "status", "--all"]] : [];
+  },
   probeEnv: (args, environment) => {
     const named = args.indexOf("--hostname");
     return named !== -1 &&

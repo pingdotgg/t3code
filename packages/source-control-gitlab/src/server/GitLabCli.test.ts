@@ -37,6 +37,45 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect("creates the repository on the host the caller picked", () =>
+    Effect.gen(function* () {
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput(JSON.stringify({ id: 7 }))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              JSON.stringify({
+                path_with_namespace: "group/project",
+                web_url: "https://git.example.com/group/project",
+                http_url_to_repo: "https://git.example.com/group/project.git",
+                ssh_url_to_repo: "git@git.example.com:group/project.git",
+              }),
+            ),
+          ),
+        );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.createRepository({
+        cwd: "/repo",
+        repository: "group/project",
+        visibility: "private",
+        host: "git.example.com",
+      });
+
+      const calls = mockedRun.mock.calls.map(([input]) => input);
+      assert.deepStrictEqual(
+        calls.map((input) => input.args.slice(0, 3)),
+        [
+          ["api", "--hostname", "git.example.com"],
+          ["api", "--hostname", "git.example.com"],
+        ],
+      );
+      for (const input of calls) {
+        assert.strictEqual(input.env?.GITLAB_HOST, "git.example.com");
+      }
+    }),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

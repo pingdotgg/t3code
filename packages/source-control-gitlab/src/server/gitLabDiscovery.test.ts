@@ -54,7 +54,8 @@ ${defaultHostOnly}`;
   }),
 );
 
-it.effect("skips --all when the current glab host is signed in", () =>
+// glab already lists every host when the current one is gitlab.com.
+it.effect("skips --all when glab's current host is gitlab.com and signed in", () =>
   Effect.gen(function* () {
     const asked: Array<ReadonlyArray<string>> = [];
     const item = yield* probeSourceControlProvider({
@@ -66,8 +67,8 @@ it.effect("skips --all when the current glab host is signed in", () =>
           return Effect.succeed(
             args[0] === "--version"
               ? processOutput("glab 1.124.0\n")
-              : processOutput(`gitlab.example.test
-  ✓ Logged in to gitlab.example.test as gitlab-user
+              : processOutput(`gitlab.com
+  ✓ Logged in to gitlab.com as gitlab-user
 `),
           );
         },
@@ -75,6 +76,35 @@ it.effect("skips --all when the current glab host is signed in", () =>
     });
     assert.strictEqual(item.auth.status, "authenticated");
     assert.isFalse(asked.some((args) => args.includes("--all")));
+  }),
+);
+
+it.effect("lists every signed-in host when glab's current host is self-managed", () =>
+  Effect.gen(function* () {
+    const currentHostOnly = `git.example.com
+  ✓ Logged in to git.example.com as selfhosted-user
+`;
+    const allHosts = `gitlab.com
+  ✓ Logged in to gitlab.com as gitlab-user
+${currentHostOnly}`;
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ args }) =>
+          Effect.succeed(
+            args[0] === "--version"
+              ? processOutput("glab 1.124.0\n")
+              : processOutput(args.includes("--all") ? allHosts : currentHostOnly),
+          ),
+      },
+    });
+    assert.deepStrictEqual(item.auth.host, Option.some("git.example.com"));
+    assert.deepStrictEqual(item.auth.account, Option.some("selfhosted-user"));
+    assert.deepStrictEqual(
+      item.auth.accounts?.map((entry) => entry.host),
+      ["gitlab.com", "git.example.com"],
+    );
   }),
 );
 

@@ -232,6 +232,8 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
+      /** The signed-in host to create it on. Without it, the provider's default host. */
+      readonly host?: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
