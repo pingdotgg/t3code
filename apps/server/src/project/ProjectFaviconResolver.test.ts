@@ -194,14 +194,35 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          `<link rel="icon" href="data:image/png;base64,${"A".repeat(5000)}">
+<link rel="icon" href="https://cdn.example.com/icon.svg">
+<link rel="icon" href="/missing.svg">
+<link rel="icon" href="//cdn.example.com/icon.svg">
+<link rel="icon" href="/index.html/icon.svg">
+<link rel="icon" href="/brand/logo.svg">
+<link rel="icon" href="/brand/late.svg">`,
+        );
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+        yield* writeTextFile(cwd, "public/brand/late.svg", "<svg>late</svg>");
+        yield* writeTextFile(cwd, "public/cdn.example.com/icon.svg", "<svg>cdn</svg>");
         yield* writeTextFile(cwd, "web/favicon.png", "flutter");
 
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+
+        // A cached icon whose `public` folder became a file falls back instead of failing.
+        yield* (yield* FileSystem.FileSystem).remove((yield* Path.Path).join(cwd, "public"), {
+          recursive: true,
+        });
+        yield* writeTextFile(cwd, "public", "not a folder");
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          (yield* Path.Path).join(cwd, "web", "favicon.png"),
+        );
 
         const flutterCwd = yield* makeTempDir;
         yield* writeTextFile(flutterCwd, "web/favicon.png", "flutter");
@@ -284,6 +305,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
   head: () => ({
     links: [
       { rel: "stylesheet", href: "/app.css" },
+      { rel: "icon", href: "https://cdn.example.com/icon.svg" },
       { rel: "icon shortcut", href: "/brand/logo.svg" },
     ],
   }),
