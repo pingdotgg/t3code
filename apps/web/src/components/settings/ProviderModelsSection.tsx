@@ -471,8 +471,10 @@ export function ProviderModelsSection({
               if (error) setError(null);
             }}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === "Escape") {
                 event.preventDefault();
+                event.stopPropagation();
                 cancelAdd();
                 return;
               }

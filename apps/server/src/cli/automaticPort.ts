@@ -1,3 +1,4 @@
+import { listensOnLoopback } from "@t3tools/shared/hostClassification";
 import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -44,14 +45,17 @@ export const make = Effect.gen(function* () {
     return new Set(listeners.map((listener) => listener.port));
   }).pipe(Effect.orElseSucceed(() => null));
 
-  return Effect.fn("automaticPort.select")(function* (preferred: number) {
-    if (!(yield* isWsl)) return yield* net.findAvailablePort(preferred);
+  return Effect.fn("automaticPort.select")(function* (preferred: number, host: string | undefined) {
+    // Windows localhost forwarding reaches only WSL listeners on loopback or a wildcard address.
+    if (!listensOnLoopback(host) || !(yield* isWsl)) {
+      return yield* net.findAvailablePort(preferred, host);
+    }
     const windows = yield* readWindowsHostListeners;
     if (windows === null) {
       yield* Effect.logWarning(
         "Could not list Windows TCP listeners from WSL; Windows may be unable to reach the selected port. Pass --port to choose one.",
       );
-      return yield* net.findAvailablePort(preferred);
+      return yield* net.findAvailablePort(preferred, host);
     }
     if (!windows.has(preferred) && (yield* net.isPortAvailableOnLoopback(preferred))) {
       return preferred;
