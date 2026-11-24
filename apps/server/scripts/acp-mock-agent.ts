@@ -2,7 +2,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 
@@ -18,7 +20,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
-const antigravityInitialThinking = process.env.T3_ACP_ANTIGRAVITY_INITIAL_THINKING;
+let antigravityInitialThinking: string | undefined;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -126,7 +128,7 @@ let currentModeId = antigravityProfile
     : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
-let currentReasoning = antigravityInitialThinking ?? "medium";
+let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let currentAgent = "";
@@ -520,6 +522,10 @@ function emitGrokKillTaskScenario(
 }
 
 const program = Effect.gen(function* () {
+  antigravityInitialThinking = Option.getOrUndefined(
+    yield* Config.option(Config.String("T3_ACP_ANTIGRAVITY_INITIAL_THINKING")),
+  );
+  currentReasoning = antigravityInitialThinking ?? currentReasoning;
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
