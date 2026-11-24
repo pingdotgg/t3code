@@ -359,12 +359,16 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let projectId: string | undefined;
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
+      // The 1.5 CLI's ChainedAuth still falls back to the OS keyring when the profile has no
+      // file token, even with SSH_CONNECTION set; keep the profile file first when present.
       const stored = (yield* fs.exists(cliTokenPath))
         ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
+        : yield* readKeyringSecret.pipe(
+            Effect.catchTags({
+              AntigravityKeyringError: (error) =>
+                input.authMethod === "oauth-personal" ? Effect.undefined : Effect.fail(error),
+            }),
+          );
       if (stored === undefined) {
         return makeUnavailableUsageLimits({
           checkedAt,
