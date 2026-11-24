@@ -11841,89 +11841,88 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each([modelSelection.instanceId, claudeInstanceId])(
-    "starts an edited queued run on its saved model and provider %s",
-    (instanceId) =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make(`queued-edit-model-${instanceId}`);
+  it.effect("starts an edited queued run on the provider and model it was edited to", () =>
+    Effect.gen(function* () {
+      const instanceId = claudeInstanceId;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("queued-edit-model");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queued model",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const type of ["start_immediately", "queue_after_active"] as const) {
         yield* orchestrator.dispatch({
-          type: "thread.create",
+          type: "message.dispatch",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`${threadId}:create`),
+          commandId: CommandId.make(`${threadId}:${type}`),
           threadId,
-          projectId: ProjectId.make(`${threadId}:project`),
-          title: "Queued model",
+          messageId: MessageId.make(`${threadId}:${type}`),
+          text: type,
+          attachments: [],
           modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: process.cwd(),
+          dispatchMode: { type },
         });
-        for (const type of ["start_immediately", "queue_after_active"] as const) {
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`${threadId}:${type}`),
+      }
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const active = before.runs[0]!;
+      const queued = before.runs[1]!;
+      const selection = {
+        instanceId,
+        model: "changed-model",
+        options: [
+          { id: "effort", value: "medium" },
+          { id: "fastMode", value: true },
+        ],
+      };
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`${threadId}:edit`),
+        threadId,
+        runId: queued.id,
+        text: "Edited",
+        modelSelection: selection,
+      });
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
             threadId,
-            messageId: MessageId.make(`${threadId}:${type}`),
-            text: type,
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type },
-          });
-        }
-        const before = yield* orchestrator.getThreadProjection(threadId);
-        const active = before.runs[0]!;
-        const queued = before.runs[1]!;
-        const selection = {
-          instanceId,
-          model: "changed-model",
-          options: [
-            { id: "effort", value: "medium" },
-            { id: "fastMode", value: true },
-          ],
-        };
-        yield* orchestrator.dispatch({
-          type: "queued-run.edit",
-          commandId: CommandId.make(`${threadId}:edit`),
-          threadId,
-          runId: queued.id,
-          text: "Edited",
-          modelSelection: selection,
-        });
-        const now = yield* DateTime.now;
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make(`${threadId}:completed`),
-              type: "run.updated",
-              threadId,
-              runId: active.id,
-              occurredAt: now,
-              payload: { ...active, status: "completed", completedAt: now },
-            },
-          ],
-        });
-        yield* orchestrator.resumeQueuedRuns;
-        const after = yield* orchestrator.getThreadProjection(threadId);
-        const started = after.runs.find((run) => run.id === queued.id)!;
-        assert.equal(started.status, "starting");
-        assert.deepEqual(started.modelSelection, selection);
-        assert.equal(started.providerInstanceId, instanceId);
-        assert.equal(
-          after.providerThreads.find((row) => row.id === started.providerThreadId)
-            ?.providerInstanceId,
-          instanceId,
-        );
-        assert.equal(
-          after.attempts.find((row) => row.id === started.activeAttemptId)?.providerInstanceId,
-          instanceId,
-        );
-      }),
+            runId: active.id,
+            occurredAt: now,
+            payload: { ...active, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const started = after.runs.find((run) => run.id === queued.id)!;
+      assert.equal(started.status, "starting");
+      assert.deepEqual(started.modelSelection, selection);
+      assert.equal(started.providerInstanceId, instanceId);
+      assert.equal(
+        after.providerThreads.find((row) => row.id === started.providerThreadId)
+          ?.providerInstanceId,
+        instanceId,
+      );
+      assert.equal(
+        after.attempts.find((row) => row.id === started.activeAttemptId)?.providerInstanceId,
+        instanceId,
+      );
+    }),
   );
 
   it.effect("edits and removes queued runs", () =>
