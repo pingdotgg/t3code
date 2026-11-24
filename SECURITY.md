@@ -75,7 +75,9 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   ordinary bug. That stops at what a shell as the server's OS user cannot reach:
   another client's device, what another scope guards by name (as
   `providers:manage` does for secret references), a managed-policy ceiling or
-  lock, and access that outlives the session's revocation.
+  lock, and access that outlives the session's revocation. Where the session
+  can obtain that shell, file contents are within its reach, so reading a file
+  by a route that does not check `filesystem:read` crosses no boundary.
 - The default grant includes `access:write`, so a full session can mint more
   pairing links and sessions. They appear in Sharing & access, and "revoke all
   others" removes them.
@@ -86,6 +88,13 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   it can reach these addresses.
 - `access-control-allow-origin: *` on the environment API. Auth is a bearer
   header, so the wildcard grants nothing a caller without a token lacks.
+- Rendered Markdown loads remote images and media from the host its author
+  names, so that host learns the reader's network address and when the content
+  was shown. A page in a preview tab can likewise start a download, as it can
+  in a browser. It is a finding when the request carries a credential or names
+  the environment it was rendered in, when it is made where the product says
+  none is made, or when the app does for the content what the content could
+  not do from where it runs (see 7 and 8).
 - An agent in full-access mode can do whatever the user can. Prompt injection
   that stays within the agent's mode is the provider's concern. One that lets
   it act above that mode is in scope (see 3).
@@ -140,6 +149,15 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   report it only if it breaks a documented promise or crosses a boundary above.
 - Follow the claim to its effect. A guard in a caller, a schema, or a version
   check elsewhere often means the cited lines cannot do what the report says.
+- Rate severity by what the actor must already hold, not by the worst outcome
+  named. Each of these lowers severity and none removes the finding: a narrow
+  grant the owner chose to issue (the default grant is full scope), another OS
+  account on the same machine, a host or service the owner connected turning
+  hostile, a change that must land in the moment between a person's look and
+  their action, a person acting on prepared input (opening a file, pasting,
+  following a link), and an effect limited to resource use or a stalled
+  client. A finding that needs none of these, or that yields a session, a
+  credential, or code execution above the actor's grant, keeps its severity.
 - Check the reported commit against `main`. Reports often trail fixes.
 - Prove a finding with a failing test at the lowest layer that shows it, as
   [Verifying](AGENTS.md#verifying) describes. Do not run a PoC against
