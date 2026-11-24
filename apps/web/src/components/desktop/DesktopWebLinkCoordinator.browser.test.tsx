@@ -13,6 +13,9 @@ const state = vi.hoisted(() => ({
   openLink: vi.fn(async () => undefined),
   navigate: vi.fn(async (): Promise<void> => undefined),
   openScratchProject: vi.fn(async () => null),
+  openThread: vi.fn(async (_ref: unknown): Promise<{ threadId: string } | null> => ({
+    threadId: "draft",
+  })),
   confirm: vi.fn(async (_message: string) => true),
   connectPairing: vi.fn(async (_input: { pairingUrl: string }) => ({ _tag: "Success" })),
   localEnvironmentDisabled: false,
@@ -75,6 +78,11 @@ vi.mock(import("../../hooks/useScratchProject"), async (original) => ({
   })) as never,
 }));
 
+vi.mock(import("../../hooks/useHandleNewThread"), async (original) => ({
+  ...(await original()),
+  useNewThreadHandler: (() => state.openThread) as never,
+}));
+
 vi.mock("../../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => state.preview,
 }));
@@ -106,6 +114,7 @@ import {
   selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
+import { toastManager } from "../ui/toast";
 import { DesktopWebLinkCoordinator } from "./DesktopWebLinkCoordinator";
 
 const discoverySettled = allReachableShellsLiveAtom as Atom.Writable<boolean>;
@@ -275,6 +284,31 @@ it("opens a plain commit the workspace lacks like any other delivered link", asy
   expect(state.openLink).not.toHaveBeenCalled();
   expect(useDiffPanelStore.getState().byThreadKey).toEqual({});
   expect(useRightPanelStore.getState().byThreadKey).toEqual({});
+});
+
+const projectLink = `t3code://new?environmentId=local&projectId=${projectId}`;
+
+it("starts a thread from a project link once discovery finds the project", async () => {
+  setup();
+  await using _coordinator = await mount(projectLink);
+  expect(state.openThread).not.toHaveBeenCalled();
+
+  state.projects = [project];
+  await act(async () => appAtomRegistry.set(discoverySettled, true));
+  await vi.waitFor(() =>
+    expect(state.openThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ environmentId, projectId }),
+    ),
+  );
+});
+
+it("reports a project link whose project no longer exists instead of drafting into it", async () => {
+  setup();
+  const addToast = vi.spyOn(toastManager, "add");
+  appAtomRegistry.set(discoverySettled, true);
+  await using _coordinator = await mount(projectLink);
+  await vi.waitFor(() => expect(addToast).toHaveBeenCalledOnce());
+  expect(state.openThread).not.toHaveBeenCalled();
 });
 
 it("adds the backend from a pairing link after the user confirms its host", async () => {

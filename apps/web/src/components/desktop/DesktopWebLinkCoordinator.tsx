@@ -214,12 +214,12 @@ export function DesktopWebLinkCoordinator() {
     // Siri and Spotlight open a project by starting a new thread in it.
     const projectTarget = newThreadProjectTarget(url);
     if (projectTarget !== null) {
-      const opened = await openThread(
-        scopeProjectRef(
-          projectTarget.environmentId as EnvironmentId,
-          projectTarget.projectId as ProjectId,
-        ),
+      const projectRef = scopeProjectRef(
+        projectTarget.environmentId as EnvironmentId,
+        projectTarget.projectId as ProjectId,
       );
+      // A stale index entry can name a project that no longer exists; never draft into it.
+      const opened = readProject(projectRef) === null ? null : await openThread(projectRef);
       if (!opened) reportFailure(url);
       return;
     }
