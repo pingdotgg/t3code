@@ -7,6 +7,7 @@ pub mod hex;
 pub mod hmac;
 pub mod ids;
 pub mod input;
+pub mod js_date;
 pub mod json;
 pub mod login_env;
 pub mod modes;

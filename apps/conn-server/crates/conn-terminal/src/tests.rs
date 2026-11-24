@@ -836,10 +836,90 @@ async fn close_idle_closes_only_shells_at_their_prompt() {
         })
         .await;
     assert!(open(&manager), "a failed inspection keeps the terminal");
-    // Once its echo is out, the shell at its prompt is idle.
+    // Once its echo is out, the shell at its prompt is idle, even when the poller clears a
+    // job that ended (a settle script's) while the table is read.
     output_contains(&mut typed, "Q").await;
-    manager.close_idle("t13", None).await;
+    let ended = (i32::MAX, "sleep".to_owned());
+    manager
+        .inner
+        .lock()
+        .sessions
+        .get_mut(&("t13".to_owned(), "typed".to_owned()))
+        .unwrap()
+        .job = Some(ended);
+    manager
+        .close_idle_with("t13", None, async {
+            manager.inner.poll().await;
+            processes::process_table().await
+        })
+        .await;
     assert!(!open(&manager), "the quiet shell at its prompt closes");
+
+    // A command in its own foreground group keeps the terminal, even when the table was read
+    // before it started (between the two commands of `make test && make deploy`).
+    let listed = |manager: &TerminalManager, thread: &str| {
+        manager.list().iter().any(|t| t.thread_id == thread)
+    };
+    let mut next = manager.attach(attach_input("t14", "next"), 1).unwrap();
+    assert!(matches!(next.next().await, E::Snapshot(_)));
+    write(&manager, "t14", "next", "sleep 300\n").await;
+    until(
+        &mut next,
+        |e| matches!(e, E::Activity(a) if a.has_running_subprocess),
+    )
+    .await;
+    manager
+        .close_idle_with("t14", None, async {
+            Ok(processes::ProcessTable::default())
+        })
+        .await;
+    assert!(
+        listed(&manager, "t14"),
+        "a foreground job keeps the terminal"
+    );
+
+    // Output the reader has not taken yet keeps the terminal, so a command's last line
+    // reaches its scrollback.
+    let mut late = manager.attach(attach_input("t15", "late"), 1).unwrap();
+    assert!(matches!(late.next().await, E::Snapshot(_)));
+    write(&manager, "t15", "late", "printf 'TTY<%s>\\n' \"$(tty)\"\n").await;
+    let seen = output_contains(&mut late, ">\r\n$ ").await;
+    let tty = seen
+        .split("TTY<")
+        .find_map(|s| s.starts_with("/dev/").then(|| s.split_once('>')).flatten())
+        .map(|(path, _)| path.to_owned())
+        .unwrap();
+    let control = manager.inner.lock().sessions[&("t15".to_owned(), "late".to_owned())]
+        .proc
+        .as_ref()
+        .unwrap()
+        .control
+        .clone();
+    manager
+        .close_idle_with("t15", None, async {
+            // This future never yields, so the reader cannot take the bytes before the check.
+            use std::io::Write as _;
+            let mut tty = std::fs::OpenOptions::new().write(true).open(&tty).unwrap();
+            tty.write_all(b"LATE-42\n").unwrap();
+            let mut fds = [rustix::event::PollFd::new(
+                &*control,
+                rustix::event::PollFlags::IN,
+            )];
+            let guard = rustix::event::Timespec {
+                tv_sec: 15,
+                tv_nsec: 0,
+            };
+            assert_eq!(rustix::event::poll(&mut fds, Some(&guard)).unwrap(), 1);
+            Ok(processes::ProcessTable::default())
+        })
+        .await;
+    assert!(listed(&manager, "t15"), "unread output keeps the terminal");
+    output_contains(&mut late, "LATE-42").await;
+    manager.close_idle("t15", None).await;
+    assert!(
+        !listed(&manager, "t15"),
+        "once read, the quiet shell closes"
+    );
     drop(streams);
 }
 

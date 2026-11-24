@@ -437,19 +437,22 @@ impl Inner {
         // reply slot with it.
         let _slot = ReplySlot { inner: self, id };
         command["id"] = json!(id);
-        if writer.send((self.driver.encode)(&command)).await.is_err() {
-            return Err("the Claude helper stopped".into());
-        }
+        let line = (self.driver.encode)(&command);
         drop(command);
-        match timeout {
-            Some(timeout) => match tokio::time::timeout(timeout, rx).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(_)) => Err("the Claude helper stopped".into()),
-                Err(_) => Err("no answer in time".into()),
-            },
-            None => rx
+        let exchange = async {
+            writer
+                .send(line)
                 .await
-                .map_err(|_| "the Claude helper stopped".to_owned())?,
+                .map_err(|_| "the Claude helper stopped".to_owned())?;
+            rx.await
+                .map_err(|_| "the Claude helper stopped".to_owned())?
+        };
+        // The deadline covers the send too: a host with a full input must not hold the caller.
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, exchange)
+                .await
+                .unwrap_or_else(|_| Err("no answer in time".into())),
+            None => exchange.await,
         }
     }
 }
@@ -901,6 +904,27 @@ mod tests {
             "too many pending SDK calls"
         );
         assert!(rx.try_recv().is_err());
+    }
+
+    /// `Effect.timeout` around the whole call, as `ClaudeAdapterV2` bounds `stopTask`: a host
+    /// whose input is full cannot hold a caller past its deadline, and the slot goes with it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_deadline_covers_the_send_to_a_full_host() {
+        let helper = Helper::new(
+            HelperCommand::from_path("/nonexistent/unused-sdk-host"),
+            "claudeAgent",
+            plain_driver("claude"),
+        );
+        let (tx, _rx) = mpsc::channel(1);
+        tx.send("filler".into()).await.unwrap();
+        let call = helper
+            .inner
+            .request(&tx, json!({"t":"call"}), Some(Duration::from_millis(50)));
+        let answer = tokio::time::timeout(Duration::from_secs(2), call)
+            .await
+            .expect("the deadline ends the call");
+        assert_eq!(answer.unwrap_err(), "no answer in time");
+        assert!(helper.inner.lock().replies.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]

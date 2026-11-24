@@ -174,6 +174,20 @@ pub trait EngineHost: Send + Sync {
         true
     }
 
+    /// Whether a queued run may start on `instance_id`, by T3's queue rule
+    /// (`startNextQueuedRun`): only an explicit project override or a machine entry disables
+    /// it. Default: the dispatch rule.
+    fn queue_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        self.provider_instance_enabled(project_id, instance_id)
+    }
+
+    /// Reloads settings whose last load failed in a way that may have passed, before work is
+    /// admitted against them (T3 keeps a failed settings load for no time). Off the runtime
+    /// thread when it reads files.
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
     /// `responseStreamingMode` of `project_id` (`resolveProjectSettings`): how streamed
     /// assistant text is stored. The default is T3's default, `paragraph`.
     fn response_streaming_mode(&self, _project_id: Option<&str>) -> ResponseStreamingMode {
@@ -279,6 +293,14 @@ pub struct WorktreeRequest {
 pub struct ProvisionedWorktree {
     pub path: String,
     pub branch: String,
+}
+
+/// The query of `GET /api/orchestration/shell` (`answerShellSnapshot`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HttpShellQuery {
+    pub omit_idle_subagents: bool,
+    pub omit_older_settled: bool,
+    pub resume_from: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -417,6 +439,16 @@ pub trait Engine: Send + Sync {
 
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
+        unsupported("the shell snapshot")
+    }
+
+    /// `GET /api/orchestration/shell` with the client's query: `None` when the shell stream
+    /// can resume from `resume_from` (the client keeps its rows), else the snapshot trimmed as
+    /// a fresh `subscribeShell` with the same options trims it.
+    fn http_shell_snapshot(
+        &self,
+        _options: HttpShellQuery,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetShellSnapshotError>>> {
         unsupported("the shell snapshot")
     }
 
