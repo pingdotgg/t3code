@@ -21,6 +21,12 @@ export function useReadAloudHighlight(id: string): ReadAloudHighlight | null {
   });
 }
 
+/** Shows `title` and the error when reading message `id` failed. */
+export function alertReadAloudError(id: string, title: string) {
+  const result = readAloudController.getSnapshot();
+  if (result.id === id && result.status === "error") Dialog.alert(title, result.error);
+}
+
 export function ReadAloudButton({
   id,
   text,
@@ -61,9 +67,7 @@ export function ReadAloudButton({
         if (stoppable) return readAloudController.stop();
         if (active && state.status === "paused") await readAloudController.resume();
         else await readAloudController.start(id, text, settings);
-        const result = readAloudController.getSnapshot();
-        if (result.id === id && result.status === "error")
-          Dialog.alert(gt("Could not read aloud"), result.error);
+        alertReadAloudError(id, gt("Could not read aloud"));
       }}
     >
       <SymbolView

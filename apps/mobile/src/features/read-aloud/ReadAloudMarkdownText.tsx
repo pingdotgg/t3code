@@ -1,5 +1,6 @@
 import { readAloudShownText } from "@t3tools/shared/read-aloud";
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { useGT } from "gt-react-native";
 import { View, type ViewInstance } from "react-native";
 import type {
   HighlightLayoutEvent,
@@ -9,8 +10,10 @@ import type {
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
-import { useReadAloudHighlight } from "./ReadAloudButton";
+import { alertReadAloudError, useReadAloudHighlight } from "./ReadAloudButton";
 import { followReadAloud } from "./readAloudFollow";
+import { readAloudTapSource } from "./readAloudTap";
+import { readAloudController } from "./playback";
 
 /** The web's `--read-aloud-block` and `--read-aloud-word`: its info blue at these strengths. */
 const READ_ALOUD_TINT = {
@@ -33,9 +36,10 @@ function locator(markdown: string, shown: RenderedTextChangeEvent) {
 }
 
 /**
- * Markdown of a reply that read aloud can read: tints the paragraph and word being read and keeps
- * the word in view. `readAloud.markdown` is the text read aloud reads, which can differ from the
- * part of it this view shows.
+ * Markdown of a reply that read aloud can read: tints the paragraph and word being read, keeps
+ * the word in view, and while the reply is read, a tap on a paragraph reads from there.
+ * `readAloud.markdown` is the text read aloud reads, which can differ from the part of it this
+ * view shows.
  */
 export function ReadAloudMarkdownText(
   props: SelectableMarkdownTextProps & {
@@ -44,6 +48,10 @@ export function ReadAloudMarkdownText(
 ) {
   const { readAloud, ...markdownProps } = props;
   const highlight = useReadAloudHighlight(readAloud.id);
+  const reading = useSyncExternalStore(readAloudController.subscribe, () =>
+    readAloudController.isReading(readAloud.id),
+  );
+  const gt = useGT();
   const { themeAppearance } = useAppearancePreferences();
   const [shown, setShown] = useState<RenderedTextChangeEvent | null>(null);
   const container = useRef<ViewInstance>(null);
@@ -77,6 +85,18 @@ export function ReadAloudMarkdownText(
       <SelectableMarkdownText
         {...markdownProps}
         highlights={highlights}
+        // Only while the reply is read, so taps elsewhere keep their native behavior.
+        onTextPress={
+          reading && shown
+            ? (tap) => {
+                const from = readAloudTapSource(readAloud.markdown, shown, tap);
+                const jumped = from === null ? null : readAloudController.jump(readAloud.id, from);
+                void jumped?.then(() =>
+                  alertReadAloudError(readAloud.id, gt("Could not read aloud")),
+                );
+              }
+            : undefined
+        }
         onRenderedTextChange={setShown}
         onHighlightLayout={onHighlightLayout}
       />
