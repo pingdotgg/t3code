@@ -446,7 +446,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
     };
   }
   if (name === "codex-followup") {
-    if (!attributes.prompt?.trim() || !node.children.map(textOf).join("").trim()) return asText();
+    if (!attributes.prompt?.trim() || !textOf(node).trim()) return asText();
     return { type: "element", tagName: "span", properties: {}, children: node.children };
   }
   const template = resolveCodexArtifactTemplate(attributes);
