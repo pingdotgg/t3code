@@ -945,3 +945,37 @@ it.live("restores a recorded repository the project stopped tracking as its work
     }),
   ),
 );
+
+it.live("resumes once an excluded dependency's worktree is replaced by a clone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, run, repository } = yield* fixture;
+      const project = yield* repository("phoenix");
+      const dependency = yield* repository("phoenix/deps/heroicons");
+      state.workspaceRoot = project;
+      const { taskFolder } = yield* create("feature");
+      const clone = path.join(taskFolder.projectPath, "deps", "heroicons");
+      yield* fileSystem.remove(clone, { recursive: true });
+      yield* run(taskFolder.projectPath, "clone", "-q", "--local", dependency, clone);
+      yield* fileSystem.writeFileString(
+        path.join(project, "t3.json"),
+        JSON.stringify({ ignoreRepositories: ["deps"] }),
+      );
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const restore = taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        recreate: () => Effect.die("nothing is missing"),
+      });
+
+      // Tracked by hand, the clone is still not the thread's worktree.
+      state.trackedFolders = tracked(dependency);
+      assert.include((yield* Effect.flip(restore)).detail, "is not a worktree of");
+
+      state.trackedFolders = [];
+      yield* restore;
+      assert.equal(yield* run(clone, "rev-parse", "--git-dir"), ".git");
+      assert.deepEqual((yield* taskFolders.find(taskFolder.root))?.repositories, []);
+    }),
+  ),
+);
