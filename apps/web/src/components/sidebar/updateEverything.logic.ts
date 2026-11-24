@@ -533,6 +533,30 @@ export function resolveUpdateRunMachineStatus(
   return "waiting";
 }
 
+/** "current": the server already runs the target, so retrying it only settles the row. */
+export type RestoredRetry = ServerUpdateTarget | "current";
+
+/** A row restored after this app relaunched keeps only its target version, so its retry is
+ * rebuilt from the server as it is now, as the dialog would. Null when there is nothing to retry. */
+export function resolveRestoredRetry(
+  machine: UpdateRunMachine,
+  machines: ReadonlyArray<UpdateEverythingMachine>,
+): RestoredRetry | null {
+  const targetVersion = machine.handedOffVersion;
+  if (machine.result !== "failed" || machine.server !== null || targetVersion === null) return null;
+  const current = machines.find(({ environmentId }) => environmentId === machine.environmentId);
+  if (current === undefined) return null;
+  const config = current.serverConfig;
+  if (
+    current.connected &&
+    config !== null &&
+    resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null
+  ) {
+    return "current";
+  }
+  return collectServerUpdateTargets([current], targetVersion).targets[0] ?? null;
+}
+
 export function isServerUpdateHandedOff(state: ServerUpdateState): boolean {
   return state.status === "running" && state.stage === "resuming";
 }
@@ -559,6 +583,7 @@ export function formatUpdateElapsed(ms: number, resolve: MessageResolver = m): s
 export interface UpdateRunMachineView {
   readonly machine: UpdateRunMachine;
   readonly status: UpdateRunMachineStatus;
+  readonly restoredRetry: RestoredRetry | null;
 }
 
 export type UpdateRunLocalState =
@@ -637,7 +662,10 @@ export function describeUpdateCapsule(
               }),
             ),
       action:
-        !run.trackSwitch && failed.some(({ machine }) => machine.server !== null)
+        !run.trackSwitch &&
+        failed.some(
+          ({ machine, restoredRetry }) => machine.server !== null || restoredRetry !== null,
+        )
           ? "retry"
           : "dismiss",
     };
