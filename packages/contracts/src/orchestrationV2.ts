@@ -1798,6 +1798,8 @@ export const OrchestrationV2SecretRequestField = Schema.Struct({
   label: TrimmedNonEmptyString,
   placeholder: Schema.optional(Schema.String),
   secret: Schema.optional(Schema.Boolean),
+  /** The user may leave it blank; its value is then an empty string. */
+  optional: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2SecretRequestField = typeof OrchestrationV2SecretRequestField.Type;
 

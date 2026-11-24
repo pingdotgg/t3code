@@ -162,6 +162,7 @@
   "81f613bb68d85bb7": "Hors de la discussion, dans un fichier privé que les commandes de cet agent peuvent lire pendant 24 heures",
   "07b56c0c12bd2de1": "Hors de la discussion, dans des fichiers privés que les commandes de cet agent peuvent lire pendant 24 heures",
   "8c2d901183b4e219": "Collez le secret",
+  "d8fb763eb069ba1d": "Facultatif",
   "610aea624f895a78": "Enregistré de façon sécurisée et gardé privé",
   "329b7854b7e0546e": "Utilisez une référence 1Password comme {example}.",
   "d68b539295c009d3": "{count, plural, one {{count} tâche déléguée} other {{count} tâches déléguées}}",

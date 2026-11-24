@@ -831,6 +831,9 @@ const RequestSecretFields = Schema.Array(
     secret: Schema.optional(Schema.Boolean).annotate({
       description: "false shows the typed value, e.g. an email.",
     }),
+    optional: Schema.optional(Schema.Boolean).annotate({
+      description: "true lets the user leave it blank; its file is then empty.",
+    }),
   }),
 )
   .check(Schema.isMinLength(1), Schema.isMaxLength(8))

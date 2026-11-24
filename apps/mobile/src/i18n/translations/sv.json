@@ -162,6 +162,7 @@
   "81f613bb68d85bb7": "Hålls utanför chatten, i en privat fil som den här agentens kommandon kan läsa i 24 timmar",
   "07b56c0c12bd2de1": "Hålls utanför chatten, i privata filer som den här agentens kommandon kan läsa i 24 timmar",
   "8c2d901183b4e219": "Klistra in hemligheten",
+  "d8fb763eb069ba1d": "Valfritt",
   "610aea624f895a78": "Sparad säkert och hålls privat",
   "329b7854b7e0546e": "Använd en 1Password-referens som {example}.",
   "d68b539295c009d3": "{count, plural, one {Delegerade {count} uppgift} other {Delegerade {count} uppgifter}}",
