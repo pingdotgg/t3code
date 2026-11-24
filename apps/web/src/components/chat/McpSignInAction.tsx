@@ -39,21 +39,15 @@ export function McpSignInAction({
   threadId,
   providerThreadId,
   server,
-  noticeAt,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly server: string;
-  /** When the environment raised the notice, in epoch milliseconds. */
-  readonly noticeAt: number;
 }) {
   const gt = useGT();
   const formId = useId();
   const allowed = useAtomValue(threadEnvironment.mcpSignInStart.permissionAtom(environmentId));
-  const signedIn = useAtomValue(
-    threadEnvironment.mcpSignedInAtom(environmentId, { threadId, server, noticeAt }),
-  );
   const start = useAtomCommand(threadEnvironment.mcpSignInStart, { reportFailure: false });
   const complete = useAtomCommand(threadEnvironment.mcpSignInComplete, { reportFailure: false });
   const { copyToClipboard, isCopied } = useCopyToClipboard();
@@ -105,22 +99,16 @@ export function McpSignInAction({
 
   return (
     <>
-      {signedIn ? (
-        <span className="shrink-0 text-sm text-success-foreground">
-          <T>Signed in</T>
-        </span>
-      ) : (
-        <InlineButton
-          aria-label={gt("Sign in to {server}", { server })}
-          onClick={(event) => {
-            event.stopPropagation();
-            void begin();
-          }}
-          onKeyDown={stopRowToggle}
-        >
-          <T>Sign in</T>
-        </InlineButton>
-      )}
+      <InlineButton
+        aria-label={gt("Sign in to {server}", { server })}
+        onClick={(event) => {
+          event.stopPropagation();
+          void begin();
+        }}
+        onKeyDown={stopRowToggle}
+      >
+        <T>Sign in</T>
+      </InlineButton>
       <Dialog
         open={signIn !== null}
         onOpenChange={(open) => {
