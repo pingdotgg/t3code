@@ -1255,6 +1255,19 @@ describe("question answer paths", () => {
         },
         {
           ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document><table:table table:name="Merged">' +
+              '<table:table-row><table:table-cell table:number-columns-spanned="3" table:number-rows-spanned="2"><text:p>Wide</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="4242"/><table:covered-table-cell office:value-type="string" office:string-value="Gone"/><table:table-cell table:number-columns-spanned="2"><text:p>After</text:p></table:table-cell><table:covered-table-cell><text:p>Tail</text:p></table:covered-table-cell></table:table-row>' +
+              '<table:table-row><table:covered-table-cell table:number-columns-repeated="3"><text:p>Below</text:p></table:covered-table-cell><table:table-cell><text:p>Next</text:p></table:table-cell></table:table-row>' +
+              "<table:table-row><table:covered-table-cell><text:p>Only</text:p></table:covered-table-cell></table:table-row>" +
+              "<table:table-row><table:table-cell><text:p>Last</text:p></table:table-cell></table:table-row></table:table></office:document>",
+          },
+          expected: ["## Sheet: Merged", "Wide\t\t\tAfter\n\t\t\tNext\nLast"],
+          absent: ["4242", "Gone", "Tail", "Below", "Only", "After\t"],
+        },
+        {
+          ext: "ods",
           bounded: true,
           parts: {
             "content.xml":

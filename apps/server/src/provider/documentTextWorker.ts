@@ -291,7 +291,9 @@ function odfValue(cell: XmlNode): string {
       return attr("value");
   }
 }
+const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
 function hasCellText(cell: XmlNode): boolean {
+  if (covered(cell)) return false;
   if (odfValue(cell).trim() || cell.name === "noBreakHyphen") return true;
   // Space markers can have enormous repeat counts; emptiness never requires expanding them.
   if (HIDDEN.has(cell.name) || cell.spaceCount !== undefined) return false;
@@ -316,6 +318,8 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           if (column >= 512) throw new Truncation("Column limit");
           if (column++) yield "\t";
+          // LibreOffice hides the contents a merge covers; the cell still holds its column.
+          if (covered(cell)) continue;
           yield CELL_START;
           yield* paragraphs(cell);
           yield { fallback: odfValue(cell) };
