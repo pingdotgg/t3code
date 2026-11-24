@@ -1963,7 +1963,9 @@ it.effect(
           Layer.mock(UsageLimitSources.UsageLimitSources)({}),
           Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
           Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            resolveNamedProjectsRoot: () => "/unused",
+          }),
           Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
           Layer.mock(ServerEnvironment.ServerEnvironment)({}),
           Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
@@ -2869,7 +2871,9 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
     Layer.mock(UsageLimitSources.UsageLimitSources)({}),
     Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
     Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      resolveNamedProjectsRoot: () => "/unused",
+    }),
     Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
     Layer.mock(ServerEnvironment.ServerEnvironment)({}),
     Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
@@ -2927,7 +2931,9 @@ const makeAcpRegistryClient = Effect.fn("test.makeAcpRegistryClient")(function* 
     Layer.mock(UsageLimitSources.UsageLimitSources)({}),
     Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
     Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      resolveNamedProjectsRoot: () => "/unused",
+    }),
     Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
     Layer.mock(ServerEnvironment.ServerEnvironment)({}),
     Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
