@@ -2461,8 +2461,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }),
           });
         }
-        // Commands settled as cancelled while their item/completed may still arrive.
-        const unknownOutcomeCommandItemIds = yield* Ref.make(new Set<string>());
+        // Commands settled as cancelled, by turn, while their item/completed may still arrive.
+        const unknownOutcomeCommandItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
         // Keep the stream open until descendants settle to avoid stranding child projections.
         const deferredRootTerminals = yield* Ref.make(new Map<string, DeferredCodexRootTerminal>());
@@ -2993,6 +2993,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (yield* turnHasRetainedBackgroundWork(nativeTurnId)) {
               return;
             }
+            // Not pending work, but a late item/completed still needs this context to route.
+            if ((yield* Ref.get(unknownOutcomeCommandItemsByTurn)).has(nativeTurnId)) return;
             yield* Ref.update(settledTurns, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
@@ -3180,9 +3182,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 const items = (yield* Ref.get(runningCommandItemsByTurn)).get(nativeTurnId);
                 if (context === undefined || items === undefined) return;
                 if ((yield* Ref.get(interruptingNativeTurns)).has(nativeTurnId)) return;
+                // A command whose process id Codex never sent may own any terminal no tracked command claims.
+                const claimed = new Set<string>();
+                for (const tracked of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
+                  for (const item of tracked.values()) {
+                    if (item.processId !== undefined) claimed.add(item.processId);
+                  }
+                }
+                const unclaimedLive = [...liveProcessIds].some((id) => !claimed.has(id));
                 const exited = new Set<string>();
                 for (const item of items.values()) {
-                  if (item.processId === undefined || !liveProcessIds.has(item.processId)) {
+                  if (
+                    item.processId === undefined
+                      ? !unclaimedLive
+                      : !liveProcessIds.has(item.processId)
+                  ) {
                     exited.add(item.id);
                   }
                 }
@@ -3196,9 +3210,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
                 // Keep the settled context: a late item/completed still routes its result and wake.
                 for (const itemId of exited) yield* clearRunningCommandItem(nativeTurnId, itemId);
-                yield* Ref.update(
-                  unknownOutcomeCommandItemIds,
-                  (current) => new Set([...current, ...exited]),
+                yield* Ref.update(unknownOutcomeCommandItemsByTurn, (current) =>
+                  new Map(current).set(
+                    nativeTurnId,
+                    new Set([...(current.get(nativeTurnId) ?? []), ...exited]),
+                  ),
                 );
               }),
             );
@@ -5969,10 +5985,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return [updated.delete(payload.item.id), updated] as const;
               });
               // Its run stopped listening once the command settled, so the result is session-scoped.
-              const settledUnknown = yield* Ref.modify(unknownOutcomeCommandItemIds, (current) => {
-                const updated = new Set(current);
-                return [updated.delete(payload.item.id), updated] as const;
-              });
+              const settledUnknown = yield* Ref.modify(
+                unknownOutcomeCommandItemsByTurn,
+                (current) => {
+                  const items = current.get(payload.turnId);
+                  if (items === undefined || !items.has(payload.item.id)) {
+                    return [false, current] as const;
+                  }
+                  const remaining = new Set(items);
+                  remaining.delete(payload.item.id);
+                  const updated = new Map(current);
+                  if (remaining.size === 0) updated.delete(payload.turnId);
+                  else updated.set(payload.turnId, remaining);
+                  return [true, updated] as const;
+                },
+              );
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",

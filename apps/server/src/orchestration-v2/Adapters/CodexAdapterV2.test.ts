@@ -7264,6 +7264,113 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each([
+    {
+      name: "a sibling command finishes first",
+      other: { processId: "4243" },
+      live: ["4243"],
+      expected: ["running", "cancelled", "completed"],
+    },
+    {
+      name: "its process id is unknown and a terminal is unclaimed",
+      other: undefined,
+      live: ["9999"],
+      expected: ["running", "completed"],
+    },
+  ] as const)("routes a late command result when $name", ({ other, live, expected }) =>
+    Effect.gen(function* () {
+      const inbound = (label: string, method: string, item: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label,
+        frame: { method, params: { item, threadId: BG_NATIVE_THREAD, turnId: BG_NATIVE_TURN } },
+      });
+      const sibling = (status: "inProgress" | "completed") => ({
+        ...backgroundCommandItem(status),
+        id: "call-codex-bg-other",
+        processId: other?.processId ?? null,
+      });
+      const [, ...settle] = backgroundExecTranscript.entries.slice(-4, -1);
+      const settled = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: `codex-bg-late-result-${other === undefined ? "no-pid" : "sibling"}`,
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -4),
+            other === undefined
+              ? inbound("item/started/command", "item/started", {
+                  ...backgroundCommandItem("inProgress"),
+                  processId: null,
+                })
+              : backgroundExecTranscript.entries.at(-4)!,
+            ...(other === undefined
+              ? []
+              : [inbound("item/started/other", "item/started", sibling("inProgress"))]),
+            ...settle,
+            {
+              type: "expect_outbound",
+              label: "list-background-terminals",
+              frame: {
+                id: 4,
+                method: "thread/backgroundTerminals/list",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "list-background-terminals",
+              frame: {
+                id: 4,
+                result: { data: live.map((processId) => ({ processId })), nextCursor: null },
+              },
+            },
+            ...(other === undefined
+              ? []
+              : [inbound("item/completed/other", "item/completed", sibling("completed"))]),
+            inbound(
+              "item/completed/command-late",
+              "item/completed",
+              backgroundCommandItem("completed"),
+            ),
+          ],
+        }),
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM &&
+          event.turnItem.status === "completed"
+            ? Deferred.succeed(settled, undefined)
+            : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-bg-late-result"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* Deferred.await(settled);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM
+            ? [event.turnItem.status]
+            : [],
+        ),
+        [...expected],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>
     Effect.gen(function* () {
       const harness = yield* makeCodexReplayHarness(
