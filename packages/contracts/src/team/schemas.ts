@@ -135,12 +135,37 @@ export const TeamTurnAttribution = Schema.Struct({
 });
 export type TeamTurnAttribution = typeof TeamTurnAttribution.Type;
 
+export const TeamThreadFollowInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type TeamThreadFollowInput = typeof TeamThreadFollowInput.Type;
+
+export const TeamThreadFollowResult = Schema.Struct({
+  threadId: ThreadId,
+  isFollowing: Schema.Boolean,
+});
+export type TeamThreadFollowResult = typeof TeamThreadFollowResult.Type;
+
+export const TeamListFollowedThreadsResult = Schema.Struct({
+  followedThreadIds: Schema.Array(ThreadId),
+});
+export type TeamListFollowedThreadsResult = typeof TeamListFollowedThreadsResult.Type;
+
+export const TeamThreadFollowChangedPayload = Schema.Struct({
+  threadId: ThreadId,
+  memberId: TeamMemberId,
+  isFollowing: Schema.Boolean,
+});
+export type TeamThreadFollowChangedPayload = typeof TeamThreadFollowChangedPayload.Type;
+
 export const TeamStateSnapshot = Schema.Struct({
   team: Schema.NullOr(TeamWorkspace),
   currentMember: Schema.NullOr(TeamMember),
   members: Schema.Array(TeamMember),
   invites: Schema.Array(TeamInvite),
   threadAttributions: Schema.Array(TeamThreadAttribution),
+  followedThreadIds: Schema.Array(ThreadId),
+  latestTurnAttributions: Schema.Array(TeamTurnAttribution),
 });
 export type TeamStateSnapshot = typeof TeamStateSnapshot.Type;
 
@@ -170,8 +195,46 @@ export const TeamStateStreamEvent = Schema.Union([
     type: Schema.Literal("threadAttributed"),
     payload: TeamThreadAttribution,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("turnAttributed"),
+    payload: TeamTurnAttribution,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("threadFollowChanged"),
+    payload: TeamThreadFollowChangedPayload,
+  }),
 ]);
 export type TeamStateStreamEvent = typeof TeamStateStreamEvent.Type;
+
+export interface TeamThreadNotificationEligibilityInput {
+  readonly hasTeam: boolean;
+  readonly memberId: TeamMemberId | null;
+  readonly creatorMemberId: TeamMemberId | null;
+  readonly isFollowing: boolean;
+  readonly activeTurnAuthorMemberId: TeamMemberId | null;
+}
+
+/**
+ * Determines whether a team member should be notified for a thread event.
+ * Personal mode (`!hasTeam`) and unattributed threads always remain enabled.
+ */
+export function shouldNotifyTeamMemberForThread(
+  input: TeamThreadNotificationEligibilityInput,
+): boolean {
+  if (!input.hasTeam || input.creatorMemberId === null) {
+    return true;
+  }
+  if (input.memberId === null) {
+    return false;
+  }
+  return (
+    input.creatorMemberId === input.memberId ||
+    input.isFollowing ||
+    (input.activeTurnAuthorMemberId !== null && input.activeTurnAuthorMemberId === input.memberId)
+  );
+}
 
 export const TeamInitializeInput = Schema.Struct({
   name: TrimmedNonEmptyString,

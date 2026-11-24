@@ -7,6 +7,8 @@ import {
   canManageTeamInvites,
   isValidTeamPseudo,
   parseTeamJoinLink,
+  shouldNotifyTeamMemberForThread,
+  TeamMemberId,
 } from "./schemas.ts";
 
 describe("team role hierarchy", () => {
@@ -77,5 +79,92 @@ describe("team join links", () => {
     expect(parseTeamJoinLink("t3code://pair?pairingUrl=https://example.com")).toBeNull();
     expect(parseTeamJoinLink("t3code://team/join?server=javascript:alert(1)&token=abc")).toBeNull();
     expect(parseTeamJoinLink("https://app.t3.codes/team/join?server=https://x.test")).toBeNull();
+  });
+});
+
+describe("shouldNotifyTeamMemberForThread", () => {
+  const alice = TeamMemberId.make("member-alice");
+  const bob = TeamMemberId.make("member-bob");
+
+  it.each([
+    [
+      "personal mode (no team)",
+      {
+        hasTeam: false,
+        memberId: null,
+        creatorMemberId: null,
+        isFollowing: false,
+        activeTurnAuthorMemberId: null,
+      },
+      true,
+    ],
+    [
+      "unattributed legacy thread in team mode",
+      {
+        hasTeam: true,
+        memberId: bob,
+        creatorMemberId: null,
+        isFollowing: false,
+        activeTurnAuthorMemberId: null,
+      },
+      true,
+    ],
+    [
+      "unbound session on attributed team thread",
+      {
+        hasTeam: true,
+        memberId: null,
+        creatorMemberId: alice,
+        isFollowing: false,
+        activeTurnAuthorMemberId: null,
+      },
+      false,
+    ],
+    [
+      "thread creator",
+      {
+        hasTeam: true,
+        memberId: alice,
+        creatorMemberId: alice,
+        isFollowing: false,
+        activeTurnAuthorMemberId: alice,
+      },
+      true,
+    ],
+    [
+      "non-following colleague",
+      {
+        hasTeam: true,
+        memberId: bob,
+        creatorMemberId: alice,
+        isFollowing: false,
+        activeTurnAuthorMemberId: alice,
+      },
+      false,
+    ],
+    [
+      "explicit follower",
+      {
+        hasTeam: true,
+        memberId: bob,
+        creatorMemberId: alice,
+        isFollowing: true,
+        activeTurnAuthorMemberId: alice,
+      },
+      true,
+    ],
+    [
+      "author of completing turn in colleague thread",
+      {
+        hasTeam: true,
+        memberId: bob,
+        creatorMemberId: alice,
+        isFollowing: false,
+        activeTurnAuthorMemberId: bob,
+      },
+      true,
+    ],
+  ])("evaluates %s -> %s", (_label, input, expected) => {
+    expect(shouldNotifyTeamMemberForThread(input)).toBe(expected);
   });
 });

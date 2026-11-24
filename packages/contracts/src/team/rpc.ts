@@ -12,6 +12,7 @@ import {
   TeamInitializeInput,
   TeamInitializeResult,
   TeamInviteCreatedResult,
+  TeamListFollowedThreadsResult,
   TeamListThreadAttributionsResult,
   TeamMember,
   TeamOperationError,
@@ -19,6 +20,8 @@ import {
   TeamRevokeInviteResult,
   TeamStateSnapshot,
   TeamStateStreamEvent,
+  TeamThreadFollowInput,
+  TeamThreadFollowResult,
   TeamUpdateMyPseudoInput,
 } from "./schemas.ts";
 
@@ -30,6 +33,9 @@ export const TEAM_WS_METHODS = {
   teamCreateInvite: "team.createInvite",
   teamRevokeInvite: "team.revokeInvite",
   teamListThreadAttributions: "team.listThreadAttributions",
+  teamFollowThread: "team.followThread",
+  teamUnfollowThread: "team.unfollowThread",
+  teamListFollowedThreads: "team.listFollowedThreads",
 } as const;
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
@@ -37,6 +43,8 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamCreateInvite]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamRevokeInvite]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamFollowThread]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamUnfollowThread]: AuthOrchestrationReadScope,
 } as const;
 
 export const TEAM_RPC_REQUIRED_SCOPES = {
@@ -44,6 +52,7 @@ export const TEAM_RPC_REQUIRED_SCOPES = {
   [TEAM_WS_METHODS.teamGetState]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamSubscribeState]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListThreadAttributions]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamListFollowedThreads]: AuthOrchestrationReadScope,
 } as const;
 
 const TeamRpcError = Schema.Union([TeamOperationError, EnvironmentAuthorizationError]);
@@ -91,6 +100,24 @@ const WsTeamListThreadAttributionsRpc = Rpc.make(TEAM_WS_METHODS.teamListThreadA
   error: TeamRpcError,
 });
 
+const WsTeamFollowThreadRpc = Rpc.make(TEAM_WS_METHODS.teamFollowThread, {
+  payload: TeamThreadFollowInput,
+  success: TeamThreadFollowResult,
+  error: TeamRpcError,
+});
+
+const WsTeamUnfollowThreadRpc = Rpc.make(TEAM_WS_METHODS.teamUnfollowThread, {
+  payload: TeamThreadFollowInput,
+  success: TeamThreadFollowResult,
+  error: TeamRpcError,
+});
+
+const WsTeamListFollowedThreadsRpc = Rpc.make(TEAM_WS_METHODS.teamListFollowedThreads, {
+  payload: Schema.Struct({}),
+  success: TeamListFollowedThreadsResult,
+  error: TeamRpcError,
+});
+
 export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
@@ -99,4 +126,7 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamCreateInviteRpc,
   WsTeamRevokeInviteRpc,
   WsTeamListThreadAttributionsRpc,
+  WsTeamFollowThreadRpc,
+  WsTeamUnfollowThreadRpc,
+  WsTeamListFollowedThreadsRpc,
 );

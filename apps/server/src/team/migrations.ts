@@ -101,6 +101,24 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         `;
     }),
   },
+  {
+    id: 2,
+    name: "TeamThreadFollows",
+    up: Effect.fn("TeamMigrations.TeamThreadFollows")(function* (sql: SqlClient.SqlClient) {
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_thread_follows (
+            thread_id TEXT NOT NULL,
+            member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (thread_id, member_id)
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_thread_follows_member_id
+            ON team_thread_follows (member_id)
+        `;
+    }),
+  },
 ];
 
 /**

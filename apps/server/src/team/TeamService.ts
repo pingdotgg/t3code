@@ -10,6 +10,7 @@ import {
   canManageTeamInvites,
   isValidTeamPseudo,
   normalizeTeamPseudo,
+  shouldNotifyTeamMemberForThread,
   TEAM_ROLE_RANK,
   TeamId,
   TeamInviteId,
@@ -34,6 +35,9 @@ import {
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
+  type TeamThreadFollowInput,
+  type TeamThreadFollowResult,
+  type TeamTurnAttribution,
   type TeamUpdateMyPseudoInput,
   type TeamWorkspace,
   type ThreadId,
@@ -140,6 +144,33 @@ export class TeamService extends Context.Service<
       ReadonlyArray<TeamThreadAttribution>,
       TeamOperationError
     >;
+    readonly followThread: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamThreadFollowInput;
+    }) => Effect.Effect<TeamThreadFollowResult, TeamOperationError>;
+    readonly unfollowThread: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamThreadFollowInput;
+    }) => Effect.Effect<TeamThreadFollowResult, TeamOperationError>;
+    readonly listFollowedThreads: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, TeamOperationError>;
+    readonly shouldNotifyMemberForThread: (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly turnId?: string;
+    }) => Effect.Effect<boolean>;
+    readonly listNotificationRecipientsForThread: (input: {
+      readonly threadId: ThreadId;
+      readonly turnId?: string;
+    }) => Effect.Effect<{
+      readonly isTeamThread: boolean;
+      readonly recipientMemberIds: ReadonlyArray<TeamMemberId> | null;
+    }>;
+    readonly shouldPublishRelayNotificationForThread: (input: {
+      readonly threadId: ThreadId;
+      readonly turnId?: string;
+    }) => Effect.Effect<boolean>;
     readonly recordThreadCreated: (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
@@ -239,21 +270,29 @@ const make = Effect.gen(function* () {
         members: [],
         invites: [],
         threadAttributions: [],
+        followedThreadIds: [],
+        latestTurnAttributions: [],
       } satisfies TeamStateSnapshot;
     }
     const team = workspaceOption.value;
-    const [currentMemberOption, members, threadAttributions] = yield* Effect.all([
-      repository.getMemberForSession(sessionId).pipe(Effect.mapError(toInternalError)),
-      repository.listMembers(team.id).pipe(Effect.mapError(toInternalError)),
-      repository.listThreadAttributions(team.id).pipe(Effect.mapError(toInternalError)),
-    ]);
+    const [currentMemberOption, members, threadAttributions, latestTurnAttributions] =
+      yield* Effect.all([
+        repository.getMemberForSession(sessionId).pipe(Effect.mapError(toInternalError)),
+        repository.listMembers(team.id).pipe(Effect.mapError(toInternalError)),
+        repository.listThreadAttributions(team.id).pipe(Effect.mapError(toInternalError)),
+        repository.listLatestTurnAttributions(team.id).pipe(Effect.mapError(toInternalError)),
+      ]);
     const currentMember = Option.getOrNull(currentMemberOption);
-    const invites =
+    const [invites, followedThreadIds] = yield* Effect.all([
       currentMember !== null &&
       currentMember.status === "active" &&
       canManageTeamInvites(currentMember.role)
-        ? yield* repository.listInvites(team.id).pipe(Effect.mapError(toInternalError))
-        : [];
+        ? repository.listInvites(team.id).pipe(Effect.mapError(toInternalError))
+        : Effect.succeed<ReadonlyArray<TeamInvite>>([]),
+      currentMember !== null && currentMember.status === "active"
+        ? repository.listFollowedThreadIds(currentMember.id).pipe(Effect.mapError(toInternalError))
+        : Effect.succeed<ReadonlyArray<ThreadId>>([]),
+    ]);
 
     return {
       team,
@@ -261,6 +300,8 @@ const make = Effect.gen(function* () {
       members,
       invites,
       threadAttributions,
+      followedThreadIds,
+      latestTurnAttributions,
     } satisfies TeamStateSnapshot;
   });
 
@@ -294,6 +335,14 @@ const make = Effect.gen(function* () {
                 return currentMember !== null &&
                   currentMember.status === "active" &&
                   canManageTeamInvites(currentMember.role)
+                  ? Option.some<TeamStateStreamEvent>(event)
+                  : Option.none<TeamStateStreamEvent>();
+              }
+              if (event.type === "threadFollowChanged") {
+                // Keep each member's follow updates scoped to their own connected sessions.
+                return currentMember !== null &&
+                  currentMember.status === "active" &&
+                  event.payload.memberId === currentMember.id
                   ? Option.some<TeamStateStreamEvent>(event)
                   : Option.none<TeamStateStreamEvent>();
               }
@@ -698,6 +747,290 @@ const make = Effect.gen(function* () {
     return yield* repository.listThreadAttributions(workspaceOption.value.id);
   }, Effect.mapError(toInternalError));
 
+  const followThread = Effect.fn("TeamService.followThread")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamThreadFollowInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const attribution = yield* repository
+      .getThreadAttribution(input.payload.threadId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isSome(attribution)) {
+      if (attribution.value.teamId !== team.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "You cannot follow a thread belonging to another team.",
+        });
+      }
+    } else {
+      const exists = yield* repository
+        .threadExistsInProjection(input.payload.threadId)
+        .pipe(Effect.mapError(toInternalError));
+      if (!exists) {
+        return yield* new TeamOperationError({
+          code: "not_found",
+          message: "Thread not found.",
+        });
+      }
+    }
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const inserted = yield* repository
+      .followThread({
+        threadId: input.payload.threadId,
+        memberId: actor.id,
+        createdAt: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (inserted) {
+      yield* publish({
+        version: 1,
+        type: "threadFollowChanged",
+        payload: {
+          threadId: input.payload.threadId,
+          memberId: actor.id,
+          isFollowing: true,
+        },
+      });
+    }
+    return { threadId: input.payload.threadId, isFollowing: true } satisfies TeamThreadFollowResult;
+  });
+
+  const unfollowThread = Effect.fn("TeamService.unfollowThread")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamThreadFollowInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const attribution = yield* repository
+      .getThreadAttribution(input.payload.threadId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isSome(attribution) && attribution.value.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "You cannot unfollow a thread belonging to another team.",
+      });
+    }
+    const removed = yield* repository
+      .unfollowThread({
+        threadId: input.payload.threadId,
+        memberId: actor.id,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (removed) {
+      yield* publish({
+        version: 1,
+        type: "threadFollowChanged",
+        payload: {
+          threadId: input.payload.threadId,
+          memberId: actor.id,
+          isFollowing: false,
+        },
+      });
+    }
+    return {
+      threadId: input.payload.threadId,
+      isFollowing: false,
+    } satisfies TeamThreadFollowResult;
+  });
+
+  const listFollowedThreads = Effect.fn("TeamService.listFollowedThreads")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const workspaceOption = yield* repository.getWorkspace();
+    if (Option.isNone(workspaceOption)) {
+      return [];
+    }
+    const memberOption = yield* repository.getMemberForSession(sessionId);
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.status !== "active" ||
+      memberOption.value.teamId !== workspaceOption.value.id
+    ) {
+      return [];
+    }
+    return yield* repository.listFollowedThreadIds(memberOption.value.id);
+  }, Effect.mapError(toInternalError));
+
+  const shouldNotifyMemberForThread = Effect.fn("TeamService.shouldNotifyMemberForThread")(
+    function* (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly turnId?: string;
+    }) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.shouldNotifyMemberForThread workspace lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+      );
+      if (Option.isNone(workspaceOption)) return true;
+      const attributionOption = yield* repository.getThreadAttribution(input.threadId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.shouldNotifyMemberForThread attribution lookup failed", {
+            threadId: input.threadId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+      );
+      if (Option.isNone(attributionOption)) return true;
+      if (attributionOption.value.teamId !== workspaceOption.value.id) return false;
+
+      const memberOption = yield* repository.getMemberById(input.memberId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.shouldNotifyMemberForThread member lookup failed", {
+            memberId: input.memberId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamMember>()),
+      );
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.status !== "active" ||
+        memberOption.value.teamId !== workspaceOption.value.id
+      ) {
+        return false;
+      }
+
+      const [isFollowing, turnAttribution] = yield* Effect.all([
+        repository
+          .isFollowingThread({ threadId: input.threadId, memberId: input.memberId })
+          .pipe(Effect.orElseSucceed(() => false)),
+        input.turnId !== undefined
+          ? repository
+              .getTurnAttribution(input.turnId)
+              .pipe(Effect.orElseSucceed(() => Option.none<TeamTurnAttribution>()))
+          : Effect.succeed(Option.none<TeamTurnAttribution>()),
+      ]);
+
+      const activeTurnAuthorMemberId =
+        Option.isSome(turnAttribution) && turnAttribution.value.threadId === input.threadId
+          ? turnAttribution.value.authorMemberId
+          : null;
+
+      return shouldNotifyTeamMemberForThread({
+        hasTeam: true,
+        memberId: memberOption.value.id,
+        creatorMemberId: attributionOption.value.creatorMemberId,
+        isFollowing,
+        activeTurnAuthorMemberId,
+      });
+    },
+  );
+
+  const listNotificationRecipientsForThread = Effect.fn(
+    "TeamService.listNotificationRecipientsForThread",
+  )(function* (input: { readonly threadId: ThreadId; readonly turnId?: string }) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          "TeamService.listNotificationRecipientsForThread workspace lookup failed",
+          { cause },
+        ),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+    );
+    if (Option.isNone(workspaceOption)) {
+      return { isTeamThread: false, recipientMemberIds: null };
+    }
+    const attributionOption = yield* repository.getThreadAttribution(input.threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          "TeamService.listNotificationRecipientsForThread attribution lookup failed",
+          { threadId: input.threadId, cause },
+        ),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+    );
+    if (Option.isNone(attributionOption)) {
+      return { isTeamThread: false, recipientMemberIds: null };
+    }
+    if (attributionOption.value.teamId !== workspaceOption.value.id) {
+      return { isTeamThread: true, recipientMemberIds: [] };
+    }
+
+    const [members, followerIds, turnAttribution] = yield* Effect.all([
+      repository
+        .listMembers(workspaceOption.value.id)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>)),
+      repository
+        .listFollowersForThread(input.threadId)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMemberId>)),
+      input.turnId !== undefined
+        ? repository
+            .getTurnAttribution(input.turnId)
+            .pipe(Effect.orElseSucceed(() => Option.none<TeamTurnAttribution>()))
+        : Effect.succeed(Option.none<TeamTurnAttribution>()),
+    ]);
+
+    const followerSet = new Set(followerIds);
+    const activeTurnAuthorMemberId =
+      Option.isSome(turnAttribution) && turnAttribution.value.threadId === input.threadId
+        ? turnAttribution.value.authorMemberId
+        : null;
+
+    const recipientMemberIds = members
+      .filter(
+        (member) =>
+          member.status === "active" &&
+          shouldNotifyTeamMemberForThread({
+            hasTeam: true,
+            memberId: member.id,
+            creatorMemberId: attributionOption.value.creatorMemberId,
+            isFollowing: followerSet.has(member.id),
+            activeTurnAuthorMemberId,
+          }),
+      )
+      .map((member) => member.id);
+
+    return { isTeamThread: true, recipientMemberIds };
+  });
+
+  const shouldPublishRelayNotificationForThread = Effect.fn(
+    "TeamService.shouldPublishRelayNotificationForThread",
+  )(function* (input: { readonly threadId: ThreadId; readonly turnId?: string }) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          "TeamService.shouldPublishRelayNotificationForThread workspace lookup failed",
+          { cause },
+        ),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+    );
+    if (Option.isNone(workspaceOption)) return true;
+
+    const recipients = yield* listNotificationRecipientsForThread(input);
+    if (!recipients.isTeamThread || recipients.recipientMemberIds === null) {
+      return true;
+    }
+    const members = yield* repository
+      .listMembers(workspaceOption.value.id)
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
+    // T3 Connect relay delivers push notifications to the host server's linked owner account.
+    const hostOwner = members.find(
+      (member) => member.status === "active" && member.role === "owner",
+    );
+    if (!hostOwner) return false;
+    return recipients.recipientMemberIds.includes(hostOwner.id);
+  });
+
   const recordThreadCreated = Effect.fn("TeamService.recordThreadCreated")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly threadId: ThreadId;
@@ -763,7 +1096,7 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(memberOption)) return;
     const nowIso = DateTime.formatIso(yield* DateTime.now);
-    yield* repository
+    const written = yield* repository
       .recordTurnAttribution({
         turnId: input.turnId,
         threadId: input.threadId,
@@ -771,6 +1104,7 @@ const make = Effect.gen(function* () {
         createdAt: nowIso,
       })
       .pipe(
+        Effect.as(true),
         Effect.tapError((cause) =>
           Effect.logWarning("TeamService.recordTurnAuthored attribution write failed", {
             threadId: input.threadId,
@@ -778,8 +1112,21 @@ const make = Effect.gen(function* () {
             cause,
           }),
         ),
-        Effect.ignore,
+        Effect.orElseSucceed(() => false),
       );
+    if (written && !input.turnId.startsWith("msg:")) {
+      yield* publish({
+        version: 1,
+        type: "turnAttributed",
+        payload: {
+          turnId: input.turnId,
+          threadId: input.threadId,
+          authorMemberId: memberOption.value.id,
+          authorPseudo: memberOption.value.pseudo,
+          createdAt: nowIso,
+        },
+      });
+    }
   });
 
   const recordThreadInheritedFromParent = Effect.fn("TeamService.recordThreadInheritedFromParent")(
@@ -833,7 +1180,7 @@ const make = Effect.gen(function* () {
         });
       }
       if (input.turnId) {
-        yield* repository
+        const written = yield* repository
           .recordTurnAttribution({
             turnId: input.turnId,
             threadId: input.threadId,
@@ -841,6 +1188,7 @@ const make = Effect.gen(function* () {
             createdAt: nowIso,
           })
           .pipe(
+            Effect.as(true),
             Effect.tapError((cause) =>
               Effect.logWarning("TeamService.recordThreadInheritedFromParent turn write failed", {
                 threadId: input.threadId,
@@ -848,8 +1196,21 @@ const make = Effect.gen(function* () {
                 cause,
               }),
             ),
-            Effect.ignore,
+            Effect.orElseSucceed(() => false),
           );
+        if (written && !input.turnId.startsWith("msg:")) {
+          yield* publish({
+            version: 1,
+            type: "turnAttributed",
+            payload: {
+              turnId: input.turnId,
+              threadId: input.threadId,
+              authorMemberId: parentAttribution.value.creatorMemberId,
+              authorPseudo: parentAttribution.value.creatorPseudo,
+              createdAt: nowIso,
+            },
+          });
+        }
       }
     },
   );
@@ -864,6 +1225,12 @@ const make = Effect.gen(function* () {
     previewInvite,
     redeemInvite,
     listThreadAttributions,
+    followThread,
+    unfollowThread,
+    listFollowedThreads,
+    shouldNotifyMemberForThread,
+    listNotificationRecipientsForThread,
+    shouldPublishRelayNotificationForThread,
     recordThreadCreated,
     recordTurnAuthored,
     recordThreadInheritedFromParent,

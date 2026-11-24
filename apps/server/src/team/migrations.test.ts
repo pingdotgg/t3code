@@ -28,6 +28,7 @@ describe("team sidecar migrations", () => {
         "team_members",
         "team_schema_migrations",
         "team_session_meta",
+        "team_thread_follows",
         "team_thread_meta",
         "team_turn_meta",
         "team_workspaces",

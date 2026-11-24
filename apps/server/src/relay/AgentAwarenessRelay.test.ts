@@ -43,6 +43,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+import * as TeamService from "../team/TeamService.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -172,6 +173,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    readonly teamService?: TeamService.TeamService["Service"];
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -312,7 +314,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     updatedAt: NOW,
     deletedAt: null,
   };
-  const relay = yield* AgentAwarenessRelay.make.pipe(
+  const relayEffect = AgentAwarenessRelay.make.pipe(
     Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
@@ -336,6 +338,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
+  const relay = yield* options.teamService !== undefined
+    ? Effect.provideService(relayEffect, TeamService.TeamService, options.teamService)
+    : relayEffect;
   return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
 });
 
@@ -1247,3 +1252,45 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(publications[1]?.state?.threadId, THREAD_ID);
   }),
 );
+
+describe("AgentAwarenessRelay team notification gating", () => {
+  it.effect(
+    "suppresses relay push for unfollowed team colleague threads and publishes when allowed",
+    () =>
+      Effect.gen(function* () {
+        let allowPublish = false;
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.sync(() => allowPublish),
+        } as unknown as TeamService.TeamService["Service"];
+
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: () => Effect.succeed(shell({ status: "running" })),
+          teamService,
+        });
+
+        // Unfollowed colleague thread is suppressed without emitting any relay publication.
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        assert.equal(publications.length, 0);
+
+        // Once the host owner follows the thread (or owns it / authored the turn), relay publishes.
+        allowPublish = true;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        assert.equal(publications.length, 1);
+        assert.include(publications[0]?.state, {
+          threadId: THREAD_ID,
+          phase: "running",
+        });
+
+        // Unfollowing while live clears the previously published card via tombstone after grace window.
+        allowPublish = false;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+        assert.isNull(publications[1]?.state);
+      }),
+  );
+});

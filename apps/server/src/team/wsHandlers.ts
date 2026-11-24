@@ -29,6 +29,16 @@ export function makeTeamWsRpcHandlers(
     ) => teamService.revokeInvite({ sessionId, payload }),
     [TEAM_WS_METHODS.teamListThreadAttributions]: () =>
       teamService.listThreadAttributions().pipe(Effect.map((attributions) => ({ attributions }))),
+    [TEAM_WS_METHODS.teamFollowThread]: (
+      payload: Parameters<typeof teamService.followThread>[0]["payload"],
+    ) => teamService.followThread({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamUnfollowThread]: (
+      payload: Parameters<typeof teamService.unfollowThread>[0]["payload"],
+    ) => teamService.unfollowThread({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamListFollowedThreads]: () =>
+      teamService
+        .listFollowedThreads(sessionId)
+        .pipe(Effect.map((followedThreadIds) => ({ followedThreadIds }))),
   };
 }
 
