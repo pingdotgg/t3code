@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -10,7 +11,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
-it.effect.skipIf(!symlinksSupported)(
+// quarantine: #42140 macOS fs.watch reports the fixture's own creation, rebuilding the watches at random.
+it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "darwin")(
   "backs off stopped watches for an unchanged linked directory",
   () =>
     Effect.gen(function* () {
