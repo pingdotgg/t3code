@@ -1614,6 +1614,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
+  // A closure over the route key would hand every row a new click handler on each thread switch.
+  const readOpenThreadKey = useStableCallback(() => routeThreadKey);
   const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
     if (isSidebarNestedLinkClick(event.target)) return;
     const isMac = isMacPlatform(navigator.platform);
@@ -1630,7 +1632,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     // macOS keeps counting quick clicks across rows, so only the open row's trailing click is a double-click.
-    if (isTrailingDoubleClick(event.detail) && routeThreadKey === threadKey) {
+    if (isTrailingDoubleClick(event.detail) && readOpenThreadKey() === threadKey) {
       return;
     }
     navigateToThread(threadRef);
