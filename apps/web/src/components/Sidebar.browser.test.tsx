@@ -64,7 +64,12 @@ vi.mock(import("../state/environments"), async (original) => {
   const { EnvironmentId } = await import("@t3tools/contracts");
   // Rows of an environment that is not connected are hidden; the fixtures live in "local".
   const connected = [EnvironmentId.make("local")];
-  return { ...(await original()), useConnectedEnvironmentIds: vi.fn(() => connected) };
+  const actual = await original();
+  return {
+    ...actual,
+    useConnectedEnvironmentIds: vi.fn(() => connected),
+    usePrimaryEnvironmentId: vi.fn(actual.usePrimaryEnvironmentId),
+  };
 });
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
