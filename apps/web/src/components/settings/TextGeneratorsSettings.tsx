@@ -675,11 +675,12 @@ function TextGeneratorModelList({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
-              return;
-            if (!query && !event.repeat) return;
-            event.stopPropagation();
-            setQuery("");
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape" && (query || event.repeat)) {
+              event.preventDefault();
+              event.stopPropagation();
+              setQuery("");
+            }
           }}
         />
       ) : null}
