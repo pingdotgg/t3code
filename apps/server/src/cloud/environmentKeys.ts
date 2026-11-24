@@ -83,7 +83,19 @@ const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(functio
 export const getOrCreateEnvironmentKeyPairFromSecretStore = Effect.fn(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
 ) {
-  const existing = yield* readEnvironmentKeyPair(secrets);
+  // A cut-short or empty record can never sign; drop it so the legacy keys or a new key take over
+  // instead of the server failing to start.
+  const existing = yield* readEnvironmentKeyPair(secrets).pipe(
+    Effect.catchTags({
+      SecretStoreDecodeError: (error) =>
+        Effect.logWarning("replacing unreadable environment signing key pair", {
+          cause: error.cause,
+        }).pipe(
+          Effect.andThen(secrets.remove(CLOUD_LINK_KEY_PAIR)),
+          Effect.as(Option.none<EnvironmentKeyPair>()),
+        ),
+    }),
+  );
   if (Option.isSome(existing)) {
     return existing.value;
   }
