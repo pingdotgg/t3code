@@ -449,14 +449,16 @@ const make = Effect.gen(function* () {
     repositories: ReadonlyArray<string>,
     /**
      * What the caller does once the command's turn has come, before the check below. It answers
-     * with what to note when the command is cleared to start.
+     * with what to note when the command is cleared to start, or null when the command is no
+     * longer wanted: it is then left unrun.
      */
-    inItsTurn: Effect.Effect<() => void, TaskFolderError> = Effect.succeed(() => {}),
+    inItsTurn: Effect.Effect<(() => void) | null, TaskFolderError> = Effect.succeed(() => {}),
   ) =>
     layoutLocks.withLock(
       taskFolder.projectRoot,
       Effect.gen(function* () {
         const noteStart = yield* inItsTurn;
+        if (noteStart === null) return null;
         // The wait for a turn can be long: who asked, the file and the approval are read again
         // once it comes, and only the text that passes then is run. Nothing else comes between
         // this check and the command's start, so no other work can outlast what it read.
@@ -913,14 +915,14 @@ const make = Effect.gen(function* () {
           ? [{ worktreePath: taskFolder.projectPath, repositoryPath: taskFolder.projectRoot }]
           : []),
       ];
-      let allGo = true;
-      for (const checkout of checkouts) {
-        if (!(yield* exists(checkout.worktreePath))) continue;
-        if ((yield* verdict(checkout)).keep === null) continue;
-        allGo = false;
-        break;
-      }
-      if (allGo) {
+      const allGo = Effect.gen(function* () {
+        for (const checkout of checkouts) {
+          if (!(yield* exists(checkout.worktreePath))) continue;
+          if ((yield* verdict(checkout)).keep !== null) return false;
+        }
+        return true;
+      });
+      if (yield* allGo) {
         yield* runLayoutCommand(
           "remove",
           layout.command,
@@ -928,6 +930,12 @@ const make = Effect.gen(function* () {
           input.deleteBranch ?? "",
           undefined,
           taskFolder.repositories.map((repository) => repository.repositoryPath),
+          // The wait for a turn can be long: a checkout that gained work during it is looked at
+          // again, and the command stays unrun when one is now kept.
+          Effect.suspend(() => {
+            verdicts.clear();
+            return Effect.map(allGo, (go) => (go ? () => {} : null));
+          }),
         ).pipe(Effect.ignoreCause({ log: true }));
         // The command took its time: what it left is looked at again before it is removed.
         verdicts.clear();
