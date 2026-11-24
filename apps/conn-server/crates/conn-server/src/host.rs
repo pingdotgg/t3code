@@ -465,12 +465,15 @@ mod tests {
         ))];
         config.host = Some(host.clone());
         let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
-        let service = mcp::service(&Deps {
-            environment: Some(environment.clone()),
-            engine: Some(engine.clone()),
-            terminals: Some(terminals.clone()),
-            ..Deps::default()
-        })
+        let service = mcp::service(
+            &Deps {
+                environment: Some(environment.clone()),
+                engine: Some(engine.clone()),
+                terminals: Some(terminals.clone()),
+                ..Deps::default()
+            },
+            "127.0.0.1:9".parse().unwrap(),
+        )
         .unwrap();
         host.mcp.set(service.clone()).unwrap();
         let dispatch = |command: Value| {
@@ -628,11 +631,14 @@ mod tests {
             ))
             .unwrap(),
         );
-        let service = mcp::service(&Deps {
-            environment: Some(environment.clone()),
-            engine: Some(engine.clone()),
-            ..Deps::default()
-        })
+        let service = mcp::service(
+            &Deps {
+                environment: Some(environment.clone()),
+                engine: Some(engine.clone()),
+                ..Deps::default()
+            },
+            "127.0.0.1:9".parse().unwrap(),
+        )
         .unwrap();
         let host = Host {
             mcp: OnceLock::new(),
@@ -677,6 +683,116 @@ mod tests {
         engine.shutdown().await;
         drop(host);
         drop(service);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `thread`'s stream, from now on.
+    async fn subscribe(
+        engine: &dyn Engine,
+        thread: &str,
+    ) -> conn_engine::Subscription<
+        conn_contract::ThreadStreamItem,
+        conn_contract::GetThreadProjectionError,
+    > {
+        engine
+            .subscribe_thread(conn_contract::from_json(json!({"threadId": thread})).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// A run a previous process left active continues at start, and its new session gets
+    /// `/mcp` at the address the server listens on. The session keeps that URL, so a guess
+    /// fails every Conn tool call until the session is replaced.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_run_recovered_at_start_gets_the_listen_address() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-recovered-mcp-{}", conn_support::uuid_v4()));
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        let root = dir.to_string_lossy().into_owned();
+        let config = |provider: &Arc<conn_engine::fake::FakeProvider>| {
+            let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+            config.projects = vec![conn_engine::ProjectConfig {
+                title: "P".into(),
+                workspace_root: root.clone(),
+            }];
+            let provider: Arc<dyn conn_provider::Provider> = provider.clone();
+            config.provider_set = Some(conn_provider::ProviderSet::from(vec![provider]));
+            config
+        };
+        let thread = "thread:recovered";
+
+        // The previous process stops during a turn, as on SIGTERM.
+        let previous = conn_engine::SqliteEngine::open(config(&Arc::new(
+            conn_engine::fake::FakeProvider::new("claudeAgent"),
+        )))
+        .unwrap();
+        previous
+            .launch_thread(json!({
+                "commandId": "launch", "threadId": thread,
+                "projectId": conn_engine::SqliteEngine::project_id_for(&root),
+                "title": "Agent", "runtimeMode": "full-access", "interactionMode": "default",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+                "workspaceStrategy": {"type": "root"},
+            }))
+            .await
+            .unwrap();
+        let mut stream = subscribe(&previous, thread).await;
+        previous
+            .dispatch(
+                conn_contract::from_json(json!({
+                    "type": "message.dispatch", "commandId": "hang", "threadId": thread,
+                    "messageId": "message:hang", "text": "hang", "attachments": [],
+                    "dispatchMode": {"type": "start_immediately"},
+                    "createdBy": "user", "creationSource": "web",
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        while conn_contract::to_json(&stream.recv().await.unwrap().unwrap())["event"]["type"]
+            != "provider-turn.updated"
+        {}
+        previous.begin_shutdown();
+        previous.shutdown().await;
+
+        // The next start, in `serve`'s order.
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: crate::methods::terminal::manager(Some(&environment)),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        });
+        let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+        let mut config = config(&provider);
+        config.host = Some(host.clone());
+        config.recover_runs = false;
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let mut stream = subscribe(engine.as_ref(), thread).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut deps = Deps {
+            environment: Some(environment.clone()),
+            engine: Some(engine.clone()),
+            ..Deps::default()
+        };
+        crate::serve::start_agent_tools(&mut deps, &host, &engine, address).unwrap();
+        let opened = || provider.sessions.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        while !opened() {
+            stream.recv().await.unwrap().unwrap();
+        }
+
+        let servers = provider.mcp_servers.lock().unwrap().clone();
+        assert_eq!(
+            servers.iter().map(|s| s.url.clone()).collect::<Vec<_>>(),
+            [format!("http://{address}/mcp")],
+            "the recovered session's `/mcp`"
+        );
+        engine.shutdown().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -72,6 +72,7 @@ fn fixture_with_provider(
     config.host = host.or_else(|| Some(Arc::new(threads_handoff::FilesHost(files.clone()))));
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
+        listen_address: "0.0.0.0:4711".parse().unwrap(),
         preview: Some(conn_preview::tabs::Preview::new(dir.clone())),
         devices: None,
         refresh_provider: None,
@@ -112,7 +113,6 @@ fn fixture_with_provider(
         scheduled_tasks: None,
         annotations: None,
     });
-    service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     Fixture { service, dir }
 }
 
@@ -1820,6 +1820,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     .await;
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
+        listen_address: "0.0.0.0:4711".parse().unwrap(),
         preview: None,
         devices: None,
         refresh_provider: None,
@@ -1848,7 +1849,6 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
             )),
         )),
     });
-    service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     let dir = base.dir.clone();
     std::mem::forget(base);
     Fixture { service, dir }

@@ -334,6 +334,16 @@ pub async fn serve_with_instances(
         Ok(Err(error)) => or_exit(Err(error), "cannot import the T3 server's state"),
         Err(error) => or_exit(Err(error), "cannot import the T3 server's state"),
     }
+    // Bound before the engine opens: every `/mcp` credential carries this address. Clients
+    // wait in the backlog until the router serves, below.
+    let listener = match tokio::net::TcpListener::bind(listen).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("conn-server: cannot listen on {listen}: {error}");
+            std::process::exit(1);
+        }
+    };
+    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = projects;
     config.provider_set = Some(providers.clone());
@@ -341,7 +351,8 @@ pub async fn serve_with_instances(
     config.host = Some(host.clone());
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
-    config.recover_runs = !inert;
+    // `start_agent_tools` recovers them, once agents can reach `/mcp`.
+    config.recover_runs = false;
     // Attention events for iOS push: off unless asked for, and only where a sender exists
     // (`attention.rs`). A container server sends through its managed Gateway client.
     let attention = !inert && crate::attention::enabled_by_env();
@@ -424,10 +435,10 @@ pub async fn serve_with_instances(
     if let Some(devices) = &deps.devices {
         let _ = host.devices.set(devices.clone());
     }
-    deps.mcp = crate::routes::mcp::service(&deps);
-    if let Some(mcp) = &deps.mcp {
-        let _ = host.mcp.set(mcp.clone());
-    }
+    or_exit(
+        start_agent_tools(&mut deps, &host, &sqlite_engine, addr),
+        "cannot recover the runs a previous process left active",
+    );
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -436,14 +447,6 @@ pub async fn serve_with_instances(
         deps,
     };
 
-    let listener = match tokio::net::TcpListener::bind(listen).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!("conn-server: cannot listen on {listen}: {error}");
-            std::process::exit(1);
-        }
-    };
-    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
     // The write and its fsync run on a blocking thread, as all file work here does.
     let published = {
@@ -454,9 +457,6 @@ pub async fn serve_with_instances(
         Ok(Ok(())) => {}
         Ok(Err(error)) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
         Err(error) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
-    }
-    if let Some(mcp) = &state.deps.mcp {
-        mcp.set_listen_address(addr);
     }
     println!("conn-server listening on http://{addr}");
     println!(
@@ -551,6 +551,25 @@ pub async fn serve_with_instances(
         // A failure exit also restarts units with Restart=on-failure.
         std::process::exit(1);
     }
+}
+
+/// Gives the engine's agents `/mcp` at `listen`, and only then recovers the runs a previous
+/// process left active (none in an inert copy). A resumed session keeps the credential it
+/// opens with, so its URL must already be the one this server answers on.
+pub(crate) fn start_agent_tools(
+    deps: &mut Deps,
+    host: &Host,
+    engine: &SqliteEngine,
+    listen: SocketAddr,
+) -> Result<(), String> {
+    deps.mcp = crate::routes::mcp::service(deps, listen);
+    if let Some(mcp) = &deps.mcp {
+        let _ = host.mcp.set(mcp.clone());
+    }
+    if inert() {
+        return Ok(());
+    }
+    engine.recover_runs()
 }
 
 /// Binds the managed ingress and starts its authority, probe, lease, ACK and notice tasks.

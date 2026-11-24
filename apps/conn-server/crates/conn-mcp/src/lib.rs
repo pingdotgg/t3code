@@ -12,7 +12,7 @@
 
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 
 use conn_engine::Engine;
@@ -46,6 +46,9 @@ pub use worktrees::WorktreeConfig;
 
 /// What the service needs from the server around it.
 pub struct McpConfig {
+    /// Where the server listens. Every credential carries `/mcp` at this address, so bind
+    /// the listener before the service exists.
+    pub listen_address: SocketAddr,
     pub preview: Option<conn_preview::tabs::Preview>,
     pub engine: Arc<dyn Engine>,
     /// The same attachment store used by client RPC and HTTP uploads.
@@ -166,6 +169,17 @@ impl std::fmt::Debug for McpConfig {
 }
 
 pub const DEFAULT_HOSTED_APP_URL: &str = "https://app.t3.codes";
+
+/// `/mcp` at the listen address. An unspecified address (`0.0.0.0`) becomes loopback: agents
+/// run on this machine.
+fn endpoint(address: SocketAddr) -> String {
+    let host = match address.ip() {
+        ip if ip.is_unspecified() => "127.0.0.1".to_owned(),
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+        std::net::IpAddr::V4(ip) => ip.to_string(),
+    };
+    format!("http://{host}:{}/mcp", address.port())
+}
 
 /// Who calls. The route authenticates; the service only reads this.
 #[derive(Clone, Debug, PartialEq)]
@@ -309,7 +323,7 @@ pub struct McpService {
     exposure: Mutex<exposure::Exposure>,
     /// Threads whose own agent asked to settle them when the active run completes.
     settling: Mutex<std::collections::HashSet<String>>,
-    endpoint: OnceLock<String>,
+    endpoint: String,
     upload_owners: Mutex<tools::attachments::UploadOwners>,
     handoffs: Mutex<std::collections::HashSet<String>>,
     /// Whether each calling thread's project is on a forge (`forgeOfThread`): read per request,
@@ -416,38 +430,19 @@ impl McpService {
     }
 
     pub fn new(config: McpConfig) -> Arc<Self> {
+        let endpoint = endpoint(config.listen_address);
         Arc::new(Self {
             config,
             credentials: Mutex::new(credentials::Credentials::default()),
             sessions: Mutex::new(sessions::Sessions::default()),
             exposure: Mutex::new(exposure::Exposure::default()),
             settling: Mutex::new(std::collections::HashSet::new()),
-            endpoint: OnceLock::new(),
+            endpoint,
             upload_owners: Mutex::new(tools::attachments::UploadOwners::default()),
             handoffs: Mutex::new(std::collections::HashSet::new()),
             forges: Mutex::new(std::collections::HashMap::new()),
             remote: remote_tasks::Followers::default(),
         })
-    }
-
-    /// Records where `/mcp` answers. An unspecified address (`0.0.0.0`) becomes loopback:
-    /// agents run on this machine.
-    pub fn set_listen_address(&self, address: SocketAddr) {
-        let host = match address.ip() {
-            ip if ip.is_unspecified() => "127.0.0.1".to_owned(),
-            std::net::IpAddr::V6(ip) => format!("[{ip}]"),
-            std::net::IpAddr::V4(ip) => ip.to_string(),
-        };
-        let _ = self
-            .endpoint
-            .set(format!("http://{host}:{}/mcp", address.port()));
-    }
-
-    pub fn endpoint(&self) -> String {
-        self.endpoint
-            .get()
-            .cloned()
-            .unwrap_or_else(|| "http://127.0.0.1/mcp".to_owned())
     }
 
     /// A fresh credential for one provider session of a thread. The provider passes the
@@ -457,7 +452,7 @@ impl McpService {
         McpServerEntry {
             thread_id: caller.thread_id,
             provider_session_id: caller.provider_session_id,
-            url: self.endpoint(),
+            url: self.endpoint.clone(),
             authorization: format!("Bearer {token}"),
         }
     }
