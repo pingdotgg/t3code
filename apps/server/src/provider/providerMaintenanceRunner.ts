@@ -15,11 +15,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -42,11 +40,6 @@ import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/ser
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
-// Native updaters (`claude update`) download a ~300 MB binary without printing
-// progress, and killing one mid-download leaves a truncated binary that the
-// next run treats as installed. Allow a slow connection to finish.
-const UPDATE_TIMEOUT_MINUTES = 30;
-const UPDATE_TIMEOUT_MS = UPDATE_TIMEOUT_MINUTES * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 // Sample installer output because every progress update resends the provider list to all clients.
 const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
@@ -58,7 +51,6 @@ export interface ProviderMaintenanceCommandResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number | null;
-  readonly timedOut: boolean;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
 }
@@ -111,14 +103,11 @@ const needsOpenCodeServerRestart = (providers: ReadonlyArray<ServerProvider>) =>
 const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceRunner.runCommand")(
   function* (input: {
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-    readonly scope: Scope.Scope;
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly env?: NodeJS.ProcessEnv;
     readonly onProgress?: (line: string) => Effect.Effect<void>;
   }) {
-    const pendingProgress = yield* Ref.make<string | null>(null);
-    const onProgress = input.onProgress;
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
         const env = input.env ? { env: input.env, extendEnv: true } : {};
@@ -144,6 +133,15 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
 
+        const pendingProgress = yield* Ref.make<string | null>(null);
+        const onProgress = input.onProgress;
+        if (onProgress) {
+          yield* Ref.getAndSet(pendingProgress, null).pipe(
+            Effect.flatMap((line) => (line === null ? Effect.void : onProgress(line))),
+            Effect.repeat(Schedule.spaced(UPDATE_PROGRESS_INTERVAL)),
+            Effect.forkScoped,
+          );
+        }
         const trackProgress = <E>(stream: Stream.Stream<Uint8Array, E>) => {
           if (!onProgress) {
             return stream;
@@ -189,43 +187,16 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           stdout: stdout.text,
           stderr: stderr.text,
           exitCode: Number(exitCode),
-          timedOut: false,
           stdoutTruncated: stdout.truncated,
           stderrTruncated: stderr.truncated,
         } satisfies ProviderMaintenanceCommandResult;
       },
     );
 
-    // Killing an installer mid-install (taskkill /F on Windows) leaves the provider half-replaced,
-    // so the timeout only stops waiting; the command keeps running and draining its output.
-    const command = yield* collectCommandResult().pipe(Effect.scoped, Effect.forkIn(input.scope));
-    return yield* Effect.gen(function* () {
-      if (onProgress) {
-        yield* Ref.getAndSet(pendingProgress, null).pipe(
-          Effect.flatMap((line) => (line === null ? Effect.void : onProgress(line))),
-          Effect.repeat(Schedule.spaced(UPDATE_PROGRESS_INTERVAL)),
-          Effect.forkScoped,
-        );
-      }
-      return yield* Fiber.join(command);
-    }).pipe(
-      Effect.scoped,
-      Effect.timeoutOption(Duration.millis(UPDATE_TIMEOUT_MS)),
-      Effect.map((result) =>
-        Option.match(result, {
-          onSome: (value) => value,
-          onNone: () =>
-            ({
-              stdout: "",
-              stderr: "",
-              exitCode: null,
-              timedOut: true,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            }) satisfies ProviderMaintenanceCommandResult,
-        }),
-      ),
-    );
+    // No timeout: killing an installer mid-install leaves the provider half-replaced (npm has moved
+    // the old package and its shims aside; `claude update` leaves a truncated binary), and an
+    // installer still running must keep the update's locks until it exits.
+    return yield* collectCommandResult().pipe(Effect.scoped);
   },
 );
 
@@ -289,9 +260,6 @@ function failureReason(result: ProviderMaintenanceCommandResult): string | null 
 }
 
 function failureMessage(result: ProviderMaintenanceCommandResult): string {
-  if (result.timedOut) {
-    return `Update timed out after ${UPDATE_TIMEOUT_MINUTES} minutes.`;
-  }
   const summary =
     result.exitCode !== null && result.exitCode !== 0
       ? `Update command exited with code ${result.exitCode}`
@@ -333,15 +301,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const serviceScope = yield* Effect.scope;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
-  // Created before any update fiber, so shutdown stops updates before the commands they leave running.
-  const commandScope = yield* Scope.fork(serviceScope);
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
   ) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
-      scope: commandScope,
       command: update.executable,
       args: update.args,
       onProgress,
@@ -604,12 +569,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               ),
             );
             const finishedAt = yield* nowIso;
-            if (result.timedOut || result.exitCode !== 0) {
+            if (result.exitCode !== 0) {
               yield* Effect.logWarning("Provider update command failed", {
                 provider,
                 command: describeCommand(command),
                 exitCode: result.exitCode,
-                timedOut: result.timedOut,
                 output: commandOutput(result),
               });
               return yield* finish(
