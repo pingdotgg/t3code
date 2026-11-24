@@ -26,7 +26,17 @@ const ISSUE = {
 /** Every endpoint the detail read touches, answered by the path `glab api` is given. */
 function answer(path: string): string {
   if (path === "user") return encode({ username: "julius" });
-  if (path === "projects/acme%2Fweb/issues/42") return encode(ISSUE);
+  if (path === "projects/acme%2Fweb/issues?iids[]=42&with_labels_details=true&per_page=1") {
+    return encode([
+      {
+        ...ISSUE,
+        labels: [
+          { name: "bug", color: "#E24329", description: "Something is broken" },
+          { name: " ", color: "#000000" },
+        ],
+      },
+    ]);
+  }
   if (path.startsWith("projects/acme%2Fweb/issues/42/notes")) {
     return encode([
       {
@@ -47,6 +57,13 @@ function answer(path: string): string {
         body: "added ~7 label",
         author: { username: "theo" },
         created_at: "2026-07-03T00:00:00Z",
+        system: true,
+      },
+      {
+        id: 10,
+        body: "mentioned in merge request api!51",
+        author: { username: "theo" },
+        created_at: "2026-07-04T00:00:00Z",
         system: true,
       },
     ]);
@@ -175,7 +192,7 @@ describe("GitLabIssueTracker", () => {
         ],
         author: { login: "octocat", name: "Octo Cat" },
         assignees: [{ login: "theo" }],
-        labels: [{ name: "bug", color: null }],
+        labels: [{ name: "bug", color: "#E24329", description: "Something is broken" }],
         commentCount: 3,
         viewer: "julius",
         viewerPermissions: { setState: true, edit: true, labels: true, assignees: true },
@@ -196,7 +213,14 @@ describe("GitLabIssueTracker", () => {
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],
         ["closed", null],
+        ["referenced", "merge request api!51"],
       ]);
+      expect(issue.events.at(-1)?.reference).toEqual({
+        repository: "acme/api",
+        number: 51,
+        kind: "pull-request",
+        url: "https://gitlab.com/acme/api/-/merge_requests/51",
+      });
       // A closing merge request is not repeated as a related one.
       expect(
         issue.linkedPullRequests.map((link) => [link.number, link.closesIssue, link.isDraft]),
@@ -204,6 +228,37 @@ describe("GitLabIssueTracker", () => {
         [50, true, false],
         [51, false, true],
       ]);
+    }),
+  );
+
+  it.effect("loads the detail without comment reactions where GitLab has no Note.awardEmoji", () =>
+    Effect.gen(function* () {
+      // GitLab before 16.1 has no `Note.awardEmoji`; glab exits 1 on any query naming it.
+      const api = yield* GitLabIssueTracker.make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabCli.GitLabCli)({
+            execute: (input) =>
+              input.args[1] === "graphql"
+                ? Effect.fail(
+                    new GitLabCli.GitLabCliCommandError({
+                      operation: "execute",
+                      command: "glab",
+                      cwd: input.cwd,
+                      cause: new Error("glab: Field 'awardEmoji' doesn't exist on type 'Note'"),
+                    }),
+                  )
+                : Effect.succeed(TestSourceControlHost.processOutput(answer(input.args[1]!))),
+          }),
+        ),
+      );
+      const target = { cwd: "/w", host: "gitlab.example.com", scope: "acme/web", key: "42" };
+      const issue = yield* api.getIssue(target);
+      expect(issue.comments.map((comment) => [comment.id, comment.reactions])).toEqual([["7", []]]);
+      expect(issue.reactions).toEqual([
+        { content: "eyes", count: 1, actors: ["theo"], viewerHasReacted: false },
+      ]);
+      const later = yield* api.getComments({ ...target, cursor: "2:after-100" });
+      expect(later.comments.map((comment) => comment.reactions)).toEqual([[]]);
     }),
   );
 
@@ -309,7 +364,7 @@ describe("GitLabIssueTracker", () => {
         cursor: "3",
       });
       expect(paths[0]).toBe(
-        "projects/acme%2Fweb/issues?state=opened&assignee_username=julius&order_by=updated_at&sort=desc&per_page=1&page=3",
+        "projects/acme%2Fweb/issues?state=opened&assignee_username=julius&order_by=updated_at&sort=desc&with_labels_details=true&per_page=1&page=3",
       );
       // A named assignee takes the one parameter GitLab reads, so "assigned to me" drops rows here.
       const both = yield* api.listIssues({
@@ -325,10 +380,12 @@ describe("GitLabIssueTracker", () => {
         limit: 1,
       });
       expect(paths[1]).toBe(
-        "projects/acme%2Fweb/issues?state=opened&labels=bug%2Cneeds%20triage&assignee_username=theo&order_by=created_at&sort=desc&per_page=1&page=1",
+        "projects/acme%2Fweb/issues?state=opened&labels=bug%2Cneeds%20triage&assignee_username=theo&order_by=created_at&sort=desc&with_labels_details=true&per_page=1&page=1",
       );
       expect(both.items).toEqual([]);
       expect(page.items[0]?.key).toBe("42");
+      // A host that ignores with_labels_details still sends names, which keep their chips.
+      expect(page.items[0]?.labels).toEqual([{ name: "bug", color: null }]);
       expect(page.nextCursor).toBe("4");
     }),
   );

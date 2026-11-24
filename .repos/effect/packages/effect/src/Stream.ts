@@ -2922,7 +2922,44 @@ export const forever = <A, E, R>(self: Stream<A, E, R>): Stream<A, E, R> => from
  * @since 4.0.0
  */
 export const flattenIterable = <A, E, R>(self: Stream<Iterable<A>, E, R>): Stream<A, E, R> =>
-  flatMap(self, fromIterable)
+  transformPull(self, (pull, scope) => {
+    let chunk: Arr.NonEmptyReadonlyArray<Iterable<A>> | undefined
+    let index = 0
+    let iterator: Iterator<A> | undefined
+    const refill = Effect.flatMap(pull, (chunk_) => {
+      chunk = chunk_
+      index = 0
+      return loop()
+    })
+    function loop(): Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E> {
+      while (true) {
+        if (iterator !== undefined) {
+          const buffer: Array<A> = []
+          while (buffer.length < DefaultChunkSize) {
+            const result = iterator.next()
+            if (result.done) {
+              iterator = undefined
+              break
+            }
+            buffer.push(result.value)
+          }
+          if (Arr.isArrayNonEmpty(buffer)) return Effect.succeed(buffer)
+        }
+        if (chunk === undefined) return refill
+        const iterable = chunk[index++]
+        if (index === chunk.length) chunk = undefined
+        if (Array.isArray(iterable)) {
+          if (Arr.isArrayNonEmpty(iterable)) return Effect.succeed(iterable)
+        } else {
+          iterator = iterable[Symbol.iterator]()
+        }
+      }
+    }
+    return Effect.as(
+      Scope.addFinalizer(scope, Effect.sync(() => iterator?.return?.())),
+      Effect.suspend(loop)
+    )
+  })
 
 /**
  * Unwraps `Take` values, emitting elements from non-empty arrays and ending or
@@ -4319,7 +4356,11 @@ export const filterEffect: {
   <A, E, R, EX, RX>(
     self: Stream<A, E, R>,
     predicate: (a: NoInfer<A>, i: number) => Effect.Effect<boolean, EX, RX>
-  ): Stream<A, E | EX, R | RX> => fromChannel(Channel.filterArrayEffect(toChannel(self), predicate))
+  ): Stream<A, E | EX, R | RX> =>
+    suspend(() => {
+      let i = 0
+      return fromChannel(Channel.filterArrayEffect(toChannel(self), (a) => predicate(a, i++)))
+    })
 )
 
 /**
@@ -8751,15 +8792,10 @@ export const groupBy: {
 ): Stream<readonly [K, Stream<V>], E | E2, R | R2> =>
   groupByImpl(
     self,
-    Effect.fnUntraced(function*(arr, queues, queueMap) {
+    Effect.fnUntraced(function*(arr, useQueue) {
       for (let i = 0; i < arr.length; i++) {
         const [key, value] = yield* f(arr[i])
-        const oentry = MutableHashMap.get(queueMap, key)
-        const queue = Option.isSome(oentry)
-          ? oentry.value
-          : yield* Effect.scoped(RcMap.get(queues, key))
-        yield* RcMap.touch(queues, key)
-        yield* Queue.offer(queue, value)
+        yield* useQueue(key, (queue) => Queue.offer(queue, value))
       }
     }),
     options
@@ -8823,7 +8859,7 @@ export const groupByKey: {
     const batch = MutableHashMap.empty<K, Arr.NonEmptyArray<A>>()
     return groupByImpl(
       self,
-      Effect.fnUntraced(function*(arr, queues, queueMap) {
+      Effect.fnUntraced(function*(arr, useQueue) {
         for (let i = 0; i < arr.length; i++) {
           const key = f(arr[i])
           const ovalues = MutableHashMap.get(batch, key)
@@ -8834,12 +8870,7 @@ export const groupByKey: {
           }
         }
         for (const [key, values] of batch) {
-          const oentry = MutableHashMap.get(queueMap, key)
-          const queue = Option.isSome(oentry)
-            ? oentry.value
-            : yield* Effect.scoped(RcMap.get(queues, key))
-          yield* RcMap.touch(queues, key)
-          yield* Queue.offerAll(queue, values)
+          yield* useQueue(key, (queue) => Queue.offerAll(queue, values))
         }
         MutableHashMap.clear(batch)
       }),
@@ -8847,12 +8878,16 @@ export const groupByKey: {
     )
   }))
 
+type UseGroupQueue<K, V> = (
+  key: K,
+  offer: (queue: Queue.Queue<V, Cause.Done>) => Effect.Effect<unknown>
+) => Effect.Effect<unknown>
+
 const groupByImpl = <A, E, R, K, V, E2, R2>(
   self: Stream<A, E, R>,
   f: (
     arr: Arr.NonEmptyReadonlyArray<A>,
-    queues: RcMap.RcMap<K, Queue.Queue<V, Cause.Done>>,
-    queueMap: MutableHashMap.MutableHashMap<K, Queue.Queue<V, Cause.Done>>
+    useQueue: UseGroupQueue<K, V>
   ) => Effect.Effect<void, E2, R2>,
   options?: {
     readonly bufferSize?: number | undefined
@@ -8866,6 +8901,8 @@ const groupByImpl = <A, E, R, K, V, E2, R2>(
       yield* Scope.addFinalizer(scope, Queue.shutdown(out))
 
       const queueMap = MutableHashMap.empty<K, Queue.Queue<V, Cause.Done>>()
+      const idleTimeToLive = Duration.fromInputUnsafe(options?.idleTimeToLive ?? Duration.infinity)
+      const canExpire = Duration.isFinite(idleTimeToLive)
       const queues = yield* RcMap.make({
         lookup: (key: K) =>
           Effect.acquireRelease(
@@ -8880,12 +8917,21 @@ const groupByImpl = <A, E, R, K, V, E2, R2>(
               return Queue.end(queue)
             }
           ),
-        idleTimeToLive: options?.idleTimeToLive ?? Duration.infinity
+        idleTimeToLive
       }).pipe(Scope.provide(forkedScope))
+
+      const useQueue: UseGroupQueue<K, V> = (key, offer) => {
+        if (!canExpire) {
+          const existing = MutableHashMap.get(queueMap, key)
+          if (Option.isSome(existing)) return offer(existing.value)
+        }
+        // Keep the group alive until the offer has been accepted or cancelled.
+        return Effect.scoped(Effect.flatMap(RcMap.get(queues, key), offer))
+      }
 
       yield* Effect.whileLoop({
         while: constTrue,
-        body: constant(Effect.flatMap(pull, (arr) => f(arr, queues, queueMap))),
+        body: constant(Effect.flatMap(pull, (arr) => f(arr, useQueue))),
         step: constVoid
       }).pipe(
         Effect.catchCause((cause) => {
