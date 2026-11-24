@@ -259,15 +259,19 @@ const sendPointerCommand = async (
   params: Record<string, unknown>,
   sessionId: string | undefined,
   route: PointerRoute | undefined,
+  beforeDispatch: (() => void) | undefined,
 ) => {
   const previous = pointerCommands.get(webContents) ?? Promise.resolve();
   const current = previous
     .catch(() => {})
     .then(async () => {
       const routed = route && sessionId === undefined ? await route(params) : null;
-      const dispatch = routed
-        ? () => sendToFrame(debuggee, method, routed)
-        : () => debuggee.sendCommand(method, params, sessionId);
+      const dispatch = () => {
+        beforeDispatch?.();
+        return routed
+          ? sendToFrame(debuggee, method, routed)
+          : debuggee.sendCommand(method, params, sessionId);
+      };
       return params["type"] === "mousePressed" || params["type"] === "touchStart"
         ? sendPointerPress(webContents, dispatch)
         : dispatch();
@@ -280,7 +284,10 @@ const sendPointerCommand = async (
   }
 };
 
-/** Sends one command to the guest's page, keeping reloads and input inside it. */
+/**
+ * Sends one command to the guest's page, keeping reloads and input inside it. Input that waits
+ * before it reaches the guest calls `beforeDispatch` once the wait ends, which throws to drop it.
+ */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
@@ -288,12 +295,29 @@ export const sendPageCommand = async (
   params: Record<string, unknown>,
   sessionId?: string,
   routeMouse?: PointerRoute,
+  beforeDispatch?: () => void,
 ): Promise<unknown> => {
   if (method === "Input.dispatchMouseEvent") {
-    return sendPointerCommand(webContents, debuggee, method, params, sessionId, routeMouse);
+    return sendPointerCommand(
+      webContents,
+      debuggee,
+      method,
+      params,
+      sessionId,
+      routeMouse,
+      beforeDispatch,
+    );
   }
   if (method === "Input.dispatchTouchEvent") {
-    return sendPointerCommand(webContents, debuggee, method, params, sessionId, undefined);
+    return sendPointerCommand(
+      webContents,
+      debuggee,
+      method,
+      params,
+      sessionId,
+      undefined,
+      beforeDispatch,
+    );
   }
   if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
   // Electron's debugger routes Page.reload on a webview to its embedder window.
@@ -312,6 +336,7 @@ export const sendPageCommand = async (
   if ((await evaluate(debuggee, `${FOCUSED_DOCUMENT} !== null`)) !== true) {
     throw new Error(CROSS_SITE_FOCUS_MESSAGE);
   }
+  beforeDispatch?.();
   switch (method) {
     case "Input.insertText":
       await webContents.insertText(typeof params["text"] === "string" ? params["text"] : "");
