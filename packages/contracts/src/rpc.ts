@@ -45,7 +45,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
@@ -87,7 +87,7 @@ import {
   AcpRegistrySetProviderResult,
 } from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
-import { CritOpenError, CritOpenInput } from "./crit.ts";
+import { CritOpenError, CritOpenInput, CritReviewInput } from "./crit.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -498,6 +498,7 @@ export const WS_METHODS = {
 
   shellOpenInEditor: "shell.openInEditor",
   shellOpenInCrit: "shell.openInCrit",
+  shellForwardCritReview: "shell.forwardCritReview",
 
   filesystemBrowse: "filesystem.browse",
   workspaceListFolders: "workspace.listFolders",
@@ -1703,6 +1704,13 @@ const WsShellOpenInCritRpc = Rpc.make(WS_METHODS.shellOpenInCrit, {
   error: Schema.Union([CritOpenError, EnvironmentAuthorizationError]),
 });
 
+const WsShellForwardCritReviewRpc = Rpc.make(WS_METHODS.shellForwardCritReview, {
+  payload: CritReviewInput,
+  success: PortSchema,
+  stream: true,
+  error: Schema.Union([CritOpenError, EnvironmentAuthorizationError]),
+});
+
 const WsFilesystemGetMetadataRpc = Rpc.make(WS_METHODS.filesystemGetMetadata, {
   payload: FilesystemGetMetadataInput,
   success: FilesystemGetMetadataResult,
@@ -2638,6 +2646,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsShellOpenInCritRpc,
+  WsShellForwardCritReviewRpc,
   WsFilesystemBrowseRpc,
   WsWorkspaceListFoldersRpc,
   WsWorkspaceScanFoldersRpc,

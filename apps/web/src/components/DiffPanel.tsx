@@ -64,12 +64,7 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
-import {
-  areAllDiffFilesCollapsed,
-  isAutoCollapsedDiffFile,
-  toggleAllDiffFiles,
-} from "../lib/diffCollapse";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { LIVE_REFRESH_MIN_INTERVAL_MS, useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   useProject,
@@ -147,7 +142,8 @@ const NO_GIT_REPOSITORIES: ReturnType<typeof threadChangedRepositories> = Object
 const NO_TURN_DIFF_SECTIONS: ReadonlyArray<TurnDiffSection> = [];
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
 
-/** Collapse control for one file header; re-renders only when its own file changes. */
+const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
+
 function DiffFileCollapseToggle({
   filePath,
   fileKey,
@@ -288,17 +284,13 @@ export default function DiffPanel({
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
-  const autoCollapseTestAndSnapshotFiles = serverConfig
-    ? resolveProjectSettings(serverConfig.settings, activeProjectId, activeProject).settings
-        .autoCollapseTestAndSnapshotFiles
-    : true;
   const onFileContextMenu = useFileContextMenuHandler(activeThread?.environmentId ?? null);
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeThread?.environmentId ?? null,
     serverConfig?.availableEditors ?? [],
   );
   const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
-  const { open: openInCrit, opening: openingCrit } = useOpenInCrit(
+  const { open: openInCrit, disabled: critDisabled } = useOpenInCrit(
     activeThread?.environmentId ?? null,
   );
   const gitStatusQuery = useEnvironmentQuery(
@@ -812,23 +804,16 @@ export default function DiffPanel({
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
+  const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
+    ? new Set(diffFileKeys)
+    : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
   const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
     collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
-  );
-  const defaultCollapsedDiffFileKeys = new Set(
-    renderableFileEntries
-      .filter(
-        ({ fileDiff }) =>
-          settings.diffFilesCollapsed ||
-          (autoCollapseTestAndSnapshotFiles &&
-            isAutoCollapsedDiffFile(resolveFileDiffPath(fileDiff))),
-      )
-      .map(({ fileKey }) => fileKey),
   );
   const collapsedDiffFileKeys = storedCollapsedDiffFileKeys ?? defaultCollapsedDiffFileKeys;
   const updateCollapsedDiffFiles = (
     update: (current: ReadonlySet<string>) => ReadonlySet<string>,
-  ): void => {
+  ) => {
     if (!collapseScopeKey) return;
     useDiffPanelSessionStore
       .getState()
@@ -1523,7 +1508,7 @@ export default function DiffPanel({
                   size="icon-sm"
                   variant="ghost"
                   aria-label={gt("Open in Crit")}
-                  disabled={openingCrit}
+                  disabled={critDisabled}
                   onClick={() => void handleOpenInCrit()}
                 />
               }

@@ -8,7 +8,6 @@ import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
-import * as Option from "effect/Option";
 import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { useFocusComposerOnThreadOpen } from "./chat/useFocusComposerOnThreadOpen";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -78,8 +77,6 @@ import {
   type ResponseContextRecord,
   type ChatFileAttachment,
   type EnvironmentId,
-  type DesktopBridge,
-  type DesktopSshPortlessForwardInput,
   type MessageId,
   type ModelSelection,
   type PreviewAnnotationPayload,
@@ -459,17 +456,6 @@ type ChatViewProps =
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
-let portlessForwardRequest: Promise<void> = Promise.resolve();
-
-function syncPortlessForwardInOrder(
-  sync: NonNullable<DesktopBridge["syncSshPortlessForward"]>,
-  input: DesktopSshPortlessForwardInput,
-): void {
-  portlessForwardRequest = portlessForwardRequest
-    .then(() => sync(input))
-    .then(() => undefined)
-    .catch((error: unknown) => console.warn("SSH Portless forward failed.", error));
-}
 const ignoreComposerFocus = () => {};
 
 export default function ChatView(props: ChatViewProps) {
@@ -1285,26 +1271,6 @@ export default function ChatView(props: ChatViewProps) {
 
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
-  const sshProfile = activeEnvironment?.entry.profile;
-  const sshTarget =
-    activeEnvironment?.connection.phase === "connected" &&
-    activeEnvironment.entry.target._tag === "SshConnectionTarget" &&
-    sshProfile &&
-    Option.isSome(sshProfile) &&
-    sshProfile.value._tag === "SshConnectionProfile"
-      ? sshProfile.value.target
-      : null;
-  const portlessCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot ?? null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the desktop SSH Portless forward for the visible workspace until navigation or unmount
-  useEffect(() => {
-    const sync = window.desktopBridge?.syncSshPortlessForward;
-    if (!sync) return;
-    syncPortlessForwardInOrder(
-      sync,
-      sshTarget && portlessCwd ? { target: sshTarget, cwd: portlessCwd } : null,
-    );
-    return () => syncPortlessForwardInOrder(sync, null);
-  }, [sshTarget, portlessCwd]);
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironment.connection.phase !== "connected";
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;

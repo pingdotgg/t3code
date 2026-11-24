@@ -1927,6 +1927,7 @@ export const layerWsRpc = (
             ? {}
             : { managedPolicy: serverSettings.managedPolicy }),
           shellResumeCompletionMarker: true,
+          shellForwardCritReview: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
           shellOlderSettled: true,
@@ -2016,6 +2017,7 @@ export const layerWsRpc = (
           return resolveSavedPromptEnvironment(settings, name, process.env);
         }),
         [WS_METHODS.shellOpenInCrit]: (input) => critManager.open(input),
+        [WS_METHODS.shellForwardCritReview]: (input) => critManager.forward(input),
         [WS_METHODS.issuesList]: (input) => issues.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),

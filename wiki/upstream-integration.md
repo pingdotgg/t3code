@@ -5,8 +5,8 @@ description: Main and branch integration boundaries and fork compatibility excep
 tags: [upstream, fork, integration]
 status: stable
 generated:
-  by: opencode/gpt-6.2-astra
-  at: 2026-11-23T17:12:38+00:00
+  by: codex/gpt-6.2-astra
+  at: 2026-11-24T02:07:29+00:00
 verified:
   - by: opencode/gpt-6.2-astra
     at: 2026-11-23T17:12:38+00:00
@@ -22,6 +22,12 @@ snapshot:
   branch_code_tip: 2a2cc2bb26419f91da8b5ba46503ae07b4182464
   missing_upstream_on_branch: 0
 sources:
+  - id: upstream-nov23-policy
+    resource: https://github.com/pingdotgg/t3code/blob/700a4644a44afc1b127a4df323e7d833abd8779b/apps/server/src/provider/model-manifest.json
+    title: Version-scoped OpenCode advisories
+  - id: upstream-desktop-forwards
+    resource: https://github.com/pingdotgg/t3code/blob/700a4644a44afc1b127a4df323e7d833abd8779b/docs/user/remote-access.md
+    title: Desktop forwarding through the preview tunnel
   - id: november-23-upstream
     resource: https://github.com/pingdotgg/t3code/commit/990412468340b8362f82610de0eae70a5171abb7
     title: November 23 upstream tip
@@ -1060,18 +1066,10 @@ form no longer offers a separate Permissions control. Existing saved override
 values are ignored on load, without a settings migration. Deployment remains
 separate.[^opencode-permissions-retirement]
 
-At the completed `99e08526e5` sync, upstream marked OpenCode v2
-incompatible while this fork supported it natively. Fork #18 removed that
-advisory, and PR #27 retained the bundled policy and remote metadata filter.
-That protection still matters at the newly reviewed tip.[^main-integration][^integration-commit]
-
-Upstream `65731f986b` supplies the native OpenCode 2 implementation, tested
-against 2.0.18. The completed integration adopts its 2.0.18+ baseline, including the installed
-2.0.22 CLI, and removes the obsolete fork V2 adapter. The bundled policy enables
-that baseline starting at this fork's package version 0.0.45, rather than waiting
-for upstream's 0.0.46 threshold. Remote compatibility metadata still cannot replace
-the bundled OpenCode policy. Older 2.x versions are outside the supported baseline.
-[^upstream-current-manifest][^reviewed-upstream-main]
+The fork shipped OpenCode 2 in T3 Code 0.0.45, one release before upstream.
+Current builds follow upstream's version-scoped bundled and downloaded advisories.
+The 0.0.45 build already shipped its own compatibility filter. New builds can accept
+updated OpenCode guidance between releases.[^upstream-nov23-policy]
 
 The completed integration through `3368dd70f2` retains fork admission, execution,
 and persisted input-delivery tracking for reused OpenCode child sessions. Once a
@@ -1152,13 +1150,15 @@ restore the older parallel managed-server recovery implementation.
 
 ## Crit remote review boundary
 
-Crit's frontend assumes its own origin root, so tailnet reviews use a separate,
-temporary HTTPS endpoint rather than a subpath of the T3 server. Preserve
-foreground Serve ownership: closing a review must remove only its endpoint,
-never the environment's persistent publication or another review. This branch
-supports Tailscale connections alongside SSH/Portless; T3 Connect-only forwarding
-is outside that boundary. Crit has no application authentication, so these endpoints
-must remain tailnet-only, not Funnel publications.[^crit-tailnet-forwarding][^tailscale-foreground-serve]
+Over SSH, Crit runs on the host's loopback. The desktop opens the review through
+its standard port forward and releases its own listener when the review ends.
+A manually forwarded port belongs to the user. The client checks for the server's
+streaming review RPC before starting a review.[^upstream-desktop-forwards]
+
+For Tailscale connections the external browser needs its own origin. Each review
+owns a separate foreground HTTPS endpoint on the tailnet. Closing it must preserve
+the environment's persistent publication and other reviews. Keep these endpoints
+tailnet-only because Crit has no application authentication.[^crit-tailnet-forwarding][^tailscale-foreground-serve]
 
 Existing file shares can require elevated Serve access even for a proxy-only
 change. On Unix, retry permission failures with non-interactive `sudo -n`;
@@ -1521,3 +1521,7 @@ git log --reverse --oneline origin/main..upstream/main
 [^november-17-main-git]: Completed main integration, exact parents, and zero ancestry gap against the pinned upstream tip.
 
 [^november-23-upstream]: Pinned upstream tip in the November 23 candidate.
+
+[^upstream-nov23-policy]: Upstream compatibility policy checked against fork 0.1.11.
+
+[^upstream-desktop-forwards]: Upstream desktop port forwarding and its loopback access model.

@@ -800,13 +800,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("collapsed expanded collapse expand files pull request pr code tab")],
   },
   {
-    id: "auto-collapse-test-and-snapshot-files",
-    title: msg("Auto-collapse test and snapshot files"),
-    to: "/settings/general",
-    scope: "project-defaults",
-    searchTerms: ["diff test spec snapshot json fold collapse project"],
-  },
-  {
     id: "diff-layout",
     title: msg("Diff layout"),
     to: "/settings/diffs",

@@ -322,6 +322,11 @@ and shows it. Forwards end when you stop them or quit the app. ⌘-click
 (Ctrl-click on Windows and Linux) on a remote server forwards it and opens it
 in your browser.
 
+When you connect over SSH, **Open in Crit** opens the review in your browser
+through a temporary port forward. Install Crit on the host and enable its
+preview tunnel. Closing the review releases its forward. If you already
+forwarded that port yourself, it stays available.
+
 A forwarded port behaves like a server running on your computer: anything on
 your computer can reach it, including web pages open in your browser, so a
 forwarded service is exposed the same way a local dev server is. Forwards

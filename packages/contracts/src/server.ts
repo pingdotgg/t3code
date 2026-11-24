@@ -730,6 +730,7 @@ export const ServerConfig = Schema.Struct({
   settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */
   managedPolicy: Schema.optionalKey(ManagedPolicySummary),
+  shellForwardCritReview: Schema.optionalKey(Schema.Boolean),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and

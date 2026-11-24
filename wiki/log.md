@@ -1,5 +1,9 @@
 # Wiki update log
 
+## 2026-11-24
+
+- Updated the [OpenCode and remote Crit boundaries](upstream-integration.md) for upstream advisories and desktop port forwarding.
+
 ## 2026-11-23
 
 - Recorded the [upstream sync](upstream-integration.md) through `9904124683` and its Git/Jujutsu and notification compatibility decisions.

@@ -504,28 +504,6 @@ describe("ClientSettings default diff file state", () => {
   });
 });
 
-describe("project diff auto-collapse setting", () => {
-  it("defaults to on and persists a project override", () => {
-    const projectId = ProjectId.make("project");
-    expect(decodeServerSettings({}).autoCollapseTestAndSnapshotFiles).toBe(true);
-    const settings = decodeServerSettings({
-      projectSettingsOverrides: {
-        [projectId]: { autoCollapseTestAndSnapshotFiles: false },
-      },
-    });
-    expect(encodeServerSettings(settings).projectSettingsOverrides).toEqual({
-      [projectId]: { autoCollapseTestAndSnapshotFiles: false },
-    });
-    expect(
-      decodeServerSettingsPatch({
-        projectSettingsOverrides: {
-          [projectId]: { autoCollapseTestAndSnapshotFiles: false },
-        },
-      }).projectSettingsOverrides?.[projectId],
-    ).toEqual({ autoCollapseTestAndSnapshotFiles: false });
-  });
-});
-
 describe("ClientSettings diff colors", () => {
   it("keeps red and green for existing settings without a saved palette", () => {
     expect(decodeClientSettings({}).diffColorScheme).toBe("red-green");

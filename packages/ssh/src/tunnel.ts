@@ -24,7 +24,6 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -75,7 +74,6 @@ const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
-const isSshReadinessError = Schema.is(SshReadinessError);
 const REMOTE_PID_EXIT_WAIT_MS = 2_000;
 // The server answers HTTP before it writes server-runtime.json, which is how
 // a launch for another alias finds it.
@@ -191,10 +189,6 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
-  /** The selected SSH thread owns the sole same-port local Portless forward. */
-  readonly syncPortlessForward: (
-    input: { readonly target: DesktopSshEnvironmentTarget; readonly cwd: string } | null,
-  ) => Effect.Effect<number | null, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
   /** Closes every tunnel, as the manager's scope finalizer does. */
   readonly closeAllTunnels: Effect.Effect<void>;
 }
@@ -1493,31 +1487,6 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
-// Keeps each forward on its own connection. A ControlMaster from the user's SSH config would
-// otherwise own the listener and keep it after this process exits.
-function ownedLocalForwardArgs(localForward: string, hostSpec: string): ReadonlyArray<string> {
-  return [
-    "-o",
-    "ExitOnForwardFailure=yes",
-    "-o",
-    "ControlMaster=no",
-    "-o",
-    "ControlPath=none",
-    "-o",
-    "ControlPersist=no",
-    "-o",
-    "ServerAliveInterval=15",
-    "-o",
-    "ServerAliveCountMax=3",
-    "-n",
-    "-N",
-    "-L",
-    localForward,
-    "--",
-    hostSpec,
-  ];
-}
-
 // ssh only binds the forward after it connects, which can take ConnectTimeout per dead address.
 const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
   readonly target: DesktopSshEnvironmentTarget;
@@ -1587,7 +1556,24 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
-    ...ownedLocalForwardArgs(`${input.localPort}:127.0.0.1:${input.remotePort}`, hostSpec),
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
+    "-o",
+    "ControlPersist=no",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
+    "-n",
+    "-N",
+    "-L",
+    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    "--",
+    hostSpec,
   ];
   const { controlPath, scope } = input;
   // The master's own GatewayPorts would otherwise decide the bind address.
@@ -1825,25 +1811,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
-  const portlessLock = Semaphore.makeUnsafe(1);
-  const portlessCandidates = new Map<
-    string,
-    {
-      readonly target: DesktopSshEnvironmentTarget;
-      readonly ports: Set<number>;
-      readonly defaultPort: number | null;
-    }
-  >();
-  let preferredPortlessForward: { readonly key: string; readonly port: number } | null = null;
-  const portlessForwards = new Map<
-    number,
-    {
-      readonly key: string;
-      readonly port: number;
-      readonly scope: Scope.Closeable;
-      readonly process: ChildProcessSpawner.ChildProcessHandle;
-    }
-  >();
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
@@ -1871,18 +1838,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
-  const closeAllTunnels = Effect.gen(function* () {
-    yield* Effect.forEach([...portlessForwards.values()], (forward) =>
-      Scope.close(forward.scope, Exit.void),
-    );
-    portlessForwards.clear();
-    portlessCandidates.clear();
-    preferredPortlessForward = null;
-    yield* Effect.forEach([...tunnels.values()], closeTunnelEntry, {
-      concurrency: "unbounded",
-    });
-    authSecrets.clear();
-  }).pipe(Effect.ignore, Effect.withSpan("ssh/tunnel.closeAllTunnels"));
+  const closeAllTunnels = Effect.sync(() => [...tunnels.values()]).pipe(
+    Effect.flatMap((entries) =>
+      Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" }),
+    ),
+    Effect.ignore,
+  );
 
   yield* Scope.addFinalizer(managerScope, closeAllTunnels);
 
@@ -1999,298 +1960,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       promptCount: 0,
       authSecret: authSecrets.get(input.key) ?? null,
     });
-  });
-
-  const closePortlessForward = Effect.fn("ssh/portless.close")(function* (port: number) {
-    const current = portlessForwards.get(port);
-    if (!current) return;
-    portlessForwards.delete(port);
-    yield* Scope.close(current.scope, Exit.void).pipe(Effect.ignore);
-  });
-
-  const validPortlessPort = (value: string): number | null => {
-    const port = Number(value);
-    return /^\d{1,5}$/.test(value) && port > 0 && port <= 65_535 ? port : null;
-  };
-
-  const discoverPortlessPorts = Effect.fn("ssh/portless.discover")(function* (
-    key: string,
-    target: DesktopSshEnvironmentTarget,
-  ): Effect.fn.Return<
-    { readonly ports: Set<number>; readonly defaultPort: number | null },
-    SshEnvironmentEffectError,
-    SshEnvironmentEffectContext
-  > {
-    const result = yield* runWithSshAuth({
-      key,
-      target,
-      operation: (authOptions) =>
-        runSshCommand(target, {
-          ...authOptions,
-          remoteCommandArgs: ["sh", "-s", "--", "t3-portless-discovery"],
-          stdin: `if command -v portless >/dev/null 2>&1; then
-  portless list 2>/dev/null || :
-elif [ -x "$HOME/.local/bin/mise" ]; then
-  "$HOME/.local/bin/mise" exec -- portless list 2>/dev/null || :
-fi
-if command -v fnox >/dev/null 2>&1; then
-  port=$(fnox get PORTLESS_PORT 2>/dev/null) || :
-elif [ -x "$HOME/.local/bin/mise" ]; then
-  port=$("$HOME/.local/bin/mise" exec -- fnox get PORTLESS_PORT 2>/dev/null) || :
-fi
-printf '\nT3_PORTLESS_DEFAULT:%s\n' "\${port:-}"
-`,
-          timeoutMs: 15_000,
-        }),
-    });
-    const ports = new Set<number>();
-    for (const match of result.stdout.matchAll(/\.localhost:(\d{1,5})\b/g)) {
-      const port = validPortlessPort(match[1] ?? "");
-      if (port !== null) ports.add(port);
-    }
-    const defaultPortValue =
-      result.stdout.match(/(?:^|\n)T3_PORTLESS_DEFAULT:(\d{1,5})\s*$/)?.[1] ??
-      result.stdout.trim().match(/^\d{1,5}$/)?.[0];
-    const defaultPort = validPortlessPort(defaultPortValue ?? "");
-    if (defaultPort !== null) ports.add(defaultPort);
-    return { ports, defaultPort };
-  });
-
-  const portlessPortForThread = Effect.fn("ssh/portless.threadPort")(function* (
-    key: string,
-    target: DesktopSshEnvironmentTarget,
-    cwd: string,
-  ): Effect.fn.Return<number | null, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
-    const quotedCwd = `'${cwd.replaceAll("'", "'\\''")}'`;
-    // Read only the matching process's Portless setting: a non-interactive
-    // SSH shell does not inherit the environment of an active agent turn.
-    const script = `python3 - ${quotedCwd} <<'PY'
-import os
-import sys
-
-ports = set()
-for entry in (os.scandir('/proc') if os.path.isdir('/proc') else ()):
-    if not entry.name.isdigit():
-        continue
-    try:
-        if os.readlink(entry.path + '/cwd') != sys.argv[1]:
-            continue
-        with open(entry.path + '/environ', 'rb') as environment:
-            for variable in environment.read().split(b'\\0'):
-                if variable.startswith(b'PORTLESS_PORT='):
-                    ports.add(variable.partition(b'=')[2].decode('ascii'))
-    except (OSError, UnicodeError):
-        continue
-if len(ports) == 1:
-    print(ports.pop())
-PY`;
-    const result = yield* runWithSshAuth({
-      key,
-      target,
-      operation: (authOptions) =>
-        runSshCommand(target, {
-          ...authOptions,
-          remoteCommandArgs: ["sh", "-s"],
-          stdin: script,
-          timeoutMs: 15_000,
-        }),
-    });
-    return validPortlessPort(result.stdout.trim());
-  });
-
-  const startPortlessForward = Effect.fn("ssh/portless.start")(function* (
-    key: string,
-    target: DesktopSshEnvironmentTarget,
-    port: number,
-    replacingForward: boolean,
-  ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
-    const net = yield* NetService.NetService;
-    let available = yield* net.canListenOnHost(port, "127.0.0.1");
-    if (replacingForward) {
-      for (let attempt = 0; !available && attempt < 10; attempt++) {
-        yield* Effect.sleep("100 millis");
-        available = yield* net.canListenOnHost(port, "127.0.0.1");
-      }
-    }
-    if (!available) {
-      return yield* new SshReadinessError({
-        message: `Local Portless port ${port} is already in use.`,
-      });
-    }
-    const hostSpec = yield* buildSshHostSpecEffect(target);
-    const command = yield* resolveSshCommand;
-    const authSecret = authSecrets.get(key);
-    const childEnvironment = yield* SshAuth.buildSshChildEnvironment(
-      authSecret === undefined ? {} : { authSecret, interactiveAuth: true },
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new SshCommandError({
-            command: [command],
-            exitCode: null,
-            stderr: "",
-            message: "Failed to prepare SSH authentication for the Portless forward.",
-            cause,
-          }),
-      ),
-    );
-    const args = [
-      ...baseSshArgs(target, { batchMode: authSecrets.has(key) ? "no" : "yes" }),
-      ...ownedLocalForwardArgs(`127.0.0.1:${port}:127.0.0.1:${port}`, hostSpec),
-    ];
-    const scope = yield* Scope.make("sequential");
-    const child = yield* (yield* ChildProcessSpawner.ChildProcessSpawner)
-      .spawn(
-        ChildProcess.make(command, args, {
-          env: childEnvironment,
-          extendEnv: true,
-          stdin: { stream: Stream.empty, endOnDone: true },
-        }),
-      )
-      .pipe(
-        Scope.provide(scope),
-        Effect.mapError(
-          (cause) =>
-            new SshCommandError({
-              command: [command, ...args],
-              exitCode: null,
-              stderr: "",
-              message: `Failed to start Portless forward for ${target.alias}.`,
-              cause,
-            }),
-        ),
-        Effect.tapError(() => Scope.close(scope, Exit.void)),
-      );
-    yield* Scope.addFinalizer(
-      scope,
-      child
-        .kill({ killSignal: "SIGTERM", forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS })
-        .pipe(Effect.ignore),
-    );
-    yield* Effect.raceFirst(
-      Effect.gen(function* () {
-        for (let attempt = 0; attempt < 40; attempt++) {
-          if (
-            yield* net.hasListenerOnHost(port, "127.0.0.1").pipe(
-              Effect.mapError(
-                (cause) =>
-                  new SshReadinessError({
-                    message: `Failed to check local Portless port ${port}.`,
-                    cause,
-                  }),
-              ),
-            )
-          )
-            return;
-          yield* Effect.sleep("100 millis");
-        }
-        return yield* new SshReadinessError({
-          message: `Portless forward did not listen on local port ${port}.`,
-        });
-      }),
-      child.exitCode.pipe(
-        Effect.flatMap(
-          (exitCode) =>
-            new SshReadinessError({
-              message: `Portless forward exited before listening on local port ${port} (exit ${exitCode}).`,
-            }),
-        ),
-      ),
-    ).pipe(
-      Effect.mapError((cause) =>
-        isSshReadinessError(cause)
-          ? cause
-          : new SshReadinessError({
-              message: `Could not start Portless forward on port ${port}.`,
-              cause,
-            }),
-      ),
-      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, Exit.void))),
-    );
-    portlessForwards.set(port, { key, port, process: child, scope });
-    yield* Effect.logInfo("ssh.portless.forward.ready", { alias: target.alias, port });
-  });
-
-  const reconcilePortlessForwards = Effect.fn("ssh/portless.reconcile")(function* () {
-    const desired = new Map<number, { key: string; target: DesktopSshEnvironmentTarget }>();
-    const replaced = new Set<number>();
-    for (const [key, candidate] of portlessCandidates) {
-      if (!tunnels.has(key)) continue;
-      for (const port of candidate.ports) {
-        if (!desired.has(port)) desired.set(port, { key, target: candidate.target });
-      }
-    }
-    if (preferredPortlessForward !== null) {
-      const candidate = portlessCandidates.get(preferredPortlessForward.key);
-      if (candidate?.ports.has(preferredPortlessForward.port)) {
-        desired.set(preferredPortlessForward.port, {
-          key: preferredPortlessForward.key,
-          target: candidate.target,
-        });
-      }
-    }
-    for (const [port, forward] of portlessForwards) {
-      if (
-        forward.key !== desired.get(port)?.key ||
-        !(yield* forward.process.isRunning.pipe(Effect.orElseSucceed(() => false)))
-      ) {
-        yield* closePortlessForward(port);
-        replaced.add(port);
-      }
-    }
-    for (const [port, owner] of desired) {
-      if (portlessForwards.has(port)) continue;
-      yield* startPortlessForward(owner.key, owner.target, port, replaced.has(port)).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("ssh.portless.forward.failed", {
-            ...sshTargetLogFields(owner.target),
-            port,
-            cause,
-          }),
-        ),
-      );
-    }
-  });
-
-  const syncPortlessForward = Effect.fn("ssh/portless.sync")(function* (
-    input: { readonly target: DesktopSshEnvironmentTarget; readonly cwd: string } | null,
-  ): Effect.fn.Return<number | null, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
-    return yield* portlessLock.withPermits(1)(
-      Effect.gen(function* () {
-        if (input === null) {
-          preferredPortlessForward = null;
-          yield* reconcilePortlessForwards();
-          return null;
-        }
-        const base = yield* resolveSshTarget(input.target.alias || input.target.hostname);
-        const target: DesktopSshEnvironmentTarget = {
-          ...base,
-          ...(input.target.username !== null ? { username: input.target.username } : {}),
-          ...(input.target.port !== null ? { port: input.target.port } : {}),
-        };
-        const key = targetConnectionKey(target);
-        if (!tunnels.has(key)) return null;
-        const forwardedPorts = [...portlessForwards.values()].filter(
-          (forward) => forward.key === key,
-        );
-        const existing = portlessCandidates.get(key);
-        const port =
-          (yield* portlessPortForThread(key, target, input.cwd)) ??
-          (preferredPortlessForward?.key === key ? preferredPortlessForward.port : null) ??
-          existing?.defaultPort ??
-          (forwardedPorts.length === 1 ? (forwardedPorts[0]?.port ?? null) : null);
-        preferredPortlessForward = port === null ? null : { key, port };
-        if (port !== null) {
-          portlessCandidates.set(key, {
-            target,
-            ports: new Set([...(existing?.ports ?? []), port]),
-            defaultPort: existing?.defaultPort ?? null,
-          });
-        }
-        yield* reconcilePortlessForwards();
-        return port !== null && portlessForwards.get(port)?.key === key ? port : null;
-      }),
-    );
   });
 
   const createTunnelEntry = Effect.fn("ssh/tunnel.ensureTunnelEntry.create")(function* (input: {
@@ -2548,20 +2217,6 @@ PY`;
       key,
       Effect.gen(function* () {
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
-        yield* portlessLock.withPermits(1)(
-          Effect.gen(function* () {
-            const discovered = yield* discoverPortlessPorts(key, resolvedTarget);
-            portlessCandidates.set(key, { target: resolvedTarget, ...discovered });
-            yield* reconcilePortlessForwards();
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("ssh.portless.discovery.failed", {
-                ...sshTargetLogFields(resolvedTarget),
-                cause,
-              }),
-            ),
-          ),
-        );
 
         const pairingResult = requestOptions?.issuePairingToken
           ? yield* runWithSshAuth({
@@ -2608,13 +2263,6 @@ PY`;
     yield* withTargetLock(
       key,
       Effect.gen(function* () {
-        yield* portlessLock.withPermits(1)(
-          Effect.gen(function* () {
-            portlessCandidates.delete(key);
-            if (preferredPortlessForward?.key === key) preferredPortlessForward = null;
-            yield* reconcilePortlessForwards();
-          }),
-        );
         const entry = tunnels.get(key) ?? null;
         yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
           ...sshTargetLogFields(resolvedTarget),
@@ -2641,12 +2289,7 @@ PY`;
     );
   });
 
-  return SshEnvironmentManager.of({
-    closeAllTunnels,
-    ensureEnvironment,
-    disconnectEnvironment,
-    syncPortlessForward,
-  });
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, closeAllTunnels });
 });
 
 /**

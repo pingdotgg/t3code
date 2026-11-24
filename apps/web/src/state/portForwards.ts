@@ -140,10 +140,10 @@ export const findPortForward = (
     (forward) => forward.environmentId === environmentId && forward.remotePort === remotePort,
   );
 
-export function forwardPort(environmentId: EnvironmentId, remotePort: number) {
+export function forwardPort(environmentId: EnvironmentId, remotePort: number, owner?: string) {
   const bridge = previewBridge();
   if (!bridge) return Promise.reject(new Error(m(msg("Port forwarding needs the desktop app."))));
-  return bridge.forwardPort(environmentId, remotePort).catch((error: unknown) => {
+  return bridge.forwardPort(environmentId, remotePort, owner).catch((error: unknown) => {
     // Electron flattens main-process errors into "Error invoking remote method '…': Tag: text".
     const raw = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -161,8 +161,8 @@ export function forwardPort(environmentId: EnvironmentId, remotePort: number) {
   });
 }
 
-export function stopPortForward(environmentId: EnvironmentId, remotePort: number) {
-  return previewBridge()?.stopPortForward(environmentId, remotePort) ?? Promise.resolve();
+export function stopPortForward(environmentId: EnvironmentId, remotePort: number, owner?: string) {
+  return previewBridge()?.stopPortForward(environmentId, remotePort, owner) ?? Promise.resolve();
 }
 
 /** `url` with its host and port moved to the forward's end on this machine. */

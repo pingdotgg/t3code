@@ -53,7 +53,18 @@
     },
     {
       "driver": "opencode",
-      "t3CodeRange": ">=0.0.45",
+      "t3CodeRange": ">=0.0.42 <0.0.46",
+      "recommendedRange": ">=1.14.19 <2.0.0",
+      "recommendedVersion": "1.14.19",
+      "ranges": [
+        { "range": ">=2.0.0", "status": "broken" },
+        { "range": ">=1.14.19 <2.0.0", "status": "supported" },
+        { "range": "<1.14.19", "status": "broken" }
+      ]
+    },
+    {
+      "driver": "opencode",
+      "t3CodeRange": ">=0.0.46",
       "versionPattern": "^(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=2.0.18",
       "ranges": [

@@ -1,15 +1,3 @@
-export function isAutoCollapsedDiffFile(path: string): boolean {
-  const parts = path.replaceAll("\\", "/").split("/");
-  const filename = parts.pop() ?? "";
-  return (
-    parts.some((part) => /^(test|tests|__tests__|spec|specs)$/i.test(part)) ||
-    /^test_.+\.[^/.]+$/i.test(filename) ||
-    /[._-](test|tests|spec)\.[^/.]+$/i.test(filename) ||
-    /(?:Test|Tests|Spec)\.[^/.]+$/.test(filename) ||
-    /_snapshot\.json$/i.test(filename)
-  );
-}
-
 export function areAllDiffFilesCollapsed(
   fileKeys: ReadonlyArray<string>,
   collapsedFileKeys: ReadonlySet<string>,

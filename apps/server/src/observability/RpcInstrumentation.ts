@@ -214,6 +214,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.providerUploadFeedback]: "provider",
   [WS_METHODS.serverResolvePromptEnvironment]: "server",
   [WS_METHODS.shellOpenInCrit]: "workspace",
+  [WS_METHODS.shellForwardCritReview]: "workspace",
   [WS_METHODS.mcpAppsCallTool]: "provider",
   [WS_METHODS.mcpAppsToolInfo]: "provider",
   [WS_METHODS.mcpAppsUpdateModelContext]: "provider",

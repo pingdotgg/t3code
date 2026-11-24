@@ -70,9 +70,6 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
-    readonly syncPortlessForward: (
-      input: { readonly target: DesktopSshEnvironmentTarget; readonly cwd: string } | null,
-    ) => Effect.Effect<number | null, DesktopSshEnvironmentOperationError>;
     readonly closeAllTunnels: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
@@ -202,13 +199,6 @@ export const make = Effect.gen(function* () {
     disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(
       function* (target) {
         return yield* manager.disconnectEnvironment(target);
-      },
-      Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-      Effect.provide(runtimeContext),
-    ),
-    syncPortlessForward: Effect.fn("desktop.ssh.syncPortlessForward")(
-      function* (input) {
-        return yield* manager.syncPortlessForward(input);
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
       Effect.provide(runtimeContext),

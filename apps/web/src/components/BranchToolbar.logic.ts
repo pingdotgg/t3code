@@ -349,11 +349,10 @@ export function resolveBranchTriggerLabel(
     if (resolvedActiveBranch === JJ_WORKING_COPY_REVISION) {
       return resolve(msg("From {revision}", { revision: JJ_WORKING_COPY_LABEL.toLowerCase() }));
     }
-    const baseRef =
-      startFromOrigin && resolvedActiveBranchIsRemote === false
-        ? `origin/${resolvedActiveBranch}`
-        : resolvedActiveBranch;
-    return resolve(msg("From {branch}", { branch: baseRef }));
+    // Only the server can determine a local branch's configured remote.
+    return startFromOrigin && resolvedActiveBranchIsRemote === false
+      ? resolve(msg("From {branch} (remote)", { branch: resolvedActiveBranch }))
+      : resolve(msg("From {branch}", { branch: resolvedActiveBranch }));
   }
   return resolvedActiveBranch;
 }

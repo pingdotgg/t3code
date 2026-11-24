@@ -405,11 +405,6 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
-export const DesktopSshPortlessForwardInputSchema = Schema.NullOr(
-  Schema.Struct({ target: DesktopSshEnvironmentTargetSchema, cwd: Schema.String }),
-);
-export type DesktopSshPortlessForwardInput = typeof DesktopSshPortlessForwardInputSchema.Type;
-
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
 export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
@@ -1024,6 +1019,7 @@ export const DesktopSharesLoopbackInputSchema = Schema.Struct({ environmentId: E
 export const DesktopPortForwardInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   remotePort: PortSchema,
+  owner: Schema.optional(Schema.String),
 });
 
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
@@ -1171,7 +1167,6 @@ export interface DesktopBridge {
     options?: { issuePairingToken?: boolean },
   ) => Promise<DesktopSshEnvironmentBootstrap>;
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
-  syncSshPortlessForward?: (input: DesktopSshPortlessForwardInput) => Promise<number | null>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   bootstrapSshBearerSession: (
     httpBaseUrl: string,
@@ -1372,8 +1367,16 @@ export interface DesktopPreviewBridge {
   ) => () => void;
   resolveTunnelAccess: (requestId: string, url: string | null) => Promise<void>;
   /** Forwards an environment's loopback port to this machine until stopped or the app quits. */
-  forwardPort: (environmentId: EnvironmentId, remotePort: number) => Promise<DesktopPortForward>;
-  stopPortForward: (environmentId: EnvironmentId, remotePort: number) => Promise<void>;
+  forwardPort: (
+    environmentId: EnvironmentId,
+    remotePort: number,
+    owner?: string,
+  ) => Promise<DesktopPortForward>;
+  stopPortForward: (
+    environmentId: EnvironmentId,
+    remotePort: number,
+    owner?: string,
+  ) => Promise<void>;
   listPortForwards: () => Promise<ReadonlyArray<DesktopPortForward>>;
   /** Whether the environment runs on this machine, where its ports need no forward. */
   sharesLoopback: (environmentId: EnvironmentId) => Promise<boolean>;

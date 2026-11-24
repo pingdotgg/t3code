@@ -119,16 +119,6 @@ export const providerCompatibility = (
   resolveProviderCompatibility(manifest.compatibility, driver, version) ??
   resolveProviderCompatibility(BUNDLED_MODEL_MANIFEST.compatibility, driver, version);
 
-/** The fork supports OpenCode v2; upstream's remote v1-only advisory must not replace it. */
-function keepLocalOpenCodeCompatibility(manifest: ModelManifestData): ModelManifestData {
-  if (!manifest.compatibility?.some((policy) => policy.driver === "opencode")) return manifest;
-  return {
-    ...manifest,
-    compatibility: manifest.compatibility.filter((policy) => policy.driver !== "opencode"),
-  };
-}
-
-/** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
 function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   if (manifest.updatedAt === undefined) return 0;
   const parsed = Date.parse(manifest.updatedAt);
@@ -241,7 +231,7 @@ export const make = Effect.gen(function* () {
       if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
         return;
       }
-      manifest = keepLocalOpenCodeCompatibility(fromDisk.manifest);
+      manifest = fromDisk.manifest;
       fetchedAtMs = fromDisk.fetchedAtMs;
     }),
   );
@@ -276,7 +266,7 @@ export const make = Effect.gen(function* () {
       return manifest;
     }
 
-    manifest = keepLocalOpenCodeCompatibility(fetched);
+    manifest = fetched;
     fetchedAtMs = now;
     yield* encodeManifestCache({ fetchedAtMs: now, manifest: fetched }).pipe(
       Effect.flatMap((contents) => writeFileStringAtomically({ filePath: cachePath, contents })),
