@@ -31,7 +31,8 @@ type PullRequestBodyTableCell = {
 };
 
 // `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)\r?$/u;
+// The marker is the whole run, so a line that is no fence is given up on in one pass.
+const FENCE_PATTERN = /^\s{0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -45,10 +46,12 @@ const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)(?:$
 const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
 
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+// Stops at the next `<`, so matching stays linear in the length of the line.
+const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+const VIDEO_TAG_CLOSE_PATTERN = /<\/video>/iu;
 
 /** Bounded like `VIDEO_TAG_MAX_LINES`; room for a before/after table with several rows. */
 const TABLE_MAX_LINES = 64;
@@ -200,6 +203,21 @@ function withDefinitions(
  */
 export type FindReferenceDefinitions = (body: string) => ReadonlyArray<string>;
 
+/** How much text the body's definitions may add across all the segments that lead with them. */
+const DEFINITIONS_MAX_ADDED_LENGTH = 256 * 1024;
+
+function segmentsWithReferences(segments: ReadonlyArray<PullRequestBodySegment>): number {
+  let count = 0;
+  for (const segment of segments) {
+    if (segment.kind === "markdown") count += segment.text.includes("[") ? 1 : 0;
+    else if (segment.kind === "table") {
+      for (const cells of segment.rows)
+        for (const cell of cells) count += segmentsWithReferences(cell.segments);
+    }
+  }
+  return count;
+}
+
 export function splitPullRequestBody(
   body: string,
   findDefinitions: FindReferenceDefinitions,
@@ -211,6 +229,18 @@ export function splitPullRequestBody(
   const definitions = findDefinitions(body);
   if (definitions.length === 0) return segments;
   const leading = `${definitions.join("\n")}\n\n`;
+  // Past the budget the body renders as one document: its media stays links, its references resolve.
+  if (leading.length * segmentsWithReferences(segments) > DEFINITIONS_MAX_ADDED_LENGTH) {
+    const text = body.replace(/^(?:\r?\n)+/u, "");
+    return [
+      {
+        id: "markdown:0",
+        kind: "markdown",
+        text: text.trimEnd(),
+        sourceOffset: body.length - text.length,
+      },
+    ];
+  }
   return segments.map((segment) => withDefinitions(segment, leading));
 }
 
@@ -232,7 +262,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       segments.push({
         id: `markdown:${segments.length}`,
         kind: "markdown",
-        text: text.replace(/\s+$/u, ""),
+        text: text.trimEnd(),
         sourceOffset,
       });
     }
@@ -298,7 +328,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
     const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
     let cursor = index;
-    while (cursor < lastCandidate && !VIDEO_TAG_END_PATTERN.test(lines[cursor]!)) {
+    while (cursor < lastCandidate && !VIDEO_TAG_CLOSE_PATTERN.test(lines[cursor]!)) {
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)

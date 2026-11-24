@@ -514,14 +514,16 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs tags and rejects oversized metadata before decoding", async () => {
+  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
     let bytes = new ArrayBuffer(0);
+    let exifEntry = 0;
     for (const { pixels, expected } of [
       { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
       { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
     ]) {
       const samples = pixels.length / 2;
-      const start = samples === 2 ? 158 : 146;
+      const start = samples === 2 ? 170 : 158;
+      const exif = start + pixels.length;
       const tags = [
         [256, 2],
         [257, 1],
@@ -535,8 +537,10 @@ describe("bounded binary previews", () => {
         [284, 1],
         [330, 0, 13],
         ...(samples === 2 ? [[338, 2]] : []),
+        [34665, exif, 13],
       ];
-      bytes = new ArrayBuffer(start + pixels.length);
+      exifEntry = 10 + (tags.length - 1) * 12;
+      bytes = new ArrayBuffer(exif + 8);
       const view = new DataView(bytes);
       view.setUint16(0, 0x4949);
       view.setUint16(2, 42, true);
@@ -563,14 +567,30 @@ describe("bounded binary previews", () => {
         URL.revokeObjectURL(src);
       }
     }
-    new DataView(bytes).setUint32(14, 1_000_000, true);
-    const invalid = URL.createObjectURL(new Blob([bytes]));
-    try {
-      await expect(
-        decodeImagePreview(invalid, false, new AbortController().signal),
-      ).rejects.toThrow("metadata");
-    } finally {
-      URL.revokeObjectURL(invalid);
+    for (const [mutate, message] of [
+      [
+        (view: DataView) => view.setUint16(exifEntry + 2, 3, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(exifEntry + 4, 2, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(14, 1_000_000, true),
+        "This TIFF has too much or truncated metadata.",
+      ],
+    ] as const) {
+      const copy = bytes.slice(0);
+      mutate(new DataView(copy));
+      const invalid = URL.createObjectURL(new Blob([copy]));
+      try {
+        await expect(
+          decodeImagePreview(invalid, false, new AbortController().signal),
+        ).rejects.toThrow(message);
+      } finally {
+        URL.revokeObjectURL(invalid);
+      }
     }
   });
 });
@@ -1643,7 +1663,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(image?.alt).toBe("Mermaid diagram");
     expect(image?.naturalWidth).toBeGreaterThan(0);
   });
-  await page.getByRole("button", { name: "Back, close image preview" }).click();
+  await page.getByRole("button", { name: "Close image preview" }).click();
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await screen.getByRole("button", { name: "Show Mermaid source" }).click();
   await vi.waitFor(() => expect(screen.container.querySelector("pre")?.textContent).toBe(text));

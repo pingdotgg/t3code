@@ -3950,6 +3950,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       boundThread: OrchestrationV2ThreadShell | null,
       upserted: Ref.Ref<number>,
       saved: ScheduledTask = tasks[0]!,
+      /** Stores each keyed create under the id its key derives, as the real service does. */
+      created?: Ref.Ref<ReadonlyArray<ScheduledTask>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3984,9 +3986,24 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-              list: () => Effect.succeed({ tasks }),
-              upsert: () =>
-                Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: saved })),
+              list: () =>
+                created === undefined
+                  ? Effect.succeed({ tasks })
+                  : Ref.get(created).pipe(Effect.map((stored) => ({ tasks: stored }))),
+              upsert: (input) =>
+                Ref.update(upserted, (count) => count + 1).pipe(
+                  Effect.andThen(
+                    created === undefined || input.commandId === undefined
+                      ? Effect.void
+                      : Ref.set(created, [
+                          {
+                            ...saved,
+                            id: ScheduledTaskService.scheduledTaskIdForCommand(input.commandId),
+                          },
+                        ]),
+                  ),
+                  Effect.as({ task: saved }),
+                ),
             }),
           ),
         ),
@@ -4082,6 +4099,39 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(error.code, "runtime_mode_escalation_denied");
         assert.equal(yield* Ref.get(upserted), 0);
       }),
+    );
+
+    it.effect(
+      "refuses to replay a creation over a task whose thread now runs above the caller",
+      () =>
+        Effect.gen(function* () {
+          const upserted = yield* Ref.make(0);
+          const created = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+          const bound = task({ threadId: boundThreadId });
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+            Effect.provide(
+              service(
+                [bound],
+                liveThreadShell(boundThreadId, { runtimeMode: "full-access" }),
+                upserted,
+                bound,
+                created,
+              ),
+            ),
+          );
+          const create = (prompt: string) =>
+            mcp.scheduleTask(supervisedClient, {
+              projectId,
+              prompt,
+              schedule: { type: "webhook" },
+              freshSession: true,
+              clientRequestId: "nightly",
+            });
+          yield* create("Check the build");
+          const error = yield* create("Something else").pipe(Effect.flip);
+          assert.equal(error.code, "runtime_mode_escalation_denied");
+          assert.equal(yield* Ref.get(upserted), 1);
+        }),
     );
 
     it.effect("reports a saved task even when its bound thread cannot be read", () =>

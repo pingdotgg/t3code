@@ -308,4 +308,40 @@ describe("CommandPalette open intents", () => {
       }),
     );
   });
+
+  it("leaves a submenu only on a fresh, unmodified Backspace", async () => {
+    setup({ projects: [makeProject("Acme"), makeProject("Beta")] });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    const rootInput = page.getByPlaceholder("Search commands, projects, and threads...");
+    await expect.element(rootInput).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    await expect
+      .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
+      .toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Enter}");
+
+    const submenuInput = page.getByPlaceholder("Search...");
+    await expect.element(submenuInput).toHaveFocus();
+
+    for (const init of [
+      { repeat: true },
+      { ctrlKey: true },
+      { isComposing: true },
+    ] satisfies ReadonlyArray<KeyboardEventInit>) {
+      const event = new KeyboardEvent("keydown", {
+        key: "Backspace",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      await act(() => submenuInput.element().dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+      await expect.element(submenuInput).toBeVisible();
+    }
+
+    await userEvent.keyboard("{Backspace}");
+    await expect.element(rootInput).toHaveFocus();
+  });
 });

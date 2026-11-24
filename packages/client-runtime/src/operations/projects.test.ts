@@ -143,6 +143,11 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
     expect(getCloneDirectoryName("git@github.com:repo.git")).toBe("repo");
     expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
+    expect(getCloneDirectoryName("/srv/git/firmware#2.git")).toBe("firmware#2");
+    expect(getCloneDirectoryName("~/git/what?.git")).toBe("what?");
+    expect(getCloneDirectoryName("../firmware#2.git")).toBe("firmware#2");
+    expect(getCloneDirectoryName("C:\\src\\firmware#2.git")).toBe("firmware#2");
+    expect(getCloneDirectoryName("github.com:owner/repo.git?ref=main")).toBe("repo");
   });
 
   it("lays clone folders out like ghq only when asked, and only when the URL is safe", () => {
