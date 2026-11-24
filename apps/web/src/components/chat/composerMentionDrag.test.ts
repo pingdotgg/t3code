@@ -4,6 +4,7 @@ import {
   COMPOSER_MENTION_DRAG_TYPE,
   type ComposerMentionDropHost,
   makeComposerMentionDragHandlers,
+  writePullRequestDragData,
 } from "./composerMentionDrag.ts";
 
 const makeDragEvent = (options?: {
@@ -74,5 +75,37 @@ describe("makeComposerMentionDragHandlers", () => {
     const { event } = makeDragEvent();
     handlers.onDragOver(event);
     expect(event.dataTransfer.dropEffect).toBe("move");
+  });
+
+  it("drops a PR badge drag as a PR chip, keeping #number and the URL for other targets", () => {
+    const data = new Map([["text/html", "<span>122</span>"]]);
+    const dataTransfer = {
+      get types() {
+        return [...data.keys()];
+      },
+      getData: (format: string) => data.get(format) ?? "",
+      setData: (format: string, value: string) => void data.set(format, value),
+      clearData: () => data.clear(),
+      dropEffect: "none",
+    };
+    const pullRequest = {
+      number: 122,
+      url: "https://github.com/pingdotgg/t3code/pull/122",
+      title: "Fix sidebar drag",
+      headBranch: "fix/sidebar-drag",
+      baseBranch: "main",
+      state: "open",
+      isDraft: false,
+    } as const;
+    writePullRequestDragData(dataTransfer, pullRequest, pullRequest);
+    expect(Object.fromEntries(data)).toMatchObject({
+      "text/plain": "#122",
+      "text/uri-list": pullRequest.url,
+    });
+    expect(data.has("text/html")).toBe(false);
+
+    const { host, log } = makeHost();
+    makeComposerMentionDragHandlers(host).onDrop({ ...makeDragEvent().event, dataTransfer });
+    expect(log).toEqual(["active:false", "pr:122"]);
   });
 });

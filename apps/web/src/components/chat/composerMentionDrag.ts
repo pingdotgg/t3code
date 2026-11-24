@@ -11,6 +11,20 @@ const decodePullRequestPayload = Schema.decodeUnknownOption(PullRequestDragPaylo
 
 export const encodePullRequestDragPayload = Schema.encodeSync(PullRequestDragPayload);
 
+/** Plain text and URL keep drops outside the composer useful; the payload makes a context chip. */
+export function writePullRequestDragData(
+  dataTransfer: Pick<DataTransfer, "clearData" | "setData">,
+  pullRequest: { readonly number: number; readonly url: string },
+  metadata: PullRequestContextMetadata | null,
+): void {
+  dataTransfer.clearData();
+  dataTransfer.setData("text/plain", `#${pullRequest.number}`);
+  dataTransfer.setData("text/uri-list", pullRequest.url);
+  if (metadata !== null) {
+    dataTransfer.setData(COMPOSER_PULL_REQUEST_DRAG_TYPE, encodePullRequestDragPayload(metadata));
+  }
+}
+
 export function composerMentionFromTreePath(treePath: string): string | null {
   const relativePath = treePath.replace(/\/+$/, "");
   if (relativePath.length === 0) {
