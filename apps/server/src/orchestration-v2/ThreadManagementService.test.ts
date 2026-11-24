@@ -907,6 +907,7 @@ it.effect.each([
                 ({
                   thread: { id: threadId, projectId, deletedAt: null },
                   runs: raced ? [...runs, nextRun] : runs,
+                  turnItems: [],
                   messages: [
                     { id: MessageId.make("original"), runId, role: "user" as const },
                     {
