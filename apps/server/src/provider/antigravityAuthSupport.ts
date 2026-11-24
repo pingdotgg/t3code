@@ -556,6 +556,7 @@ export function buildAntigravityAcpSpawnInput(input: {
     command: input.installation.executablePath,
     args: [
       "acp",
+      "--disable-telemetry",
       "--gemini-dir",
       input.profile.geminiHome,
       "--app-data-dir",

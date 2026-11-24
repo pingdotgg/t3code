@@ -157,4 +157,17 @@ describe("mergeProviderInstanceEnvironment", () => {
       });
     }),
   );
+
+  it.effect("defaults provider subprocesses to telemetry opt-out when using process.env", () =>
+    Effect.gen(function* () {
+      const env = yield* mergeProviderInstanceEnvironment(undefined);
+      expect(env).toMatchObject({
+        DO_NOT_TRACK: "1",
+        DISABLE_TELEMETRY: "1",
+        DISABLE_ERROR_REPORTING: "1",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+        OPENCODE_DISABLE_TELEMETRY: "1",
+      });
+    }),
+  );
 });
