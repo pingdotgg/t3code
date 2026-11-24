@@ -24,6 +24,8 @@ import {
   type FramePickCapture,
   type FramePickDelivery,
   type FramePickHit,
+  type FramePickPointerType,
+  type FramePickRect,
   type FramePickRelay,
   type FramePickUp,
 } from "./FramePickAgent.ts";
@@ -467,6 +469,100 @@ const pageNumber = (source: unknown, key: string): number | null => {
   const value = pageField(source, key);
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 };
+
+const pageRect = (source: unknown): FramePickRect | null => {
+  const x = pageNumber(source, "x");
+  const y = pageNumber(source, "y");
+  const width = pageNumber(source, "width");
+  const height = pageNumber(source, "height");
+  return x === null || y === null || width === null || height === null
+    ? null
+    : { x, y, width, height };
+};
+
+const pageHit = (source: unknown): FramePickHit | null => {
+  const label = pageString(source, "label");
+  const rect = pageRect(pageField(source, "rect"));
+  if (label === null || rect === null) return null;
+  const styles = pageField(source, "styles");
+  return {
+    id: pageString(source, "id"),
+    label,
+    rect,
+    styles:
+      typeof styles === "object" && styles !== null
+        ? Object.fromEntries(
+            Object.entries(styles).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string",
+            ),
+          )
+        : null,
+  };
+};
+
+const FRAME_POINTER_TYPES: ReadonlySet<unknown> = new Set([
+  "pointermove",
+  "pointerdown",
+  "pointerup",
+  "pointerout",
+]);
+
+/** Subframe agents run in the page's world, so a relayed message is checked field by field. */
+function parseFrameDelivery(delivery: FramePickDelivery): FramePickDelivery | null {
+  const { up, path, frames } = delivery as { up: unknown; path: unknown; frames: unknown };
+  if (!Array.isArray(path) || !path.every((index) => Number.isInteger(index))) return null;
+  if (!Array.isArray(frames) || !frames.every((frame) => typeof frame === "string")) return null;
+  const relayed = (parsed: FramePickUp | null): FramePickDelivery | null =>
+    parsed && { up: parsed, path, frames };
+  const kind = pageField(up, "kind");
+  if (kind === "pointer") {
+    const type = pageField(up, "type");
+    const x = pageNumber(up, "x");
+    const y = pageNumber(up, "y");
+    const button = pageNumber(up, "button");
+    if (!FRAME_POINTER_TYPES.has(type) || x === null || y === null || button === null) return null;
+    return relayed({
+      kind,
+      type: type as FramePickPointerType,
+      x,
+      y,
+      button,
+      shiftKey: pageField(up, "shiftKey") === true,
+      hit: pageHit(pageField(up, "hit")),
+    });
+  }
+  if (kind === "key") {
+    const key = pageString(up, "key");
+    return relayed(key === null ? null : { kind, key });
+  }
+  if (kind === "rects") {
+    const entries = pageField(up, "rects");
+    if (!Array.isArray(entries)) return null;
+    const rects = entries.flatMap((entry) => {
+      const id = pageString(entry, "id");
+      const rect = pageRect(pageField(entry, "rect"));
+      return id === null || rect === null ? [] : [{ id, rect }];
+    });
+    return relayed({ kind, rects });
+  }
+  if (kind === "captured") {
+    const requestId = pageString(up, "requestId");
+    if (requestId === null) return null;
+    const capture = pageField(up, "capture");
+    const selector = pageString(capture, "selector");
+    const htmlPreview = pageString(capture, "htmlPreview");
+    const tagName = pageString(capture, "tagName");
+    return relayed({
+      kind,
+      requestId,
+      capture:
+        selector === null || htmlPreview === null || tagName === null
+          ? null
+          : { selector, htmlPreview: htmlPreview.slice(0, HTML_PREVIEW_MAX_CHARS), tagName },
+    });
+  }
+  return null;
+}
 
 const toStackFrame = (frame: unknown): PickedElementStackFrame => ({
   functionName: pageString(frame, "functionName"),
@@ -1968,8 +2064,6 @@ function startAnnotation(
     path: ReadonlyArray<number>,
     frames: ReadonlyArray<string>,
   ): void => {
-    if (!Object.hasOwn(forwardedPointerHandlers, up.type)) return;
-    if (!Number.isFinite(up.x) || !Number.isFinite(up.y)) return;
     const handler = forwardedPointerHandlers[up.type];
     const forwarded = {
       type: up.type,
@@ -2003,8 +2097,10 @@ function startAnnotation(
     } as unknown as KeyboardEvent);
   };
 
-  const onFrameDelivery = ({ up, path, frames }: FramePickDelivery): void => {
-    if (finished) return;
+  const onFrameDelivery = (delivery: FramePickDelivery): void => {
+    const parsed = parseFrameDelivery(delivery);
+    if (finished || !parsed) return;
+    const { up, path, frames } = parsed;
     if (up.kind === "pointer") forwardPointer(up, path, frames);
     else if (up.kind === "key") forwardKey(up.key);
     else if (up.kind === "rects") {

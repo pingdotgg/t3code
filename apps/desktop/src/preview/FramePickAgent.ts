@@ -68,6 +68,8 @@ export interface FramePickRelay {
   readonly dispose: () => void;
 }
 
+// Main injects this function's source text into subframes, so it must not reference anything
+// outside its own body.
 export function installFramePickAgent(
   key: string,
   deliver?: (delivery: FramePickDelivery) => void,
@@ -387,6 +389,8 @@ export function installFramePickAgent(
     }
     if (!deliver) handleHere(down);
     if (down.kind === "start" || down.kind === "stop" || down.kind === "refresh") broadcast(down);
+    // Main injects a fresh agent into every frame when the next session starts.
+    if (down.kind === "stop") relay.dispose();
   };
 
   const onMessage = (event: MessageEvent): void => {
