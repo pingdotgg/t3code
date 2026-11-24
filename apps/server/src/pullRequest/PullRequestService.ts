@@ -2524,7 +2524,12 @@ export const make = Effect.gen(function* () {
     ).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
         const rewrite = project.api.updateComment;
-        if (project.api.capabilities.edit?.comment !== true || rewrite === undefined) {
+        const edit = project.api.capabilities.edit;
+        if (
+          edit?.comment !== true ||
+          (input.kind === "review" && edit.review !== true) ||
+          rewrite === undefined
+        ) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "updateComment",

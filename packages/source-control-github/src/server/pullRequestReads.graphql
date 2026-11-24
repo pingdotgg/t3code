@@ -324,6 +324,7 @@ query PullRequestActivity(
           submittedAt
           lastEditedAt
           url
+          viewerCanUpdate
           isMinimized
           author {
             login

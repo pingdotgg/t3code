@@ -766,7 +766,7 @@ export function PullRequestSummaryTab({
     onEdit: (comment) =>
       setCommentScope(comment === null ? null : { pullRequest: detail.url, commentId: comment.id }),
     onSave: async (comment, body) => {
-      if (commentSaving || comment.kind === "review") return;
+      if (commentSaving) return;
       setCommentSaving(true);
       const result = await updateComment({
         environmentId,
@@ -781,7 +781,6 @@ export function PullRequestSummaryTab({
       onRefresh();
     },
     saveTasks: async (comment, body) => {
-      if (comment.kind === "review") return false;
       const result = await updateComment({
         environmentId,
         input: { ...reference, commentId: comment.id, kind: comment.kind, body },

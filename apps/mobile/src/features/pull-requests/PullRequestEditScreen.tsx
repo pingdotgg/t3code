@@ -26,9 +26,7 @@ export type PullRequestEditParams = PullRequestParams &
     | {
         readonly field: "comment";
         /** Carried along because a reply loaded page by page is not in the cached activity. */
-        readonly comment: Pick<PullRequestComment, "id" | "body" | "author" | "canEdit"> & {
-          readonly kind: "issue-comment" | "review-comment";
-        };
+        readonly comment: Pick<PullRequestComment, "id" | "body" | "author" | "canEdit" | "kind">;
       }
   );
 

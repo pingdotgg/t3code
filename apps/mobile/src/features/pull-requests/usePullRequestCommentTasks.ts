@@ -37,7 +37,6 @@ export function usePullRequestCommentTasks(
   if (kept !== draft) setDraft(kept);
   const body = kept?.body ?? comment.body;
   const save = async (next: string) => {
-    if (comment.kind === "review") return false;
     const target = pullRequestTarget(params);
     const result = await updateComment({
       ...target,

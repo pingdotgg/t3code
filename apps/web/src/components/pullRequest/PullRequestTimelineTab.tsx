@@ -270,7 +270,7 @@ function ConversationCard({
   });
 
   const save = async (body: string) => {
-    if (editable === null || saving || editable.kind === "review") return;
+    if (editable === null || saving) return;
     setSaving(true);
     const result = await updateComment({
       environmentId: reactions.environmentId,
@@ -287,7 +287,7 @@ function ConversationCard({
 
   // The timeline shows the body trimmed; the whitespace around it goes back on save.
   const saveTasks = async (shown: string) => {
-    if (editable === null || editable.kind === "review") return false;
+    if (editable === null) return false;
     const start = editable.body.length - editable.body.trimStart().length;
     const body =
       editable.body.slice(0, start) + shown + editable.body.slice(editable.body.trimEnd().length);

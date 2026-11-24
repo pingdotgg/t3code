@@ -52,7 +52,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true, searchCandidates: true },
-  edit: { changeRequest: true, comment: true, maintainerEdits: true },
+  edit: { changeRequest: true, comment: true, maintainerEdits: true, review: true },
   stacks: true,
   stackActions: true,
   stackAutoMerge: true,

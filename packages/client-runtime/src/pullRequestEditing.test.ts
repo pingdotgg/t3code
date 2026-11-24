@@ -181,8 +181,17 @@ describe("canEditPullRequestComment", () => {
     ).toBe(false);
   });
 
-  it("refuses a review's own summary", () => {
-    expect(canEditPullRequestComment(subject(), comment({ kind: "review" }))).toBe(false);
+  it("lets a review's summary be rewritten only where the host can", () => {
+    const review = comment({ kind: "review", author: actor("coderabbitai"), canEdit: true });
+    expect(canEditPullRequestComment(subject(), review)).toBe(false);
+    expect(
+      canEditPullRequestComment(
+        subject({
+          capabilities: capabilities({ changeRequest: true, comment: true, review: true }),
+        }),
+        review,
+      ),
+    ).toBe(true);
   });
 });
 

@@ -858,7 +858,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly host: string;
       readonly number: number;
       readonly commentId: string;
-      readonly kind: "issue-comment" | "review-comment";
+      readonly kind: "issue-comment" | "review-comment" | "review";
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
   }
@@ -3371,7 +3371,9 @@ export const make = Effect.gen(function* () {
           return (
             input.kind === "issue-comment"
               ? client.UpdateIssueComment(variables).pipe(Effect.asVoid)
-              : client.UpdateReviewComment(variables).pipe(Effect.asVoid)
+              : input.kind === "review"
+                ? client.UpdateReview(variables).pipe(Effect.asVoid)
+                : client.UpdateReviewComment(variables).pipe(Effect.asVoid)
           ).pipe(graphql({ ...input, operation: "updateComment" }));
         }),
       );

@@ -101,13 +101,12 @@ export function settleDescriptionSave(
   return { ...draft, saves, body: saved || saves > 0 ? draft.body : null };
 }
 
-/** Hosts do not support rewriting review summaries through comment mutations. */
 export function canEditPullRequestComment(
   detail: EditingSubject,
   comment: Pick<PullRequestComment, "author" | "canEdit" | "kind">,
 ): boolean {
   if (detail.capabilities.edit?.comment !== true) return false;
-  if (comment.kind !== "issue-comment" && comment.kind !== "review-comment") return false;
+  if (comment.kind === "review" && detail.capabilities.edit.review !== true) return false;
   if (comment.canEdit !== undefined) return comment.canEdit;
   return sameLogin(detail.viewer, comment.author?.login);
 }

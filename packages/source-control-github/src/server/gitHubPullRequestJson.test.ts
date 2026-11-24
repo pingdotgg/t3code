@@ -514,6 +514,7 @@ describe("pull request detail decoding", () => {
                   lastEditedAt: null,
                   url: "https://github.com/r",
                   isMinimized: false,
+                  viewerCanUpdate: false,
                   author: null,
                   submittedAt: null,
                   ...review,
@@ -816,11 +817,21 @@ describe("pull request detail decoding", () => {
             viewerCanUpdate: true,
           },
         ],
+        reviews: [
+          {
+            id: "r1",
+            body: "- [ ] Autofix",
+            state: "COMMENTED",
+            submittedAt: "2026-07-06T00:00:00Z",
+            viewerCanUpdate: true,
+          },
+        ],
       }),
     );
     expect(detail.comments.map((comment) => [comment.id, comment.canEdit])).toEqual([
       ["c1", false],
       ["c2", true],
+      ["r1", true],
     ]);
   });
 
@@ -1082,6 +1093,35 @@ describe("review thread decoding", () => {
       kind: "review-comment",
       path: "apps/server/src/ws.ts",
     });
+  });
+
+  it("keeps whether the reader may edit a line comment in the conversation", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_a",
+            path: "README.md",
+            comments: {
+              nodes: [
+                { id: "t1", body: "- [ ] a", createdAt: "2026-07-01T00:00:00Z" },
+                {
+                  id: "t2",
+                  body: "- [ ] b",
+                  createdAt: "2026-07-02T00:00:00Z",
+                  viewerCanUpdate: true,
+                },
+              ],
+            },
+          },
+        ]),
+      ),
+    );
+    const comments = reviewThreadConversation(result.threads.map((entry) => entry.thread));
+    expect(comments.map((comment) => [comment.id, comment.canEdit])).toEqual([
+      ["t1", false],
+      ["t2", true],
+    ]);
   });
 
   it("carries every reply, not only the remark each thread opened with", () => {

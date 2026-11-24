@@ -115,6 +115,15 @@ mutation UpdateReviewComment($commentId: ID!, $body: String!) {
   }
 }
 
+# A review's summary, the body it was submitted with.
+mutation UpdateReview($commentId: ID!, $body: String!) {
+  updatePullRequestReview(input: { pullRequestReviewId: $commentId, body: $body }) {
+    pullRequestReview {
+      id
+    }
+  }
+}
+
 # Clears one file, or puts it back. GitHub has no bulk form of either mutation, so
 # `GraphQLResolver.aliased` repeats this under an alias per file and a burst of ticks is one
 # request; `$viewed` picks which of the two each alias runs.

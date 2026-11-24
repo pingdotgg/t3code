@@ -729,7 +729,11 @@ function toComments(raw: {
     RemarkFields & { readonly createdAt: string; readonly viewerCanUpdate: boolean }
   >;
   readonly reviews: ReadonlyArray<
-    RemarkFields & { readonly state: string; readonly submittedAt: string | null }
+    RemarkFields & {
+      readonly state: string;
+      readonly submittedAt: string | null;
+      readonly viewerCanUpdate: boolean;
+    }
   >;
 }): ReadonlyArray<PullRequestComment> {
   const issueComments = raw.comments
@@ -768,6 +772,7 @@ function toComments(raw: {
         url: trimmed(review.url),
         path: null,
         reviewState,
+        canEdit: review.viewerCanUpdate,
       },
     ];
   });
@@ -1379,6 +1384,7 @@ export function reviewThreadConversation(
       path: thread.path,
       reviewState: null,
       reactions: comment.reactions ?? [],
+      ...(comment.canEdit === undefined ? {} : { canEdit: comment.canEdit }),
     })),
   );
 }
