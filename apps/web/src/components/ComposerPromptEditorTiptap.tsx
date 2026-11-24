@@ -1563,8 +1563,10 @@ function ComposerPromptEditorTiptapInner(
           if (moved || view.dragging || !data || data.files.length > 0) return false;
           const target = view.posAtCoords({ left: event.clientX, top: event.clientY });
           if (!target || !readPastedPlainText(data)) return false;
+          // Between blocks, ProseMirror's drop inserts a new block; a nearby selection would replace or join one.
+          if (!view.state.doc.resolve(target.pos).parent.inlineContent) return false;
           view.dispatch(
-            view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(target.pos))),
+            view.state.tr.setSelection(TextSelection.create(view.state.doc, target.pos)),
           );
           // Handling the drop skips ProseMirror's own focus call.
           view.focus();

@@ -594,6 +594,32 @@ it.each([
   expect(editor.view.hasFocus()).toBe(true);
 });
 
+it("drops text on a rule's edge without replacing the rule", async () => {
+  await using screen = await mountEditor("before\n\n---\n\nafter");
+  const { editor } = screen;
+  let rulePos = -1;
+  editor.state.doc.forEach((node, offset) => {
+    if (node.type.name === "horizontalRule") rulePos = offset;
+  });
+  const rule = (editor.view.nodeDOM(rulePos) as HTMLElement).getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "dropped");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: rule.left + rule.width / 2,
+        clientY: rule.top,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  const value = serializeEditorDoc(editor.state.doc).value;
+  expect(value).toContain("---");
+  expect(value).toContain("dropped");
+});
+
 it.each([
   ["**DEV**", "**DEV**!"],
   ["*DEV*", "*DEV*!"],
