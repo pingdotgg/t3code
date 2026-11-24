@@ -273,6 +273,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     readonly rejectRunningServer?: boolean;
     readonly selectAutomaticPort?: (
       preferred: number,
+      host: string | undefined,
     ) => Effect.Effect<number, NetService.NetError | CliError.UserError>;
   },
 ) {
@@ -312,22 +313,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     () => "web",
   );
 
-  const port = yield* Option.match(
-    resolveOptionPrecedence(
-      normalizedFlags.port,
-      Option.fromUndefinedOr(env.port),
-      Option.fromUndefinedOr(bootstrap?.port),
-    ),
-    {
-      onSome: (value) => Effect.succeed(value),
-      onNone: () => {
-        if (mode === "desktop") {
-          return Effect.succeed(ServerConfig.DEFAULT_PORT);
-        }
-        return selectAutomaticPort(ServerConfig.DEFAULT_PORT);
-      },
-    },
-  );
   const devUrl = Option.getOrElse(
     resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
     () => undefined,
@@ -402,6 +387,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
   const desktopBootstrapSecret = bootstrap?.desktopBootstrapSecret;
+  const desktopReadinessSecret = bootstrap?.desktopReadinessSecret;
   const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
   const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
   const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
@@ -464,6 +450,22 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
         ));
   const host = Option.getOrElse(explicitHost, () =>
     privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
+  );
+  const port = yield* Option.match(
+    resolveOptionPrecedence(
+      normalizedFlags.port,
+      Option.fromUndefinedOr(env.port),
+      Option.fromUndefinedOr(bootstrap?.port),
+    ),
+    {
+      onSome: (value) => Effect.succeed(value),
+      onNone: () => {
+        if (mode === "desktop") {
+          return Effect.succeed(ServerConfig.DEFAULT_PORT);
+        }
+        return selectAutomaticPort(ServerConfig.DEFAULT_PORT, host);
+      },
+    },
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -538,6 +540,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     startupPresentation,
     desktopBootstrapToken,
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
+    ...(desktopReadinessSecret === undefined ? {} : { desktopReadinessSecret }),
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,
     desktopTelemetryControlFd,

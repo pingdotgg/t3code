@@ -27,8 +27,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
-      contents: read
-      issues: write
       pull-requests: write
     steps:
       - id: pr

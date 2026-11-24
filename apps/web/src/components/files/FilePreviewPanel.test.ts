@@ -217,6 +217,19 @@ describe("document preview contents", () => {
     expect(html.replaceAll(/<[^>]*>/g, "")).toBe("Hello boldUnicode: αvisible");
     expect(html).toContain("<strong>");
     expect(html).not.toContain("https:");
+    const styled = openRtf(
+      bytes(
+        "{\\rtf1\\ansi\\b \\uc0\\u55357 \\u56960  Launch\\b0  \\i\\uc1\\u-10187?\\u-8904?\\i0}",
+      ),
+    );
+    if (styled.type !== "document") throw new Error("Expected document");
+    expect(styled.pages[0]!.html).toBe("<p><strong>🚀 Launch</strong> <em>𝔸</em></p>");
+    const fallbacks = openRtf(bytes("{\\rtf1\\b\\uc1\\u-10179\\_\\uc0\\u-8576 }"));
+    if (fallbacks.type !== "document") throw new Error("Expected document");
+    expect(fallbacks.pages[0]!.html).toBe("<p><strong>🚀</strong></p>");
+    const escapedBreak = openRtf(bytes("{\\rtf1\\b A\\u66\\\nC\\par D}"));
+    if (escapedBreak.type !== "document") throw new Error("Expected document");
+    expect(escapedBreak.pages[0]!.html).toBe("<p><strong>ABC</strong><br><strong>D</strong></p>");
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
@@ -376,6 +389,11 @@ Third}`;
                 { data: { "text/html": "", "text/plain": "\u001b[1mstring fallback\u001b[0m" } },
                 { data: { "text/html": "  ", "text/plain": "space fallback" } },
                 { output_type: "stream", text: ["\u001b[", "32m42\u001b[0m\n"] },
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: ["\r 10%|#         |", "\r100%|##########|\n", "done\r\n", "🚀 ready\rX\n"],
+                },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
               ],
             },
@@ -396,6 +414,7 @@ Third}`;
             { kind: "text", text: "string fallback" },
             { kind: "text", text: "space fallback" },
             { kind: "text", text: "42\n" },
+            { kind: "text", text: "100%|##########|\ndone\nX  ready\n" },
             { kind: "html", text: "<b>Results</b>" },
           ],
         },
@@ -504,6 +523,22 @@ Third}`;
     expect(result.sheets[0]!.rows[0]![0]).toBe("Research & design");
   });
 
+  it("hides ODS values kept in cells a merge covers", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet><table:table table:name="Merged">' +
+        '<table:table-row><table:table-cell table:number-columns-spanned="4" table:number-rows-spanned="2"><text:p>Total</text:p></table:table-cell><table:covered-table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:covered-table-cell><table:covered-table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>Lead</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:covered-table-cell office:value-type="string" office:string-value="Below"/><table:covered-table-cell table:number-columns-repeated="3"/><table:table-cell><text:p>Q2</text:p></table:table-cell></table:table-row>' +
+        "</table:table></office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Total", "", "", "", "Lead"],
+      ["", "", "", "", "Q2"],
+    ]);
+  });
+
   it("reads an ODS time cell that has no display paragraph", async () => {
     const archive = new JSZip().file(
       "content.xml",
@@ -565,6 +600,24 @@ Third}`;
     const result = await openDocument(archive, "odt");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
+  });
+
+  it("preserves ODT table colspan and rowspan on merged cells", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-column table:number-columns-repeated="3"/>' +
+        '<table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>Quarter</text:p></table:table-cell><table:covered-table-cell/><table:table-cell><text:p>Lead</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell table:number-rows-spanned="2"><text:p>North</text:p></table:table-cell><table:table-cell><text:p>Q1</text:p></table:table-cell><table:table-cell><text:p>Lead A</text:p></table:table-cell></table:table-row>' +
+        "<table:table-row><table:covered-table-cell><text:p>Hidden</text:p></table:covered-table-cell><table:table-cell><text:p>Q2</text:p></table:table-cell><table:table-cell><text:p>Lead B</text:p></table:table-cell></table:table-row>" +
+        '<table:table-row><table:table-cell table:number-columns-spanned="9999" table:number-rows-spanned="0"><text:p>Total</text:p></table:table-cell><table:table-cell table:number-columns-spanned="Infinity" table:number-rows-spanned="50.5"/></table:table-row>' +
+        '<table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2"><table:table><table:table-row><table:table-cell table:number-rows-spanned="2"/></table:table-row></table:table></table:table-cell><table:table-cell table:number-columns-repeated="2" table:number-columns-spanned="2"/></table:table-row>' +
+        "</table:table></office:text></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      `<table><tr><td colspan="2"><p>Quarter</p></td><td><p>Lead</p></td></tr><tr><td rowspan="2"><p>North</p></td><td><p>Q1</p></td><td><p>Lead A</p></td></tr><tr><td><p>Q2</p></td><td><p>Lead B</p></td></tr><tr><td colspan="50"><p>Total</p></td><td></td></tr>${'<tr><td colspan="2"><table><tr><td rowspan="2"></td></tr></table></td><td></td><td></td></tr>'.repeat(2)}</table>`,
+    );
   });
 
   // LibreOffice writes every index as the templates it was built from, then the built index.

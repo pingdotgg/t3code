@@ -30,6 +30,9 @@ export const layerNoTaskFolders = Layer.mock(TaskFolders.TaskFolders)({
 });
 
 export const layer = Layer.mergeAll(
+  Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+    runForThread: () => Effect.succeed({ status: "no-script" }),
+  }),
   layerNoTaskFolders,
   Layer.mock(GitWorkflow.GitWorkflowService)({
     ensureWorkspace: () => Effect.void,

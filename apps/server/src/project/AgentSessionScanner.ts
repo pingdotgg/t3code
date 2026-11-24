@@ -923,11 +923,17 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-  const baseDir = path.resolve(serverConfig.baseDir);
-  const worktreesDir = path.resolve(serverConfig.worktreesDir);
-  const realWorktreesDir = yield* fileSystem
-    .realPath(worktreesDir)
-    .pipe(Effect.orElseSucceed(() => worktreesDir));
+  const configuredT3Dirs = {
+    baseDir: path.resolve(serverConfig.baseDir),
+    worktreesDir: path.resolve(serverConfig.worktreesDir),
+  };
+  // Resolved candidates are compared with T3's folders as resolved too, so a symlinked base still matches.
+  const realPathOf = (directory: string) =>
+    fileSystem.realPath(directory).pipe(Effect.orElseSucceed(() => directory));
+  const realT3Dirs = {
+    baseDir: yield* realPathOf(configuredT3Dirs.baseDir),
+    worktreesDir: yield* realPathOf(configuredT3Dirs.worktreesDir),
+  };
   const platform = yield* HostProcess.Platform;
   const isWindows = platform === "win32";
   const foldWorktreeCase = isWindows;
@@ -944,24 +950,28 @@ export const make = Effect.gen(function* () {
     path.join(homeDir, "Documents", "Codex"),
   ];
 
-  const isExcludedProjectPath = (
-    candidatePath: string,
-    configuredWorktreesDirs: ReadonlyArray<string>,
-  ) =>
+  const isScratchPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
     excludedProjectAncestors.some((ancestor) =>
       normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
         normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
       ),
-    ) ||
+    );
+  const isT3OwnedPath = (
+    candidatePath: string,
+    roots: ReadonlyArray<string>,
+    t3Dirs = configuredT3Dirs,
+  ) =>
     normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
+      normalizeForWorktreeMatch(t3Dirs.baseDir, foldWorktreeCase),
     ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase) ||
-    configuredWorktreesDirs.some((directory) =>
-      isT3ManagedWorktree(candidatePath, directory, foldWorktreeCase),
-    ) ||
-    isT3ManagedWorktree(candidatePath, realWorktreesDir, foldWorktreeCase);
+    isT3ManagedWorktree(candidatePath, t3Dirs.worktreesDir, foldWorktreeCase) ||
+    roots.some((root) => isT3ManagedWorktree(candidatePath, root, foldWorktreeCase));
+  const isExcludedProjectPath = (
+    candidatePath: string,
+    roots: ReadonlyArray<string>,
+    t3Dirs = configuredT3Dirs,
+  ) => isScratchPath(candidatePath) || isT3OwnedPath(candidatePath, roots, t3Dirs);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -1024,7 +1034,9 @@ export const make = Effect.gen(function* () {
       .realPath(directory)
       .pipe(Effect.orElseSucceed(() => directory));
     // Symlinks can disguise excluded worktree paths; re-check their targets.
-    return isExcludedProjectPath(realPath, configuredWorktreesDir) ? Option.none() : stats;
+    return isExcludedProjectPath(realPath, configuredWorktreesDir, realT3Dirs)
+      ? Option.none()
+      : stats;
   });
 
   // Paths whose own read outlived the deadline, mapped to when they may be read
@@ -1647,19 +1659,18 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()));
   });
 
-  // Only chats left in an excluded folder, such as Codex's scratch folder, take their project's root.
-  const projectCwd = (
+  // Only chats left in a scratch folder, such as Codex's, take their project's root; T3's own stay excluded.
+  const projectCwd = Effect.fnUntraced(function* (
     cwd: string,
     projectRoots: ReadonlyArray<string> | undefined,
-    configuredWorktreesDirs: ReadonlyArray<string>,
-  ): string =>
-    projectRoots !== undefined &&
-    isExcludedProjectPath(
-      path.resolve(expandHomePath(cwd.trim(), homeDir)),
-      configuredWorktreesDirs,
-    )
-      ? projectRoots[0]!
-      : cwd;
+    roots: ReadonlyArray<string>,
+  ) {
+    if (projectRoots === undefined) return cwd;
+    const resolved = path.resolve(expandHomePath(cwd.trim(), homeDir));
+    if (!isScratchPath(resolved) || isT3OwnedPath(resolved, roots)) return cwd;
+    const realCwd = yield* realPathOf(resolved);
+    return isT3OwnedPath(realCwd, roots, realT3Dirs) ? cwd : projectRoots[0]!;
+  });
 
   const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
@@ -1829,7 +1840,7 @@ export const make = Effect.gen(function* () {
             sameTranscriptIdentity(imported.source, transcript.identity),
         )?.cwd ?? (yield* readCwd(source, transcript, budget));
       if (rolloutCwd === null || rolloutCwd === false) continue;
-      const cwd = projectCwd(rolloutCwd, transcript.projectRoots, configuredWorktreesDirs);
+      const cwd = yield* projectCwd(rolloutCwd, transcript.projectRoots, configuredWorktreesDirs);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
@@ -1863,7 +1874,7 @@ export const make = Effect.gen(function* () {
     );
     const configuredWorktreesDirs = managedWorktreesDirectories(
       settings,
-      worktreesDir,
+      configuredT3Dirs.worktreesDir,
       path,
       homeDir,
     );
@@ -2049,7 +2060,7 @@ export const make = Effect.gen(function* () {
     );
     const configuredWorktreesDir = managedWorktreesDirectories(
       settings,
-      worktreesDir,
+      configuredT3Dirs.worktreesDir,
       path,
       homeDir,
     );
@@ -2160,13 +2171,13 @@ export const make = Effect.gen(function* () {
     );
     const configuredWorktreesDir = managedWorktreesDirectories(
       settings,
-      worktreesDir,
+      configuredT3Dirs.worktreesDir,
       path,
       homeDir,
     );
     if (
       isExcludedProjectPath(root, configuredWorktreesDir) ||
-      isExcludedProjectPath(realRoot, configuredWorktreesDir)
+      isExcludedProjectPath(realRoot, configuredWorktreesDir, realT3Dirs)
     )
       return Stream.empty;
     const rootIdentity = yield* directoryIdentity(root);
@@ -2359,7 +2370,11 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const expandedCwd = expandHomePath(
-            projectCwd(snapshot.cwd.value, transcript.projectRoots, configuredWorktreesDir).trim(),
+            (yield* projectCwd(
+              snapshot.cwd.value,
+              transcript.projectRoots,
+              configuredWorktreesDir,
+            )).trim(),
             homeDir,
           );
           if (!path.isAbsolute(expandedCwd) || !(yield* belongsToRoot(path.resolve(expandedCwd)))) {
