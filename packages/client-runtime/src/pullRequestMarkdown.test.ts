@@ -193,6 +193,7 @@ describe("pull request body segmentation", () => {
   it.each([
     ["a whitespace run inside a line", `a${" ".repeat(1_000_000)}b`],
     ["a run of unclosed video tags", `${"<video ".repeat(150_000)}</video>`],
+    ["a run of backticks before a line separator", `${"`".repeat(100_000)}\u2028x`],
   ])("splits %s in one pass", (_case, body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
