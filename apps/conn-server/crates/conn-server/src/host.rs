@@ -82,7 +82,16 @@ impl Host {
 }
 
 impl EngineHost for Host {
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(crate::settings::refresh(&self.environment))
+    }
+
     fn provider_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        // T3 admits no launch while its settings fail to load; a retry runs first
+        // (`refresh_settings`), so this holds only while the failure lasts.
+        if self.environment.settings.needs_reload() {
+            return false;
+        }
         crate::settings::provider_instance_enabled(
             &self.environment.settings.raw(),
             project_id,

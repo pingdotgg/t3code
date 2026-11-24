@@ -174,6 +174,13 @@ pub trait EngineHost: Send + Sync {
         true
     }
 
+    /// Reloads settings whose last load failed in a way that may have passed, before work is
+    /// admitted against them (T3 keeps a failed settings load for no time). Off the runtime
+    /// thread when it reads files.
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
     /// `responseStreamingMode` of `project_id` (`resolveProjectSettings`): how streamed
     /// assistant text is stored. The default is T3's default, `paragraph`.
     fn response_streaming_mode(&self, _project_id: Option<&str>) -> ResponseStreamingMode {
