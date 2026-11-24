@@ -875,6 +875,67 @@ describe("Antigravity update_steps plans", () => {
       }),
     ).toBeUndefined();
 
+    // An explicit empty replacement must not fall back to earlier buffered steps.
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-cleared-on-complete",
+          title: "Run update_steps",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { steps: [{ title: "Stale step", status: "in_progress" }] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-cleared-on-complete",
+          status: "completed",
+          rawInput: { steps: [] },
+        },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-cleared-before-complete",
+          title: "Run update_steps",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { steps: [{ title: "Stale step", status: "in_progress" }] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-cleared-before-complete",
+          status: "in_progress",
+          rawInput: { steps: [] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-cleared-before-complete",
+          status: "completed",
+        },
+      }),
+    ).toBeUndefined();
+
     const mcpNotification = {
       sessionId: "session-1",
       update: {

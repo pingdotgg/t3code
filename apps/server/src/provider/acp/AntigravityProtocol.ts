@@ -468,7 +468,7 @@ type AntigravityPlanEntries = Extract<
 function antigravityUpdateSteps(rawInput: unknown): AntigravityPlanEntries | undefined {
   if (!Predicate.isObject(rawInput) || !Array.isArray(rawInput.steps)) return undefined;
   const steps: ReadonlyArray<unknown> = rawInput.steps;
-  const entries: AntigravityPlanEntries = steps.flatMap((step) =>
+  return steps.flatMap((step) =>
     Predicate.isObject(step) && typeof step.title === "string"
       ? [
           {
@@ -486,7 +486,6 @@ function antigravityUpdateSteps(rawInput: unknown): AntigravityPlanEntries | und
         ]
       : [],
   );
-  return entries.length === 0 ? undefined : entries;
 }
 
 /**
@@ -516,7 +515,7 @@ export function makeAntigravityUpdateStepsPlans() {
     const entries = antigravityUpdateSteps(update.rawInput) ?? calls.get(key);
     if (update.status === "completed") {
       calls.delete(key);
-      return entries === undefined
+      return entries === undefined || entries.length === 0
         ? undefined
         : { ...notification, update: { sessionUpdate: "plan", entries } };
     }
