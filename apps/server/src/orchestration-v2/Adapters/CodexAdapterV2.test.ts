@@ -8140,6 +8140,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         });
 
         yield* harness.awaitTerminal(1);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
+              event.turnItem.status === "interrupted",
+          ),
+        );
         assert.equal(
           harness.terminalEvents()[0]?.status,
           parentCompleted ? "completed" : "interrupted",
