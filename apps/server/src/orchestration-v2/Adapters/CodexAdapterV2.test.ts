@@ -7205,12 +7205,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               label: "list-background-terminals",
               frame: { id: 4, result: { data: [], nextCursor: null } },
             },
+            // The terminal can leave the list before Codex reports the command's result.
+            {
+              type: "emit_inbound",
+              label: "item/completed/command-late",
+              frame: {
+                method: "item/completed",
+                params: {
+                  item: backgroundCommandItem("completed"),
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                },
+              },
+            },
           ],
         }),
         (event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.type === "command_execution" &&
-          event.turnItem.status !== "running"
+          event.turnItem.status === "completed"
             ? Deferred.succeed(settled, undefined)
             : Effect.void,
       );
@@ -7224,20 +7237,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }),
       );
       yield* Deferred.await(settled);
+      yield* harness.until(() => harness.continuationRequests.length === 1);
       assert.deepEqual(
         harness.events.flatMap((event) =>
           event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
             ? [event.turnItem.status]
             : [],
         ),
-        ["running", "cancelled"],
+        ["running", "cancelled", "completed"],
       );
       assert.deepEqual(
         harness.terminalEvents().map((event) => event.status),
         ["completed"],
       );
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      assert.lengthOf(harness.continuationRequests, 0);
+      assert.lengthOf(harness.continuationRequests, 1);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

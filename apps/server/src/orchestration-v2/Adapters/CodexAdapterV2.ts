@@ -3192,16 +3192,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   yield* DateTime.now,
                   exited,
                 );
-                for (const itemId of exited) {
-                  yield* clearRunningCommandItem(nativeTurnId, itemId);
-                  yield* Ref.update(userStoppedCommandItemIds, (current) => {
-                    if (!current.has(itemId)) return current;
-                    const updated = new Set(current);
-                    updated.delete(itemId);
-                    return updated;
-                  });
-                }
-                yield* releaseSettledTurnIfIdle(nativeTurnId);
+                // Keep the settled context: a late item/completed still routes its result and wake.
+                for (const itemId of exited) yield* clearRunningCommandItem(nativeTurnId, itemId);
               }),
             );
           },
