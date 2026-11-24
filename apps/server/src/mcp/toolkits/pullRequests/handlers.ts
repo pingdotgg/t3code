@@ -421,10 +421,8 @@ const make = Effect.gen(function* () {
   // Layers below the target are pinned to the heads read here; the host refuses if any moved.
   const stackMergeScope = Effect.fnUntraced(function* (
     ref: PullRequestRef,
-    input: { readonly expectedHeadSha: string; readonly auto?: boolean | undefined },
+    input: { readonly expectedHeadSha: string },
   ) {
-    if (input.auto === true)
-      return yield* new PullRequestForgeError({ detail: "A stack merge cannot wait with auto." });
     const stack = yield* pullRequests
       .stack(ref, { bypassCache: true })
       .pipe(Effect.mapError(forgeFailure));

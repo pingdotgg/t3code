@@ -2221,11 +2221,16 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        const stackAutoMerge =
+          input.action === "enable-auto-merge" || input.action === "disable-auto-merge";
         if (
           input.stackNumber !== undefined &&
           (project.api.capabilities.stackActions !== true ||
-            !["merge", "update-branch"].includes(input.action) ||
-            input.expectedStackHeads === undefined ||
+            !(
+              ["merge", "update-branch"].includes(input.action) ||
+              (stackAutoMerge && project.api.capabilities.stackAutoMerge === true)
+            ) ||
+            (input.expectedStackHeads === undefined && input.action !== "disable-auto-merge") ||
             (input.action === "update-branch" && input.updateMethod !== "rebase"))
         ) {
           return Effect.fail(
