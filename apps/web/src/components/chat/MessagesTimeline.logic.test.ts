@@ -5094,6 +5094,32 @@ describe("parent run waiting on foreground subagents", () => {
     expect(liveRow([status])).toEqual({ ...thinking, label: "Waiting on 2 subagents" });
   });
 
+  it("keeps Thinking when the finished message after the children belongs to another run", () => {
+    const foreign: OrchestrationV2TurnItem = {
+      ...base("foreign", 5),
+      runId: RunId.make("other-run"),
+      status: "completed",
+      type: "assistant_message",
+      messageId: MessageId.make("foreign"),
+      text: "Earlier answer.",
+      streaming: false,
+    };
+    expect(liveRow([foreign])).toEqual(thinking);
+  });
+
+  it("shows no live row while the parent's reply after the children is still streaming", () => {
+    const streaming: OrchestrationV2TurnItem = {
+      ...base("streaming", 5),
+      status: "running",
+      completedAt: null,
+      type: "assistant_message",
+      messageId: MessageId.make("streaming"),
+      text: "Subagents launched; ",
+      streaming: true,
+    };
+    expect(liveRow([streaming])).toBeUndefined();
+  });
+
   it("keeps Thinking when a hidden newer parent command follows the children", () => {
     const command: OrchestrationV2TurnItem = {
       ...base("command", 5),

@@ -1405,6 +1405,19 @@ describe("buildThreadFeed", () => {
         ]),
       ),
     ).toBeUndefined();
+    expect(
+      thinkingLabel(
+        present([
+          {
+            ...assistantMessage("2026-06-20T00:00:05.000Z"),
+            id: TurnItemId.make("foreign"),
+            messageId: MessageId.make("foreign"),
+            runId: RunId.make("run-2"),
+            text: "Earlier answer.",
+          },
+        ]),
+      ),
+    ).toBeUndefined();
   });
 
   it("does not show Thinking once the provider turn has ended or its reply is streaming", () => {
