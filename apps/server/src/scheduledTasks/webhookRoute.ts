@@ -85,7 +85,10 @@ export const layer = HttpApiBuilder.group(
 
       const headers: Record<string, string> = {};
       for (const [name, value] of Object.entries(request.headers)) {
-        if (typeof value === "string") headers[name.toLowerCase()] = value;
+        // Webhook senders do not use cookies, so the request a task reads carries none.
+        if (typeof value === "string" && name.toLowerCase() !== "cookie") {
+          headers[name.toLowerCase()] = value;
+        }
       }
       const queryIndex = request.url.indexOf("?");
       // The relay's delivery id and receive time count only with its signed

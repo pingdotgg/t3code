@@ -355,6 +355,76 @@ it.effect("pairs a client with a linked environment only for one that may hand o
   }).pipe(Effect.scoped),
 );
 
+it.effect("hands out a link code or a guest link only within what the session itself holds", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksPairLink | typeof WS_METHODS.guestShareCreate
+        > => tag !== WS_METHODS.peerLinksPairLink && tag !== WS_METHODS.guestShareCreate,
+      ),
+    );
+    let handled = 0;
+    const environmentId = EnvironmentId.make("environment-box");
+    const threadId = ThreadId.make("thread-1");
+    const handlers = Layer.mergeAll(
+      group.toLayerHandler(WS_METHODS.peerLinksPairLink, () =>
+        Effect.sync(() => {
+          handled++;
+          return {
+            type: "unsupported" as const,
+            reason: "link_access" as const,
+            environmentId,
+            label: "Box",
+            urls: [],
+          };
+        }),
+      ),
+      group.toLayerHandler(WS_METHODS.guestShareCreate, () =>
+        Effect.sync(() => handled++).pipe(Effect.andThen(Effect.die("no share in this test"))),
+      ),
+    );
+    const clientWith = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer(scopes))),
+      );
+
+    // Managing access alone is not running agents or reading threads.
+    const manager = yield* clientWith([AuthAccessWriteScope]);
+    expect(
+      yield* manager[WS_METHODS.peerLinksPairLink]({ environmentId, access: "read-only" }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+    expect(
+      yield* manager[WS_METHODS.guestShareCreate]({ threadId }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+
+    const supervisor = yield* clientWith([
+      AuthAccessWriteScope,
+      AuthOrchestrationReadScope,
+      AuthOrchestrationOperateScope,
+    ]);
+    expect(
+      yield* supervisor[WS_METHODS.peerLinksPairLink]({
+        environmentId,
+        access: "full-access",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+    expect(handled).toBe(0);
+
+    expect(
+      (yield* supervisor[WS_METHODS.peerLinksPairLink]({ environmentId, access: "auto" })).type,
+    ).toBe("unsupported");
+    expect(handled).toBe(1);
+    yield* supervisor[WS_METHODS.guestShareCreate]({ threadId }).pipe(Effect.exit);
+    expect(handled).toBe(2);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
   "enforces read permission on stream %s",
   (method) =>
@@ -586,6 +656,67 @@ describe("settings mutation authorization", () => {
     }),
   );
 });
+
+it.effect("answering a secret request with a reference needs provider management", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.secretsAnswerRequest
+        > => tag !== WS_METHODS.secretsAnswerRequest,
+      ),
+    );
+    const handled: string[] = [];
+    const handler = group.toLayerHandler(WS_METHODS.secretsAnswerRequest, ({ answer }) =>
+      Effect.sync(() => {
+        handled.push(answer.type);
+      }),
+    );
+    const clientWith = (...scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+      );
+    const request = { threadId: ThreadId.make("thread"), turnItemId: TurnItemId.make("item") };
+    const reference = {
+      type: "reference" as const,
+      reference: {
+        provider: SecretProviderId.make("personal"),
+        reference: "op://Private/OpenAI/credential",
+      },
+    };
+
+    const operate = yield* clientWith(AuthOrchestrationOperateScope);
+    expect(
+      yield* operate[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    expect(handled).toEqual([]);
+    // Typed values stay with the scope that runs the thread, whatever the fields are called.
+    yield* operate[WS_METHODS.secretsAnswerRequest]({
+      ...request,
+      answer: { type: "save", secret: "typed-value" },
+    });
+    yield* operate[WS_METHODS.secretsAnswerRequest]({
+      ...request,
+      answer: { type: "save", values: { provider: "personal", reference: "typed-value" } },
+    });
+    expect(handled).toEqual(["save", "save"]);
+
+    const manage = yield* clientWith(AuthOrchestrationOperateScope, AuthProvidersManageScope);
+    yield* manage[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference });
+    expect(handled).toEqual(["save", "save", "reference"]);
+    const manageOnly = yield* clientWith(AuthProvidersManageScope);
+    expect(
+      yield* manageOnly[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+  }),
+);
 
 it.effect("requires task permission before attaching a prepared worktree to a thread", () =>
   Effect.gen(function* () {

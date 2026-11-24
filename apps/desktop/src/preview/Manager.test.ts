@@ -1271,6 +1271,72 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("preserves postBody on in-place window-open navigations", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const setWindowOpenHandler = vi.fn<Electron.WebContents["setWindowOpenHandler"]>();
+        Object.assign(preview.webContents, { setWindowOpenHandler });
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_window_open_post");
+        yield* manager.registerWebview("tab_window_open_post", 42);
+
+        const openWindow = setWindowOpenHandler.mock.calls[0]![0];
+        const detailsBase = {
+          frameName: "",
+          features: "",
+          referrer: { url: "", policy: "default" as const },
+        };
+        const multipartData: Electron.PostBody["data"] = [
+          { type: "rawData", bytes: Buffer.from("a=1") },
+        ];
+
+        expect(
+          openWindow({
+            ...detailsBase,
+            url: "http://localhost:5173/submit",
+            disposition: "foreground-tab",
+            postBody: {
+              contentType: "multipart/form-data",
+              boundary: "----x",
+              data: multipartData,
+            },
+          }),
+        ).toEqual({ action: "deny" });
+        expect(
+          openWindow({
+            ...detailsBase,
+            url: "https://example.com/submit",
+            disposition: "background-tab",
+            postBody: {
+              contentType: "application/x-www-form-urlencoded",
+              data: [],
+            },
+          }),
+        ).toEqual({ action: "deny" });
+        yield* Effect.yieldNow;
+
+        expect(preview.loadURL.mock.calls).toEqual([
+          [
+            "http://localhost:5173/submit",
+            {
+              postData: multipartData,
+              extraHeaders: "content-type: multipart/form-data; boundary=----x",
+            },
+          ],
+          [
+            "https://example.com/submit",
+            {
+              postData: [],
+              extraHeaders: "content-type: application/x-www-form-urlencoded",
+            },
+          ],
+        ]);
+      }),
+    ),
+  );
+
   effectIt.effect("treats a load superseded by a page redirect as a successful navigation", () =>
     withManager((manager) =>
       Effect.gen(function* () {
