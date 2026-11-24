@@ -95,3 +95,37 @@ it("prints end times in other numeric spellings as before", () => {
 
   assert.include(formatTraceSummary(summarizer.finish(), 25), "to 2026-11-24T00:00:00.001Z");
 });
+
+it("formats large summaries without overflowing the call stack", () => {
+  const rowCount = 150_000;
+  const entry = {
+    name: "long-span-name",
+    count: 1,
+    perMinute: 1,
+    p50Ms: 1,
+    p90Ms: 1,
+    maxMs: 1,
+    interrupted: 0,
+    failures: 0,
+  };
+  const spans = Array.from({ length: rowCount }, () => entry);
+
+  const lines = formatTraceSummary(
+    {
+      spanCount: rowCount,
+      skippedLineCount: 0,
+      firstEndMs: 0,
+      lastEndMs: MINUTE_MS,
+      minutes: 1,
+      spans,
+    },
+    rowCount,
+  ).split("\n");
+
+  assert.strictEqual(lines.length, rowCount + 3);
+  assert.strictEqual(lines[2], "span            count  /min  p50  p90  max  interrupted  failed");
+  assert.strictEqual(
+    lines.at(-1),
+    "long-span-name      1   1.0  1ms  1ms  1ms            0       0",
+  );
+});
