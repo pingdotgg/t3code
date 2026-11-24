@@ -34,6 +34,7 @@ import {
 } from "../voice-input/voiceDestination";
 import { LocalModelChoice } from "./VoiceModelSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
+import { DeviceVoiceEngineSection } from "./DeviceVoiceEngineSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -111,15 +112,6 @@ const KINDS: Record<
     icon: "car",
   },
 };
-
-const UNAVAILABLE_EXPLANATION =
-  Platform.OS === "android"
-    ? msg(
-        "Dictation on this device needs Android 12 or later and Google speech services that support your language. Your keyboard’s voice typing is separate.",
-      )
-    : msg(
-        "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.",
-      );
 
 function saveDestination(id: EnvironmentId | null) {
   try {
@@ -340,8 +332,15 @@ export function SettingsVoiceRouteScreen() {
             }
           />
         ) : null}
-        {!grant && transcriber === null ? (
-          <Text className="px-2 text-sm text-foreground-muted">{m(UNAVAILABLE_EXPLANATION)}</Text>
+        {!grant && !sheetEnvironment && Platform.OS === "ios" ? <DeviceVoiceEngineSection /> : null}
+        {!grant && Platform.OS === "android" && transcriber === null ? (
+          <Text className="px-2 text-sm text-foreground-muted">
+            {m(
+              msg(
+                "Dictation on this device needs Android 12 or later and Google speech services that support your language. Your keyboard’s voice typing is separate.",
+              ),
+            )}
+          </Text>
         ) : null}
         {permission === "ask" || permission === "denied" ? (
           <>

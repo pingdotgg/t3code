@@ -1,10 +1,26 @@
-import AudioToolbox
 import ExpoModulesCore
 import Foundation
 
 public class T3VoiceTranscriptionModule: Module {
+  private let parakeetUltra = ParakeetUltraModel()
+
+  private func publishParakeetUltraState(_ snapshot: ParakeetUltraModel.Snapshot) {
+    sendEvent("parakeetUltraState", snapshot.payload)
+  }
+
   public func definition() -> ModuleDefinition {
     Name("T3VoiceTranscription")
+    Events("parakeetUltraState")
+
+    OnCreate {
+      let model = self.parakeetUltra
+      Task { await model.pruneSupersededModels() }
+    }
+
+    OnDestroy {
+      let model = self.parakeetUltra
+      Task { await model.stop() }
+    }
 
     Function("isAppleSpeechAvailable") {
       if #available(iOS 26, *) { return AppleSpeechEngine.isAvailable }
@@ -20,44 +36,43 @@ public class T3VoiceTranscriptionModule: Module {
       }
     }
 
-    AsyncFunction("transcribeWithAppleSpeech") { (uri: URL, locale: String) async throws -> String in
+    AsyncFunction("transcribeWithAppleSpeech") {
+      (uri: URL, locale: String) async throws -> String in
       guard #available(iOS 26, *) else { throw CocoaError(.featureUnsupported) }
       return try await AppleSpeechEngine.transcribe(locale, file: uri)
     }
 
     AsyncFunction("decodeRecording") { (uri: URL) throws -> Data in
-      guard uri.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
-      var opened: ExtAudioFileRef?
-      try check(ExtAudioFileOpenURL(uri as CFURL, &opened))
-      guard let file = opened else { throw CocoaError(.fileReadCorruptFile) }
-      defer { ExtAudioFileDispose(file) }
-      var format = AudioStreamBasicDescription(
-        mSampleRate: 16_000, mFormatID: kAudioFormatLinearPCM,
-        mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
-        mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
-        mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
-      let formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-      try check(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, formatSize, &format))
-      var pcm = Data()
-      var chunk = [Int16](repeating: 0, count: 8192)
-      try chunk.withUnsafeMutableBytes { bytes in
-        while true {
-          var frames = UInt32(bytes.count / 2)
-          var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
-            mNumberChannels: 1, mDataByteSize: UInt32(bytes.count), mData: bytes.baseAddress))
-          try check(ExtAudioFileRead(file, &frames, &buffers))
-          if frames == 0 { break }
-          let count = Int(frames) * 2
-          guard pcm.count + count <= 16_000 * 2 * 301 else { throw CocoaError(.fileReadTooLarge) }
-          pcm.append(contentsOf: bytes.prefix(count))
-        }
+      try VoiceRecordingPCM.signed16(file: uri)
+    }
+
+    Function("getParakeetUltraSize") { ParakeetUltraArtifact.byteCount }
+
+    AsyncFunction("getParakeetUltraState") { () async -> [String: Any] in
+      await self.parakeetUltra.snapshot(publish: self.publishParakeetUltraState).payload
+    }
+
+    AsyncFunction("startParakeetUltraDownload") { () async in
+      await self.parakeetUltra.startDownload { [weak self] snapshot in
+        self?.publishParakeetUltraState(snapshot)
       }
-      guard !pcm.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
-      return pcm
+    }
+
+    AsyncFunction("cancelParakeetUltraDownload") { () async in
+      await self.parakeetUltra.cancelDownload(publish: self.publishParakeetUltraState)
+    }
+
+    AsyncFunction("removeParakeetUltra") { () async throws in
+      try await self.parakeetUltra.remove(publish: self.publishParakeetUltraState)
+    }
+
+    AsyncFunction("transcribeWithParakeetUltra") { (id: String, uri: URL) async throws -> String in
+      try await self.parakeetUltra.transcribe(
+        id: id, file: uri, publish: self.publishParakeetUltraState)
+    }
+
+    AsyncFunction("cancelParakeetUltraTranscription") { (id: String) async in
+      await self.parakeetUltra.cancelInference(id: id)
     }
   }
-}
-
-private func check(_ status: OSStatus) throws {
-  guard status == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
 }

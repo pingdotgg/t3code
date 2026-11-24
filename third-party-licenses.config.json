@@ -1,6 +1,15 @@
 {
   "customNotices": [
     {
+      "bundles": ["ios"],
+      "includeInBundles": ["mobile"],
+      "license": "MIT",
+      "name": "transcribe.cpp for iOS",
+      "version": "0.4.1",
+      "sourceUrl": "https://github.com/handy-computer/transcribe.cpp/tree/v0.4.1",
+      "noticeFile": "apps/mobile/modules/t3-voice-transcription/THIRD_PARTY_NOTICES.md"
+    },
+    {
       "bundles": ["desktop", "mobile"],
       "license": "MIT",
       "name": "Apple Speech engine (adapted from @react-native-ai/apple)",

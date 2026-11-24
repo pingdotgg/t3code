@@ -229,8 +229,15 @@ Use the composer's microphone to record, then confirm to transcribe. Text is
 inserted where your selection was when recording started, ready for you to review
 and edit before sending.
 
-By default, audio stays on the phone. Local transcription needs a supported iPhone
-with iOS 26 or later, or Android 12 or later with compatible Google speech services.
+By default, audio stays on the phone. iPhone uses Apple Speech by default, which
+requires a supported device with iOS 26 or later. In **Settings → Voice**, choose
+**This device**, download **Parakeet Ultra**, then select it for offline
+dictation. Parakeet Ultra detects the spoken language and transcribes after you stop.
+You can switch back to Apple Speech or remove the download in the same settings.
+If you remove the selected model, download it again or choose Apple Speech to
+resume dictation. The [Parakeet Ultra model](https://huggingface.co/handy-computer/parakeet-ultra-gguf)
+is Moondream’s model converted to GGUF by Handy, under CC BY 4.0.
+On-device dictation on Android requires Android 12 or later with compatible Google speech services.
 To use a paired environment instead, open **Settings → Voice → Transcribe on**,
 choose the environment, and confirm. Finished recordings go only to that environment,
 even when a draft belongs to another one. This also works on phones without local
@@ -241,7 +248,7 @@ under the environment in **Settings → Voice** and confirm which provider may r
 On Android, keep T3 Code open while recording and transcribing.
 
 On-device dictation may need a network connection to download a speech model the
-first time. After that it works offline for that language. iPhone dictates in the
+first time. After that it works offline for that language. Apple Speech uses the
 first of your preferred languages (**Settings → General → Language & Region**)
 that Apple’s speech model supports. If none is supported, it tries the app’s
 language. Android transcribes on the device while you
