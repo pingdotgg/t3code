@@ -4290,6 +4290,7 @@ export default function ChatView(props: ChatViewProps) {
         taskFolderPath={activeThreadWorktreePath}
         projection={serverProjection}
         worktreePath={activeThread?.worktreePath ?? null}
+        isSideChat={activeThread?.lineage.sideChat === true}
         onConfirm={onConfirmRevertStable}
       />
       {embedded ? null : <LinkPullRequestDialogHost />}

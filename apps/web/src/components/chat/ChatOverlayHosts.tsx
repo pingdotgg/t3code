@@ -217,14 +217,26 @@ export function RevertConfirmHost(props: {
     "checkpoints" | "checkpointScopes"
   > | null;
   readonly worktreePath: string | null;
+  readonly isSideChat: boolean;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
   const checkpoint =
     pending === null ? undefined : findRevertCheckpoint(props.projection, pending.turnCount);
-  // Only a missing snapshot depends on the task folder: its repositories may still restore.
+  // Only a missing snapshot with restorable repositories depends on whether the folder links a project.
+  const mayRestoreRepositories =
+    !props.isSideChat &&
+    props.projection !== null &&
+    props.worktreePath !== null &&
+    props.taskFolderPath !== null &&
+    checkpoint?.status === "missing" &&
+    rewindFileRestore({
+      projection: props.projection,
+      checkpoint,
+      taskFolder: { projectIsWorktree: false },
+    }) === "repositories";
   const taskFolderQuery = useEnvironmentQuery(
-    checkpoint?.status === "missing" && props.taskFolderPath !== null
+    mayRestoreRepositories && props.taskFolderPath !== null
       ? filesystemEnvironment.taskFolder({
           environmentId: props.environmentId,
           input: { worktreePath: props.taskFolderPath },
@@ -232,8 +244,8 @@ export function RevertConfirmHost(props: {
       : null,
   );
   const fileRestore =
-    // The server refuses file restore outside an isolated worktree.
-    props.projection === null || props.worktreePath === null
+    // Side chats do not snapshot files, and the server refuses file restore outside a worktree.
+    props.isSideChat || props.projection === null || props.worktreePath === null
       ? null
       : rewindFileRestore({
           projection: props.projection,
@@ -264,10 +276,31 @@ export function RevertConfirmHost(props: {
                 composer. “Revert repositories too” also undoes your own edits in this thread’s
                 repository worktrees. Files in the project folder itself stay as they are.
               </T>
-            ) : (
+            ) : fileRestore === "files" ? (
               <T>
                 Rewind chat to before this message. Your prompt and attachments return to the
                 composer. “Revert files too” also undoes your own edits.
+              </T>
+            ) : mayRestoreRepositories && taskFolderQuery.isPending ? (
+              <T>
+                Rewind chat to before this message. Your prompt and attachments return to the
+                composer.
+              </T>
+            ) : props.isSideChat ? (
+              <T>
+                Rewind chat to before this message. Your prompt and attachments return to the
+                composer. Files stay as they are because side chats do not snapshot files.
+              </T>
+            ) : props.worktreePath === null ? (
+              <T>
+                Rewind chat to before this message. Your prompt and attachments return to the
+                composer. Files stay as they are because file restore requires a worktree.
+              </T>
+            ) : (
+              <T>
+                Rewind chat to before this message. Your prompt and attachments return to the
+                composer. Files stay as they are because no file snapshot is available for this
+                message.
               </T>
             )}
           </AlertDialogDescription>
@@ -276,17 +309,15 @@ export function RevertConfirmHost(props: {
           <AlertDialogClose render={<Button variant="outline" />}>
             <T>Cancel</T>
           </AlertDialogClose>
-          <Button
-            variant="destructive-outline"
-            disabled={fileRestore === null}
-            onClick={() => confirm(true)}
-          >
-            {fileRestore === "repositories" ? (
-              <T>Revert repositories too</T>
-            ) : (
-              <T>Revert files too</T>
-            )}
-          </Button>
+          {fileRestore !== null ? (
+            <Button variant="destructive-outline" onClick={() => confirm(true)}>
+              {fileRestore === "repositories" ? (
+                <T>Revert repositories too</T>
+              ) : (
+                <T>Revert files too</T>
+              )}
+            </Button>
+          ) : null}
           <Button onClick={() => confirm(false)}>
             <T>Revert and keep changes</T>
           </Button>
