@@ -63,8 +63,7 @@ export interface VerifiedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
-  /** An MCP client that is another T3 Code environment's peer link. */
-  readonly peerLink?: true;
+  readonly peerLinkTtl?: Duration.Duration;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -930,7 +929,7 @@ const make = Effect.gen(function* () {
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
-        ...(claims.plk === 1 ? { peerLink: true as const } : {}),
+        ...(rowHoldsDeadline ? { peerLinkTtl: Duration.millis(claims.exp - claims.iat) } : {}),
       } satisfies VerifiedSession;
     },
   );

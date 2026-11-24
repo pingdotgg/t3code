@@ -201,7 +201,9 @@ T3CODE_MCP_CLIENT_SESSION_TTL_DAYS=90 t3 serve
 ```
 
 Restart the server after changing the variable. It applies to new MCP OAuth
-sign-ins, including links from other T3 Code environments. Existing sign-ins keep
-their original expiry; revoke and sign in again to use the new lifetime. You can
-still revoke an agent at any time. This setting does not change pairing-code
-lifetimes or credentials issued by `t3 auth session issue` or `t3 thread`.
+sign-ins, including links from other T3 Code environments. Peer links use the
+same lifetime when they renew.
+
+Existing sign-ins keep the lifetime they were issued with. To use the new
+lifetime, revoke the old sign-in and sign in again. Pairing codes and credentials
+issued by `t3 auth session issue` or `t3 thread` keep their own lifetimes.

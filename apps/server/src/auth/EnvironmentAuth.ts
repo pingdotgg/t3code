@@ -1633,16 +1633,19 @@ export const make = Effect.gen(function* () {
   const renewPeerLinkSession = Effect.fnUntraced(function* (
     sessionId: AuthSessionId,
     expiresAt: DateTime.DateTime,
+    ttl: Duration.Duration,
   ) {
     const now = yield* DateTime.now;
-    const renewed = DateTime.add(now, {
-      milliseconds: Duration.toMillis(MCP_CLIENT_SESSION_TTL),
-    });
-    if (DateTime.distance(expiresAt, renewed).pipe(Duration.isLessThan(PEER_LINK_RENEWAL_STEP))) {
+    const renewed = DateTime.make(now.epochMilliseconds + Duration.toMillis(ttl));
+    const step = Duration.min(PEER_LINK_RENEWAL_STEP, Duration.divideUnsafe(ttl, 2));
+    if (
+      Option.isNone(renewed) ||
+      Duration.isLessThan(DateTime.distance(expiresAt, renewed.value), step)
+    ) {
       return DateTime.toUtc(expiresAt);
     }
     const current = yield* sessions
-      .extend(sessionId, renewed, PEER_LINK_RENEWAL_STEP)
+      .extend(sessionId, renewed.value, step)
       .pipe(mapSessionVerificationErrors);
     // A revoke can land between the verification and the update.
     if (Option.isNone(current)) {
@@ -1671,12 +1674,16 @@ export const make = Effect.gen(function* () {
             access: session.scopes.includes(AuthOrchestrationOperateScope)
               ? (session.runtimeModeCeiling ?? "approval-required")
               : "read-only",
-            peerLink: session.peerLink === true,
+            peerLink: session.peerLinkTtl !== undefined,
           } satisfies McpClientSession;
-          if (session.peerLink !== true || session.expiresAt === undefined) return client;
+          if (session.peerLinkTtl === undefined || session.expiresAt === undefined) return client;
           return {
             ...client,
-            linkExpiresAt: yield* renewPeerLinkSession(session.sessionId, session.expiresAt),
+            linkExpiresAt: yield* renewPeerLinkSession(
+              session.sessionId,
+              session.expiresAt,
+              session.peerLinkTtl,
+            ),
           } satisfies McpClientSession;
         }),
       ),
