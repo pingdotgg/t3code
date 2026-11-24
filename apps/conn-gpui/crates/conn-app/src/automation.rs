@@ -108,7 +108,26 @@ async fn await_preview_reply(
     .map_err(|e| e.to_string())?
 }
 
-async fn run(
+/// Runs `f` on the app with its window, as browser commands need to make a page.
+fn with_app_window<T>(
+    app: &WeakEntity<ConnApp>,
+    window: AnyWindowHandle,
+    cx: &mut AsyncApp,
+    f: impl FnOnce(
+        &mut ConnApp,
+        &mut gpui_kit::Window,
+        &mut gpui_kit::Context<'_, ConnApp>,
+    ) -> Result<T, String>,
+) -> Result<T, String> {
+    let entity = app.upgrade().ok_or("app is gone")?;
+    window
+        .update(cx, |_, window, cx| {
+            entity.update(cx, |app, cx| f(app, window, cx))
+        })
+        .map_err(|e| e.to_string())?
+}
+
+pub(crate) async fn run(
     app: &WeakEntity<ConnApp>,
     window: AnyWindowHandle,
     cmd: &Value,
@@ -474,37 +493,36 @@ async fn run(
                 .map_err(|e| e.to_string())?;
             Ok(json!("ok"))
         }
-        "browser-state" => app
-            .read_with(cx, |app, cx| app.browser_state(cx))
-            .map_err(|e| err(e.into())),
-        "browser-title" => app
-            .read_with(cx, |app, cx| json!(app.browser_title(cx)))
-            .map_err(|e| err(e.into())),
+        "browser-state" => with_app_window(app, window, cx, |app, window, cx| {
+            app.browser_state(window, cx)
+        }),
+        "browser-title" => with_app_window(app, window, cx, |app, window, cx| {
+            app.browser_title(window, cx).map(|title| json!(title))
+        }),
         "browser-eval" => {
             let expression = text(cmd, "expression").to_owned();
-            let rx = app
-                .update(cx, |app, cx| app.browser_preview_eval(&expression, cx))
-                .map_err(|e| err(e.into()))??;
+            let rx = with_app_window(app, window, cx, |app, window, cx| {
+                app.browser_preview_eval(&expression, window, cx)
+            })?;
             await_preview_reply(rx).await
         }
         "browser-snapshot" => {
-            let rx = app
-                .update(cx, |app, cx| {
-                    app.browser_preview_call("snapshot", &json!({}), cx)
-                })
-                .map_err(|e| err(e.into()))??;
+            let rx = with_app_window(app, window, cx, |app, window, cx| {
+                app.browser_preview_call("snapshot", &json!({}), window, cx)
+            })?;
             await_preview_reply(rx).await
         }
         "browser-act" => {
-            let rx = app
-                .update(cx, |app, cx| app.browser_preview_call("act", cmd, cx))
-                .map_err(|e| err(e.into()))??;
+            let rx = with_app_window(app, window, cx, |app, window, cx| {
+                app.browser_preview_call("act", cmd, window, cx)
+            })?;
             await_preview_reply(rx).await
         }
         "browser-screenshot" => {
             let path = std::path::PathBuf::from(text(cmd, "path"));
-            app.read_with(cx, |app, cx| app.browser_screenshot(&path, cx))
-                .map_err(|e| err(e.into()))?
+            with_app_window(app, window, cx, |app, window, cx| {
+                app.browser_screenshot(&path, window, cx)
+            })
         }
         "new-thread" => {
             let project = cmd

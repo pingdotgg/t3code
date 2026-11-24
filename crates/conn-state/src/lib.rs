@@ -20,6 +20,7 @@ pub mod environments;
 mod layout;
 pub mod model_preferences;
 mod order_keys;
+mod panel_tabs;
 pub mod project_groups;
 pub mod project_settings;
 pub mod provider_auth;
@@ -81,7 +82,7 @@ pub use crate::drafts::{
     retarget_draft,
 };
 pub use crate::layout::{
-    CHAT_BESIDE_PANEL_MIN_WIDTH, LayoutState, MAIN_CONTENT_MIN_WIDTH, PanelSurface,
+    BrowserTabId, CHAT_BESIDE_PANEL_MIN_WIDTH, LayoutState, MAIN_CONTENT_MIN_WIDTH, PanelSurface,
     RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH, RIGHT_PANEL_MIN_WIDTH, RightPanelTab,
     SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, right_panel_max_width,
     sidebar_max_width,
@@ -89,6 +90,9 @@ pub use crate::layout::{
 pub use crate::order_keys::{
     OrderAssignment, order_key_between, plan_reorder, sort_active, sort_pinned, spread_order_keys,
     top_of_pinned_run_key,
+};
+pub use crate::panel_tabs::{
+    ClosedTab, RightPanelTabs, ThreadPanel, ThreadPanels, browser_tab_title,
 };
 pub use crate::question::{
     clamp_context, markdown_preview_text, seed_user_input_drafts, split_recommended_label,

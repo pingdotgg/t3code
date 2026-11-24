@@ -31,11 +31,16 @@ pub enum RightPanelTab {
     File,
 }
 
-/// One open right-panel tab: a surface kind, or a file with its project-relative path.
+/// Names one browser tab; ids are never reused within a window.
+pub type BrowserTabId = u64;
+
+/// One open right-panel tab: a surface kind, a file with its project-relative path, or one of
+/// any number of browser tabs (Conn's `browser:<tabId>`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PanelSurface {
     Kind(RightPanelTab),
     File(String),
+    Browser(BrowserTabId),
 }
 
 impl PanelSurface {
@@ -45,6 +50,7 @@ impl PanelSurface {
         match self {
             Self::Kind(tab) => *tab,
             Self::File(_) => RightPanelTab::File,
+            Self::Browser(_) => RightPanelTab::Browser,
         }
     }
 
@@ -52,7 +58,7 @@ impl PanelSurface {
     #[must_use]
     pub fn file_path(&self) -> Option<&str> {
         match self {
-            Self::Kind(_) => None,
+            Self::Kind(_) | Self::Browser(_) => None,
             Self::File(path) => Some(path),
         }
     }

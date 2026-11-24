@@ -3,7 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use conn_client::{ClientEvent, Connection, ConnectionStatus, ServerConfig};
-use conn_state::{LayoutState, PanelSurface, RightPanelTab, ShellState, ThreadState};
+use conn_state::{
+    LayoutState, PanelSurface, RightPanelTab, RightPanelTabs, ShellState, ThreadPanel,
+    ThreadPanels, ThreadState,
+};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
@@ -43,7 +46,13 @@ pub(crate) use self::sidebar_more::PressMode;
 
 actions!(
     conn_app,
-    [ToggleSidebar, ToggleRightPanel, NewThread, ToggleTerminal]
+    [
+        ToggleSidebar,
+        ToggleRightPanel,
+        NewThread,
+        ToggleTerminal,
+        NewRightPanelSurface
+    ]
 );
 
 /// Registers global shell keyboard shortcuts (`Cmd+B`, `Cmd+Alt+B` and `Cmd+J`).
@@ -56,6 +65,8 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-n", NewThread, None),
         // `terminal.toggle` is `mod+j` in Conn's default keybindings.
         KeyBinding::new("cmd-j", ToggleTerminal, None),
+        // `rightPanel.new` (`mod+t`, `rightPanelOpen && !terminalFocus`) opens the `+` menu.
+        KeyBinding::new("cmd-t", NewRightPanelSurface, None),
     ]);
 }
 
@@ -255,10 +266,12 @@ pub(crate) struct ConnApp {
     saved_drafts_json: Option<String>,
     /// Approval requests with a `runtime-request.respond` in flight (`respondingRequestIds`).
     responding_approvals: HashSet<String>,
-    /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
-    right_panel_open_tabs: Vec<PanelSurface>,
-    /// The open file while `layout.right_panel_tab` is [`RightPanelTab::File`].
-    right_panel_file: Option<String>,
+    /// Right panel tabs the user has open, in order, and the active one (Conn's
+    /// `rightPanelStore`). Any number of browser tabs; one of every other kind.
+    right_panel_tabs: RightPanelTabs,
+    /// The other threads' right panels; `right_panel_tabs` and `layout.right_panel_open` hold
+    /// the shown thread's (`rightPanelStore.byThreadKey`).
+    thread_panels: ThreadPanels,
     right_panel_add_menu_open: bool,
     right_panel_maximized: bool,
     /// The terminal drawer under the chat is open, and its height.
@@ -492,9 +505,7 @@ impl ConnApp {
                     app.show_source_location(location, cx)
                 }
                 crate::chat::ChatEvent::OpenInBrowser(url) => {
-                    app.right_panel
-                        .update(cx, |panel, cx| panel.navigate_browser(url.clone(), cx));
-                    app.select_right_panel_tab(RightPanelTab::Browser, cx);
+                    app.open_browser_tab(url.clone(), false, cx);
                 }
                 crate::chat::ChatEvent::RuntimeModeSelected(mode) => {
                     app.set_runtime_mode(mode, cx);
@@ -587,6 +598,10 @@ impl ConnApp {
                 crate::panels::RightPanelEvent::Annotation(action) => {
                     app.handle_annotation_action(action.clone(), cx);
                 }
+                crate::panels::RightPanelEvent::OpenBrowserTab { url, background } => {
+                    app.open_browser_tab(url.clone(), *background, cx);
+                }
+                crate::panels::RightPanelEvent::BrowserTitleChanged => cx.notify(),
             },
         )
         .detach();
@@ -674,8 +689,8 @@ impl ConnApp {
             saved_drafts_json: None,
             responding_approvals: HashSet::new(),
             // No tab until one is picked: opening the panel shows the surface launcher.
-            right_panel_open_tabs: Vec::new(),
-            right_panel_file: None,
+            right_panel_tabs: RightPanelTabs::default(),
+            thread_panels: ThreadPanels::default(),
             right_panel_add_menu_open: false,
             right_panel_maximized: false,
             terminal_drawer_open: false,
@@ -1080,6 +1095,7 @@ impl ConnApp {
     /// The right panel is open and no GPUI overlay covers it.
     fn right_panel_surface_visible(&self) -> bool {
         self.layout.right_panel_open
+            && !self.right_panel_tabs.tabs().is_empty()
             && self.command_palette.is_none()
             && self.settings_modal.is_none()
             && self.workspace_editor.is_none()
@@ -1134,6 +1150,7 @@ impl ConnApp {
 
     /// Pushes the selected thread's timeline (or active draft state) into the chat view and right panel.
     fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
+        self.sync_panel_owner();
         self.refresh_selected_outline(cx);
         self.sync_chat_environment(cx);
         let child_approvals = self.sync_child_approvals();
@@ -1205,8 +1222,7 @@ impl ConnApp {
         self.right_panel.update(cx, |panel, cx| {
             panel.set_environment(environment_id, cx);
             panel.set_context(project_id.clone(), panel_root, thread_id, shell_thread, cx);
-            panel.set_surface(&surface, cx);
-            panel.set_surface_visible(surface_visible, cx);
+            panel.show_surface(&surface, surface_visible, cx);
         });
         let (
             model_instance,
@@ -2742,6 +2758,7 @@ impl ConnApp {
                             app.drafts.set_frozen_active(None);
                         }
                         app.drafts.forget(&draft_id);
+                        app.thread_panels.rename(&draft_id, final_thread_id.clone());
                         if was_open {
                             app.layout.selected_project_id = Some(project_id.clone());
                             app.layout.selected_thread_id = Some(final_thread_id.clone());
@@ -3387,31 +3404,71 @@ impl ConnApp {
     /// Opens the Browser tab and loads `url`.
     #[cfg(feature = "automation")]
     pub(crate) fn browse(&mut self, url: String, cx: &mut Context<'_, Self>) {
-        self.select_right_panel_tab(RightPanelTab::Browser, cx);
+        let surface = self.right_panel_tabs.open(RightPanelTab::Browser);
+        self.show_right_panel_surface(cx);
+        if let PanelSurface::Browser(id) = surface {
+            self.right_panel
+                .update(cx, |panel, cx| panel.navigate_browser(id, url, cx));
+        }
+    }
+
+    /// Opens `url` in a new browser tab (`openUrlInPreview`): it shows, unless `background`
+    /// keeps the tab behind the active one.
+    pub(crate) fn open_browser_tab(
+        &mut self,
+        url: String,
+        background: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let id = if background {
+            self.right_panel_tabs.new_background_browser()
+        } else {
+            self.right_panel_tabs.new_browser()
+        };
         self.right_panel
-            .update(cx, |panel, cx| panel.navigate_browser(url, cx));
+            .update(cx, |panel, cx| panel.navigate_browser(id, url, cx));
+        if background && self.layout.right_panel_open {
+            cx.notify();
+        } else {
+            self.show_right_panel_surface(cx);
+        }
     }
 
-    /// Diagnostic state of the Browser tab.
+    /// Diagnostic state of the shown thread's browser tab.
     #[cfg(feature = "automation")]
-    pub(crate) fn browser_state(&self, cx: &App) -> serde_json::Value {
-        self.right_panel.read(cx).browser_state(cx)
+    pub(crate) fn browser_state(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<serde_json::Value, String> {
+        let id = self.thread_browser();
+        self.right_panel
+            .update(cx, |panel, cx| panel.browser_state(id, window, cx))
     }
 
-    /// The Browser tab's page title.
+    /// The shown thread's browser tab's page title.
     #[cfg(feature = "automation")]
-    pub(crate) fn browser_title(&self, cx: &App) -> String {
-        self.right_panel.read(cx).browser_title(cx)
+    pub(crate) fn browser_title(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<String, String> {
+        let id = self.thread_browser();
+        self.right_panel
+            .update(cx, |panel, cx| panel.browser_title(id, window, cx))
     }
 
     #[cfg(feature = "automation")]
     pub(crate) fn browser_preview_eval(
         &mut self,
         expression: &str,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
-        self.right_panel
-            .update(cx, |panel, cx| panel.browser_preview_eval(expression, cx))
+        let id = self.thread_browser();
+        self.right_panel.update(cx, |panel, cx| {
+            panel.browser_preview_eval(id, expression, window, cx)
+        })
     }
 
     #[cfg(feature = "automation")]
@@ -3419,19 +3476,26 @@ impl ConnApp {
         &mut self,
         op: &str,
         params: &serde_json::Value,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
-        self.right_panel
-            .update(cx, |panel, cx| panel.browser_preview_call(op, params, cx))
+        let id = self.thread_browser();
+        self.right_panel.update(cx, |panel, cx| {
+            panel.browser_preview_call(id, op, params, window, cx)
+        })
     }
 
     #[cfg(feature = "automation")]
     pub(crate) fn browser_screenshot(
-        &self,
+        &mut self,
         path: &std::path::Path,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
     ) -> Result<serde_json::Value, String> {
-        self.right_panel.read(cx).browser_screenshot(path, cx)
+        let id = self.thread_browser();
+        self.right_panel.update(cx, |panel, cx| {
+            panel.browser_screenshot(id, path, window, cx)
+        })
     }
 
     /// State read-out for the automation hook.
@@ -3795,15 +3859,166 @@ impl ConnApp {
     /// The open right panel has no tab, so it lists the surfaces to open.
     fn right_panel_shows_launcher(&self) -> bool {
         self.layout
-            .shows_surface_launcher(self.right_panel_open_tabs.len())
+            .shows_surface_launcher(self.right_panel_tabs.tabs().len())
+    }
+
+    /// Puts the shown thread's (or draft's) right panel in place. Panels are keyed by thread or
+    /// draft id alone: both are UUIDs, and a linked thread's environment can be learnt late. The panel it leaves keeps
+    /// its tabs, and its browsers keep their pages, until the thread shows again.
+    fn sync_panel_owner(&mut self) {
+        let owner = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .or_else(|| self.draft.as_ref().map(|d| d.draft_id.as_str()))
+            .map(str::to_owned);
+        let mut panel = ThreadPanel {
+            tabs: std::mem::take(&mut self.right_panel_tabs),
+            open: self.layout.right_panel_open,
+        };
+        if self.thread_panels.switch(owner, &mut panel) {
+            self.right_panel_add_menu_open = false;
+            self.layout.right_panel_tab = panel
+                .tabs
+                .active()
+                .map_or(RightPanelTab::Files, PanelSurface::kind);
+        }
+        self.right_panel_tabs = panel.tabs;
+        self.layout.right_panel_open = panel.open;
+    }
+
+    /// An agent's `panel_open` for a thread the user is not looking at: its tab waits in that
+    /// thread's panel (`preparePanel`), and nothing reaches the shown thread's panel. A query
+    /// or an MCP action does not run, and the agent hears why. Returns that, if so.
+    fn prepare_background_panel(
+        &mut self,
+        request: &conn_contract::AgentPanelRequest,
+        not_on_thread: &str,
+    ) -> Option<String> {
+        use conn_contract::AgentPanelKind;
+        let acts = match request.panel {
+            AgentPanelKind::Mcp => request.mcp_server.is_some() || request.mcp_call.is_some(),
+            AgentPanelKind::Database => request.sql.is_some(),
+            _ => false,
+        };
+        if acts {
+            return Some(not_on_thread.to_owned());
+        }
+        self.thread_panels.prepare(
+            &request.thread_id,
+            agent_panel_tab(request.panel),
+            &mut self.right_panel_tabs,
+        );
+        None
+    }
+
+    /// The shown thread's browser tab for the automation hook: the active one, else the one it
+    /// showed last. None when this thread has no browser tab, whatever other threads hold.
+    #[cfg(feature = "automation")]
+    fn thread_browser(&self) -> Option<conn_state::BrowserTabId> {
+        match self.right_panel_tabs.active() {
+            Some(PanelSurface::Browser(id)) => Some(*id),
+            _ => self.right_panel_tabs.last_browser(),
+        }
+    }
+
+    /// A thread deleted here takes its right panel and browsers with it. Shell events do not:
+    /// `thread.removed` also means archived, and the thread can come back. The browser cap
+    /// bounds what threads deleted elsewhere leave behind.
+    pub(crate) fn release_thread_panel(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+        self.sync_panel_owner();
+        self.forget_thread_panel(thread_id, cx);
+    }
+
+    /// A deleted thread's right panel goes with it, and so do its browsers.
+    fn forget_thread_panel(&mut self, owner: &str, cx: &mut Context<'_, Self>) {
+        for id in self.thread_panels.forget(owner) {
+            self.right_panel.update(cx, |panel, cx| {
+                panel.close_surface(&PanelSurface::Browser(id), cx);
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_draft_id_for_test(&self) -> Option<String> {
+        self.draft.as_ref().map(|d| d.draft_id.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn right_panel_add_menu_open_for_test(&self) -> bool {
+        self.right_panel_add_menu_open
+    }
+
+    #[cfg(test)]
+    pub(crate) fn right_panel_shows_launcher_for_test(&self) -> bool {
+        self.right_panel_shows_launcher()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn right_panel_for_test(&self) -> &Entity<crate::panels::RightPanel> {
+        &self.right_panel
+    }
+
+    /// One server event, applied as the connection's batch loop applies it.
+    #[cfg(test)]
+    pub(crate) fn apply_event_for_test(&mut self, event: ClientEvent, cx: &mut Context<'_, Self>) {
+        self.apply_event(event, None, cx);
+        self.sync_chat(cx);
+        cx.notify();
+    }
+
+    /// What a server switch does to the app's state, without opening a connection.
+    #[cfg(test)]
+    pub(crate) fn switch_server_state_for_test(&mut self, cx: &mut Context<'_, Self>) {
+        self.reset_environment_state();
+        self.sync_chat(cx);
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepare_background_panel_for_test(
+        &mut self,
+        request: &conn_contract::AgentPanelRequest,
+    ) -> Option<String> {
+        self.prepare_background_panel(request, "not on thread")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn right_panel_tabs(&self) -> &RightPanelTabs {
+        &self.right_panel_tabs
+    }
+
+    #[cfg(test)]
+    pub(crate) fn browser_weak_for_test(
+        &self,
+        id: conn_state::BrowserTabId,
+        cx: &App,
+    ) -> Option<gpui_kit::WeakEntity<crate::panels::BrowserPanelHandle>> {
+        self.right_panel.read(cx).browser_handle(id)
+    }
+
+    /// The address browser tab `id` loads, once its browser exists.
+    #[cfg(test)]
+    pub(crate) fn browser_target_for_test(
+        &self,
+        id: conn_state::BrowserTabId,
+        cx: &App,
+    ) -> Option<String> {
+        self.right_panel.read(cx).browser_target(id, cx)
     }
 
     /// The active right-panel surface.
+    /// With no tab open it is never a browser: the right panel holds other threads' browsers,
+    /// and an empty thread shows the launcher, not one of them.
     fn right_panel_surface(&self) -> PanelSurface {
-        match (&self.layout.right_panel_tab, &self.right_panel_file) {
-            (RightPanelTab::File, Some(path)) => PanelSurface::File(path.clone()),
-            (tab, _) => PanelSurface::Kind(*tab),
-        }
+        let fallback = match self.layout.right_panel_tab {
+            RightPanelTab::Browser => RightPanelTab::Files,
+            tab => tab,
+        };
+        self.right_panel_tabs
+            .active()
+            .cloned()
+            .unwrap_or(PanelSurface::Kind(fallback))
     }
 
     #[cfg(feature = "automation")]
@@ -3811,7 +4026,7 @@ impl ConnApp {
         let mut state = self.right_panel.read(cx).spike_files_state(window, cx);
         if let PanelSurface::File(path) = self.right_panel.read(cx).displayed_surface(
             self.right_panel_surface(),
-            &self.right_panel_open_tabs,
+            self.right_panel_tabs.tabs(),
             cx,
         ) {
             state["displayedTab"] = path.into();
@@ -3833,13 +4048,22 @@ impl ConnApp {
         }
     }
 
-    /// Selects a right-panel tab and opens the right panel if it was closed.
+    /// Selects a right-panel tab and opens the right panel if it was closed. Browser shows the
+    /// browser tab shown last, or a new one (`togglePreviewPanel`).
     pub(crate) fn select_right_panel_tab(
         &mut self,
         tab: RightPanelTab,
         cx: &mut Context<'_, Self>,
     ) {
-        self.select_right_panel_surface(PanelSurface::Kind(tab), cx);
+        self.right_panel_tabs.open(tab);
+        self.show_right_panel_surface(cx);
+    }
+
+    /// The add menu's choice (`+`, its letter keys, the launcher): Browser always adds a new
+    /// tab (`createBrowserSurface`); other kinds show their one tab.
+    pub(crate) fn add_right_panel_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+        self.right_panel_tabs.add(tab);
+        self.show_right_panel_surface(cx);
     }
 
     /// Shows `surface` (opening its tab) and opens the right panel if it was closed.
@@ -3848,39 +4072,68 @@ impl ConnApp {
         surface: PanelSurface,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.right_panel_open_tabs.contains(&surface) {
-            self.right_panel_open_tabs.push(surface.clone());
-        }
+        self.right_panel_tabs.activate(surface);
+        self.show_right_panel_surface(cx);
+    }
+
+    /// Opens the right panel on the active tab.
+    fn show_right_panel_surface(&mut self, cx: &mut Context<'_, Self>) {
         self.right_panel_add_menu_open = false;
-        self.layout.right_panel_tab = surface.kind();
-        if let PanelSurface::File(path) = surface {
-            self.right_panel_file = Some(path);
-        }
+        self.layout.right_panel_tab = self.right_panel_surface().kind();
         self.layout.right_panel_open = true;
         self.sync_chat(cx);
         self.sync_browser_visibility(cx);
         cx.notify();
     }
 
-    /// Closes a right panel tab; closing the last one closes the panel.
-    fn close_right_panel_tab(&mut self, surface: &PanelSurface, cx: &mut Context<'_, Self>) {
-        // Closing the last surface closes the panel, as in Conn.
-        if self.right_panel_open_tabs.len() <= 1 {
+    /// A dialog, menu or popover is open, so a panel shortcut must leave the keyboard where it is
+    /// (`LAUNCHER_SHORTCUT_BLOCKING_LAYERS` in `RightPanelTabs.tsx`).
+    fn shortcut_blocking_layer_open(&self, cx: &App) -> bool {
+        self.settings_modal.is_some()
+            || self.command_palette.is_some()
+            || self.workspace_editor.is_some()
+            || self.thread_menu.is_some()
+            || self.rail_menu.is_some()
+            || self.sidebar_filter_menu_open
+            || self.chat.read(cx).model_picker_open(cx)
+    }
+
+    /// `rightPanel.new` (`Cmd+T`): opens the `+` menu while the right panel shows and the
+    /// terminal does not have the keyboard.
+    fn open_right_panel_add_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let terminal = self.right_panel.read(cx).terminal_entity();
+        let terminal_focused = terminal.focus_handle(cx).contains_focused(window, cx);
+        let blocked = !self.right_panel_add_menu_open && self.shortcut_blocking_layer_open(cx);
+        if !self.layout.right_panel_open || terminal_focused || blocked {
+            cx.propagate();
+            return;
+        }
+        if !self.right_panel_add_menu_open {
+            self.right_panel_add_menu_open = true;
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
+        }
+    }
+
+    /// Closes a right panel tab (`closeSurface`); closing the last one closes the panel.
+    pub(crate) fn close_right_panel_tab(
+        &mut self,
+        surface: &PanelSurface,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(closed) = self.right_panel_tabs.close(surface) else {
+            return;
+        };
+        self.right_panel
+            .update(cx, |panel, cx| panel.close_surface(surface, cx));
+        if closed.was_last {
             self.right_panel_add_menu_open = false;
             if self.layout.right_panel_open {
                 self.toggle_right_panel(cx);
             }
-            return;
-        }
-        let Some(pos) = self.right_panel_open_tabs.iter().position(|t| t == surface) else {
-            return;
-        };
-        self.right_panel_open_tabs.remove(pos);
-        self.right_panel
-            .update(cx, |panel, cx| panel.release_closed_file(surface, cx));
-        if &self.right_panel_surface() == surface {
-            let next = self.right_panel_open_tabs[pos.saturating_sub(1)].clone();
-            self.select_right_panel_surface(next, cx);
+            cx.notify();
+        } else if closed.activated.is_some() {
+            self.show_right_panel_surface(cx);
         } else {
             cx.notify();
         }
@@ -4776,7 +5029,10 @@ impl ConnApp {
             "delete thread",
             crate::commands::delete_thread(thread_id),
             cx,
-            move |app, cx| app.forget_thread_draft(&deleted, cx),
+            move |app, cx| {
+                app.forget_thread_draft(&deleted, cx);
+                app.release_thread_panel(&deleted, cx);
+            },
         );
     }
 
@@ -5286,7 +5542,7 @@ impl ConnApp {
 
     /// Current shell state.
     #[cfg_attr(
-        not(feature = "automation"),
+        not(any(feature = "automation", test)),
         expect(dead_code, reason = "read by the automation hook")
     )]
     #[must_use]
@@ -5480,7 +5736,7 @@ impl ConnApp {
         }
         match RightPanelTab::from_menu_shortcut(&event.keystroke.key) {
             Some(tab) if self.available_right_panel_tabs().contains(&tab) => {
-                self.select_right_panel_tab(tab, cx);
+                self.add_right_panel_tab(tab, cx);
                 true
             }
             _ => false,
@@ -5511,7 +5767,7 @@ impl ConnApp {
             && self.available_right_panel_tabs().contains(&tab)
         {
             self.right_panel_add_menu_open = false;
-            self.select_right_panel_tab(tab, cx);
+            self.add_right_panel_tab(tab, cx);
             return true;
         }
         false
@@ -5528,12 +5784,17 @@ impl ConnApp {
         let available_tabs = self.available_right_panel_tabs();
         let active_surface = self.right_panel.read(cx).displayed_surface(
             self.right_panel_surface(),
-            &self.right_panel_open_tabs,
+            self.right_panel_tabs.tabs(),
             cx,
         );
+        let browser_titles = self
+            .right_panel
+            .read(cx)
+            .browser_titles(self.right_panel_tabs.browser_ids(), cx);
         let header = render_panel_header(
             PanelHeaderProps {
-                open_tabs: &self.right_panel_open_tabs,
+                open_tabs: self.right_panel_tabs.tabs(),
+                browser_titles: &browser_titles,
                 active_tab: &active_surface,
                 maximized: self.right_panel_maximized,
                 owns_window_leading_edge: self.right_panel_maximized && !self.layout.sidebar_open,
@@ -5572,7 +5833,7 @@ impl ConnApp {
                 on_add_tab: {
                     let app = app.clone();
                     Rc::new(move |tab, _, cx| {
-                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                        app.update(cx, |this, cx| this.add_right_panel_tab(tab, cx));
                     })
                 },
                 on_toggle_maximize: {
@@ -5618,7 +5879,7 @@ impl ConnApp {
                 Rc::new({
                     let app = cx.entity();
                     move |tab, _, cx| {
-                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                        app.update(cx, |this, cx| this.add_right_panel_tab(tab, cx));
                     }
                 }),
             ))
@@ -6065,38 +6326,16 @@ impl ConnApp {
             .unwrap_or(false);
 
         if !on_thread {
-            if request.panel == AgentPanelKind::Database
-                && let Some(sql) = request.sql.clone()
-            {
-                let _ = this.update(cx, |app, cx| {
-                    app.right_panel
-                        .update(cx, |panel, cx| panel.set_database_sql(sql, cx));
-                });
-                if request.run == Some(true) {
-                    resp.ok = false;
-                    resp.error = Some(format!(
-                        "{not_on_thread} The query is in its Database panel."
-                    ));
-                }
-                return resp;
-            }
-            if request.panel == AgentPanelKind::Mcp
-                && (request.mcp_server.is_some() || request.mcp_call.is_some())
-            {
+            if let Ok(Some(error)) = this.update(cx, |app, _| {
+                app.prepare_background_panel(&request, not_on_thread)
+            }) {
                 resp.ok = false;
-                resp.error = Some(not_on_thread.to_owned());
-                return resp;
+                resp.error = Some(error);
             }
             return resp;
         }
 
-        let target_tab = match request.panel {
-            AgentPanelKind::Browser => RightPanelTab::Browser,
-            AgentPanelKind::Database => RightPanelTab::Database,
-            AgentPanelKind::Mcp => RightPanelTab::Mcp,
-            AgentPanelKind::Diff => RightPanelTab::Diff,
-            AgentPanelKind::Files => RightPanelTab::Files,
-        };
+        let target_tab = agent_panel_tab(request.panel);
 
         let _ = this.update(cx, |app, cx| {
             app.select_right_panel_tab(target_tab, cx);
@@ -6445,24 +6684,9 @@ impl ConnApp {
         (connection, events)
     }
 
-    /// Switches the active live `conn-server` connection to a new [`ServerConfig`] (e.g. an Orbit
-    /// Node or Instance), cleanly resetting shell/thread state and updating chat & right panels.
-    fn connect_to_server_config(
-        &mut self,
-        config: ServerConfig,
-        orbit_server_id: Option<String>,
-        label: Option<String>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.connection_gen = self.connection_gen.wrapping_add(1);
-        let generation = self.connection_gen;
-        self.server_url = Some(config.http_base_url.to_string());
-        self.server_label = label;
-        self.status = Some(ConnectionStatus::Connecting);
-        self.orbit.active_server_id = orbit_server_id.clone();
-        self.orbit.connecting_server_id = orbit_server_id.clone();
-        self.orbit.notice = None;
-
+    /// Forgets the old server's shell, threads and selection when the app switches servers.
+    /// Right-panel tabs stay: they are not the server's, and the thread may come back.
+    fn reset_environment_state(&mut self) {
         self.offline = offline::Offline::new();
         self.reset_linked_environments();
         self.shell = ShellState::default();
@@ -6480,6 +6704,26 @@ impl ConnApp {
         // Drafts belong to their environment; this connection ends any launch in flight.
         self.park_active_draft();
         self.drafts.clear_launching();
+    }
+
+    /// Switches the active live `conn-server` connection to a new [`ServerConfig`] (e.g. an Orbit
+    /// Node or Instance), cleanly resetting shell/thread state and updating chat & right panels.
+    fn connect_to_server_config(
+        &mut self,
+        config: ServerConfig,
+        orbit_server_id: Option<String>,
+        label: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.connection_gen = self.connection_gen.wrapping_add(1);
+        let generation = self.connection_gen;
+        self.server_url = Some(config.http_base_url.to_string());
+        self.server_label = label;
+        self.status = Some(ConnectionStatus::Connecting);
+        self.orbit.active_server_id = orbit_server_id.clone();
+        self.orbit.connecting_server_id = orbit_server_id.clone();
+        self.orbit.notice = None;
+        self.reset_environment_state();
 
         let (connection, events) = Self::start_connection(config, self.device_name());
         Self::pump_events(generation, orbit_server_id, events, cx);
@@ -7065,6 +7309,18 @@ pub(crate) fn start_frame_log(cx: &mut App) {
     .detach();
 }
 
+/// The right-panel tab an agent's `panel_open` request shows.
+fn agent_panel_tab(panel: conn_contract::AgentPanelKind) -> RightPanelTab {
+    use conn_contract::AgentPanelKind;
+    match panel {
+        AgentPanelKind::Browser => RightPanelTab::Browser,
+        AgentPanelKind::Database => RightPanelTab::Database,
+        AgentPanelKind::Mcp => RightPanelTab::Mcp,
+        AgentPanelKind::Diff => RightPanelTab::Diff,
+        AgentPanelKind::Files => RightPanelTab::Files,
+    }
+}
+
 impl Render for ConnApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.refresh_workspace_images();
@@ -7159,6 +7415,9 @@ impl Render for ConnApp {
             }))
             .on_action(cx.listener(|app, _: &ToggleTerminal, window, cx| {
                 app.toggle_terminal_drawer(window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &NewRightPanelSurface, window, cx| {
+                app.open_right_panel_add_menu(window, cx);
             }))
             .on_action(cx.listener(|app, _: &NewThread, window, cx| {
                 app.start_new_thread(None, Some(window), cx);

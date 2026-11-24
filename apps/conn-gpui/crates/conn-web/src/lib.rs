@@ -16,9 +16,11 @@ mod load_error;
 #[cfg(target_os = "macos")]
 mod mac;
 mod menu;
+mod popup;
 mod trace;
 
 pub use load_error::{LoadError, net_error_name};
+pub use popup::NewTabRequest;
 pub use trace::{LOG_PATH as TRACE_LOG_PATH, trace};
 
 pub use menu::{
@@ -654,6 +656,16 @@ impl BrowserView {
     pub fn on_context_menu(&self, callback: impl Fn(ContextMenuEvent) + Send + Sync + 'static) {
         #[cfg(target_os = "macos")]
         self.inner.on_context_menu(callback);
+        #[cfg(not(target_os = "macos"))]
+        let _ = callback;
+    }
+
+    /// Registers the host's handler for links the page opens in a new tab (`target=_blank`,
+    /// Cmd-click, middle click). Without one they do nothing. The callback runs on the main
+    /// thread.
+    pub fn on_open_tab(&self, callback: impl Fn(NewTabRequest) + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        self.inner.on_open_tab(callback);
         #[cfg(not(target_os = "macos"))]
         let _ = callback;
     }

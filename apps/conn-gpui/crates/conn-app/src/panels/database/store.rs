@@ -94,6 +94,10 @@ impl DatabaseStore {
 
 /// Path where saved connections and per-connection SQL live (`database.json`).
 pub(crate) fn store_path() -> Option<PathBuf> {
+    // Tests never read or write the user's saved connections.
+    if cfg!(test) {
+        return None;
+    }
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join("Library/Application Support/conn-gpui/database.json"))
 }

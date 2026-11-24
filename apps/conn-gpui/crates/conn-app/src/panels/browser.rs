@@ -19,8 +19,8 @@ use conn_state::AnnotationRecord;
 use conn_theme::Tokens;
 use conn_web::{
     BrowserView, ContextMenuEvent, CursorKind, EditCommand, KeyEvent as WebKeyEvent, KeyEventKind,
-    Modifiers as WebModifiers, MouseButton as WebMouseButton, Rect as WebRect, WebRuntime,
-    WebRuntimeState,
+    Modifiers as WebModifiers, MouseButton as WebMouseButton, NewTabRequest, Rect as WebRect,
+    WebRuntime, WebRuntimeState,
 };
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
@@ -125,6 +125,16 @@ enum BrowserOverlayEvent {
     },
     LoadEnd,
     ContextMenu(ContextMenuEvent),
+    OpenTab(NewTabRequest),
+}
+
+/// What a browser tab tells its host.
+#[derive(Clone, Debug)]
+pub(crate) enum BrowserTabEvent {
+    /// The tab's title (page title or host) changed.
+    TitleChanged,
+    /// The page opened a link in a new tab (`target=_blank`, Cmd-click, middle click).
+    OpenTab(NewTabRequest),
 }
 
 #[derive(Default)]
@@ -194,9 +204,30 @@ pub(crate) struct BrowserPanel {
     /// The user has asked for a page (typed an address, used back, forward or reload, or clicked
     /// in the page), so a load is theirs and the reload button may spin.
     user_load: bool,
+    /// The tab title last reported with [`BrowserTabEvent::TitleChanged`].
+    reported_title: String,
+    /// `__connAnnotationsChanged` calls, CEF view or not, so tests can count them.
+    #[cfg(test)]
+    annotation_scripts: Cell<usize>,
+    /// A page loaded while hidden; its bridge and pins go in when it shows.
+    load_injection_pending: bool,
+    /// A page started loading while hidden; the debug bar's host script goes in when it shows.
+    host_script_pending: bool,
+    #[cfg(test)]
+    host_scripts: Cell<usize>,
+    /// The automation hook needs this page while it is hidden, so its view is made anyway.
+    view_while_hidden: Rc<Cell<bool>>,
+    /// Preview requests the automation hook sent this page, view or not.
+    #[cfg(all(test, feature = "automation"))]
+    preview_requests: Cell<usize>,
+    #[cfg(test)]
+    bridge_injections: Cell<usize>,
+    #[cfg(test)]
+    overlay_injections: Cell<usize>,
 }
 
 impl EventEmitter<AnnotationAction> for BrowserPanel {}
+impl EventEmitter<BrowserTabEvent> for BrowserPanel {}
 
 impl fmt::Debug for BrowserPanel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -249,6 +280,11 @@ impl BrowserPanel {
             }
         }));
 
+        // A closed tab releases this panel: free its last frame from the sprite atlas (only a
+        // newer frame frees the one before) and close its Chromium browser.
+        cx.on_release(|this: &mut Self, cx| this.release(cx))
+            .detach();
+
         let annotations = AnnotationUiState::new(AnnotationSubject::Page, window, cx, |_, _, _| {});
         let view = Rc::new(RefCell::new(None));
         let last_bounds = Rc::new(Cell::new(None));
@@ -286,6 +322,76 @@ impl BrowserPanel {
             polling_runtime: false,
             context_menu: None,
             user_load: false,
+            reported_title: String::new(),
+            #[cfg(test)]
+            annotation_scripts: Cell::new(0),
+            load_injection_pending: false,
+            host_script_pending: false,
+            #[cfg(test)]
+            host_scripts: Cell::new(0),
+            view_while_hidden: Rc::new(Cell::new(false)),
+            #[cfg(all(test, feature = "automation"))]
+            preview_requests: Cell::new(0),
+            #[cfg(test)]
+            bridge_injections: Cell::new(0),
+            #[cfg(test)]
+            overlay_injections: Cell::new(0),
+        }
+        .with_reported_title()
+    }
+
+    fn release(&mut self, cx: &mut gpui_kit::App) {
+        if let Some((_, image)) = self.rendered_frame.take() {
+            cx.defer(move |cx| cx.drop_image(image, None));
+        }
+        self.wake_task = None;
+        self.overlay_task = None;
+        let view = self.view.borrow_mut().take();
+        if let Some(view) = view {
+            view.close();
+        }
+    }
+
+    fn with_reported_title(mut self) -> Self {
+        self.reported_title = self.tab_title();
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn target_url(&self) -> &str {
+        &self.url
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visible_for_test(&self) -> bool {
+        self.visible.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn annotation_scripts(&self) -> usize {
+        self.annotation_scripts.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn project_for_test(&self) -> Option<&str> {
+        self.project_id.as_deref()
+    }
+
+    /// The tab strip's title (`surfaceTitle`): the page title, else its host, else Browser.
+    pub(crate) fn tab_title(&self) -> String {
+        let view = self.view.borrow();
+        match view.as_ref() {
+            Some(view) => conn_state::browser_tab_title(&view.title(), &view.url()),
+            None => conn_state::browser_tab_title("", &self.url),
+        }
+    }
+
+    /// Tells the host when the tab title changed. Cheap enough to run on every frame.
+    fn report_title(&mut self, cx: &mut Context<'_, Self>) {
+        let title = self.tab_title();
+        if title != self.reported_title {
+            self.reported_title = title;
+            cx.emit(BrowserTabEvent::TitleChanged);
         }
     }
 
@@ -331,10 +437,47 @@ impl BrowserPanel {
         project_ready: bool,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.annotations.annotations == annotations
+            && self.annotations.watching == watching
+            && self.annotations.project_ready == project_ready
+        {
+            return;
+        }
         self.annotations.sync(annotations, watching, project_ready);
         self.notify_overlay_annotations_changed();
         self.maybe_show_existing_pins();
         cx.notify();
+    }
+
+    /// Where the page is drawn, once it has been.
+    #[cfg(feature = "automation")]
+    pub(crate) fn web_bounds(&self) -> Option<WebRect> {
+        self.last_bounds.get()
+    }
+
+    /// Makes this page's view while it is hidden, at `bounds` if it was never drawn, so the
+    /// automation hook can act on a tab that is not on screen.
+    #[cfg(feature = "automation")]
+    pub(crate) fn make_view_while_hidden(
+        &mut self,
+        bounds: Option<WebRect>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.view_while_hidden.set(true);
+        if self.last_bounds.get().is_none() {
+            self.last_bounds.set(bounds);
+        }
+        self.maybe_create_view_deferred(cx);
+    }
+
+    #[cfg(all(test, feature = "automation"))]
+    pub(crate) fn preview_requests(&self) -> usize {
+        self.preview_requests.get()
+    }
+
+    /// The page's address now, else the one it was asked to load.
+    pub(crate) fn page_url(&self) -> String {
+        self.current_url()
     }
 
     fn current_url(&self) -> String {
@@ -373,13 +516,80 @@ impl BrowserPanel {
         cx.notify();
     }
 
+    /// A page finished loading. Its bridge and pins go in now only if it shows; a hidden tab
+    /// takes them when it is shown, so a page in the background runs none of our scripts.
+    fn on_load_end(&mut self, cx: &mut Context<'_, Self>) {
+        self.overlay_injected_load_count.set(None);
+        self.annotations.annotating = false;
+        self.vault_logins.open = false;
+        if self.visible.get() {
+            self.inject_after_load();
+        } else {
+            self.load_injection_pending = true;
+        }
+        cx.notify();
+    }
+
+    /// A page started loading. The debug bar's host script goes in now only if it shows, as
+    /// the bridge does on load end.
+    fn on_load_start(&mut self, cx: &mut Context<'_, Self>) {
+        if self.visible.get() {
+            self.inject_host_script();
+        } else {
+            self.host_script_pending = true;
+        }
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.on_load_start(cx));
+    }
+
+    fn inject_host_script(&mut self) {
+        self.host_script_pending = false;
+        #[cfg(test)]
+        self.host_scripts.set(self.host_scripts.get() + 1);
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.execute_javascript(&host_script());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_start_for_test(&mut self, cx: &mut Context<'_, Self>) {
+        self.on_load_start(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn host_scripts_for_test(&self) -> usize {
+        self.host_scripts.get()
+    }
+
+    fn inject_after_load(&mut self) {
+        self.load_injection_pending = false;
+        self.ensure_bridge_injected();
+        self.maybe_show_existing_pins();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_end_for_test(&mut self, cx: &mut Context<'_, Self>) {
+        self.on_load_end(cx);
+    }
+
+    /// Bridge and overlay injections so far, CEF view or not.
+    #[cfg(test)]
+    pub(crate) fn injections_for_test(&self) -> (usize, usize) {
+        (self.bridge_injections.get(), self.overlay_injections.get())
+    }
+
     fn ensure_bridge_injected(&self) {
+        #[cfg(test)]
+        self.bridge_injections.set(self.bridge_injections.get() + 1);
         if let Some(view) = self.view.borrow().as_ref() {
             view.execute_javascript(BROWSER_OVERLAY_BRIDGE_JS);
         }
     }
 
     fn ensure_overlay_injected(&self, force: bool) {
+        #[cfg(test)]
+        self.overlay_injections
+            .set(self.overlay_injections.get() + 1);
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
             return;
@@ -403,6 +613,8 @@ impl BrowserPanel {
         &mut self,
         expression: &str,
     ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        #[cfg(test)]
+        self.preview_requests.set(self.preview_requests.get() + 1);
         self.ensure_bridge_injected();
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
@@ -427,6 +639,8 @@ impl BrowserPanel {
         op: &str,
         params: &serde_json::Value,
     ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        #[cfg(test)]
+        self.preview_requests.set(self.preview_requests.get() + 1);
         self.ensure_bridge_injected();
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
@@ -597,6 +811,9 @@ impl BrowserPanel {
     }
 
     fn notify_overlay_annotations_changed(&self) {
+        #[cfg(test)]
+        self.annotation_scripts
+            .set(self.annotation_scripts.get() + 1);
         if let Some(view) = self.view.borrow().as_ref() {
             view.execute_javascript("window.__connAnnotationsChanged?.();");
         }
@@ -875,6 +1092,12 @@ impl BrowserPanel {
             apply_hidden(&self.view, &self.applied_hidden, !visible);
             if visible {
                 self.prewarm_runtime(cx);
+                if self.host_script_pending {
+                    self.inject_host_script();
+                }
+                if self.load_injection_pending {
+                    self.inject_after_load();
+                }
             } else {
                 self.context_menu = None;
             }
@@ -906,6 +1129,7 @@ impl BrowserPanel {
         self.user_load = true;
         self.context_menu = None;
         self.ensure_runtime_and_load(cx);
+        self.report_title(cx);
     }
 
     /// Diagnostic state for the automation hook.
@@ -1103,13 +1327,17 @@ impl BrowserPanel {
         let last_bounds = self.last_bounds.clone();
         let last_scale = self.last_scale.clone();
         let visible = self.visible.clone();
+        let view_while_hidden = self.view_while_hidden.clone();
         let applied_hidden = self.applied_hidden.clone();
         let entity = cx.entity().downgrade();
 
         // Defer BrowserView creation until after GPUI finishes the current frame.
         cx.defer(move |cx| {
             creating_flag.set(false);
-            if view_slot.borrow().is_some() {
+            // A tab closed or hidden since the frame gets no Chromium view: nothing would close it.
+            // The automation hook's page is the exception; the cap closes it like any other.
+            let wanted = visible.get() || view_while_hidden.get();
+            if view_slot.borrow().is_some() || entity.upgrade().is_none() || !wanted {
                 return;
             }
             let rect = last_bounds.get().unwrap_or(bounds);
@@ -1175,6 +1403,10 @@ impl BrowserPanel {
                     browser_view.on_context_menu(move |event| {
                         let _ = menu_tx.send(BrowserOverlayEvent::ContextMenu(event));
                     });
+                    let tab_tx = overlay_tx.clone();
+                    browser_view.on_open_tab(move |request| {
+                        let _ = tab_tx.send(BrowserOverlayEvent::OpenTab(request));
+                    });
                     let start_tx = overlay_tx.clone();
                     let response_tx = overlay_tx.clone();
                     browser_view.on_load_start(move |_url| {
@@ -1197,7 +1429,11 @@ impl BrowserPanel {
                             panel.phase = RuntimePhase::Running;
                             panel.wake_task = Some(cx.spawn(async move |this, cx| {
                                 while wake_rx.recv().await.is_some() {
-                                    if this.update(cx, |_panel, cx| cx.notify()).is_err() {
+                                    let alive = this.update(cx, |panel, cx| {
+                                        panel.report_title(cx);
+                                        cx.notify();
+                                    });
+                                    if alive.is_err() {
                                         break;
                                     }
                                 }
@@ -1249,12 +1485,7 @@ impl BrowserPanel {
                                             });
                                         }
                                         BrowserOverlayEvent::LoadStart => {
-                                            if let Some(view) = panel.view.borrow().as_ref() {
-                                                view.execute_javascript(&host_script());
-                                            }
-                                            panel
-                                                .laravel_toolbar
-                                                .update(cx, |bar, cx| bar.on_load_start(cx));
+                                            panel.on_load_start(cx);
                                         }
                                         BrowserOverlayEvent::PreviewResult {
                                             request_id,
@@ -1289,13 +1520,11 @@ impl BrowserPanel {
                                                 cx.notify();
                                             }
                                         }
+                                        BrowserOverlayEvent::OpenTab(request) => {
+                                            cx.emit(BrowserTabEvent::OpenTab(request));
+                                        }
                                         BrowserOverlayEvent::LoadEnd => {
-                                            panel.overlay_injected_load_count.set(None);
-                                            panel.annotations.annotating = false;
-                                            panel.vault_logins.open = false;
-                                            panel.ensure_bridge_injected();
-                                            panel.maybe_show_existing_pins();
-                                            cx.notify();
+                                            panel.on_load_end(cx);
                                         }
                                     });
                                     if alive.is_err() {

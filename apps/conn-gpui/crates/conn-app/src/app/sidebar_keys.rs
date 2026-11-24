@@ -503,13 +503,24 @@ impl ConnApp {
             cx.background_executor()
                 .timer(std::time::Duration::from_secs(DISCARD_UNDO_SECS))
                 .await;
-            let _ = this.update(cx, |app, cx| {
-                if app.discards.expire(generation) {
-                    cx.notify();
-                }
-            });
+            let _ = this.update(cx, |app, cx| app.expire_undo(generation, cx));
         })
         .detach();
+        cx.notify();
+    }
+
+    /// Ends the notice of `generation`. A discarded draft can no longer come back, so its
+    /// parked right panel and browsers go too.
+    pub(crate) fn expire_undo(&mut self, generation: u64, cx: &mut Context<'_, Self>) {
+        let expired = self.discards.expire_entries(generation);
+        if expired.is_empty() {
+            return;
+        }
+        for entry in expired {
+            if let UndoEntry::Draft(DiscardedDraft::New { session, .. }) = entry {
+                self.forget_thread_panel(&session.draft_id, cx);
+            }
+        }
         cx.notify();
     }
 

@@ -98,6 +98,17 @@ pub(crate) fn surface_label(surface: &PanelSurface) -> String {
     match surface {
         PanelSurface::Kind(tab) => panel_tab_label(*tab).to_owned(),
         PanelSurface::File(path) => PanelSurface::file_title(path).to_owned(),
+        PanelSurface::Browser(_) => panel_tab_label(RightPanelTab::Browser).to_owned(),
+    }
+}
+
+/// The AX id segment of an open tab (`panel.tab.<slug>`): its label, or `browser.<id>` for a
+/// browser tab, whose title changes with the page and may repeat.
+#[must_use]
+pub(crate) fn surface_ax_slug(surface: &PanelSurface, label: &str) -> String {
+    match surface {
+        PanelSurface::Browser(id) => format!("browser.{id}"),
+        _ => label.to_ascii_lowercase().replace(' ', "-"),
     }
 }
 
@@ -107,6 +118,7 @@ pub(crate) fn surface_icon_path(surface: &PanelSurface) -> &'static str {
     match surface {
         PanelSurface::Kind(tab) => panel_tab_icon_path(*tab),
         PanelSurface::File(path) => crate::file_icons::file_icon(path).asset,
+        PanelSurface::Browser(_) => panel_tab_icon_path(RightPanelTab::Browser),
     }
 }
 
@@ -114,7 +126,7 @@ pub(crate) fn surface_icon_path(surface: &PanelSurface) -> &'static str {
 #[must_use]
 fn surface_icon_color(surface: &PanelSurface, tokens: &Tokens, fallback: Hsla) -> Hsla {
     match surface {
-        PanelSurface::Kind(_) => fallback,
+        PanelSurface::Kind(_) | PanelSurface::Browser(_) => fallback,
         PanelSurface::File(path) => crate::file_icons::file_icon(path)
             .color
             .map(|c| to_hsla(c.for_appearance(tokens.appearance)))
@@ -181,6 +193,8 @@ pub(crate) fn panel_menu_items(available_tabs: &[RightPanelTab]) -> Vec<PanelMen
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PanelHeaderProps<'a> {
     pub(crate) open_tabs: &'a [PanelSurface],
+    /// Each open browser tab's title (`surfaceTitle`).
+    pub(crate) browser_titles: &'a [(conn_state::BrowserTabId, String)],
     pub(crate) active_tab: &'a PanelSurface,
     pub(crate) maximized: bool,
     /// The panel is maximized while the sidebar is collapsed, so the header owns the window's
@@ -230,7 +244,15 @@ pub(crate) fn render_panel_header(
     for (idx, tab) in props.open_tabs.iter().enumerate() {
         let active = tab == props.active_tab;
         let text_color = if active { fg } else { muted };
-        let label = surface_label(tab);
+        let label = match tab {
+            PanelSurface::Browser(id) => props
+                .browser_titles
+                .iter()
+                .find(|(tab_id, _)| tab_id == id)
+                .map_or_else(|| surface_label(tab), |(_, title)| title.clone()),
+            _ => surface_label(tab),
+        };
+        let ax_slug = surface_ax_slug(tab, &label);
         let icon_path = surface_icon_path(tab);
         let icon_color = surface_icon_color(tab, props.tokens, text_color);
         let group = SharedString::from(format!("right-panel-tab-group-{idx}"));
@@ -242,13 +264,7 @@ pub(crate) fn render_panel_header(
         // `PanelTabCloseButton`: the surface icon, swapped for an `X` while the tab is hovered.
         let close_slot = div()
             .id(SharedString::from(format!("right-panel-tab-close-{idx}")))
-            .a11y_button(
-                format!(
-                    "panel.tab.{}.close",
-                    label.to_ascii_lowercase().replace(' ', "-")
-                ),
-                format!("Close {label}"),
-            )
+            .a11y_button(format!("panel.tab.{ax_slug}.close"), format!("Close {label}"))
             .relative()
             .flex()
             .flex_shrink_0()
@@ -291,12 +307,11 @@ pub(crate) fn render_panel_header(
                     .child(superhero_icon("superhero/close.svg", HEADER_ICON_PX, fg)),
             );
 
-        let tab_ax_id = SharedString::from(format!(
-            "panel.tab.{}",
-            label.to_ascii_lowercase().replace(' ', "-")
-        ));
+        let tab_ax_id = SharedString::from(format!("panel.tab.{ax_slug}"));
         let tab_el = h_flex()
-            .id(SharedString::from(format!("right-panel-tab-{idx}-{label}")))
+            .id(SharedString::from(format!(
+                "right-panel-tab-{idx}-{ax_slug}"
+            )))
             .a11y_tab(tab_ax_id, label.clone(), active)
             .group(group)
             .h(px(TAB_HEIGHT_PX))

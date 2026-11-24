@@ -137,12 +137,20 @@ impl<T> DiscardUndo<T> {
     /// Ends the notice when `generation` is still the newest action; a later one keeps it.
     /// Returns whether the notice went.
     pub fn expire(&mut self, generation: u64) -> bool {
+        !self.expire_entries(generation).is_empty()
+    }
+
+    /// [`Self::expire`], handing back the actions that can no longer be undone, oldest first,
+    /// so the caller can release what they held.
+    pub fn expire_entries(&mut self, generation: u64) -> Vec<T> {
         if generation != self.generation || self.entries.is_empty() {
-            return false;
+            return Vec::new();
         }
-        self.entries.clear();
         self.claimed = false;
-        true
+        std::mem::take(&mut self.entries)
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .collect()
     }
 
     /// Whether `⌘Z` undoes the notice even while a text field has the keyboard.
@@ -464,6 +472,11 @@ mod tests {
         assert!(undo.expire(second));
         assert_eq!(undo.notice(), None);
         assert!(!undo.expire(second), "an ended notice ends once");
+        // The caller gets back what expired, to release what it held.
+        undo.push(3);
+        let fourth = undo.push(4);
+        assert_eq!(undo.expire_entries(fourth), [3, 4]);
+        assert!(undo.expire_entries(fourth).is_empty());
     }
 
     #[test]

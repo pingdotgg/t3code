@@ -74,9 +74,29 @@ wrap_resource_request_handler! {
 wrap_request_handler! {
     pub(crate) struct ToolbarRequestHandler {
         slot: ToolbarResponseSlot,
+        open_tab: super::view::OpenTabSlot,
     }
 
     impl RequestHandler {
+        // Cmd-click and middle-click on an ordinary link arrive here, not in `on_before_popup`:
+        // a tab request becomes a Conn tab, and the page does not navigate.
+        fn on_open_urlfrom_tab(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            target_url: Option<&CefString>,
+            target_disposition: WindowOpenDisposition,
+            user_gesture: c_int,
+        ) -> c_int {
+            let url = target_url.map(CefString::to_string).unwrap_or_default();
+            let decision = crate::popup::open_url_from_tab(
+                super::view::popup_disposition(target_disposition),
+                &url,
+                user_gesture == 1,
+            );
+            super::view::offer_tab(&self.open_tab, decision)
+        }
+
         // Logged for `CONN_WEB_TRACE`: every navigation the browser process is about to start.
         fn on_before_browse(
             &self,
