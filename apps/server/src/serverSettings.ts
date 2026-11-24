@@ -383,19 +383,6 @@ const PersistedServerSettings = Schema.Struct({
 const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServerSettings);
 
-/**
- * The settings on disk with the managed policy laid over them, read without the service: no
- * database, no write, no legacy migration. A missing or unreadable file reads as the defaults.
- */
-export const readServerSettingsFromDisk = Effect.gen(function* () {
-  const { settingsPath } = yield* ServerConfig.ServerConfig;
-  const fs = yield* FileSystem.FileSystem;
-  const { settings: managed } = yield* ManagedPolicy.ManagedPolicy;
-  const raw = yield* fs.readFileString(settingsPath).pipe(Effect.option);
-  return managed.applyLocks(
-    Option.isNone(raw) ? managed.defaults : decodeSettingsFile(raw.value, managed).settings,
-  );
-}).pipe(Effect.withSpan("ServerSettings.readServerSettingsFromDisk"));
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),

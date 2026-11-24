@@ -58,7 +58,7 @@ const DOC_RULES = [
   },
   {
     files: "docs/internals/08_product-analytics.md",
-    applyTo: "{apps/server/src/telemetry,apps/server/src/feedback}/**/*.ts",
+    applyTo: "apps/server/src/telemetry/**/*.ts",
     instructions:
       "Hold analytics identity, attribution, and privacy boundaries to docs/internals/08_product-analytics.md.",
   },

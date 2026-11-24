@@ -307,7 +307,6 @@ export const make = Effect.gen(function* () {
       mcpHostedApproval: true,
       shellThreadFamilies: true,
       shellOlderSettled: true,
-      agentFeedback: false,
     },
   };
 

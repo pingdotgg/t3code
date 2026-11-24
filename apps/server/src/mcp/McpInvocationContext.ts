@@ -1,5 +1,4 @@
 import {
-  type AgentFeedbackMode,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -156,8 +155,6 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
-  /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
-  readonly agentFeedback?: AgentFeedbackMode;
   /** The broadest runtime mode an administrator lets a thread run in here. Unset is full access. */
   readonly runtimeModeCeiling?: RuntimeMode | undefined;
   /** True while Labs → Workflows is on here; `/mcp` reads it per request. Unset is off. */
@@ -235,13 +232,6 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
-};
-
-/** `McpSchema.EnabledWhen` for agent feedback tools, for every client including `t3 feedback`. */
-export const hiddenWhileFeedbackOff = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.agentFeedback !== undefined && scope.agentFeedback !== "off";
 };
 
 /** `McpSchema.EnabledWhen` for workflow event types: outside clients only, while Workflows is on. */

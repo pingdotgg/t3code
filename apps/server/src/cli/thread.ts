@@ -250,11 +250,7 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * outside agent does, and revokes that session when the command ends.
  */
 export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: {
-    readonly baseDir: Option.Option<string>;
-    readonly json: boolean;
-    readonly clientLabel?: string;
-  },
+  flags: { readonly baseDir: Option.Option<string>; readonly json: boolean },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -269,7 +265,7 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* Effect.acquireRelease(
       environmentAuth.issueMcpClientSession({
-        label: flags.clientLabel ?? "t3 thread cli",
+        label: "t3 thread cli",
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
