@@ -1,6 +1,6 @@
 import { pullRequestCommentPreview } from "./pullRequestMarkdown.logic";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
-import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
+import { holdLinkedNodeInView, holdScrollTop } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -670,6 +670,8 @@ export function PullRequestSummaryTab({
     }
   }
   const stopHolding = useRef<(() => void) | null>(null);
+  // A restore clamped by content still loading must not overwrite the saved position.
+  const restoringScroll = useRef(false);
   const revealSummary = useEffectEvent(() => {
     const root = scrollRef.current;
     if (revealUrl === undefined || !root) return;
@@ -710,7 +712,11 @@ export function PullRequestSummaryTab({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts a remounted Summary back at the scroll position it left, before paint
   useLayoutEffect(() => {
     const scrollTop = summaryViewByScopeKey.get(viewKey)?.scrollTop ?? 0;
-    if (scrollRef.current && scrollTop > 0) scrollRef.current.scrollTop = scrollTop;
+    if (!scrollRef.current || scrollTop === 0) return;
+    restoringScroll.current = true;
+    stopHolding.current = holdScrollTop(scrollRef.current, scrollTop, () => {
+      restoringScroll.current = false;
+    });
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- restores once per mount
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
@@ -910,7 +916,9 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef(node);
       }}
-      onScroll={(event) => rememberView({ scrollTop: event.currentTarget.scrollTop })}
+      onScroll={(event) => {
+        if (!restoringScroll.current) rememberView({ scrollTop: event.currentTarget.scrollTop });
+      }}
       tabIndex={-1}
       data-workspace-focus-default
       className="h-full overflow-y-auto outline-none"

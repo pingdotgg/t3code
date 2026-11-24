@@ -308,10 +308,10 @@ it("comes back at the scroll position it left when the right panel remounts the 
   setup();
   const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
   const value = { ...detail, body, url: "https://github.com/owner/repo/pull/2" };
-  const mount = async () => {
+  const mount = async (shown = value) => {
     const container = document.createElement("div");
     container.className = "flex h-[300px]";
-    const screen = await renderUi(tab(value), { container });
+    const screen = await renderUi(tab(shown), { container });
     const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
     return Object.assign(screen, { scroller });
   };
@@ -321,8 +321,13 @@ it("comes back at the scroll position it left when the right panel remounts the 
     await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
     await act(async () => screen.scroller.dispatchEvent(new Event("scroll")));
   }
-  await using screen = await mount();
-  expect(screen.scroller.scrollTop).toBe(500);
+  // The tab can come back before the content that reached that position has loaded.
+  await using screen = await mount({ ...value, body: "Paragraph 0" });
+  await screen.rerender(tab(value));
+  await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
+  await screen.unmount();
+  await using again = await mount();
+  expect(again.scroller.scrollTop).toBe(500);
 });
 
 it("scrolls from the keyboard after a click inside it", async () => {
