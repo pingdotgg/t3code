@@ -824,7 +824,10 @@ const make = Effect.gen(function* () {
       if (standalone === null) {
         const found = serve(onTracker);
         if (found === null) {
-          return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+          return yield* new IssueOperationError({
+            operation: "resolveUrl",
+            detail: `No project in T3 Code is on ${link.host}. Add any ${link.host} project to read its issues.`,
+          });
         }
         return found.resolved;
       }
