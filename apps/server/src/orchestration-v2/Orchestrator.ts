@@ -12534,12 +12534,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     // The service picks the active run, but the run can end before this command is its turn. A
     // turn that completed without its result still owes it, and a later turn may give it.
-    const owed = yield* resolveOwedOutputRun(projection.runs, () =>
-      projectionStore.getThreadRecords(command.threadId, ["runs", "turnItems"], {
-        turnItemTypes: ["user_message"],
-      }),
-    ).pipe(mapDispatchError(command));
-    const owes = owed?.id === run.id;
+    const owes =
+      run.status === "completed" &&
+      run.output === undefined &&
+      (yield* resolveOwedOutputRun(projection.runs, () =>
+        projectionStore.getThreadRecords(command.threadId, ["runs", "turnItems"], {
+          turnItemTypes: ["user_message"],
+        }),
+      ).pipe(mapDispatchError(command)))?.id === run.id;
     if (!isActiveRun(run) && !owes) {
       return yield* rejectOutput(
         "inactive",
@@ -12556,8 +12558,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           active = candidate;
         }
       }
-      const matchesRun = (candidate: OrchestrationV2Run | undefined) =>
-        candidate !== undefined &&
+      const matchesRun = (candidate: OrchestrationV2Run) =>
         (command.callerRunId === undefined || candidate.id === command.callerRunId) &&
         (command.callerAttemptId === undefined ||
           candidate.activeAttemptId === command.callerAttemptId);

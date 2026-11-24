@@ -256,7 +256,6 @@ export interface ProviderSessionManagerV2Shape {
     readonly runId?: RunId;
     readonly attemptId?: RunAttemptId;
     readonly requireRunScopedMcp?: boolean;
-    readonly owedOutputRunId?: RunId;
     /** The provider already started this turn natively, on the credential it holds. */
     readonly providerStartedTurn?: boolean;
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
@@ -1781,42 +1780,29 @@ export const layerWithOptions = (
           ([entry]) =>
             Option.match(entry, {
               onNone: () => Effect.void,
-              onSome: (entry) =>
-                // Revoke recorded credentials after process death, except those held by live replacements.
-                Ref.get(sessions).pipe(
-                  Effect.flatMap((current) =>
-                    Effect.forEach(
-                      entry.mcpCredentialIdsByThread,
-                      ([threadId, mcpCredentialIds]) =>
-                        Effect.forEach(
-                          mcpCredentialIds,
-                          (mcpCredentialId) =>
-                            Effect.gen(function* () {
-                              // Only holders of this credential may prevent its revocation; stale credentials must not leak it.
-                              // An attached replacement holds only the thread's current one, which it may not have recorded yet.
-                              const threadCurrent = yield* mcpSessions.read(threadId);
-                              const isThreadCurrent =
-                                threadCurrent !== undefined &&
-                                McpProviderSession.mcpCredentialIdOf(threadCurrent) ===
-                                  mcpCredentialId;
-                              const heldElsewhere =
-                                isMcpCredentialReserved(threadId, mcpCredentialId) ||
-                                Array.from(current.values()).some(
-                                  (other) =>
-                                    other !== entry &&
-                                    ((isThreadCurrent && other.attachedThreadIds.has(threadId)) ||
-                                      other.mcpCredentialIdsByThread
-                                        .get(threadId)
-                                        ?.has(mcpCredentialId) === true),
-                                );
-                              if (!heldElsewhere) yield* clearMcpSession(threadId, mcpCredentialId);
-                            }),
-                          { discard: true },
-                        ),
-                      { discard: true },
-                    ),
-                  ),
-                ),
+              // Revoke recorded credentials after process death, except those held by live replacements.
+              onSome: Effect.fnUntraced(function* (entry) {
+                const others = [...(yield* Ref.get(sessions)).values()].filter(
+                  (other) => other !== entry,
+                );
+                for (const [threadId, mcpCredentialIds] of entry.mcpCredentialIdsByThread) {
+                  const current = others.some((other) => other.attachedThreadIds.has(threadId))
+                    ? yield* mcpSessions.read(threadId)
+                    : undefined;
+                  const currentId = current && McpProviderSession.mcpCredentialIdOf(current);
+                  for (const id of mcpCredentialIds) {
+                    // Only holders of this credential may prevent its revocation; stale credentials must not leak it.
+                    // An attached replacement holds only the thread's current one, which it may not have recorded yet.
+                    if (
+                      id !== currentId &&
+                      !isMcpCredentialReserved(threadId, id) &&
+                      !others.some((other) => other.mcpCredentialIdsByThread.get(threadId)?.has(id))
+                    ) {
+                      yield* clearMcpSession(threadId, id);
+                    }
+                  }
+                }
+              }),
             }),
         ).pipe(
           Effect.catchCause((cause) =>
@@ -2228,7 +2214,6 @@ export const layerWithOptions = (
           readonly runId: RunId;
           readonly attemptId?: RunAttemptId | undefined;
           readonly requireRunScopedMcp?: boolean | undefined;
-          readonly owedOutputRunId?: RunId | undefined;
           readonly providerStartedTurn?: boolean | undefined;
         }) {
           if (options.configureMcp === false) return;
@@ -2339,7 +2324,7 @@ export const layerWithOptions = (
               // once it ends, while the owed run stays the target.
               const rotateOnRunChange =
                 input.requireRunScopedMcp !== undefined
-                  ? input.requireRunScopedMcp || input.owedOutputRunId !== undefined
+                  ? input.requireRunScopedMcp
                   : yield* threadRequiresRunScopedMcp(input.threadId, input.runId).pipe(
                       Effect.mapError(
                         (cause) =>
@@ -2354,45 +2339,48 @@ export const layerWithOptions = (
                 if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) return;
                 continue;
               }
-              const loadedKey = (yield* Ref.get(sessions))
-                .get(sessionKey(input.providerSessionId))
-                ?.loadedMcpCredentialByThread.get(input.threadId)?.providerThread;
-              const probeThread = input.runtime.hasPendingBackgroundWorkForThread;
               // A shared session reloads only this thread, so only this thread's own work blocks it.
               // The probe takes the thread as recorded: the adapter tracks its turns under that id.
-              const pendingWork =
-                input.runtime.providerSession.capabilities.sessions
-                  .supportsMultipleProviderThreadsPerSession &&
-                input.runtime.unloadThread !== undefined
-                  ? loadedKey === undefined || probeThread === undefined
-                    ? Effect.succeed(false)
-                    : projectionStore.getThreadRecords(input.threadId, ["providerThreads"]).pipe(
-                        Effect.flatMap(({ providerThreads }) => {
-                          const loaded = providerThreads.find(
-                            (candidate) => providerThreadRuntimeKey(candidate) === loadedKey,
-                          );
-                          return loaded === undefined
-                            ? Effect.succeed(false)
-                            : probeThread(loaded, { includeSubagents: true });
-                        }),
-                        // Like a failed probe, a failed read keeps the thread's credential.
-                        Effect.orElseSucceed(() => true),
-                      )
-                  : (input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false));
+              const reloadBlocked = Effect.gen(function* () {
+                if (
+                  !input.runtime.providerSession.capabilities.sessions
+                    .supportsMultipleProviderThreadsPerSession ||
+                  input.runtime.unloadThread === undefined
+                ) {
+                  return yield* input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false);
+                }
+                const probeThread = input.runtime.hasPendingBackgroundWorkForThread;
+                const loadedKey = (yield* Ref.get(sessions))
+                  .get(sessionKey(input.providerSessionId))
+                  ?.loadedMcpCredentialByThread.get(input.threadId)?.providerThread;
+                if (loadedKey === undefined || probeThread === undefined) return false;
+                const { providerThreads } = yield* projectionStore.getThreadRecords(
+                  input.threadId,
+                  ["providerThreads"],
+                );
+                const loaded = providerThreads.find(
+                  (candidate) => providerThreadRuntimeKey(candidate) === loadedKey,
+                );
+                return loaded === undefined
+                  ? false
+                  : yield* probeThread(loaded, { includeSubagents: true });
+              }).pipe(
+                // Like a failed probe, a failed read keeps the thread's credential.
+                Effect.orElseSucceed(() => true),
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  () => Effect.succeed(true),
+                ),
+              );
               // A turn that cannot take a new credential now (the provider already started it, no way to
               // deliver one, or a reload that would end background work) keeps it unbound; the agent
               // then names its run in the call.
-              const cannotRotate =
-                input.providerStartedTurn === true ||
-                input.runtime.mcpCredentialRotation === "none" ||
-                (input.runtime.mcpCredentialRotation !== "live" &&
-                  (yield* pendingWork.pipe(
-                    Effect.catchCauseIf(
-                      (cause) => !Cause.hasInterruptsOnly(cause),
-                      () => Effect.succeed(true),
-                    ),
-                  )));
-              if (cannotRotate && current !== undefined) {
+              if (
+                current !== undefined &&
+                (input.providerStartedTurn === true ||
+                  input.runtime.mcpCredentialRotation === "none" ||
+                  (input.runtime.mcpCredentialRotation !== "live" && (yield* reloadBlocked)))
+              ) {
                 if (yield* retainCurrentMcpCredential(current, { unbindRun: true })) return;
                 continue;
               }
@@ -4040,7 +4028,6 @@ export const layerWithOptions = (
                     runId: input.runId,
                     attemptId: input.attemptId,
                     requireRunScopedMcp: input.requireRunScopedMcp,
-                    owedOutputRunId: input.owedOutputRunId,
                     providerStartedTurn: input.providerStartedTurn,
                   });
                 } else if (
@@ -4095,8 +4082,7 @@ export const layerWithOptions = (
                   ? {
                       runId: input.runId,
                       attemptId: input.attemptId,
-                      rotateOnRunChange:
-                        input.requireRunScopedMcp === true || input.owedOutputRunId !== undefined,
+                      rotateOnRunChange: input.requireRunScopedMcp === true,
                     }
                   : undefined,
               );

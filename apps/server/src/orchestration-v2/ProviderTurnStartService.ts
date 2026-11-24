@@ -70,7 +70,7 @@ import {
   isSlashCommandMessage,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
-import { isProviderCommand, outputInstructions, resolveOwedOutputRun } from "./runOutput.ts";
+import { isProviderCommand, outputInstructions, runRequiresRunScopedMcp } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1030,7 +1030,7 @@ export const layer: Layer.Layer<
         brokenNativeThread &&
         providerThread.nativeThreadRef !== null &&
         !(yield* providerSessions.isLive(providerSessionId));
-      const owedOutputRun = yield* resolveOwedOutputRun(projection.runs, () =>
+      const requireRunScopedMcp = yield* runRequiresRunScopedMcp(projection.runs, run.id, () =>
         projectionStore.getThreadRecords(input.threadId, ["runs", "turnItems"], {
           turnItemTypes: ["user_message"],
         }),
@@ -1043,8 +1043,7 @@ export const layer: Layer.Layer<
           runtimePolicy: resolvedRuntimePolicy,
           runId: run.id,
           attemptId: attempt.id,
-          requireRunScopedMcp: run.outputSchema !== undefined,
-          ...(owedOutputRun === undefined ? {} : { owedOutputRunId: owedOutputRun.id }),
+          requireRunScopedMcp,
           ...(message?.createdBy === "agent" && message.creationSource === "provider"
             ? { providerStartedTurn: true }
             : {}),

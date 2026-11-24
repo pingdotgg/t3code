@@ -3651,7 +3651,6 @@ it.effect.each([
         readonly runId?: RunId;
         readonly attemptId?: RunAttemptId;
         readonly requireRunScopedMcp?: boolean;
-        readonly owedOutputRunId?: RunId;
         readonly providerStartedTurn?: boolean;
       },
     ) =>
@@ -3738,8 +3737,7 @@ it.effect.each([
         yield* openFor(manager, providerSessionId, threadId, {
           runId: wakeRun,
           attemptId: RunAttemptId.make("attempt-live-wake"),
-          requireRunScopedMcp: false,
-          owedOutputRunId: run1,
+          requireRunScopedMcp: true,
         });
         const wakeToken = rawBearer(yield* mcpSessions.read(threadId));
         assert.notEqual(wakeToken, token1);
@@ -3751,8 +3749,7 @@ it.effect.each([
         yield* openFor(manager, providerSessionId, threadId, {
           runId: RunId.make("run-live-provider-wake"),
           attemptId: RunAttemptId.make("attempt-live-provider-wake"),
-          requireRunScopedMcp: false,
-          owedOutputRunId: run1,
+          requireRunScopedMcp: true,
           providerStartedTurn: true,
         });
         assert.equal(rawBearer(yield* mcpSessions.read(threadId)), wakeToken);

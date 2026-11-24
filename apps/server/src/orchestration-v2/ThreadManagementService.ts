@@ -1066,12 +1066,14 @@ const make = Effect.gen(function* () {
     // A turn that ended without its result still owes it: the agent may have ended it to wait
     // for something, and answer from the turn that woke it. Only the newest started run asked for
     // one can owe it, and only while the agent's conversation still reaches it.
-    const owed = yield* resolveOwedOutputRun(records.runs, () =>
-      orchestrator.getThreadRecords(input.threadId, ["runs", "turnItems"], {
-        turnItemTypes: ["user_message"],
-      }),
-    );
-    const run = active?.outputSchema !== undefined ? active : owed;
+    const run =
+      active === undefined || active.outputSchema !== undefined
+        ? active
+        : yield* resolveOwedOutputRun(records.runs, () =>
+            orchestrator.getThreadRecords(input.threadId, ["runs", "turnItems"], {
+              turnItemTypes: ["user_message"],
+            }),
+          );
     // Check whether a result is expected before caller identity so plain turns keep their message.
     if (active === undefined || run?.outputSchema === undefined) {
       return yield* new ThreadManagementRunOutputRejectedError({
