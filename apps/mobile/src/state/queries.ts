@@ -32,12 +32,13 @@ import {
   type ThreadSearchResultsState,
   type ThreadSearchScope,
 } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
+import { PullRequestOperationError, THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
 import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useMemo, useState } from "react";
 
@@ -45,7 +46,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
-import { useEnvironmentQuery } from "./query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { msg, useMessages } from "gt-react-native";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
@@ -115,8 +116,18 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
 
 const EMPTY_PULL_REQUEST_DETAILS_ATOM = Atom.make<{
   readonly details: ReadonlyArray<PullRequestDetail>;
+  readonly failureCause: Cause.Cause<unknown> | null;
   readonly isPending: boolean;
-}>({ details: [], isPending: false }).pipe(Atom.withLabel("mobile:composer-pr-details:empty"));
+}>({ details: [], failureCause: null, isPending: false }).pipe(
+  Atom.withLabel("mobile:composer-pr-details:empty"),
+);
+
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
+function isPullRequestNotFoundCause(cause: Cause.Cause<unknown>): boolean {
+  const failure = Option.getOrNull(Cause.findErrorOption(cause));
+  return isPullRequestOperationError(failure) && failure.reason === "not-found";
+}
 
 const composerPullRequestDetailsAtom = Atom.family((key: string) =>
   Atom.make((get) => {
@@ -125,14 +136,22 @@ const composerPullRequestDetailsAtom = Atom.family((key: string) =>
       readonly input: PullRequestRef;
     }>;
     const details: PullRequestDetail[] = [];
+    let failureCause: Cause.Cause<unknown> | null = null;
     let isPending = false;
     for (const target of targets) {
       const result = get(composerPullRequests.detail(target));
       isPending ||= result.waiting;
+      if (
+        result._tag === "Failure" &&
+        failureCause === null &&
+        !isPullRequestNotFoundCause(result.cause)
+      ) {
+        failureCause = result.cause;
+      }
       const value = AsyncResult.getOrElse(result, () => null);
       if (value !== null) details.push(value);
     }
-    return { details, isPending };
+    return { details, failureCause, isPending };
   }).pipe(Atom.withLabel(`mobile:composer-pr-details:${key}`)),
 );
 
@@ -144,6 +163,7 @@ export function useComposerPullRequestSearch(input: {
   threadPullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   query: string | null;
 }) {
+  const resolve = useMessages();
   const query = useDebouncedValue(input.query, 180);
   const linked =
     input.projectId === null
@@ -180,9 +200,14 @@ export function useComposerPullRequestSearch(input: {
           listedRepositories: list.data?.repositories,
           entries: list.data?.entries ?? [],
           number,
-        }).map((repository) => ({
+        }).map(({ host, repository }) => ({
           environmentId: input.environmentId!,
-          input: { projectId: input.projectId!, repository, number },
+          input: {
+            projectId: input.projectId!,
+            ...(host === undefined ? {} : { host }),
+            repository,
+            number,
+          },
         }))
       : [];
   const exact = useAtomValue(
@@ -249,13 +274,15 @@ export function useComposerPullRequestSearch(input: {
     list.data.providers.length === 0 &&
     list.data.entries.length === 0 &&
     list.data.errors.length === 0;
+  const exactError =
+    exact.failureCause === null ? null : formatEnvironmentQueryError(exact.failureCause, resolve);
   return {
     entries,
     isPending:
       input.query !== null &&
       hasSource &&
       (query !== input.query || list.isPending || exact.isPending),
-    error: list.error ?? list.data?.errors[0]?.message ?? null,
+    error: list.error ?? list.data?.errors[0]?.message ?? exactError,
     unavailable,
   };
 }

@@ -1087,4 +1087,30 @@ describe("filter picker choices", () => {
       selectedPullRequestAuthor([], rememberPullRequestAuthors(first, [moved]), "juliana")?.actor,
     ).toEqual(moved);
   });
+
+  it("keeps host-qualified listed repositories distinct across hosts when merging lists", () => {
+    const merged = mergePullRequestLists([
+      [
+        ENV_1,
+        {
+          viewers: {},
+          providers: [],
+          repositories: [
+            { host: "github.com", repository: "acme/api" },
+            { host: "gitlab.com", repository: "acme/api" },
+            { host: "GITHUB.COM", repository: "Acme/Api" },
+          ],
+          entries: [],
+          errors: [],
+          truncated: false,
+          nextCursors: {},
+        },
+      ],
+    ]);
+
+    expect(merged?.repositories).toEqual([
+      { host: "github.com", repository: "acme/api" },
+      { host: "gitlab.com", repository: "acme/api" },
+    ]);
+  });
 });

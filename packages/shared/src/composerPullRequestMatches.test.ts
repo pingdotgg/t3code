@@ -88,7 +88,7 @@ describe("composerExactPullRequestRepositories", () => {
         entries: [entry(10, "2026-01-01")],
         number: 25,
       }),
-    ).toEqual(["owner/root"]);
+    ).toEqual([{ repository: "owner/root" }]);
     expect(
       composerExactPullRequestRepositories({
         projectId: "p1",
@@ -104,21 +104,24 @@ describe("composerExactPullRequestRepositories", () => {
       composerExactPullRequestRepositories({
         projectId: "p1",
         repository: null,
-        listedRepositories: ["owner/repo-a"],
+        listedRepositories: [{ host: "github.com", repository: "owner/repo-a" }],
         entries: [{ ...entry(10, "2026-01-01"), repository: "owner/repo-a" }],
         number: 25,
       }),
-    ).toEqual(["owner/repo-a"]);
+    ).toEqual([{ host: "github.com", repository: "owner/repo-a" }]);
 
     expect(
       composerExactPullRequestRepositories({
         projectId: "p1",
         repository: null,
-        listedRepositories: ["owner/repo-a", "owner/repo-b"],
+        listedRepositories: [
+          { host: "github.com", repository: "owner/repo-a" },
+          { host: "github.com", repository: "owner/repo-b" },
+        ],
         entries: [{ ...entry(25, "2026-01-01"), repository: "owner/repo-a" }],
         number: 25,
       }),
-    ).toEqual(["owner/repo-b"]);
+    ).toEqual([{ host: "github.com", repository: "owner/repo-b" }]);
 
     expect(
       composerExactPullRequestRepositories({
@@ -131,7 +134,41 @@ describe("composerExactPullRequestRepositories", () => {
         ],
         number: 25,
       }),
-    ).toEqual(["owner/repo-a", "owner/repo-b"]);
+    ).toEqual([
+      { host: "github.com", repository: "owner/repo-a" },
+      { host: "github.com", repository: "owner/repo-b" },
+    ]);
+  });
+
+  it("keeps same-named repositories on different hosts distinct for exact lookup and suppression", () => {
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        listedRepositories: [
+          { host: "github.com", repository: "acme/api" },
+          { host: "gitlab.com", repository: "acme/api" },
+        ],
+        entries: [{ ...entry(25, "2026-01-01"), host: "github.com", repository: "acme/api" }],
+        number: 25,
+      }),
+    ).toEqual([{ host: "gitlab.com", repository: "acme/api" }]);
+
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        listedRepositories: [
+          { host: "github.com", repository: "acme/api" },
+          { host: "gitlab.com", repository: "acme/api" },
+        ],
+        entries: [],
+        number: 25,
+      }),
+    ).toEqual([
+      { host: "github.com", repository: "acme/api" },
+      { host: "gitlab.com", repository: "acme/api" },
+    ]);
   });
 });
 

@@ -78,39 +78,55 @@ export function filterComposerPullRequestMatches<
     .slice(0, input.limit);
 }
 
+export interface ComposerPullRequestRepositoryTarget {
+  readonly host?: string | undefined;
+  readonly repository: string;
+}
+
 /** Repositories of a project that still need an exact-number detail lookup. */
 export function composerExactPullRequestRepositories(input: {
   readonly projectId: string;
   readonly repository: string | null;
-  readonly listedRepositories?: ReadonlyArray<string> | undefined;
+  readonly listedRepositories?: ReadonlyArray<ComposerPullRequestRepositoryTarget> | undefined;
   readonly entries: ReadonlyArray<
-    Pick<ComposerPullRequestMatch, "projectId" | "repository" | "number">
+    Pick<ComposerPullRequestMatch, "projectId" | "host" | "repository" | "number">
   >;
   readonly number: number;
-}): ReadonlyArray<string> {
-  const candidates: string[] = [];
+}): ReadonlyArray<ComposerPullRequestRepositoryTarget> {
+  const candidates: ComposerPullRequestRepositoryTarget[] = [];
   const seen = new Set<string>();
-  const add = (repository: string) => {
-    const trimmed = repository.trim();
-    const normalized = trimmed.toLowerCase();
-    if (normalized.length === 0 || seen.has(normalized)) return;
-    seen.add(normalized);
-    candidates.push(trimmed);
+  const add = (repository: string, host?: string) => {
+    const trimmedRepository = repository.trim();
+    const normalizedRepository = trimmedRepository.toLowerCase();
+    const trimmedHost = host?.trim();
+    const normalizedHost = trimmedHost ? trimmedHost.toLowerCase() : undefined;
+    const key = `${normalizedHost ?? ""}\0${normalizedRepository}`;
+    if (normalizedRepository.length === 0 || seen.has(key)) return;
+    seen.add(key);
+    candidates.push(
+      normalizedHost === undefined
+        ? { repository: trimmedRepository }
+        : { host: trimmedHost, repository: trimmedRepository },
+    );
   };
   if (input.repository !== null) {
     add(input.repository);
   } else {
-    for (const repository of input.listedRepositories ?? []) add(repository);
+    for (const candidate of input.listedRepositories ?? []) {
+      add(candidate.repository, candidate.host);
+    }
     for (const entry of input.entries) {
-      if (entry.projectId === input.projectId) add(entry.repository);
+      if (entry.projectId === input.projectId) add(entry.repository, entry.host);
     }
   }
-  return candidates.filter((repository) => {
-    const normalized = repository.toLowerCase();
+  return candidates.filter((candidate) => {
+    const normalizedRepository = candidate.repository.toLowerCase();
+    const normalizedHost = candidate.host?.toLowerCase();
     return !input.entries.some(
       (entry) =>
         entry.projectId === input.projectId &&
-        entry.repository.trim().toLowerCase() === normalized &&
+        entry.repository.trim().toLowerCase() === normalizedRepository &&
+        (normalizedHost === undefined || entry.host.trim().toLowerCase() === normalizedHost) &&
         entry.number === input.number,
     );
   });

@@ -55,6 +55,7 @@ const reactTests = [
   "src/features/layout/useCollapsedSplitColumn.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
+  "src/state/queries.pullRequest.test.tsx",
   "src/state/use-selected-thread-git-state.test.tsx",
   "src/state/use-vcs-action-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",

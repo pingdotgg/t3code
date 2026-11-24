@@ -196,10 +196,11 @@ export function useComposerMenuItems({
           listedRepositories: pullRequestLookup.data?.repositories,
           entries: pullRequestLookup.data?.entries ?? [],
           number: settledPullRequestNumber,
-        }).map((repository) => ({
+        }).map(({ host, repository }) => ({
           environmentId,
           input: {
             projectId: pullRequestProjectId,
+            ...(host === undefined ? {} : { host }),
             repository,
             number: settledPullRequestNumber,
           },

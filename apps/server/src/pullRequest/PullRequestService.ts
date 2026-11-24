@@ -1087,7 +1087,13 @@ export const make = Effect.gen(function* () {
                 : sourceControlDefinitions.canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
         }
-        return { projects, supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
+        return {
+          projects,
+          supported,
+          unimplemented,
+          viewerRoots,
+          refinedProjectIdsByHost,
+        };
       }),
     );
 
@@ -1513,7 +1519,14 @@ export const make = Effect.gen(function* () {
     const repositories =
       input.projectId === undefined
         ? undefined
-        : [...new Set(projects.map((project) => project.repository))];
+        : Array.from(
+            new Map(
+              projects.map((project) => [
+                `${project.host.toLowerCase()}\0${project.repository.toLowerCase()}`,
+                { host: project.host, repository: project.repository },
+              ]),
+            ).values(),
+          );
     if (readable.length === 0) {
       const listResult: PullRequestListResult = {
         viewers: viewers as PullRequestListResult["viewers"],
@@ -2996,7 +3009,7 @@ export const make = Effect.gen(function* () {
           (host === undefined || candidate.host === host),
       );
       if (project === undefined || project.api.listChangeRequestStats === undefined) continue;
-      wanted.set(`${ref.projectId} ${project.host} ${repository} ${ref.number}`, {
+      wanted.set(`${ref.projectId}\0${project.host}\0${repository}\0${ref.number}`, {
         project,
         number: ref.number,
       });
@@ -3019,7 +3032,7 @@ export const make = Effect.gen(function* () {
           { readonly repository: string; readonly number: number; projects: SupportedProject[] }
         >();
         for (const entry of entries) {
-          const key = `${entry.project.repository.toLowerCase()} ${entry.number}`;
+          const key = `${entry.project.repository.toLowerCase()}\0${entry.number}`;
           const held = requesters.get(key);
           if (held === undefined) {
             requesters.set(key, {
@@ -3040,7 +3053,7 @@ export const make = Effect.gen(function* () {
           Effect.map((read) =>
             read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> =>
               (
-                requesters.get(`${stat.repository.toLowerCase()} ${stat.number}`)?.projects ?? []
+                requesters.get(`${stat.repository.toLowerCase()}\0${stat.number}`)?.projects ?? []
               ).map((project) => ({
                 projectId: project.project.id,
                 host: project.host,
@@ -3882,15 +3895,15 @@ export const make = Effect.gen(function* () {
           (ref) =>
             [
               ref.projectId,
-              ref.host?.toLowerCase() ?? "",
+              ref.host?.trim().toLowerCase() ?? "",
               ref.repository,
               ref.number,
               refEpoch(ref),
             ] as const,
         )
         .toSorted((left, right) =>
-          `${left[0]} ${left[1]} ${left[2]} ${left[3]}`.localeCompare(
-            `${right[0]} ${right[1]} ${right[2]} ${right[3]}`,
+          `${left[0]}\0${left[1]}\0${left[2]}\0${left[3]}`.localeCompare(
+            `${right[0]}\0${right[1]}\0${right[2]}\0${right[3]}`,
           ),
         ),
     ]);
@@ -3919,10 +3932,13 @@ export const make = Effect.gen(function* () {
       ),
     );
     for (const [key, ref] of missing) {
+      const refHost = ref.host?.trim().toLowerCase();
       const stat = result.stats.find(
         (stat) =>
           stat.projectId === ref.projectId &&
-          (ref.host === undefined || stat.host === ref.host.toLowerCase()) &&
+          (refHost === undefined ||
+            stat.host === undefined ||
+            stat.host.toLowerCase() === refHost) &&
           stat.repository.toLowerCase() === ref.repository.toLowerCase() &&
           stat.number === ref.number,
       );
