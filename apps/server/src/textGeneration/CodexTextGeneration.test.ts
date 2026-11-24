@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProjectId,
   ProviderDriverKind,
   type ModelSelection,
@@ -660,11 +661,13 @@ const PREFLIGHT_PRIMARY_STATES = [
   "exhausted",
   "not installed",
   "not installed, fallback disabled for project",
+  "not installed, fallback model cannot generate text",
   "signed out",
   "signed out, fallback failed",
   "cannot generate text",
   "model cannot generate text",
   "disabled",
+  "disabled, thread default model cannot generate text",
   "disabled, fallback disabled for project",
 ] as const;
 
@@ -720,6 +723,21 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
                   slug: selection.model,
                   name: selection.model,
                   isCustom: false,
+                  supportsTextGeneration: false,
+                  capabilities: null,
+                },
+              ],
+            }
+          : {}),
+        ...((primaryState === "not installed, fallback model cannot generate text" ||
+          primaryState === "disabled, thread default model cannot generate text") &&
+        instanceId === fallback
+          ? {
+              models: [
+                {
+                  slug: threadDefault.model,
+                  name: threadDefault.model,
+                  isCustom: true,
                   supportsTextGeneration: false,
                   capabilities: null,
                 },
@@ -797,7 +815,10 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         cwd: "/tmp",
         message: "hello",
         linkedContext: "",
-        modelSelection: selection,
+        modelSelection:
+          primaryState === "disabled, thread default model cannot generate text"
+            ? threadDefault
+            : selection,
         projectId,
       })
       .pipe(Effect.exit);
@@ -813,7 +834,14 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       primaryState === "not installed, fallback disabled for project" ||
       primaryState === "signed out, fallback failed"
         ? selection
-        : threadDefault,
+        : primaryState === "not installed, fallback model cannot generate text" ||
+            primaryState === "disabled, thread default model cannot generate text"
+          ? {
+              instanceId: fallback,
+              model:
+                DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+            }
+          : threadDefault,
     ]);
   }),
 );
@@ -887,6 +915,7 @@ it.effect(
         );
       const input = {
         cwd: "/tmp",
+        projectCwd: "/tmp",
         number: 1,
         title: "Change",
         description: "",

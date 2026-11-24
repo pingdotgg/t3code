@@ -129,6 +129,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --chat-content-max-width: 46rem;
+  --html-preview-max-width: var(--chat-content-max-width);
   --thread-details-panel-width: 17.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
@@ -231,6 +232,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-stash-pulse-row: stash-pulse-row 1400ms;
   --animate-stash-pulse-row-alt: stash-pulse-row-alt 1400ms;
   --animate-stash-pulse-count: stash-pulse-count 1400ms step-start;
+  /* One-off arrivals in a workflow run's timeline; nothing here loops. */
+  --animate-step-in: step-in 180ms ease-out;
+  --animate-step-ping: step-ping 520ms ease-out;
+  --animate-check-draw: check-draw 200ms ease-out;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -343,6 +348,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
     100% {
       opacity: 1;
+    }
+  }
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+  @keyframes step-ping {
+    from {
+      opacity: 0.55;
+      scale: 0.7;
+    }
+    to {
+      opacity: 0;
+      scale: 1.45;
+    }
+  }
+  @keyframes check-draw {
+    from {
+      stroke-dashoffset: 12;
     }
   }
   @keyframes status-ping {
@@ -957,6 +983,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     max-width: var(--chat-content-max-width);
   }
 
+  /* ChatCanvas sets these only while HTML previews run wider than the chat column. */
+  .html-preview-lane {
+    width: var(--html-preview-lane-width, auto);
+    margin-inline-start: var(--html-preview-lane-offset, 0px);
+  }
+
   .messages-timeline-row-frame {
     padding-inline: 0;
   }
@@ -1539,23 +1571,14 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
-/* T3 Chat renders inline code and compact chat artifacts with its translucent
+/* T3 Chat renders inline code with its translucent
    secondary surface flattened over the light chat canvas. The raw muted and
    secondary tokens are substantially darker than those visible pixels. */
 html[data-theme-id="t3-chat"] {
   @variant light {
-    & .chat-markdown :not(pre) > code,
-    & [data-changed-files-state],
-    & [data-changed-files-header] {
-      background-color: var(--message-surface);
-    }
-
-    & .chat-markdown :not(pre) > code,
-    & [data-changed-files-state] {
-      border-color: transparent;
-    }
-
     & .chat-markdown :not(pre) > code {
+      background-color: var(--message-surface);
+      border-color: transparent;
       color: var(--contrast-message-foreground);
     }
   }
@@ -1887,10 +1910,6 @@ code {
   margin: 0.65rem 0;
 }
 
-.chat-markdown-math-display .katex-display {
-  margin: 0;
-}
-
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,
@@ -2049,9 +2068,11 @@ code {
 }
 
 /* Triple-click selection stops at block-level boxes, flex items included, so file chips in
-   prose stay inline-level down to the icon and label. */
+   prose stay inline-level down to the icon and label. Chromium also stops it at
+   draggable="true" (desktop native file drags) unless user-select is set back to text. */
 .chat-markdown-file-link {
   display: inline-block;
+  user-select: text;
   overflow-x: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2312,6 +2333,15 @@ code {
   overflow-wrap: break-word;
 }
 
+.chat-markdown [data-markdown-math] {
+  font-weight: normal;
+  font-style: normal;
+}
+
+.chat-markdown [data-markdown-math] > svg {
+  font-size: 1.21em;
+}
+
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown :is(th, td):has([data-markdown-math]) {
   max-width: none;
@@ -2341,6 +2371,16 @@ code {
 
 :root[data-chat-width="full"] {
   --chat-content-max-width: 100%;
+}
+
+/* HTML preview width setting. ChatCanvas measures this and never lays a
+   preview out narrower than the chat column. */
+:root[data-html-preview-width="wide"] {
+  --html-preview-max-width: 72rem;
+}
+
+:root[data-html-preview-width="full"] {
+  --html-preview-max-width: 100%;
 }
 
 :root[data-diff-color-scheme="blue-orange"] {
@@ -2487,10 +2527,14 @@ code {
   position: relative;
 }
 
-/* Tiptap's injected base CSS disables ligatures; match sent messages. */
+/* Tiptap's injected base CSS disables ligatures; match sent messages.
+   Chromium reshapes edited text from a reused prefix that assumes two
+   characters of context, so long contextual runs (Fira Code's dots) vanish.
+   Any non-zero word-spacing makes it reshape the whole run instead. */
 .composer-tiptap.ProseMirror {
   font-variant-ligatures: normal;
   font-feature-settings: normal;
+  word-spacing: 0.01px;
 }
 
 .composer-tiptap p {
