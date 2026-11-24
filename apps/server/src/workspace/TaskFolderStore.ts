@@ -20,6 +20,10 @@ export class TaskFolderStore extends Context.Service<
     readonly findContaining: (target: string) => Effect.Effect<TaskFolder | null, TaskFolderError>;
     readonly list: Effect.Effect<ReadonlyArray<TaskFolder>, TaskFolderError>;
     readonly put: (taskFolder: TaskFolder) => Effect.Effect<void, TaskFolderError>;
+    readonly forgetRepository: (
+      root: string,
+      worktreePath: string,
+    ) => Effect.Effect<void, TaskFolderError>;
     readonly remove: (root: string) => Effect.Effect<void, TaskFolderError>;
   }
 >()("t3/workspace/TaskFolderStore") {}
@@ -132,6 +136,14 @@ const make = Effect.gen(function* () {
     findContaining,
     list: listRows(undefined).pipe(Effect.mapError(failed)),
     put,
+    forgetRepository: Effect.fn("TaskFolderStore.forgetRepository")(function* (root, worktreePath) {
+      yield* sql`
+        UPDATE task_folders
+        SET repositories_json = json_remove(repositories_json, entry.fullkey)
+        FROM json_each((SELECT repositories_json FROM task_folders WHERE root = ${root})) AS entry
+        WHERE task_folders.root = ${root} AND json_extract(entry.value, '$.worktreePath') = ${worktreePath}
+      `.pipe(Effect.mapError(failed));
+    }),
     remove: Effect.fn("TaskFolderStore.remove")(function* (root) {
       yield* sql`DELETE FROM task_folders WHERE root = ${root}`.pipe(Effect.mapError(failed));
     }),

@@ -290,11 +290,13 @@ const make = Effect.gen(function* () {
       new TaskFolderError({ operation, detail: `${prefix}: ${failureDetail(cause)}`, cause });
 
   // A project that lays its own thread folder out says so in its `t3.json`.
-  const worktreeLayout = (projectRoot: string) =>
+  const projectFile = (projectRoot: string) =>
     fileSystem.readFileString(path.join(projectRoot, T3_PROJECT_FILE_NAME)).pipe(
-      Effect.map((contents) => parseT3ProjectFile(contents)?.worktreeLayout ?? null),
+      Effect.map(parseT3ProjectFile),
       Effect.orElseSucceed(() => null),
     );
+  const worktreeLayout = (projectRoot: string) =>
+    projectFile(projectRoot).pipe(Effect.map((config) => config?.worktreeLayout ?? null));
   // One at a time per project: the commands share the project folder, and its workspace files.
   const layoutLocks = yield* KeyedLock.make<string>();
   const runLayoutCommand = (
@@ -1383,12 +1385,44 @@ const make = Effect.gen(function* () {
     const restoreFailed = fail("create", "Could not restore the worktrees");
     // A project that lays its own folder out rebuilds it; whatever is still missing after that
     // comes back as a plain checkout below.
-    const layout = yield* worktreeLayout(taskFolder.projectRoot);
+    const config = yield* projectFile(taskFolder.projectRoot);
+    const layout = config?.worktreeLayout;
+    const repositories: TaskFolderRepository[] = [];
+    for (const repository of taskFolder.repositories) {
+      // a package manager may replace an excluded dependency's worktree with its own clone.
+      if (
+        config?.ignoreRepositories?.some((entry) =>
+          isWithinRoot(
+            path,
+            repository.repositoryPath,
+            path.resolve(taskFolder.projectRoot, entry),
+          ),
+        ) &&
+        isWithinRoot(path, repository.repositoryPath, taskFolder.projectRoot) &&
+        isWithinRoot(path, repository.worktreePath, taskFolder.projectPath) &&
+        (yield* fileSystem
+          .lstat(path.join(repository.worktreePath, ".git"))
+          .pipe(Effect.option, Effect.map(Option.exists((stat) => stat.type === "Directory"))))
+      ) {
+        const project = yield* readProject("create", taskFolder.projectId);
+        if (
+          !project.trackedFolders.some(
+            (folder) =>
+              !folder.discovered &&
+              path.resolve(folder.path) === path.resolve(repository.repositoryPath),
+          )
+        ) {
+          yield* store.forgetRepository(taskFolder.root, repository.worktreePath);
+          continue;
+        }
+      }
+      repositories.push(repository);
+    }
     const present = yield* Effect.forEach(
-      [taskFolder.projectPath, ...taskFolder.repositories.map((entry) => entry.worktreePath)],
+      [taskFolder.projectPath, ...repositories.map((entry) => entry.worktreePath)],
       exists,
     );
-    if (layout !== null && present.includes(false)) {
+    if (layout && present.includes(false)) {
       yield* fileSystem
         .makeDirectory(taskFolder.root, { recursive: true })
         .pipe(Effect.mapError(restoreFailed));
@@ -1398,7 +1432,7 @@ const make = Effect.gen(function* () {
         taskFolder,
         branch,
         undefined,
-        taskFolder.repositories.map((repository) => repository.repositoryPath),
+        repositories.map((repository) => repository.repositoryPath),
       ).pipe(Effect.ignoreCause({ log: true }));
     }
     const recreateMissing = Effect.fnUntraced(function* (checkout: TaskFolderCheckout) {
@@ -1429,10 +1463,10 @@ const make = Effect.gen(function* () {
       // A recorded repository the project no longer tracks still gets its worktree, never a link.
       yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, [
         ...tracked,
-        ...taskFolder.repositories.map((repository) => repository.repositoryPath),
+        ...repositories.map((repository) => repository.repositoryPath),
       ]).pipe(Effect.mapError(restoreFailed));
     }
-    for (const repository of taskFolder.repositories.toSorted(
+    for (const repository of repositories.toSorted(
       (left, right) => depth(left.worktreePath) - depth(right.worktreePath),
     )) {
       yield* recreateMissing(repository);
