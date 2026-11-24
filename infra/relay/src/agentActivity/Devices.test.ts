@@ -71,21 +71,29 @@ describe("Devices", () => {
           .values([
             device("stale", daysAgo(31)),
             device("stale-armed", daysAgo(31)),
+            device("stale-recent-card", daysAgo(31)),
             device("recent", daysAgo(29)),
             device("reachable", daysAgo(31), "apns-token"),
           ]),
       );
-      const liveActivity = (deviceId: string, activityPushToken: string | null) => ({
+      const liveActivity = (
+        deviceId: string,
+        activityPushToken: string | null,
+        updatedAt = daysAgo(31),
+      ) => ({
         userId: "user-1",
         deviceId,
         activityPushToken,
         createdAt: daysAgo(31),
-        updatedAt: daysAgo(31),
+        updatedAt,
       });
       yield* Effect.promise(() =>
-        db
-          .insert(relayLiveActivities)
-          .values([liveActivity("stale", null), liveActivity("stale-armed", "activity-token")]),
+        db.insert(relayLiveActivities).values([
+          liveActivity("stale", null),
+          liveActivity("stale-armed", "activity-token"),
+          // An iPhone with notifications off that ended a card yesterday is still in use.
+          liveActivity("stale-recent-card", null, daysAgo(1)),
+        ]),
       );
       const devices = yield* Effect.service(Devices.Devices).pipe(
         Effect.provide(Devices.layer.pipe(Layer.provide(layer))),
@@ -97,9 +105,13 @@ describe("Devices", () => {
         "reachable",
         "recent",
         "stale-armed",
+        "stale-recent-card",
       ]);
       const activities = yield* Effect.promise(() => db.select().from(relayLiveActivities));
-      expect(activities.map((row) => row.deviceId)).toEqual(["stale-armed"]);
+      expect(activities.map((row) => row.deviceId).toSorted()).toEqual([
+        "stale-armed",
+        "stale-recent-card",
+      ]);
     }),
   );
 });

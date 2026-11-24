@@ -7,7 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, exists, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
+import { and, eq, exists, gte, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -287,7 +287,11 @@ const make = Effect.gen(function* () {
               and(
                 eq(relayLiveActivities.userId, relayMobileDevices.userId),
                 eq(relayLiveActivities.deviceId, relayMobileDevices.deviceId),
-                isNotNull(relayLiveActivities.activityPushToken),
+                // Live Activity use never touches the device row, so a recent card keeps it.
+                or(
+                  isNotNull(relayLiveActivities.activityPushToken),
+                  gte(relayLiveActivities.updatedAt, before),
+                ),
               ),
             ),
         ),
@@ -308,6 +312,7 @@ const make = Effect.gen(function* () {
         and(
           keyCondition(relayLiveActivities),
           isNull(relayLiveActivities.activityPushToken),
+          lt(relayLiveActivities.updatedAt, before),
           exists(
             new QueryBuilder()
               .select({ deviceId: relayMobileDevices.deviceId })
