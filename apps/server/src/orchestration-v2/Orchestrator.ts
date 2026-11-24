@@ -1092,15 +1092,12 @@ function queueTailModelSelection(
 }
 
 /**
- * The provider's latest run stopped on its usage limit and nothing ran after it.
- * With `now` (automatic starts), a run on another provider since does not lift
- * a reported reset still in the future; an unknown reset is lifted, as transient 429s are.
+ * The latest failed usage-limit run on one provider instance, if any.
  */
-function usageLimitHoldsQueue(
+function usageLimitBlockedRunForInstance(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
-  now?: DateTime.Utc,
-): boolean {
+): OrchestrationV2Run | null {
   let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
     if (
@@ -1111,11 +1108,24 @@ function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
-  const limited = usageLimitBlockedRun(
+  return usageLimitBlockedRun(
     projection.runs.filter((run) => run.providerInstanceId === providerInstanceId),
     projection.turnItems,
     latestSession?.lastError ?? null,
   );
+}
+
+/**
+ * The provider's latest run stopped on its usage limit and nothing ran after it.
+ * With `now` (automatic starts), a run on another provider since does not lift
+ * a reported reset still in the future; an unknown reset is lifted, as transient 429s are.
+ */
+function usageLimitHoldsQueue(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
+  providerInstanceId: ModelSelection["instanceId"],
+  now?: DateTime.Utc,
+): boolean {
+  const limited = usageLimitBlockedRunForInstance(projection, providerInstanceId);
   if (limited === null) return false;
   if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
   if (now === undefined) return false;
@@ -8071,12 +8081,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.steerFollowUpOfRunId === undefined
         ? undefined
         : projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
-    const queueBehindRun = activeRun ?? worktreeMissingRun ?? steerFollowUpSource;
-    const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
+    // A subagent finishing must not wake a thread whose provider is still
+    // usage-limited: the wake would fail on the same limit and drop the armed
+    // auto-resume. Queue it held behind the limited run instead; the reset
+    // resume releases it. Buffered wakes only replay produced output, so they start.
+    let limitedRunForAutomaticWake: OrchestrationV2Run | undefined;
+    if (
+      activeRun === undefined &&
+      command.createdBy === "agent" &&
+      command.usageLimitContinuationOfRunId === undefined &&
+      (command.delegatedCompletion !== undefined || command.notification !== undefined) &&
+      !isBufferedProviderNotification(command) &&
+      startsOrQueuesRun &&
+      usageLimitHoldsQueue(projection, modelSelection.instanceId, yield* DateTime.now)
+    ) {
+      limitedRunForAutomaticWake =
+        usageLimitBlockedRunForInstance(projection, modelSelection.instanceId) ?? undefined;
+    }
+    const queueBehindRun =
+      activeRun ?? worktreeMissingRun ?? steerFollowUpSource ?? limitedRunForAutomaticWake;
+    const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
     // An explicit pick queued ahead reaches the thread only when its run starts. A goal or
     // restart command that stops the active run goes first, so nothing queued applies before it.
@@ -8279,6 +8307,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // A restart cancels its run; nobody knows whether the provider read the steer, so a person decides.
         ...(worktreeMissingRun !== undefined ||
         steerFollowUpSource?.status === "cancelled" ||
+        limitedRunForAutomaticWake !== undefined ||
         (heldRunsToRelease.length === 0 &&
           queueIsHeld &&
           !wakeSkipsHold &&
