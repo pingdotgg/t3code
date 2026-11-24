@@ -12,6 +12,15 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M10 12h4" } },
   ],
   check: [{ tag: "path", attrs: { d: "M20 6 9 17l-5-5" } }],
+  // fork: roles
+  bot: [
+    { tag: "path", attrs: { d: "M12 8V4H8" } },
+    { tag: "rect", attrs: { width: "16", height: "12", x: "4", y: "8", rx: "2" } },
+    { tag: "path", attrs: { d: "M2 14h2" } },
+    { tag: "path", attrs: { d: "M20 14h2" } },
+    { tag: "path", attrs: { d: "M15 13v2" } },
+    { tag: "path", attrs: { d: "M9 13v2" } },
+  ],
   timer: [
     { tag: "line", attrs: { x1: "10", x2: "14", y1: "2", y2: "2" } },
     { tag: "line", attrs: { x1: "12", x2: "15", y1: "14", y2: "11" } },

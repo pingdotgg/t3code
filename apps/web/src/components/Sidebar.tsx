@@ -144,6 +144,8 @@ import { timedSnoozePresets } from "@t3tools/client-runtime/state/thread-settled
 import { laterMenuItem } from "./threadActionMenu.forkLater"; // fork: later-shelf
 import { RolesHeader, SidebarRoleIcon, useRolesSection } from "./Sidebar.forkRoles"; // fork: roles
 import { splitRoleThreads } from "./Sidebar.forkRoles.logic"; // fork: roles
+import { readForkRoleMenuState, useSetThreadRole } from "../state/forkRoles"; // fork: roles
+import { forkRoleFromMenuId } from "./threadActionMenu.forkRoles"; // fork: roles
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -970,6 +972,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const setThreadRole = useSetThreadRole(); // fork: roles
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2720,7 +2723,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const isSettled = settledThreadKeysRef.current.has(threadKey);
+        const isSettled =
+          settledThreadKeysRef.current.has(threadKey) ||
+          (thread.roleId !== null && thread.settledOverride === "settled"); // fork: roles
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(
@@ -2736,6 +2741,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const forkRoles = await readForkRoleMenuState(threadRef.environmentId, thread.roleId); // fork: roles
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2772,6 +2778,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
+              forkRoles, // fork: roles
             }),
             position,
             source,
@@ -2779,6 +2786,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        const pickedRole = forkRoleFromMenuId(clicked.value); // fork: roles
+        if (pickedRole !== undefined) return void (await setThreadRole(threadRef, pickedRole)); // fork: roles
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"

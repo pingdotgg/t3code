@@ -5,6 +5,11 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
 import { laterMenuItem } from "./threadActionMenu.forkLater"; // fork: later-shelf
+import {
+  type ForkRoleMenuId,
+  type ForkRoleMenuState,
+  forkRoleMenuItems,
+} from "./threadActionMenu.forkRoles"; // fork: roles
 
 export type ThreadActionMenuId =
   | "find"
@@ -32,7 +37,8 @@ export type ThreadActionMenuId =
   | "copy-thread"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | ForkRoleMenuId; // fork: roles
 
 export type DraftActionMenuId =
   | "copy"
@@ -125,6 +131,7 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  readonly forkRoles?: ForkRoleMenuState; // fork: roles
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -276,6 +283,7 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...forkRoleMenuItems(state.forkRoles, resolve), // fork: roles
     {
       id: "copy",
       label: resolve(msg("Copy", { $context: "submenu of things to copy" })),
