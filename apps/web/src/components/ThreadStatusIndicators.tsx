@@ -59,7 +59,17 @@ import {
   PullRequestGlyph,
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import {
+  PullRequestActorLabel,
+  resolvePullRequestState,
+} from "./pullRequest/pullRequestPresentation";
+import {
+  PULL_REQUEST_ROW_CLASS,
+  PULL_REQUEST_ROW_NUMBER_CLASS,
+  PullRequestRowGlyph,
+  PullRequestRowLines,
+} from "./pullRequest/PullRequestListRow";
+import { sourceControlIcon } from "../sourceControlPresentation";
 
 export interface PrStatusIndicator {
   label: string;
@@ -393,6 +403,14 @@ function resolveThreadPullRequestBadgePresentation(
   };
 }
 
+/** Issues linked beside the pull requests, folded into the same badge. */
+export interface ThreadPullRequestBadgeIssues {
+  readonly count: number;
+  readonly label: string;
+  readonly mark: ReactNode;
+  readonly rows: ReactNode;
+}
+
 export function ThreadPullRequestBadgeControl({
   render,
   badge,
@@ -400,6 +418,7 @@ export function ThreadPullRequestBadgeControl({
   number,
   url,
   status,
+  issues,
   onOpenList,
   onOpenPullRequest,
 }: {
@@ -409,21 +428,34 @@ export function ThreadPullRequestBadgeControl({
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
+  issues?: ThreadPullRequestBadgeIssues | undefined;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
   const m = useMessages();
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status }, m);
   if (presentation === null) return null;
+  const pullRequestCount = Math.max(visibleThreadPullRequests(pullRequests).length, 1);
   return (
     <PullRequestBadge
       render={render}
-      presentation={presentation}
-      opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
+      presentation={
+        issues
+          ? {
+              ...presentation,
+              label: `${issues.label}, ${presentation.label}`,
+              text: `+${pullRequestCount + issues.count}`,
+            }
+          : presentation
+      }
+      opensList={
+        issues !== undefined || (badge !== null && (badge.kind === "stack" || badge.others > 0))
+      }
       url={url}
       number={number}
       status={status}
       pullRequests={pullRequests}
+      issues={issues}
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
     />
@@ -438,6 +470,7 @@ function PullRequestBadge({
   number,
   status,
   pullRequests,
+  issues,
   onOpenList,
   onOpenPullRequest,
 }: {
@@ -448,6 +481,7 @@ function PullRequestBadge({
   number: number | undefined;
   status: PrStatusIndicator | null;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  issues: ThreadPullRequestBadgeIssues | undefined;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
@@ -475,6 +509,7 @@ function PullRequestBadge({
   return (
     <Tooltip key={opensList ? "list" : "link"}>
       <TooltipTrigger render={control}>
+        {issues?.mark}
         <span
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
         >
@@ -487,9 +522,26 @@ function PullRequestBadge({
         sideOffset={0}
         variant="glass"
         className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
+        onContextMenu={issues ? (event) => event.stopPropagation() : undefined}
       >
         <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
-          {visibleThreadPullRequests(pullRequests).length > 0 ? (
+          {issues?.rows}
+          {issues ? (
+            <ThreadPullRequestRows
+              pullRequests={pullRequests}
+              fallback={
+                number !== undefined && url !== undefined
+                  ? {
+                      number,
+                      url,
+                      title: status?.tooltipTitle ?? presentation.label,
+                      Icon: presentation.Icon,
+                    }
+                  : null
+              }
+              onOpenPullRequest={onOpenPullRequest}
+            />
+          ) : visibleThreadPullRequests(pullRequests).length > 0 ? (
             <ThreadPullRequestsMiniList
               pullRequests={pullRequests}
               onOpenPullRequest={onOpenPullRequest}
@@ -508,6 +560,135 @@ function PullRequestBadge({
         </div>
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+/**
+ * Pull request rows in the two-line form linked issue rows use, so a badge holding both lists
+ * them alike.
+ */
+function ThreadPullRequestRows({
+  pullRequests,
+  fallback,
+  onOpenPullRequest,
+}: {
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  /** The branch's own pull request, shown when no linked one is visible. */
+  fallback: { number: number; url: string; title: string; Icon: PullRequestGlyphIcon } | null;
+  onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+}) {
+  const lines = pipe(
+    visibleThreadPullRequests(pullRequests),
+    resolveThreadPullRequestChains,
+    pullRequestListLines,
+  );
+  if (lines.length === 0) {
+    return fallback === null ? null : (
+      <ThreadPullRequestRow
+        url={fallback.url}
+        number={fallback.number}
+        title={fallback.title}
+        glyph={<fallback.Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
+        onOpenPullRequest={onOpenPullRequest}
+      />
+    );
+  }
+  return lines.map(({ link, depth, stack }) => {
+    const snapshot = link.snapshot;
+    const definition = sourceControlClients.parseChangeRequestUrl(link.url)?.definition;
+    const HostIcon = definition ? sourceControlIcon(definition) : null;
+    return (
+      <ThreadPullRequestRow
+        key={`${link.host}/${link.repository}#${link.number}`}
+        url={link.url}
+        number={link.number}
+        title={snapshot?.title ?? link.repository}
+        depth={depth}
+        glyph={
+          snapshot ? (
+            <PullRequestRowGlyph state={snapshot.state} isDraft={snapshot.isDraft} />
+          ) : (
+            <PullRequestGlyph.pullRequest
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+          )
+        }
+        status={
+          stack ? (
+            <span>
+              {stack.kind === "native" ? (
+                <T context="a native stack of pull requests">stack</T>
+              ) : (
+                <T context="a chain of pull requests based on each other">chain</T>
+              )}{" "}
+              · {stack.size}
+            </span>
+          ) : null
+        }
+        meta={
+          <>
+            {snapshot?.author ? (
+              <PullRequestActorLabel actor={snapshot.author} tooltip={false} />
+            ) : null}
+            {HostIcon && definition ? (
+              <span role="img" aria-label={definition.label} className="inline-flex shrink-0">
+                <HostIcon className="size-3" />
+              </span>
+            ) : null}
+            <span className="truncate">{link.repository}</span>
+          </>
+        }
+        updatedAt={snapshot?.updatedAt ?? link.linkedAt}
+        onOpenPullRequest={onOpenPullRequest}
+      />
+    );
+  });
+}
+
+function ThreadPullRequestRow({
+  url,
+  number,
+  title,
+  glyph,
+  status,
+  meta,
+  updatedAt,
+  depth = 0,
+  onOpenPullRequest,
+}: {
+  url: string;
+  number: number;
+  title: string;
+  glyph: ReactNode;
+  status?: ReactNode;
+  meta?: ReactNode;
+  updatedAt?: string | null;
+  depth?: number;
+  onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+}) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(
+        PULL_REQUEST_ROW_CLASS,
+        "px-2 hover:bg-accent/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+      )}
+      style={depth > 0 ? { paddingLeft: `${0.5 + Math.min(depth, 3) * 0.75}rem` } : undefined}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => onOpenPullRequest(event, url)}
+    >
+      {glyph}
+      <PullRequestRowLines
+        number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>#{number}</span>}
+        title={title}
+        status={status}
+        meta={meta}
+        updatedAt={updatedAt}
+      />
+    </a>
   );
 }
 
