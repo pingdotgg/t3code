@@ -36,6 +36,12 @@ describe("restoring pasted Markdown links", () => {
       html: '<a href="/local">Local</a>, <a>unavailable</a>, and !<a href="https://example.com/guide">Guide</a><a href="https://example.com/empty"></a>',
       expected: "Local, unavailable, and \\![Guide](https://example.com/guide)",
     },
+    {
+      case: "linked identifiers inside code samples as code",
+      plain: "pub fn new(v: Vec<u8>) -> Self",
+      html: '<pre><code>pub fn new(v: <a href="https://doc.rust-lang.org/std/vec/struct.Vec.html">Vec</a>&lt;<a href="https://doc.rust-lang.org/std/primitive.u8.html">u8</a>&gt;) -&gt; Self</code></pre>',
+      expected: "pub fn new(v: Vec<u8>) -> Self",
+    },
   ])("keeps $case", ({ plain, html, expected }) => {
     expect(restorePastedMarkdownLinks(plain, html)).toBe(expected);
   });

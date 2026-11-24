@@ -272,6 +272,8 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
     }
   }
   for (const anchor of fragment.querySelectorAll("a[href]")) {
+    // Linked identifiers in API docs code samples must stay literal code.
+    if (anchor.closest("pre, code")) continue;
     const href = anchor.getAttribute("href")?.trim() ?? "";
     if (!/^(?:https?:\/\/|mailto:)/i.test(href)) continue;
     let url: URL;
