@@ -254,6 +254,108 @@ async fn list_refs_orders_filters_and_pages() {
     assert!(!none.is_repo);
 }
 
+/// T3's split-directory regression: Git lists a `--separate-git-dir` repository's metadata
+/// folder as the main checkout. It is no worktree to reuse: the current branch gets the real
+/// checkout, a linked checkout sees no reusable path for `main`, and an ordinary linked
+/// worktree keeps its path.
+#[tokio::test]
+async fn list_refs_never_offers_the_git_metadata_folder_as_a_worktree() {
+    let root = TempDir::new("refs-split");
+    let checkout = root.path().join("checkout");
+    let metadata = root.path().join("git-metadata");
+    std::fs::create_dir_all(&checkout).unwrap();
+    git(
+        &checkout,
+        &[
+            "init",
+            "-qb",
+            "main",
+            &format!("--separate-git-dir={}", metadata.display()),
+        ],
+    );
+    commit_all_empty(&checkout, "seed");
+    let current = |list: &conn_contract::VcsListRefsResult| {
+        list.refs
+            .iter()
+            .find(|r| r.current)
+            .and_then(|r| r.worktree_path.clone())
+            .map(|p| std::fs::canonicalize(p).unwrap())
+    };
+    let from_main = refs::list_refs(list_input(&checkout.to_string_lossy()))
+        .await
+        .unwrap();
+    assert_eq!(
+        current(&from_main),
+        Some(std::fs::canonicalize(&checkout).unwrap())
+    );
+
+    let linked = root.path().join("linked");
+    git(
+        &checkout,
+        &["worktree", "add", "-qb", "topic", &linked.to_string_lossy()],
+    );
+    let mut input = list_input(&linked.to_string_lossy());
+    input.refresh = Some(true);
+    input.query = Some("main".into());
+    input.ref_kind = Some(VcsListRefsInputRefKind::Local);
+    let from_linked = refs::list_refs(input).await.unwrap();
+    assert_eq!(from_linked.is_at_repository_root, Some(true));
+    let main = from_linked.refs.iter().find(|r| r.name == "main").unwrap();
+    assert!(!main.current);
+    assert_eq!(
+        main.worktree_path, None,
+        "the metadata folder is no checkout"
+    );
+
+    // Git keeps a trailing space in the folder name; only its final newline is output framing.
+    let spaced = TempDir::new("refs-split-space");
+    let checkout = spaced.path().join("checkout");
+    let metadata = spaced.path().join("git-metadata ");
+    std::fs::create_dir_all(&checkout).unwrap();
+    git(
+        &checkout,
+        &[
+            "init",
+            "-qb",
+            "main",
+            &format!("--separate-git-dir={}", metadata.display()),
+        ],
+    );
+    commit_all_empty(&checkout, "seed");
+    let linked = spaced.path().join("linked");
+    git(
+        &checkout,
+        &["worktree", "add", "-qb", "topic", &linked.to_string_lossy()],
+    );
+    let mut input = list_input(&linked.to_string_lossy());
+    input.refresh = Some(true);
+    input.query = Some("main".into());
+    input.ref_kind = Some(VcsListRefsInputRefKind::Local);
+    let from_linked = refs::list_refs(input).await.unwrap();
+    let main = from_linked.refs.iter().find(|r| r.name == "main").unwrap();
+    assert_eq!(
+        main.worktree_path, None,
+        "a metadata folder named with a trailing space is no checkout"
+    );
+
+    // The conventional layout: a linked worktree's path is offered.
+    let fx = Fixture::new("refs-linked");
+    let other = fx.root.path().join("other-worktree");
+    git(
+        &fx.work,
+        &["worktree", "add", "-qb", "other", &other.to_string_lossy()],
+    );
+    let listed = refs::list_refs(list_input(&fx.cwd())).await.unwrap();
+    let other_ref = listed.refs.iter().find(|r| r.name == "other").unwrap();
+    assert_eq!(
+        other_ref
+            .worktree_path
+            .as_deref()
+            .map(|p| std::fs::canonicalize(p).unwrap()),
+        Some(std::fs::canonicalize(&other).unwrap())
+    );
+}
+
 fn commit_all_empty(dir: &std::path::Path, message: &str) {
     git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
 }
