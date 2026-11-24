@@ -1333,6 +1333,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
   },
+  runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] = "full-access",
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1466,7 +1467,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
           },
         });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode: "full-access",
+    runtimeMode,
     interactionMode: "default",
     cwd: process.cwd(),
   });
@@ -1507,7 +1508,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
         title: "Antigravity wake",
         providerInstanceId: instanceId,
         modelSelection,
-        runtimeMode: "full-access",
+        runtimeMode,
         interactionMode: "default",
         branch: null,
         worktreePath: process.cwd(),
@@ -2199,6 +2200,76 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.notInclude(subagentStatuses, "interrupted");
       assert.equal(subagentStatuses.at(-1), "idle");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // Antigravity keeps its session across a runtime-mode change, so a message steered into
+  // the running turn is the only way the new mode reaches it.
+  it.effect("answers requests after a steer under the runtime mode the steer carries", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand(
+        {},
+        undefined,
+        { agentVersion: "1.5.11", holdsFirstPrompt: true },
+        undefined,
+        "approval-required",
+      );
+      const { session, providerThread, command, startTurn, until, requestPermission } = opened;
+      yield* startTurn(1, false);
+      const started = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      const providerTurnId = started.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+
+      const steer = {
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+        providerThread,
+        providerTurnId,
+        message: {
+          messageId: MessageId.make("message-antigravity-steer"),
+          text: "Go ahead without asking",
+          attachments: [],
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      };
+      yield* session.steerTurn(steer);
+
+      const permission = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: {
+            toolCallId: "call_after_switch",
+            kind: "execute",
+            title: "cat /etc/hosts",
+            status: "pending",
+          },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "deny", name: "Deny", kind: "reject_once" },
+          ],
+        },
+        { requestId: "permission-after-switch", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      const answered = yield* Effect.raceFirst(
+        Fiber.join(permission).pipe(Effect.map((response) => ({ response }))),
+        until((event) => event.type === "runtime_request.updated").pipe(
+          Effect.as({ response: "asked the user" as const }),
+        ),
+      );
+      assert.deepEqual(answered, {
+        response: { outcome: { outcome: "selected", optionId: "allow" } },
+      });
     }).pipe(Effect.provide(layerSession)),
   );
 
