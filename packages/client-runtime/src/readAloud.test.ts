@@ -4,6 +4,7 @@ import {
   createReadAloudController,
   createReadAloudWarmup,
   createTimedWords,
+  readAloudButtonMode,
   type SpeechPlayback,
   type SpokenWord,
 } from "./readAloud.ts";
@@ -388,4 +389,119 @@ it("follows provider word timings on the audio clock and estimates them when the
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("pauses while a reply plays, resumes it, cancels only the first speech generation, and offers Stop", () => {
+  const mode = (state: Parameters<typeof readAloudButtonMode>[0]) =>
+    readAloudButtonMode(state, "1");
+  expect(mode({ id: null, status: "idle" })).toEqual({ action: "read", stoppable: false });
+  expect(mode({ id: "2", status: "playing", started: true })).toEqual({
+    action: "read",
+    stoppable: false,
+  });
+  expect(mode({ id: "1", status: "error", error: "offline" })).toEqual({
+    action: "read",
+    stoppable: false,
+  });
+  expect(mode({ id: "1", status: "loading", started: false })).toEqual({
+    action: "cancel",
+    stoppable: false,
+  });
+  expect(mode({ id: "1", status: "playing", started: true })).toEqual({
+    action: "pause",
+    stoppable: true,
+  });
+  expect(mode({ id: "1", status: "loading", started: true })).toEqual({
+    action: "pause",
+    stoppable: true,
+  });
+  expect(mode({ id: "1", status: "paused", started: false })).toEqual({
+    action: "resume",
+    stoppable: true,
+  });
+});
+
+it("keeps the spoken word highlighted while paused and goes on from it after resume", async () => {
+  const markdown = "One two three four.";
+  const playing = deferred<void>();
+  const finished = deferred<void>();
+  const play = vi.fn(async () => {});
+  const pause = vi.fn();
+  let emit: ((word: SpokenWord | null) => void) | undefined;
+  const controller = createReadAloudController(async () => ({
+    play,
+    pause,
+    stop: () => finished.resolve(),
+    finished: finished.promise,
+    words: (listener) => {
+      emit = listener;
+      return () => {
+        emit = undefined;
+      };
+    },
+  }));
+  const unsubscribe = controller.subscribe(() => {
+    if (controller.getSnapshot().status === "playing") playing.resolve();
+  });
+  const run = controller.start("1", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await playing.promise;
+  unsubscribe();
+  expect(controller.getSnapshot()).toEqual({ id: "1", status: "playing", started: true });
+  const two = markdown.indexOf("two");
+  emit?.({ start: two, end: two + 3 });
+  controller.pause();
+  expect(pause).toHaveBeenCalledTimes(1);
+  expect(controller.getSnapshot().status).toBe("paused");
+  expect(controller.getHighlight()?.word).toMatchObject({ start: two, end: two + 3 });
+  await controller.resume();
+  expect(play).toHaveBeenCalledTimes(2);
+  expect(controller.getSnapshot()).toEqual({ id: "1", status: "playing", started: true });
+  const three = markdown.indexOf("three");
+  emit?.({ start: three, end: three + 5 });
+  expect(controller.getHighlight()?.word).toMatchObject({ start: three, end: three + 5 });
+  controller.stop();
+  await run;
+  expect(controller.getSnapshot()).toEqual({ id: null, status: "idle" });
+  expect(controller.getHighlight()).toBeNull();
+});
+
+it("marks the wait for a later chunk as started, so it can be paused instead of cancelled", async () => {
+  const started = deferred<void>();
+  const finished = deferred<void>();
+  const nextPrepared = deferred<void>();
+  const next = deferred<SpeechPlayback>();
+  const prepare = vi.fn(async (): Promise<SpeechPlayback> => {
+    if (prepare.mock.calls.length > 1) {
+      nextPrepared.resolve();
+      return next.promise;
+    }
+    return {
+      play: async () => started.resolve(),
+      pause: () => {},
+      stop: () => {},
+      finished: finished.promise,
+    };
+  });
+  const controller = createReadAloudController(prepare);
+  const run = controller.start("1", "word ".repeat(1000), {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  expect(controller.getSnapshot()).toEqual({ id: "1", status: "loading", started: false });
+  await started.promise;
+  finished.resolve();
+  await nextPrepared.promise;
+  expect(controller.getSnapshot()).toEqual({ id: "1", status: "loading", started: true });
+  expect(readAloudButtonMode(controller.getSnapshot(), "1").action).toBe("pause");
+  controller.stop();
+  next.resolve({
+    play: async () => {},
+    pause: () => {},
+    stop: () => {},
+    finished: Promise.resolve(),
+  });
+  await run;
 });
