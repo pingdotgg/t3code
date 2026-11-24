@@ -7,6 +7,7 @@ import {
   ProjectId,
   type TaskFolderError,
   type Project as ProjectRecord,
+  type ProjectScript,
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
@@ -210,6 +211,20 @@ const withSavedProjectSettings = Effect.gen(function* () {
 const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
   Effect.orElseSucceed(() => (project: ProjectRecord) => project),
 );
+
+/**
+ * Scripts are read back through Settings, so an agent's write must land there; the project
+ * record's copy is only what installs from before the fold still resolve.
+ */
+const saveProjectScripts = (projectId: ProjectId, scripts: readonly ProjectScript[]) =>
+  ServerSettings.ServerSettingsService.pipe(
+    Effect.flatMap((service) =>
+      service.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } },
+      }),
+    ),
+    Effect.mapError(unavailable),
+  );
 
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_thread_launch: McpToolAccess.startsThreads(
@@ -570,9 +585,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               "Creating a project does not set its default model; set defaultModelSelection afterwards with t3_project_update.",
           });
         const commandId = yield* newCommandId();
+        const projectId = ProjectId.make(commandId);
         const created = yield* projects
-          .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
+          .create({ ...input, workspaceRoot, commandId, projectId })
           .pipe(Effect.mapError(projectFailure));
+        if (input.scripts !== undefined && input.scripts.length > 0) {
+          // The project is committed, so a failed save is reported instead of leaving the agent
+          // believing its scripts were stored.
+          yield* saveProjectScripts(projectId, input.scripts).pipe(
+            Effect.mapError(
+              () =>
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message:
+                    "The project was created, but its scripts were not saved. Set them with t3_project_update.",
+                }),
+            ),
+          );
+        }
         return (yield* withSavedProjectSettingsAfterCreate)(created);
       }),
     // Linked work may bring the repository it works in; an existing
@@ -582,9 +612,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
+      // Scripts go through Settings, as reads and the setup runner resolve them from there.
+      const { scripts, ...rest } = input;
       const updated = yield* projects
-        .update({ ...input, commandId: yield* newCommandId() })
+        .update({ ...rest, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
+      if (scripts !== undefined) yield* saveProjectScripts(input.projectId, scripts);
       return (yield* withSavedProjectSettings)(updated);
     }),
   ),

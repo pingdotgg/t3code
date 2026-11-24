@@ -1287,3 +1287,69 @@ it.effect("a project update or create that is refused tells the agent why", () =
     expect(dropped.at(-1)?.result).toMatchObject({ code: "invalid_request" });
   }),
 );
+
+it.effect("scripts an agent saves on create are the ones a later read returns", () =>
+  Effect.gen(function* () {
+    // Folded settings: the project's actions live in Settings, so the project record's copy is
+    // what a create writes and no reader returns.
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const settings = ServerSettings.layerTest({
+      projectSettingsFolded: true,
+      projectSettingsOverrides: {},
+    });
+    const script = {
+      id: "likec4-start",
+      name: "LikeC4 podgląd",
+      command: "npx -y likec4@latest start",
+      icon: "play",
+      runOnWorktreeCreate: false,
+    } satisfies ProjectScript;
+    const created: { project: ProjectRecord | null } = { project: null };
+    const dependencies = Layer.merge(
+      Layer.merge(
+        harness.dependencies,
+        Layer.mock(Project.ProjectService)({
+          create: (input) =>
+            Effect.sync(() => {
+              created.project = {
+                id: input.projectId,
+                title: input.title,
+                workspaceRoot: input.workspaceRoot,
+                defaultModelSelection: null,
+                scripts: input.scripts ?? [],
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                deletedAt: null,
+              } as unknown as ProjectRecord;
+              return created.project;
+            }),
+          getById: () =>
+            Effect.succeed(created.project === null ? Option.none() : Option.some(created.project)),
+        }),
+      ),
+      settings,
+    );
+    // One build of both the toolkit and its services, so the Settings a create writes are the
+    // ones the read sees.
+    const [createdResult, read] = yield* Effect.gen(function* () {
+      const toolkit = yield* ProjectToolkit;
+      const createdResult = yield* toolkit
+        .handle("t3_project_create", {
+          title: "LikeC4",
+          workspaceRoot: "/projects/client-target",
+          scripts: [script],
+        })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      const read = yield* toolkit
+        .handle("t3_project_read", { projectId: created.project!.id })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      return [createdResult, read] as const;
+    }).pipe(
+      Effect.provide(
+        Layer.merge(McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer), dependencies),
+      ),
+    );
+    expect(createdResult.at(-1)?.result).toMatchObject({ scripts: [script] });
+    expect(read.at(-1)?.result).toMatchObject({ scripts: [script] });
+  }),
+);
