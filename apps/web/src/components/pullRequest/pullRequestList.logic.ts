@@ -615,6 +615,7 @@ export const readPullRequestDiffStat = <Stat>(
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;
   readonly providers: PullRequestListResult["providers"];
+  readonly repositories: ReadonlyArray<string>;
   readonly entries: ReadonlyArray<EnvironmentPullRequestEntry>;
   readonly errors: ReadonlyArray<EnvironmentPullRequestError>;
   readonly truncated: boolean;
@@ -629,6 +630,7 @@ export function mergePullRequestLists(
   const viewers: Record<string, string> = {};
   const truncatedEnvironments = new Set<string>();
   const providers = new Map<string, PullRequestListResult["providers"][number]>();
+  const repositories = new Map<string, string>();
   const entries = new Map<string, EnvironmentPullRequestEntry>();
   const errors: EnvironmentPullRequestError[] = [];
   const nextCursors: Record<string, PullRequestListCursors> = {};
@@ -651,6 +653,12 @@ export function mergePullRequestLists(
             },
       );
     }
+    for (const repository of answer.repositories ?? []) {
+      const key = repository.trim().toLowerCase();
+      if (key.length > 0 && !repositories.has(key)) {
+        repositories.set(key, repository.trim());
+      }
+    }
     for (const entry of answer.entries) {
       const held = entries.get(entry.url);
       // The first environment to answer keeps a pull request that several of them read.
@@ -671,6 +679,7 @@ export function mergePullRequestLists(
   return {
     viewers,
     providers: [...providers.values()],
+    repositories: [...repositories.values()],
     entries: [...entries.values()].toSorted(comparePullRequestsByRecency),
     errors,
     truncated,

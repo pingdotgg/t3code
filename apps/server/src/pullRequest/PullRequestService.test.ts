@@ -50,6 +50,7 @@ function project(input: {
   readonly provider?: string;
   readonly host?: string;
   readonly remoteUrl?: string;
+  readonly trackedFolders?: OrchestrationProjectShell["trackedFolders"];
 }): OrchestrationProjectShell {
   const host = input.host ?? (input.provider === "gitlab" ? "gitlab.com" : "github.com");
   return {
@@ -70,6 +71,7 @@ function project(input: {
           },
         }
       : {}),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-07-01T00:00:00Z",
@@ -5682,5 +5684,129 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
       assert.strictEqual(error._tag, "PullRequestOperationError");
       assert.strictEqual(error.reason, "not-found");
       assert.strictEqual(diffReads, 2);
+    }),
+);
+
+it.effect(
+  "lists and reads pull requests from tracked folder repositories when the project root is not a git repo",
+  () =>
+    Effect.gen(function* () {
+      const githubIdentity = (repository: string) => ({
+        canonicalKey: `github.com/${repository}`,
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: `https://github.com/${repository}.git`,
+        },
+        provider: SourceControlProviderKind.make("github"),
+        displayName: repository,
+      });
+      const resolvedCwds: string[] = [];
+      const listCwds = new Map<string, string>();
+      const detailCwds = new Map<string, string>();
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "root-git",
+            title: "Root git",
+            workspaceRoot: "/root-git",
+            repository: "acme/root",
+            trackedFolders: [{ path: "/root-git/child", name: "child", discovered: true }],
+          }),
+          project({
+            id: "single-tracked",
+            title: "Single tracked",
+            workspaceRoot: "/single",
+            trackedFolders: [{ path: "/single/repo-a", name: "repo-a", discovered: true }],
+          }),
+          project({
+            id: "multi-tracked",
+            title: "Multi tracked",
+            workspaceRoot: "/multi",
+            trackedFolders: [
+              { path: "/multi/repo-a", name: "repo-a", discovered: true },
+              { path: "/multi/repo-b", name: "repo-b", discovered: true },
+              { path: "/multi/notes", name: "notes" },
+            ],
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ cwd, repository }) => {
+              listCwds.set(repository, cwd);
+              const number =
+                repository === "acme/root" ? 10 : repository === "acme/repo-a" ? 25 : 26;
+              return Effect.succeed({
+                items: [
+                  {
+                    ...changeRequest(number, "2026-07-05T00:00:00Z"),
+                    url: `https://github.com/${repository}/pull/${number}`,
+                  },
+                ],
+                truncated: false,
+                continues: false,
+              });
+            },
+            getChangeRequest: ({ cwd, repository, number }) => {
+              detailCwds.set(`${repository}#${number}`, cwd);
+              return Effect.succeed({
+                ...hostedChangeRequest(`PR ${number}`),
+                number,
+                url: `https://github.com/${repository}/pull/${number}`,
+              });
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) =>
+          Effect.sync(() => {
+            resolvedCwds.push(cwd);
+            if (cwd === "/single/repo-a" || cwd === "/multi/repo-a") {
+              return githubIdentity("acme/repo-a");
+            }
+            if (cwd === "/multi/repo-b") {
+              return githubIdentity("acme/repo-b");
+            }
+            return null;
+          }),
+      });
+
+      const rootList = yield* service.list({ state: "all", projectId: "root-git" as ProjectId });
+      assert.deepStrictEqual(
+        rootList.entries.map((entry) => `${entry.repository}#${entry.number}`),
+        ["acme/root#10"],
+      );
+      assert.strictEqual(listCwds.get("acme/root"), "/root-git");
+      assert.isFalse(resolvedCwds.includes("/root-git/child"));
+
+      const singleList = yield* service.list({
+        state: "all",
+        projectId: "single-tracked" as ProjectId,
+      });
+      assert.deepStrictEqual(
+        singleList.entries.map((entry) => `${entry.repository}#${entry.number}`),
+        ["acme/repo-a#25"],
+      );
+      assert.deepStrictEqual(singleList.repositories, ["acme/repo-a"]);
+      assert.strictEqual(listCwds.get("acme/repo-a"), "/single/repo-a");
+
+      const multiList = yield* service.list({
+        state: "all",
+        projectId: "multi-tracked" as ProjectId,
+      });
+      assert.deepStrictEqual(
+        multiList.entries.map((entry) => `${entry.repository}#${entry.number}`).toSorted(),
+        ["acme/repo-a#25", "acme/repo-b#26"],
+      );
+      assert.deepStrictEqual(multiList.repositories, ["acme/repo-a", "acme/repo-b"]);
+      assert.strictEqual(listCwds.get("acme/repo-b"), "/multi/repo-b");
+
+      const detail = yield* service.detail({
+        projectId: "multi-tracked" as ProjectId,
+        repository: "acme/repo-b",
+        number: 25,
+      });
+      assert.strictEqual(detail.repository, "acme/repo-b");
+      assert.strictEqual(detail.number, 25);
+      assert.strictEqual(detailCwds.get("acme/repo-b#25"), "/multi/repo-b");
     }),
 );

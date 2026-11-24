@@ -443,6 +443,8 @@ export const PullRequestListResult = Schema.Struct({
   /** Unreadable hosts are absent; JSON codecs reject optional record values. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   providers: Schema.Array(PullRequestProviderSummary),
+  /** Repositories read for a single-project listing, so callers can look up older PRs by number. */
+  repositories: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Re-sort after appending: one repository's older slice may outrank another's existing rows. */
   entries: Schema.Array(PullRequestListEntry),
   errors: Schema.Array(PullRequestListProjectError),

@@ -39,12 +39,12 @@ export function filterComposerPullRequestMatches<
   readonly entries: ReadonlyArray<Entry>;
   readonly linked?: ReadonlyArray<Linked>;
   readonly projectId: string;
-  readonly repository: string;
+  readonly repository: string | null;
   readonly query: string;
   readonly limit: number;
   readonly keyOf: (entry: Entry | Linked) => string;
 }): ReadonlyArray<Entry | Linked> {
-  const repository = input.repository.trim().toLowerCase();
+  const repository = input.repository?.trim().toLowerCase() ?? null;
   const { keyOf } = input;
   // Compare numerically so a zero-padded query like "0042" still finds #42.
   const queryNumber = /^\d+$/u.test(input.query) ? Number(input.query) : Number.NaN;
@@ -56,7 +56,7 @@ export function filterComposerPullRequestMatches<
   const matchingEntries = input.entries.filter(
     (entry) =>
       entry.projectId === input.projectId &&
-      entry.repository.trim().toLowerCase() === repository &&
+      (repository === null || entry.repository.trim().toLowerCase() === repository) &&
       matchesQuery(entry),
   );
   const uniqueEntries = new Map<string, Entry | Linked>();
@@ -76,6 +76,44 @@ export function filterComposerPullRequestMatches<
         updatedAtMs(right) - updatedAtMs(left),
     )
     .slice(0, input.limit);
+}
+
+/** Repositories of a project that still need an exact-number detail lookup. */
+export function composerExactPullRequestRepositories(input: {
+  readonly projectId: string;
+  readonly repository: string | null;
+  readonly listedRepositories?: ReadonlyArray<string> | undefined;
+  readonly entries: ReadonlyArray<
+    Pick<ComposerPullRequestMatch, "projectId" | "repository" | "number">
+  >;
+  readonly number: number;
+}): ReadonlyArray<string> {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const add = (repository: string) => {
+    const trimmed = repository.trim();
+    const normalized = trimmed.toLowerCase();
+    if (normalized.length === 0 || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(trimmed);
+  };
+  if (input.repository !== null) {
+    add(input.repository);
+  } else {
+    for (const repository of input.listedRepositories ?? []) add(repository);
+    for (const entry of input.entries) {
+      if (entry.projectId === input.projectId) add(entry.repository);
+    }
+  }
+  return candidates.filter((repository) => {
+    const normalized = repository.toLowerCase();
+    return !input.entries.some(
+      (entry) =>
+        entry.projectId === input.projectId &&
+        entry.repository.trim().toLowerCase() === normalized &&
+        entry.number === input.number,
+    );
+  });
 }
 
 /** Puts the thread's linked pull requests that match a text query ahead of the searched ones. */
