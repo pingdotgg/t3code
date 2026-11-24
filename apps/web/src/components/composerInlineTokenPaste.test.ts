@@ -75,4 +75,19 @@ describe("importPastedComposerText", () => {
       ),
     ).toBe("实现参考另附 [Agent-Autoloop 仓库](https://github.com/KKKKhazix/agent-autoloop)");
   });
+
+  it("links the anchored occurrence and leaves a destination the text already shows", () => {
+    const paste = (plain: string, html: string) =>
+      importPastedComposerText(
+        clipboard({ "text/plain": plain, "text/html": html }),
+        () => new Map(),
+      );
+    expect(
+      paste("docs, see docs", '<p>docs, see <a href="https://x.dev/?a=1&amp;b=(2)">docs</a></p>'),
+    ).toBe("docs, see [docs](https://x.dev/?a=1&b=%282%29)");
+    // T3's own copy already writes the link as Markdown in text/plain.
+    expect(paste("[docs](https://x.dev)", '<a href="https://x.dev">docs</a>')).toBe(
+      "[docs](https://x.dev)",
+    );
+  });
 });
