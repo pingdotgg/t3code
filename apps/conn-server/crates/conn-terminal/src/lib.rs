@@ -511,6 +511,13 @@ impl TerminalManager {
         }
     }
 
+    /// Holds the manager's lock until the guard drops, so a test can stall a close.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn hold_lock(&self) -> impl Drop + '_ {
+        self.inner.lock()
+    }
+
     /// `getShell`: the executable of a running terminal's shell.
     pub fn shell(&self, thread_id: &str, terminal_id: &str) -> Option<String> {
         let state = self.inner.lock();

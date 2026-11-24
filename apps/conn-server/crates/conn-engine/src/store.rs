@@ -59,6 +59,9 @@ WHERE kind = 'turnItems';
 -- The runs with a Stop request, for the visibility rule.
 CREATE INDEX IF NOT EXISTS turn_item_interrupts ON entities(thread_id, json_extract(body, '$.runId'))
 WHERE kind = 'turnItems' AND json_extract(body, '$.type') = 'run_interrupt_request';
+-- Threads that own a task in a linked environment (`has_remote_tasks`), for the shell trim.
+CREATE INDEX IF NOT EXISTS remote_task_owners ON entities(thread_id)
+WHERE kind = 'subagents' AND json_type(body, '$.remoteChild') = 'object';
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
   workspace_root TEXT NOT NULL UNIQUE,
@@ -220,6 +223,10 @@ pub(crate) type StoreResult<T> = Result<T, String>;
 
 /// Shell changes kept for resuming streams. An older cursor gets a fresh snapshot instead.
 pub(crate) const SHELL_CHANGES_KEEP: i64 = 1024;
+/// `SHELL_RESUME_MAX_GAP`: past this many events a snapshot is cheaper than the replay.
+const SHELL_RESUME_MAX_GAP: u64 = 1_000;
+/// `SHELL_REPLAY_PAYLOAD_BUDGET_BYTES`: raw event bytes a shell resume may replay.
+const SHELL_REPLAY_BUDGET_BYTES: i64 = 8 * 1024 * 1024;
 /// Command receipts kept for retries. Clients retry within seconds, not thousands of commands.
 pub(crate) const RECEIPTS_KEEP: i64 = 4096;
 /// Retention runs when the sequence crosses a multiple of this, not on every commit.
@@ -278,6 +285,8 @@ pub(crate) struct Store {
     clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
+    /// The provider instances, so a command can tell an instance's driver ([`Tx::driver`]).
+    pub(crate) providers: conn_provider::ProviderSet,
     /// Which runs' provider starts were accepted or abandoned. In memory: a restart starts
     /// every active run again, so nothing here outlives the process.
     starts: StartLedger,
@@ -340,6 +349,7 @@ impl Store {
             next_seq: high as u64 + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
+            providers: conn_provider::ProviderSet::default(),
             starts: StartLedger::default(),
             attention: None,
         })
@@ -391,6 +401,7 @@ impl Store {
             attention_written: false,
             now_ms,
             generates_titles,
+            providers: &self.providers,
             starts: &mut self.starts,
             starts_changed: None,
             tx: self.conn.transaction().map_err(err)?,
@@ -487,6 +498,23 @@ impl Store {
         Ok(projects)
     }
 
+    /// The threads that own a task in a linked environment, which a trimmed shell keeps.
+    pub(crate) fn remote_task_owners(&self) -> StoreResult<std::collections::HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT thread_id FROM entities
+                 WHERE kind = 'subagents' AND json_type(body, '$.remoteChild') = 'object'
+                   AND json_extract(body, '$.origin') = 'app_owned'
+                   AND json_type(body, '$.childThreadId') IS NOT 'text'",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?;
+        rows.map(|row| row.map_err(err)).collect()
+    }
+
     /// Shell changes after `after`, or `None` when retention already dropped some of them.
     pub(crate) fn shell_changes_since(&self, after: u64) -> StoreResult<Option<Vec<Value>>> {
         let pruned: i64 = self
@@ -502,6 +530,43 @@ impl Store {
             return Ok(None);
         }
         self.shell_changes_after(after).map(Some)
+    }
+
+    /// Whether a shell stream resumes from `after` with changes rather than a snapshot
+    /// (`canResumeShellFrom`), for the socket's `afterSequence` and the HTTP `resumeFrom`: at
+    /// most [`SHELL_RESUME_MAX_GAP`] events and [`SHELL_REPLAY_BUDGET_BYTES`] of them behind.
+    pub(crate) fn shell_resumable(&self, after: u64) -> StoreResult<bool> {
+        let high = self.high_water();
+        if !crate::streams::can_replay(after, high, self.imported_through()) {
+            return Ok(false);
+        }
+        if after == high {
+            return Ok(true);
+        }
+        if high - after > SHELL_RESUME_MAX_GAP {
+            return Ok(false);
+        }
+        let bytes: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(length(CAST(event AS BLOB))), 0) FROM events
+                 WHERE seq > ?1 AND seq <= ?2",
+                params![after as i64, high as i64],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        if bytes > SHELL_REPLAY_BUDGET_BYTES {
+            return Ok(false);
+        }
+        let pruned: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE((SELECT value FROM meta WHERE key = 'shell_pruned_through'), 0)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        Ok(i64::try_from(after).is_ok_and(|after| after >= pruned))
     }
 
     pub(crate) fn shell_changes_after(&self, after: u64) -> StoreResult<Vec<Value>> {
@@ -1090,6 +1155,7 @@ pub(crate) struct Tx<'a> {
     /// Threads whose shell row may have changed, with the last sequence that touched them.
     touched: Vec<(String, u64)>,
     pub(crate) generates_titles: bool,
+    providers: &'a conn_provider::ProviderSet,
     starts: &'a mut StartLedger,
     /// The ledger as this write changed it; it replaces the store's on commit only.
     starts_changed: Option<StartLedger>,
@@ -1178,6 +1244,13 @@ impl Tx<'_> {
             .map_err(err)?
             .flatten();
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
+    }
+
+    /// The driver of a provider instance, found as a turn start finds the instance.
+    pub(crate) fn driver(&self, instance: &str) -> Option<String> {
+        self.providers
+            .resolve(instance)
+            .map(|provider| provider.driver().to_owned())
     }
 
     pub(crate) fn now(&self) -> &str {

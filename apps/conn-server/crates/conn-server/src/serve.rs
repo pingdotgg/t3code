@@ -23,12 +23,13 @@ use crate::{
     router,
 };
 
-/// Grok's `providerInstances.grok` settings as stored in `<state_dir>/settings.json`, so a Grok
-/// task due at start does not meet a disabled instance before the first status refresh. Reads
-/// the file with `std::fs`: call it before the runtime starts. A file that does not parse
-/// gives Grok's default (off); the settings store logs it.
+/// Grok's `providerInstances.grok` settings as the settings store reads `<state_dir>/settings.json`
+/// (legacy provider map and history included), so a Grok task due at start does not meet a
+/// disabled instance before the first status refresh. Reads the file with `std::fs`: call it
+/// before the runtime starts. A file that does not decode gives Grok's default (off); the
+/// settings store logs it.
 pub fn stored_grok_settings(state_dir: &std::path::Path) -> conn_provider_acp::GrokSettings {
-    let stored = crate::settings::read(&state_dir.join("settings.json")).unwrap_or_default();
+    let stored = crate::settings::effective(&state_dir.join("settings.json"));
     conn_provider_acp::GrokSettings::from_instance(
         stored.get("providerInstances").and_then(|p| p.get("grok")),
     )
@@ -281,6 +282,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        previews: OnceLock::new(),
         settle_cleanups: Arc::default(),
     });
 
@@ -399,6 +401,7 @@ pub async fn serve_with_instances(
         .await;
     let _ = host.scheduled_tasks.set(scheduled_tasks.clone());
     let preview = conn_preview::tabs::Preview::new(state_dir.clone());
+    let _ = host.previews.set(preview.clone());
     let mut deps = Deps {
         preview: Some(preview.clone()),
         panels: Some(conn_features::panels::PanelBroker::default()),
@@ -702,11 +705,20 @@ mod stored_grok_settings_tests {
         )
         .expect("settings");
         let settings = stored_grok_settings(&dir);
+        // T3's legacy map turns Grok on too, before the settings store migrates the file.
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"providers":{"grok":{"enabled":true,"binaryPath":"/opt/legacy-grok"}}}"#,
+        )
+        .expect("settings");
+        let legacy = stored_grok_settings(&dir);
         std::fs::write(dir.join("settings.json"), "{not json").expect("settings");
         let broken = stored_grok_settings(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(settings.enabled);
         assert_eq!(settings.binary_path, "/opt/grok");
+        assert!(legacy.enabled, "a legacy enable: on");
+        assert_eq!(legacy.binary_path, "/opt/legacy-grok");
         assert!(!broken.enabled, "a broken file: off");
     }
 }

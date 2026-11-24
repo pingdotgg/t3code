@@ -145,24 +145,57 @@ fn settled_millis(row: &Value) -> Option<i64> {
     row["settledAt"].as_str().and_then(millis_from_iso)
 }
 
+/// `OLDER_SETTLED_TITLE_ROWS` and `OLDER_SETTLED_MESSAGE_ROWS` in `ThreadSearch.ts`.
+const OLDER_SETTLED_TITLE_ROWS: usize = 15;
+const OLDER_SETTLED_MESSAGE_ROWS: usize = 5;
+
+/// `foldSearchQuery`, as far as a candidate filter needs: lowercase words, straight
+/// apostrophes, no wrapping quotes.
+fn fold_search_words(query: &str) -> Vec<String> {
+    let quotes: &[char] = &['"', '`', '\u{201c}', '\u{201d}'];
+    query
+        .trim()
+        .trim_matches(quotes)
+        .replace(['\u{2018}', '\u{2019}'], "'")
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every word appears in the title, the branch or a pull request's number or title.
+fn title_matches(row: &Value, words: &[String]) -> bool {
+    let mut text = String::new();
+    for field in [&row["title"], &row["branch"]] {
+        text.push_str(field.as_str().unwrap_or_default());
+        text.push('\n');
+    }
+    for pull_request in row["pullRequests"].as_array().into_iter().flatten() {
+        if let Some(number) = pull_request["number"].as_u64() {
+            text.push_str(&format!("#{number}\n"));
+        }
+        text.push_str(pull_request["title"].as_str().unwrap_or_default());
+        text.push('\n');
+    }
+    let text = text.to_lowercase().replace(['\u{2018}', '\u{2019}'], "'");
+    words.iter().all(|word| text.contains(word.as_str()))
+}
+
 /// `isOlderSettledThreadShell`: listed, settled before `before`.
 fn older_settled(row: &Value, before: i64) -> bool {
     listed(row) && settled_millis(row).is_some_and(|at| at < before)
 }
 
 /// The settle time below which a thread is "older settled": the 25th newest settle time of
-/// listed threads, or `None` with fewer than 25.
+/// listed threads, the oldest with fewer (so none is older), or `None` when none is settled.
 fn older_settled_cut(rows: &[Value]) -> Option<i64> {
     let mut times: Vec<i64> = rows
         .iter()
         .filter(|row| listed(row))
         .filter_map(settled_millis)
         .collect();
-    if times.len() < NEWEST_SETTLED_KEPT {
-        return None;
-    }
     times.sort_unstable_by(|a, b| b.cmp(a));
-    Some(times[NEWEST_SETTLED_KEPT - 1])
+    times.get(NEWEST_SETTLED_KEPT - 1).or(times.last()).copied()
 }
 
 /// A live subagent row stays in a shell that omits idle subagents (`isLiveSubagentShell`).
@@ -196,12 +229,19 @@ impl Store {
             .filter(|r| r["lineage"]["relationshipToParent"] == "subagent")
             .map(|r| r["lineage"]["parentThreadId"].clone())
             .collect();
+        let remote_task_owners = self.remote_task_owners()?;
+        let owns_remote_task = |r: &Value| {
+            r["id"]
+                .as_str()
+                .is_some_and(|id| remote_task_owners.contains(id))
+        };
         let mut keep: Vec<Value> = rows.clone();
         if omit_idle {
             keep.retain(|r| {
                 r["lineage"]["relationshipToParent"] != "subagent"
                     || live_subagent(r)
                     || parent_of_subagent.contains(&r["id"])
+                    || owns_remote_task(r)
             });
         }
         if omit_older {
@@ -232,6 +272,7 @@ impl Store {
                         .is_some_and(|until| until > now)
                     || live_subagent(r)
                     || ancestors.contains(&r["id"])
+                    || owns_remote_task(r)
             });
             let counts: Vec<Value> = counts
                 .into_iter()
@@ -387,13 +428,95 @@ impl Store {
             .next())
     }
 
-    /// `searchThreads`: the newest message of each thread that holds every search word, newest
-    /// first, as `ThreadSearch.ts`. Titles are the client's to match.
+    /// `searchThreadsWithOlderSettledRows`: message matches, and with `olderSettledBefore` the
+    /// rows of the best older settled matches, which a shell that omits them does not hold.
     pub(crate) fn search_threads(&self, input: &Value) -> StoreResult<Value> {
+        let mut result = self.search_messages(input)?;
+        let Some(before) = input["olderSettledBefore"]
+            .as_str()
+            .and_then(millis_from_iso)
+        else {
+            return Ok(result);
+        };
+        let message_threads: Vec<String> = result["matches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m["threadId"].as_str().map(str::to_owned))
+            .collect();
+        let threads = self.older_settled_search(input, before, &message_threads)?;
+        result["snapshotSequence"] = json!(self.high_water());
+        result["threads"] = json!(threads);
+        Ok(result)
+    }
+
+    /// `searchOlderSettled`: up to 15 older settled threads whose title, branch or pull
+    /// request matches every query word, by recent use, then up to 5 of the message matches.
+    /// Rows only; the client ranks them with its own palette scorer.
+    fn older_settled_search(
+        &self,
+        input: &Value,
+        before: i64,
+        message_threads: &[String],
+    ) -> StoreResult<Vec<Value>> {
+        let projects: Option<Vec<&str>> = input["projectIds"]
+            .as_array()
+            .map(|ids| ids.iter().filter_map(Value::as_str).collect());
+        let words = fold_search_words(input["query"].as_str().unwrap_or_default());
+        let mut candidates: Vec<Value> = self
+            .shell_rows()?
+            .into_iter()
+            .filter(|row| row["archivedAt"].is_null() && older_settled(row, before))
+            .filter(|row| {
+                projects
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&row["projectId"].as_str().unwrap_or("")))
+            })
+            .collect();
+        let recent_use = |row: &Value| -> i64 {
+            row["latestUserMessageAt"]
+                .as_str()
+                .or_else(|| row["createdAt"].as_str())
+                .and_then(millis_from_iso)
+                .unwrap_or(0)
+        };
+        let mut titled: Vec<Value> = candidates
+            .iter()
+            .filter(|row| !words.is_empty() && title_matches(row, &words))
+            .cloned()
+            .collect();
+        titled.sort_by_key(|row| std::cmp::Reverse(recent_use(row)));
+        titled.truncate(OLDER_SETTLED_TITLE_ROWS);
+        let mut seen: Vec<String> = Vec::new();
+        for id in message_threads {
+            if seen.len() >= OLDER_SETTLED_MESSAGE_ROWS {
+                break;
+            }
+            if seen.contains(id)
+                || titled.iter().any(|row| row["id"] == id.as_str())
+                || !candidates.iter().any(|row| row["id"] == id.as_str())
+            {
+                continue;
+            }
+            seen.push(id.clone());
+        }
+        candidates.retain(|row| seen.iter().any(|id| row["id"] == id.as_str()));
+        candidates.sort_by_key(|row| {
+            seen.iter()
+                .position(|id| row["id"] == id.as_str())
+                .unwrap_or(usize::MAX)
+        });
+        titled.extend(candidates);
+        Ok(titled)
+    }
+
+    /// `searchThreads`: the newest message of each thread that holds every search word, newest
+    /// first, as `ThreadSearch.ts`.
+    fn search_messages(&self, input: &Value) -> StoreResult<Value> {
         let limit = input["limit"].as_u64().unwrap_or(20).clamp(1, 50) as usize;
         let mut matches: Vec<Value> = Vec::new();
-        // Messages only: the client matches titles itself, and `titlesOnly` asks for no message
-        // search at all. A query with no long word searches no messages (`buildMessageSearch`).
+        // `titlesOnly` asks for no message search at all. A query with no long word searches no
+        // messages (`buildMessageSearch`).
         let Some(search) = (input["titlesOnly"] != true)
             .then(|| MessageSearch::new(input["query"].as_str().unwrap_or_default()))
             .flatten()

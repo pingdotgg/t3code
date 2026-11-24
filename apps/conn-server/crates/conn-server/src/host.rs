@@ -34,6 +34,8 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Preview tabs a deleted thread held (`ResourceCleanupService.cleanupPreviews`).
+    pub previews: OnceLock<conn_preview::tabs::Preview>,
     /// Settled-thread cleanups run one at a time, as T3's single event consumer runs them.
     pub settle_cleanups: Arc<tokio::sync::Mutex<()>>,
 }
@@ -82,7 +84,16 @@ impl Host {
 }
 
 impl EngineHost for Host {
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(crate::settings::refresh(&self.environment))
+    }
+
     fn provider_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        // T3 admits no launch while its settings fail to load; a retry runs first
+        // (`refresh_settings`), so this holds only while the failure lasts.
+        if self.environment.settings.needs_reload() {
+            return false;
+        }
         crate::settings::provider_instance_enabled(
             &self.environment.settings.raw(),
             project_id,
@@ -277,17 +288,38 @@ impl EngineHost for Host {
                 self.clean_up_settled(thread_id, settled_at.clone(), false);
             }
             ThreadClose::Archived | ThreadClose::Deleted => {
-                self.terminals.close(TerminalCloseInput {
-                    thread_id: thread_id.to_owned(),
-                    terminal_id: None,
-                    delete_history: Some(reason == ThreadClose::Deleted),
+                // T3's `terminal.cleanup` effect: archive and delete both drop the history. The
+                // close scans and unlinks history files under the manager's lock, so it runs on
+                // the blocking pool; the device sessions end after it.
+                let (terminals, devices) = (self.terminals.clone(), self.devices.get().cloned());
+                let thread_id = thread_id.to_owned();
+                tokio::spawn(async move {
+                    let close = TerminalCloseInput {
+                        thread_id: thread_id.clone(),
+                        terminal_id: None,
+                        delete_history: Some(true),
+                    };
+                    if let Err(error) =
+                        tokio::task::spawn_blocking(move || terminals.close(close)).await
+                    {
+                        eprintln!("terminal cleanup: {error}");
+                    }
+                    if let Some(devices) = devices {
+                        devices.cleanup_thread(&thread_id).await;
+                    }
                 });
-                // The thread's device sessions end; the devices stay on for other threads.
-                if let Some(devices) = self.devices.get().cloned() {
-                    let thread_id = thread_id.to_owned();
-                    tokio::spawn(async move { devices.cleanup_thread(&thread_id).await });
-                }
             }
+        }
+        // `ThreadDeletion`'s `preview.cleanup`: a deleted thread's tabs free their slots.
+        if reason == ThreadClose::Deleted
+            && let Some(previews) = self.previews.get().cloned()
+        {
+            let thread_id = thread_id.to_owned();
+            tokio::spawn(async move {
+                if let Err(error) = previews.close(&thread_id, None).await {
+                    eprintln!("preview cleanup: {error}");
+                }
+            });
         }
         // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
         if reason == ThreadClose::Deleted
@@ -367,6 +399,214 @@ mod tests {
     use crate::{methods::Deps, routes::mcp};
     use conn_engine::Engine;
     use serde_json::json;
+
+    fn cleanup_host(dir: &std::path::Path) -> Host {
+        let environment =
+            Arc::new(Environment::load(dir, None, dir.to_path_buf(), Default::default()).unwrap());
+        let terminals = TerminalManager::new(conn_terminal::TerminalConfig {
+            history_dir: Some(dir.join("terminals")),
+            shells: vec!["/bin/sh".into()],
+            poll_interval: std::time::Duration::from_millis(50),
+            kill_grace: std::time::Duration::from_millis(500),
+            persist_delay: std::time::Duration::from_millis(10),
+            ..conn_terminal::TerminalConfig::default()
+        });
+        Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals,
+            environment,
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            previews: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        }
+    }
+
+    fn attach(thread: &str, terminal: &str) -> conn_contract::TerminalAttachInput {
+        conn_contract::TerminalAttachInput {
+            thread_id: thread.into(),
+            terminal_id: terminal.into(),
+            cwd: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+            worktree_path: None,
+            cols: None,
+            rows: None,
+            env: Some(conn_contract::support::Map::from([
+                ("PS1".to_owned(), "$ ".to_owned()),
+                ("HISTFILE".to_owned(), "/dev/null".to_owned()),
+            ])),
+            provider_instance_id: None,
+            stop_on_settle: None,
+            restart_if_not_running: None,
+            resume: None,
+            max_history_bytes: None,
+        }
+    }
+
+    /// The text a fresh attachment replays.
+    async fn replayed(host: &Host, thread: &str, terminal: &str) -> (String, Option<i64>) {
+        use conn_contract::TerminalAttachStreamEvent as E;
+        let mut sub = host.terminals.attach(attach(thread, terminal), 1).unwrap();
+        let E::Snapshot(s) = sub.next().await else {
+            panic!("an attachment starts with its snapshot")
+        };
+        (s.snapshot.history, s.snapshot.pid)
+    }
+
+    async fn print_marker(host: &Host, thread: &str, terminal: &str, marker: &str) -> i64 {
+        use conn_contract::TerminalAttachStreamEvent as E;
+        let mut sub = host.terminals.attach(attach(thread, terminal), 1).unwrap();
+        host.terminals
+            .write(
+                conn_contract::TerminalWriteInput {
+                    thread_id: thread.into(),
+                    terminal_id: terminal.into(),
+                    data: format!("printf '%s-%s\\n' {marker} seen\n"),
+                    binary: None,
+                    reply: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let wanted = format!("{marker}-seen");
+        let mut all = String::new();
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while !all.contains(&wanted) {
+                match sub.next().await {
+                    E::Output(o) => all.push_str(&o.data),
+                    E::Snapshot(s) => all.push_str(&s.snapshot.history),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("the marker reaches the terminal");
+        host.terminals
+            .read(thread, terminal, None)
+            .and_then(|s| s.pid)
+            .unwrap()
+    }
+
+    fn alive(pid: i64) -> bool {
+        i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
+    }
+
+    /// T3's archive effect (`terminal.cleanup`) closes with `deleteHistory`: after unarchive,
+    /// both named terminals reopen as new shells with clean scrollback.
+    #[tokio::test(flavor = "current_thread")]
+    async fn archive_stops_terminals_and_drops_their_scrollback() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-archive-terms-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = cleanup_host(&dir);
+        let first = print_marker(&host, "archived", "term-1", "archmarkone").await;
+        let second = print_marker(&host, "archived", "term-2", "archmarktwo").await;
+        let other = print_marker(&host, "other", "term-1", "othermarker").await;
+
+        host.thread_closed("archived", ThreadClose::Archived);
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while alive(first) || alive(second) {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("archive stops both shells");
+
+        for (terminal, old) in [("term-1", first), ("term-2", second)] {
+            let (history, pid) = replayed(&host, "archived", terminal).await;
+            assert!(
+                pid.is_some_and(|pid| pid != old),
+                "{terminal} is a new shell"
+            );
+            assert!(!history.contains("archmarkone-seen"), "{history:?}");
+            assert!(!history.contains("archmarktwo-seen"), "{history:?}");
+        }
+        // Another thread's terminal keeps running with its scrollback.
+        let (history, pid) = replayed(&host, "other", "term-1").await;
+        assert_eq!(pid, Some(other));
+        assert!(history.contains("othermarker-seen"), "{history:?}");
+        host.terminals.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Archive drops the history on the blocking pool: with the terminal manager's lock held,
+    /// another RPC still completes on the server's one runtime thread.
+    #[tokio::test(flavor = "current_thread")]
+    async fn archive_cleanup_leaves_the_runtime_thread_free() {
+        use crate::table::{CallContext, Handler, MethodTable};
+        let dir =
+            std::env::temp_dir().join(format!("conn-archive-blocking-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = cleanup_host(&dir);
+        let mut table = MethodTable::new();
+        crate::methods::server::register(&mut table, &Deps::default());
+        let Some(Handler::Unary(probe)) = table.get("server.probe") else {
+            panic!("server.probe")
+        };
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let terminals = host.terminals.clone();
+        let holder = std::thread::spawn(move || {
+            let _held = terminals.hold_lock();
+            held_tx.send(()).unwrap();
+            // A stalled runtime fails the test after 10 s instead of hanging it.
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .is_ok()
+        });
+        held_rx.recv().unwrap();
+        host.thread_closed("archived", ThreadClose::Archived);
+        probe(CallContext::default(), json!({})).await.unwrap();
+        let _ = done_tx.send(());
+        assert!(
+            holder.join().unwrap(),
+            "the RPC completed while history cleanup held the lock"
+        );
+        host.terminals.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// T3's deletion effect (`preview.cleanup`) frees the deleted thread's desktop tabs: the
+    /// other thread's tabs stay, a full registry takes a new tab, and a replay is harmless.
+    #[tokio::test(flavor = "current_thread")]
+    async fn delete_closes_the_threads_desktop_previews() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-delete-previews-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = cleanup_host(&dir);
+        let previews = conn_preview::tabs::Preview::new(dir.clone());
+        host.previews.set(previews.clone()).unwrap();
+        let kept = previews.open_desktop("kept", &json!({})).unwrap();
+        while previews.open_desktop("deleted", &json!({})).is_ok() {}
+        previews
+            .open_desktop("newcomer", &json!({}))
+            .expect_err("the registry is full");
+
+        let sessions = |thread: &str| {
+            previews.list(thread)["sessions"]
+                .as_array()
+                .map_or(0, Vec::len)
+        };
+        for _ in 0..2 {
+            host.thread_closed("deleted", ThreadClose::Deleted);
+            for _ in 0..100 {
+                if sessions("deleted") == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+        assert_eq!(sessions("deleted"), 0);
+        assert_eq!(previews.list("kept")["sessions"][0]["tabId"], kept["tabId"]);
+        previews.open_desktop("newcomer", &json!({})).unwrap();
+        host.terminals.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         let out = std::process::Command::new("git")
@@ -453,6 +693,7 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
         });
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
@@ -648,6 +889,7 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            previews: OnceLock::new(),
             settle_cleanups: Arc::default(),
         };
         host.mcp.set(service.clone()).unwrap();
@@ -764,6 +1006,7 @@ mod tests {
             terminals: crate::methods::terminal::manager(Some(&environment)),
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
+            previews: OnceLock::new(),
             devices: OnceLock::new(),
             settle_cleanups: Arc::default(),
         });

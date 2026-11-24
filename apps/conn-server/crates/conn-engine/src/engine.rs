@@ -158,6 +158,9 @@ pub(crate) struct Inner {
     pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
+    /// Sessions a fresh run moved aside while they still ran background work; the idle
+    /// reaper closes each once its work ends or its hold runs out.
+    pub(crate) detached: Mutex<Vec<(String, Arc<LiveThread>)>>,
     /// Agent tools of closed sessions whose shared process still runs, by thread, for the
     /// thread's next session on that instance (T3 reuses the credential). Bounded by
     /// [`crate::runner::MAX_KEPT_TOOLS`].
@@ -264,7 +267,7 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 impl SqliteEngine {
     /// Opens the store, adds the configured projects, and, with [`EngineConfig::recover_runs`],
     /// recovers the runs a previous process left active ([`Self::recover_runs`]).
-    pub fn open(config: EngineConfig) -> Result<Self, String> {
+    pub fn open(mut config: EngineConfig) -> Result<Self, String> {
         let home = config.home.clone().unwrap_or_else(|| {
             config
                 .database
@@ -275,6 +278,11 @@ impl SqliteEngine {
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
+        let providers = config
+            .provider_set
+            .take()
+            .unwrap_or_else(|| std::mem::take(&mut config.providers).into());
+        store.providers = providers.clone();
         let attention = config
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
@@ -294,10 +302,9 @@ impl SqliteEngine {
                 store: Arc::new(Mutex::new(store)),
                 attention,
                 notify: watch::Sender::new(high),
-                providers: config
-                    .provider_set
-                    .unwrap_or_else(|| config.providers.into()),
+                providers,
                 live: Mutex::new(HashMap::new()),
+                detached: Mutex::new(Vec::new()),
                 kept_tools: Mutex::new(HashMap::new()),
                 thread_gates: Default::default(),
                 command_output: crate::output::CommandOutputHub::default(),
@@ -583,6 +590,9 @@ impl Inner {
         guard: Option<crate::guard::DispatchGuard>,
         commit_gate: Option<Arc<dyn crate::guard::CommitGate>>,
     ) -> Result<(u64, bool), DispatchError> {
+        if let Some(host) = &self.host {
+            host.refresh_settings().await;
+        }
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
@@ -1067,6 +1077,9 @@ impl Inner {
             }
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::CloseThreadSessions { thread_id } => {
+                self.close_thread_sessions(&thread_id).await;
+            }
             Effect::ApplyModelSelection {
                 thread_id,
                 selection,
@@ -1586,6 +1599,9 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
             // thread, so a refused launch leaves no thread behind.
+            if let Some(host) = &self.inner.host {
+                host.refresh_settings().await;
+            }
             if let Some(host) = &self.inner.host
                 && let (Some(project), Some(instance)) = (
                     input["projectId"].as_str(),
@@ -1691,6 +1707,30 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             self.inner
                 .db(|store| store.shell_snapshot())
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
+    fn http_shell_snapshot(
+        &self,
+        options: crate::HttpShellQuery,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetShellSnapshotError>>> {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Option<Value>, String> {
+                    if let Some(after) = options.resume_from
+                        && store.shell_resumable(after)?
+                    {
+                        return Ok(None);
+                    }
+                    store
+                        .shell_snapshot_trimmed(
+                            options.omit_idle_subagents,
+                            options.omit_older_settled,
+                        )
+                        .map(Some)
+                })
                 .await
                 .map_err(EngineError::Internal)
         })
