@@ -555,6 +555,7 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
 it.each([
   "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
   "see `**x**` now",
+  "signal = (7 * 2**3 * 5)**4",
 ])("sends pasted %s as pasted", async (pasted) => {
   await using screen = await mountEditor("");
   const { editor } = screen;
@@ -564,6 +565,33 @@ it.each([
     editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
+// regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
+it.each([
+  // Shown bold like the same paste; the sent text stays verbatim.
+  ["signal = (7 * 2**3 * 5)**4", "signal = (7 * 23 * 5)4"],
+  ["a **bold** and *soft* word", "a bold and soft word"],
+])("drops %s like a paste", async (dropped, shown) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", dropped);
+    const { left, top } = editor.view.coordsAtPos(1);
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: left,
+        clientY: top + 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(dropped);
+  expect(editor.state.doc.textContent).toBe(shown);
+  expect(editor.view.hasFocus()).toBe(true);
 });
 
 it.each([
