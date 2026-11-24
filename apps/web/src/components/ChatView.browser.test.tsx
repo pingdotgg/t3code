@@ -26,7 +26,7 @@ import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
-import { getPageScrollDistancePx } from "~/components/chat/pageScrollController";
+import { openVimMessageText } from "~/components/chat/vimMessageText";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
@@ -133,6 +133,11 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
 }));
+
+function vimCursorRange() {
+  const range = CSS.highlights.get("t3-vim-cursor")?.values().next().value;
+  return range instanceof Range ? range : undefined;
+}
 
 function installStylesheet() {
   const style = document.createElement("style");
@@ -967,6 +972,7 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   using _environment = installFakeEnvironment([parent, subagent]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
+    vimModeEnabled: true,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
@@ -990,6 +996,15 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   await expect
     .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
     .toBeVisible();
+  const enter = pane.getByRole("button", { name: "Enter Vim normal mode" });
+  await expect.element(pane.getByText("INSERT", { exact: true })).not.toBeInTheDocument();
+  await enter.click();
+  await expect.element(pane.getByRole("button", { name: "Exit Vim navigation" })).toHaveFocus();
+  await userEvent.keyboard("ggvip");
+  await vi.waitFor(() => expect(document.getSelection()?.toString()).toContain("subagent-child"));
+  await userEvent.keyboard("{Escape}{Escape}");
+  await expect.element(enter).toHaveFocus();
+  await expect.element(pane.getByText("NORMAL", { exact: true })).not.toBeInTheDocument();
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
@@ -1190,7 +1205,7 @@ it("selects and yanks sent prompts and assistant replies across virtualized Vim 
   await expect.element(editor).toHaveTextContent("draft");
   await userEvent.keyboard("{ArrowLeft}");
   expect(document.getSelection()?.anchorOffset).toBe(4);
-  const cursor = () => [...(CSS.highlights.get("t3-vim-cursor") ?? [])][0]?.toString();
+  const cursor = () => vimCursorRange()?.toString();
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() => expect(cursor()).toMatch(/^.$/u));
   expect(document.getSelection()?.toString()).toBe("");
@@ -1226,7 +1241,9 @@ it("selects and yanks sent prompts and assistant replies across virtualized Vim 
   await vi.waitFor(() => expect(write).toHaveBeenCalledWith("我的👩🏽‍💻"));
   await expect.element(page.getByText("NORMAL", { exact: true })).toBeVisible();
   await userEvent.keyboard("JJ");
-  expect(document.querySelector("[data-vim-message]")?.textContent).toBe("vim-replies: question 1");
+  const nextPrompt = page.getByText("vim-replies: question 1", { exact: true });
+  await expect.element(nextPrompt).toBeInViewport();
+  expect(nextPrompt.element().closest("[data-vim-message]")).toBeTruthy();
   await userEvent.keyboard("Jvll");
   expect(document.getSelection()?.toString()).toBe("中文👩🏽‍💻");
   await userEvent.keyboard("ia");
@@ -1293,11 +1310,12 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
     thread.runs[1]!.id,
     "vim-paging-assistant-1",
     3,
-    Array.from({ length: 100 }, (_, index) =>
-      index === 98
-        ? `Paragraph 98 wraps across several screens. ${"wrapped text ".repeat(400)}`
-        : `Paragraph ${index} about keyboard navigation.`,
-    ).join("\n\n"),
+    Array.from({ length: 100 }, (_, index) => {
+      if (index === 98)
+        return `Paragraph 98 wraps across several screens. ${"wrapped text ".repeat(400)}`;
+      if (index === 97) return ["```", "x".repeat(240), "```"].join("\n");
+      return `Paragraph ${index} about keyboard navigation.`;
+    }).join("\n\n"),
   );
   using _environment = installFakeEnvironment(
     [
@@ -1325,6 +1343,7 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     vimModeEnabled: true,
+    wordWrap: false,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const router = getRouter(
@@ -1341,10 +1360,20 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
     .element()
     .closest<HTMLElement>("[data-user-message-body]")!;
   await vi.waitFor(() => expect(promptBody.dataset.userMessageCollapsed).toBe("true"));
+  await expect.element(page.getByText("Prompt paragraph 0.", { exact: true })).toBeInViewport();
   await userEvent.keyboard("v");
   await vi.waitFor(() => expect(promptBody.dataset.userMessageCollapsed).toBe("false"));
   await userEvent.keyboard("{PageDown}");
   expect(document.getSelection()?.toString()).toContain("Prompt paragraph 8.");
+  await vi.waitFor(() => {
+    const caret = vimCursorRange()!.getBoundingClientRect();
+    expect(caret.bottom).toBeLessThanOrEqual(
+      editor.element().closest("[data-chat-composer-stack]")!.getBoundingClientRect().top,
+    );
+    expect(caret.top).toBeGreaterThanOrEqual(
+      promptBody.closest(".messages-timeline-scroll")!.getBoundingClientRect().top,
+    );
+  });
   await userEvent.keyboard("{Escape}J");
   const source = page.getByText("Paragraph 0 about keyboard navigation.");
   await expect.element(source).toBeInViewport();
@@ -1361,11 +1390,7 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
     .element()
     .closest("[data-chat-composer-stack]")!
     .getBoundingClientRect().top;
-  const half =
-    getPageScrollDistancePx({
-      containerHeightPx: viewport.height,
-      scrollPaddingBottomPx: Math.max(0, viewport.bottom - composerTop),
-    }) / 2;
+  const half = (Math.min(viewport.bottom, composerTop) - viewport.top - 36) / 2;
   const at = (offset: number) =>
     vi.waitFor(() => expect(Math.abs(scroll.scrollTop - offset)).toBeLessThan(5));
   const offsets: number[] = [];
@@ -1396,6 +1421,15 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
     normalColor,
   );
   expect(getComputedStyle(modeButton).textDecorationLine).toBe("none");
+  for (const key of ["PageDown", "Escape"]) {
+    modeButton.dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    );
+  }
+  const normalCell = vimCursorRange()!.getBoundingClientRect();
+  expect(normalCell.bottom).toBeGreaterThan(viewport.top);
+  expect(normalCell.bottom).toBeLessThanOrEqual(composerTop);
+  await userEvent.keyboard("v");
   const initial = document.getSelection()!.getRangeAt(0);
   const top = scroll.getBoundingClientRect().top;
   expect(initial.getBoundingClientRect().bottom).toBeGreaterThan(top);
@@ -1419,9 +1453,9 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
     offsets.length = 0;
     await userEvent.keyboard(keys);
     await vi.waitFor(() => {
-      const range = [...(CSS.highlights.get("t3-vim-cursor") ?? [])][0];
+      const range = vimCursorRange();
       expect(range?.startContainer.textContent).toContain(line);
-      const rect = (range as Range).getBoundingClientRect();
+      const rect = range!.getBoundingClientRect();
       expect(rect.top).toBeGreaterThanOrEqual(viewport.top);
       expect(rect.bottom).toBeLessThanOrEqual(composerTop);
     });
@@ -1450,6 +1484,16 @@ it("pages smoothly through a tall Vim reply and extends the Visual selection by 
   await setMotion("reduce");
   await jump("gg", "vim-paging: question 0", false);
   await jump("G", "Paragraph 99", false);
+  await setMotion("no-preference");
+  await userEvent.keyboard("kk$");
+  const codeCell = vimCursorRange()!;
+  const code = codeCell.startContainer.parentElement!.closest("pre")!;
+  expect(code.scrollLeft).toBeGreaterThan(0);
+  expect(codeCell.getBoundingClientRect().right).toBeLessThanOrEqual(
+    code.getBoundingClientRect().right + 1,
+  );
+  await setMotion("reduce");
+  await userEvent.keyboard("G");
   await jump("K", "Prompt paragraph 35.", false);
   scroll.removeEventListener("scroll", trackScroll);
   await userEvent.keyboard("i");
@@ -1507,29 +1551,29 @@ it("keeps intermediate messages visible while Vim scrolls to either end of a lon
   ] as const) {
     const positions: number[] = [];
     const visibleRows = new Set<string>();
-    const arrival = Promise.withResolvers<void>();
     const record = () => {
       positions.push(scroll.scrollTop);
       const row = document
         .elementFromPoint(viewport.left + viewport.width / 2, viewport.top + viewport.height / 2)
         ?.closest<HTMLElement>("[data-timeline-row-id]");
       if (row?.dataset.timelineRowId) visibleRows.add(row.dataset.timelineRowId);
-      const range = [...(CSS.highlights.get("t3-vim-cursor") ?? [])][0] as Range | undefined;
-      if (!range || range.startContainer.textContent !== end) return;
-      const rect = range.getBoundingClientRect();
-      if (
-        rect.height > 0 &&
-        rect.top >= viewport.top &&
-        rect.bottom <= composer.getBoundingClientRect().top
-      )
-        arrival.resolve();
     };
     record();
     scroll.addEventListener("scroll", record);
     try {
       await userEvent.keyboard(key);
+      await vi.waitFor(
+        () => {
+          const caret = vimCursorRange();
+          expect(caret?.startContainer.textContent).toBe(end);
+          const rect = caret!.getBoundingClientRect();
+          expect(rect.height).toBeGreaterThan(0);
+          expect(rect.top).toBeGreaterThanOrEqual(viewport.top);
+          expect(rect.bottom).toBeLessThanOrEqual(composer.getBoundingClientRect().top);
+        },
+        { timeout: 5000 },
+      );
       record();
-      await arrival.promise;
     } finally {
       scroll.removeEventListener("scroll", record);
     }
@@ -1540,5 +1584,59 @@ it("keeps intermediate messages visible while Vim scrolls to either end of a lon
     expect(distance).toBeGreaterThan(10 * viewport.height);
     expect(maxStep / distance).toBeLessThan(0.4);
     expect(visibleRows.size).toBeGreaterThan(3);
+    if (key === "gg") {
+      const follow = page.getByRole("button", { name: "Scroll to end" });
+      await expect.element(follow).toBeVisible();
+      using _frames = fakeTimers();
+      follow.element().closest("button")!.click();
+      scroll.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
+      await act(() => vi.advanceTimersToNextFrame());
+      expect(scroll.scrollTop).toBeLessThan(viewport.height);
+    }
+  }
+  const lastPrompt = page.getByText("vim-long-jumps: question 99", { exact: true });
+  await userEvent.keyboard("Kl");
+  expect(vimCursorRange()?.toString()).toBe("i");
+  scroll.scrollTop = 0;
+  await expect.element(lastPrompt).not.toBeInTheDocument();
+  scroll.scrollTop = scroll.scrollHeight;
+  await expect.element(lastPrompt).toBeInViewport();
+  await vi.waitFor(() => {
+    expect(lastPrompt.element().contains(vimCursorRange()?.startContainer ?? null)).toBe(true);
+    expect(vimCursorRange()?.toString()).toBe("i");
+  });
+  for (const shiftKey of [false, true]) {
+    await userEvent.keyboard("f");
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.activeElement!.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+  }
+});
+
+it("lands inside the taller cell when paging through a Markdown table", async () => {
+  await using screen = await render(
+    <table style={{ whiteSpace: "pre", lineHeight: "24px" }}>
+      <tbody>
+        <tr style={{ verticalAlign: "top" }}>
+          <td>{"first\nsecond\nthird"}</td>
+          <td>short</td>
+        </tr>
+        <tr>
+          <td>next row</td>
+        </tr>
+      </tbody>
+    </table>,
+  );
+  const reader = openVimMessageText(screen.container);
+  try {
+    reader.moveToScreenY(screen.getByText("short").element().getBoundingClientRect().top + 36);
+    expect(reader.paint(false)?.toString()).toBe("s");
+  } finally {
+    reader.close();
   }
 });

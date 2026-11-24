@@ -1,9 +1,13 @@
 import { messageTextRange, readMessageText } from "~/lib/assistantTextSelection";
 import { createVimTextCursor } from "./vimTextCursor";
 
-export function openVimMessageText(source: HTMLElement) {
+export function openVimMessageText(
+  source: HTMLElement,
+  previousCursor?: ReturnType<typeof createVimTextCursor>,
+) {
   let stream = readMessageText(source, "\n\n");
-  const cursor = createVimTextCursor(stream.text);
+  previousCursor?.refresh(stream.text);
+  const cursor = previousCursor ?? createVimTextCursor(stream.text);
   const needsTabIndex = !source.hasAttribute("tabindex");
   if (needsTabIndex) source.tabIndex = -1;
   let pageChunks: typeof stream.chunks | undefined;
@@ -48,11 +52,33 @@ export function openVimMessageText(source: HTMLElement) {
       }
       return low;
     };
-    const index = firstBelow(chunks.length, (index) => {
-      range.selectNodeContents(chunks[index]!.node);
-      return range.getBoundingClientRect().bottom;
+    const bounds = (node: Node) => {
+      range.selectNodeContents(node);
+      return range.getBoundingClientRect();
+    };
+    const index = firstBelow(chunks.length, (i) => {
+      const node = chunks[i]!.node;
+      const row = node.parentElement?.closest("tr");
+      return (row?.getBoundingClientRect() ?? bounds(node)).bottom;
     });
-    const chunk = chunks[index];
+    let chunk = chunks[index];
+    const row = chunk?.node.parentElement?.closest("tr");
+    if (row) {
+      let nearestTop = Infinity;
+      chunk = undefined;
+      for (let i = index; i < chunks.length; i++) {
+        const candidate = chunks[i]!;
+        if (!row.contains(candidate.node)) {
+          chunk ??= candidate;
+          break;
+        }
+        const rect = bounds(candidate.node);
+        if (rect.bottom <= y || rect.top >= nearestTop) continue;
+        chunk = candidate;
+        if (rect.top <= y) break;
+        nearestTop = rect.top;
+      }
+    }
     if (!chunk) {
       cursor.setPosition(stream.text.length);
       return;

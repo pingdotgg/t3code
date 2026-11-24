@@ -209,7 +209,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const timelineLiveFollowEnabled = follow.mode === "following";
   const readFollow = () => followStore.read(visit);
   // Async settles outlive their render; this reads the visit shown now.
-  const readCurrentFollow = useStableCallback(readFollow);
+  const isFollowing = useStableCallback(
+    (expectedVisit: TimelineFollowVisit = visit) =>
+      expectedVisit === visit && readFollow().mode === "following",
+  );
   const isTimelineAtLogicalEnd = () => {
     const current = readFollow();
     return (
@@ -312,22 +315,18 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     visitScroll().showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
     setTimelineAnchor(releaseChatTimelineAnchor);
+    const list = legendListRef.current;
+    if (!list) return;
+    const interrupted = () => legendListRef.current !== list || !isFollowing(visit);
     // The anchored end space must be gone before the scroll measures, or the
     // list lands short of the real end.
     requestAnimationFrame(() => {
-      const list = legendListRef.current;
-      if (!list) return;
+      if (interrupted()) return;
       void Promise.resolve(
         list.scrollToEnd?.({
           animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
         }),
-      ).then(() =>
-        settleListScroll(
-          list,
-          measuredEndOffset,
-          () => readCurrentFollow().mode !== "following" || legendListRef.current !== list,
-        ),
-      );
+      ).then(() => settleListScroll(list, measuredEndOffset, interrupted));
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
@@ -338,8 +337,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   useLayoutEffect(() => {
     const grew = composerTimelineInset > followedInsetRef.current;
     followedInsetRef.current = composerTimelineInset;
-    if (grew && readCurrentFollow().mode === "following") scrollToEndStable();
-  }, [composerTimelineInset, readCurrentFollow, scrollToEndStable]);
+    if (grew && isFollowing()) scrollToEndStable();
+  }, [composerTimelineInset, isFollowing, scrollToEndStable]);
 
   const handleNavigation = (navigation: TimelineNavigation) => {
     const awayFromEnd = () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;

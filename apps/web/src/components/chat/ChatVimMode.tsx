@@ -13,6 +13,7 @@ import {
 } from "./chatVimNavigation";
 
 export function ChatVimMode({
+  readOnly,
   listRef,
   navigateTimeline,
   composerRef,
@@ -51,15 +52,25 @@ export function ChatVimMode({
     return attachChatVimNavigation(
       button,
       column,
-      { listRef, navigateTimeline, composerRef, enterVimNormalModeRef, focusSidebar, leaveSidebar },
+      {
+        readOnly,
+        listRef,
+        navigateTimeline,
+        composerRef,
+        enterVimNormalModeRef,
+        focusSidebar,
+        leaveSidebar,
+      },
       setMode,
       copy,
     );
   };
 
   const hint = {
-    INSERT: gt("Esc to navigate"),
-    NORMAL: gt("h/j/k/l move · J/K messages · gd sidebar · v select · i type"),
+    INSERT: readOnly ? null : gt("Esc to navigate"),
+    NORMAL: readOnly
+      ? gt("h/j/k/l move · J/K messages · gd sidebar · v select · Esc exit")
+      : gt("h/j/k/l move · J/K messages · gd sidebar · v select · i type"),
     VISUAL: gt("iw word · ip paragraph · y copy · Esc cancel"),
   }[mode];
   return (
@@ -70,18 +81,21 @@ export function ChatVimMode({
         aria-label={
           mode === "INSERT" || mode === "VISUAL"
             ? gt("Enter Vim normal mode")
-            : gt("Return to typing")
+            : readOnly
+              ? gt("Exit Vim navigation")
+              : gt("Return to typing")
         }
       >
         <span
           data-mode={mode}
+          lang={readOnly && mode === "INSERT" ? undefined : "en"}
           className="font-mono data-[mode=NORMAL]:text-success-foreground data-[mode=VISUAL]:text-vim-visual-foreground"
           aria-live="polite"
         >
-          {mode}
+          {readOnly && mode === "INSERT" ? gt("Enter Vim normal mode") : mode}
         </span>
       </InlineButton>
-      <span className="min-w-0">{hint}</span>
+      {hint && <span className="min-w-0">{hint}</span>}
     </div>
   );
 }

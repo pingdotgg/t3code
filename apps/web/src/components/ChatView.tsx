@@ -4086,6 +4086,7 @@ export default function ChatView(props: ChatViewProps) {
                       {settings.vimModeEnabled && !hiddenThread && !rightPanelMaximized ? (
                         <ChatVimMode
                           key={displayedTimelineKey}
+                          readOnly={!composerMounted}
                           listRef={legendListRef}
                           enterVimNormalModeRef={enterVimNormalModeRef}
                           navigateTimeline={navigateTimeline}

@@ -47,6 +47,8 @@ cursor marks one character in your sent messages or the agent's replies. Use `h`
 Press `v` to start a selection at the cursor. For example, `vip` selects the current
 paragraph and `y` copies it. To copy a paragraph directly from **NORMAL**, use `yip`.
 Press `Esc` to leave **VISUAL**, then `i` to return to your draft.
+In a read-only subagent conversation, choose **Enter Vim normal mode** to read or copy
+messages. Press `Esc` in **NORMAL** to leave navigation.
 
 ### Navigate the Threads sidebar
 

@@ -23,6 +23,7 @@ type MessageScroll = {
   animation?: ReturnType<typeof scrollToHistoryOffset>;
 };
 export interface ChatVimNavigationProps {
+  readOnly: boolean;
   listRef: RefObject<LegendListRef | null>;
   navigateTimeline: () => void;
   composerRef: ComposerHandleRef;
@@ -69,6 +70,7 @@ export function attachChatVimNavigation(
   button: HTMLButtonElement,
   column: HTMLElement,
   {
+    readOnly,
     listRef,
     navigateTimeline,
     composerRef,
@@ -86,6 +88,7 @@ export function attachChatVimNavigation(
   let messageKey: string | null = null;
   let source: HTMLElement | null = null;
   let reader: ReturnType<typeof openVimMessageText> | null = null;
+  let savedCursor: ReturnType<typeof openVimMessageText>["cursor"] | undefined;
   let draft: ReturnType<ChatComposerHandle["readSnapshot"]> | null = null;
   let pending: "" | "g" | "y" | "i" | "a" | "yi" | "ya" | "f" | "F" | "t" | "T" = "";
   let landing: Landing | null = null;
@@ -123,9 +126,9 @@ export function attachChatVimNavigation(
     source = mounted;
     if (source) {
       source.dataset.vimMessage = mode;
-      waiting.disconnect();
       if (!reader) {
-        reader = openVimMessageText(source);
+        reader = openVimMessageText(source, savedCursor);
+        savedCursor = reader.cursor;
         observer.observe(source, { childList: true, subtree: true, characterData: true });
       }
       if (landing === "lastLine") {
@@ -141,32 +144,23 @@ export function attachChatVimNavigation(
       reader.paint(mode === "VISUAL");
     }
   };
-  const waiting = new MutationObserver(() =>
-    messageKey === null ? chooseMessage("current") : markMessage(),
-  );
-  const waitForMessage = () => {
-    const area = column.querySelector('[data-workspace-area="conversation"]');
-    if (area) waiting.observe(area, { subtree: true, childList: true });
-  };
+  const rowsObserver = new MutationObserver(() => {
+    if (messageKey === null) chooseMessage("current");
+    else if (!isCurrentSource(source)) markMessage();
+  });
   const selectMessage = (key: string | null, at: Landing = "start", keepScrolling = false) => {
     if (!keepScrolling) cancelMessageScroll();
-    waiting.disconnect();
-    if (key !== messageKey) closeReader();
+    if (key !== messageKey) {
+      closeReader();
+      savedCursor = undefined;
+    }
     messageKey = key;
     landing = at;
     markMessage();
-    if (key && !source) waitForMessage();
   };
 
   const observer = new MutationObserver((records) => {
-    if (!reader) return;
-    if (!isCurrentSource(source)) {
-      setMode("NORMAL");
-      markMessage();
-      if (!source) waitForMessage();
-      return;
-    }
-    reader.onMutation(records, mode === "VISUAL");
+    if (isCurrentSource(source)) reader?.onMutation(records, mode === "VISUAL");
   });
   function closeReader() {
     observer.disconnect();
@@ -174,13 +168,16 @@ export function attachChatVimNavigation(
     reader = null;
   }
   function setMode(next: ChatVimModeName) {
-    if (next !== mode) interruptPage();
+    const previous = mode;
+    mode = next;
+    if (next !== previous) interruptPage();
     if (next === "INSERT") {
       closeReader();
       cancelMessageScroll();
-      waiting.disconnect();
+      rowsObserver.disconnect();
       source?.removeAttribute("data-vim-message");
       source = null;
+      savedCursor = undefined;
       messageKey = null;
       draft = null;
     } else if (isCurrentSource(source)) {
@@ -188,17 +185,13 @@ export function attachChatVimNavigation(
       reader?.paint(next === "VISUAL");
     }
     column.toggleAttribute("data-vim-navigation", next !== "INSERT");
-    mode = next;
     pending = "";
     showMode(next);
   }
 
   function chooseMessage(motion: "current" | "first" | "last" | "next" | "previous") {
     const list = listRef.current;
-    if (!list) {
-      waitForMessage();
-      return;
-    }
+    if (!list) return;
     const state = list.getState();
     const rows: readonly MessagesTimelineRow[] = state.data;
     const current = messageKey === null ? undefined : state.indexByKey(messageKey);
@@ -222,10 +215,7 @@ export function attachChatVimNavigation(
       return null;
     };
     const row = find(start, direction) ?? (motion === "current" ? find(start + 1, 1) : null);
-    if (!row) {
-      if (messageKey === null) waitForMessage();
-      return;
-    }
+    if (!row) return;
 
     const destination =
       motion === "current"
@@ -273,7 +263,6 @@ export function attachChatVimNavigation(
         if (source && !isCurrentSource(source)) {
           landing = destination;
           markMessage();
-          if (!source) waitForMessage();
         }
         const cell = caretRect();
         const viewport = scroll.getBoundingClientRect();
@@ -334,7 +323,14 @@ export function attachChatVimNavigation(
   }
 
   const enterNormal = () => {
-    if (mode === "INSERT") draft = composerRef.current?.readSnapshot("dom") ?? null;
+    if (mode === "INSERT") {
+      draft = composerRef.current?.readSnapshot("dom") ?? null;
+      rowsObserver.observe(column, {
+        subtree: true,
+        childList: true,
+        attributeFilter: ["data-timeline-row-id"],
+      });
+    }
     const selection = doc.getSelection();
     if (
       selection &&
@@ -348,18 +344,19 @@ export function attachChatVimNavigation(
     navigateTimeline();
     chooseMessage("current");
   };
-  const enterInsert = () => {
+  const leaveNavigation = () => {
     const composer = composerRef.current;
     const saved = draft;
     setMode("INSERT");
-    if (composer && saved && composer.readSnapshot().value === saved.value) {
+    if (readOnly) button.focus({ preventScroll: true });
+    else if (composer && saved && composer.readSnapshot().value === saved.value) {
       composer.focusAt(saved.cursor, saved.expandedCursor);
     } else composer?.focusAtEnd();
   };
   const toggle = () => {
     if (mode === "INSERT") enterNormal();
     else if (mode === "VISUAL") setMode("NORMAL");
-    else enterInsert();
+    else leaveNavigation();
   };
   function offsetToShowCaret(scroll: HTMLElement, rect: DOMRect, requested = scroll.scrollTop) {
     const viewport = scroll.getBoundingClientRect();
@@ -376,21 +373,21 @@ export function attachChatVimNavigation(
     const list = listRef.current;
     const scroll = list?.getScrollableNode();
     if (!caret || !list || !scroll) return;
-    if (messageScroll?.animation) {
-      if (smooth) messageScroll.animation.retarget();
-      return;
-    }
     const rect = caret.getBoundingClientRect();
-    const current = scroll.scrollTop;
-    const requested =
-      pageFromTop === undefined ? current : (pendingPage?.top ?? current) + rect.top - pageFromTop;
-    const top = offsetToShowCaret(scroll, rect, requested);
     const pre = caret.startContainer.parentElement?.closest("pre");
     if (pre) {
       const box = pre.getBoundingClientRect();
       if (rect.left < box.left) pre.scrollLeft += rect.left - box.left;
       else if (rect.right > box.right) pre.scrollLeft += rect.right - box.right;
     }
+    if (messageScroll?.animation) {
+      if (smooth) messageScroll.animation.retarget();
+      return;
+    }
+    const current = scroll.scrollTop;
+    const requested =
+      pageFromTop === undefined ? current : (pendingPage?.top ?? current) + rect.top - pageFromTop;
+    const top = offsetToShowCaret(scroll, rect, requested);
     if (pageFromTop !== undefined) scrollToPage(list, scroll, top);
     else if (top !== current) {
       if (smooth) {
@@ -503,7 +500,7 @@ export function attachChatVimNavigation(
     }
     if (key === "i" || key === "a") {
       if (mode === "VISUAL") pending = key;
-      else enterInsert();
+      else if (!readOnly) leaveNavigation();
     } else if (key === "y") {
       if (mode === "NORMAL") pending = "y";
       else if (cursor) {
@@ -541,14 +538,22 @@ export function attachChatVimNavigation(
   function normalKey(event: KeyboardEvent, target: HTMLElement) {
     const { key } = event;
     if (key === "Shift" || key === "Control" || key === "Alt" || key === "Meta") return false;
+    if (key === "Escape" && mode === "VISUAL") {
+      setMode("NORMAL");
+      return true;
+    }
     interruptPage();
     const inMessage = reading(target);
     if (inMessage && !isCurrentSource(source)) markMessage();
     const prefix = pending;
     pending = "";
     if (key === "Escape") {
-      if (mode === "VISUAL") setMode("NORMAL");
-      else if (!inMessage) enterNormal();
+      if (!inMessage) enterNormal();
+      else if (readOnly) leaveNavigation();
+    } else if (inMessage && key === "Tab") {
+      setMode("NORMAL");
+      if (isCurrentSource(source)) source.focus({ preventScroll: true });
+      return false;
     } else if (inMessage && prefix && prefix !== "g") {
       return messageKeyDown(key, prefix);
     } else if (key === "[" || key === "]") {
@@ -560,14 +565,10 @@ export function attachChatVimNavigation(
       }
       moveWorkspaceFocus(key === "]" ? 1 : -1);
     } else if (!inMessage) {
-      if (key === "i" || key === "a") enterInsert();
+      if ((key === "i" || key === "a") && !readOnly) leaveNavigation();
       else if (key === "j" || key === "k")
         focusAdjacentWorkspaceControl(target, key === "j" ? 1 : -1);
       else return false;
-    } else if (key === "Tab") {
-      setMode("NORMAL");
-      if (isCurrentSource(source)) source.focus({ preventScroll: true });
-      return false;
     } else return messageKeyDown(key, prefix);
     return true;
   }
@@ -669,8 +670,8 @@ export function attachChatVimNavigation(
         }
         leaveSidebar(() => {
           if (!button.isConnected) return;
-          if (event.key === "Escape") button.focus({ preventScroll: true });
-          else enterInsert();
+          if (event.key === "Escape" || readOnly) button.focus({ preventScroll: true });
+          else leaveNavigation();
         });
       },
     },
@@ -686,7 +687,7 @@ export function attachChatVimNavigation(
     if (pendingPage) pendingPage.list.cancelScroll();
     pendingPage = null;
     cancelMessageScroll();
-    waiting.disconnect();
+    rowsObserver.disconnect();
     enterVimNormalModeRef.current = null;
     closeReader();
     source?.removeAttribute("data-vim-message");
