@@ -127,6 +127,7 @@ export const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* ()
 });
 
 interface DesktopBuildIconAssets {
+  readonly macIconComposerProject?: string;
   readonly macIconPng: string;
   readonly linuxIconPng: string;
   readonly windowsIconIco: string;
@@ -2768,16 +2769,17 @@ export function isDesktopLocalVersion(version: string): boolean {
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  if (isDesktopLocalVersion(version)) return "development";
+  if (isDesktopLocalVersion(version)) return "local";
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
   if (isDesktopLocalVersion(version)) {
     return {
-      macIconPng: BRAND_ASSET_PATHS.developmentDesktopIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.developmentUniversalIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.developmentWindowsIconIco,
+      macIconComposerProject: BRAND_ASSET_PATHS.localIconComposerProject,
+      macIconPng: BRAND_ASSET_PATHS.localMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.localLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.localWindowsIconIco,
     };
   }
   if (resolveDesktopUpdateChannel(version) === "nightly") {
@@ -2811,7 +2813,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
-  if (isDesktopLocalVersion(version)) return "T3 Code (Local)";
+  if (isDesktopLocalVersion(version)) return "Kaluwa";
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
@@ -2885,7 +2887,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const repoRoot = yield* RepoRoot;
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
-      icon: "icon.icns",
+      // Fork: the Icon Composer project gives local builds light and dark icons.
+      icon: isDesktopLocalVersion(version) ? "icon.icon" : "icon.icns",
       category: "public.app-category.developer-tools",
       extendInfo: {
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
@@ -3054,6 +3057,11 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
 ) {
   if (platform === "mac") {
     yield* stageMacIcons(stageResourcesDir, iconAssets.macIconPng, verbose);
+    if (iconAssets.macIconComposerProject) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.copy(iconAssets.macIconComposerProject, path.join(stageResourcesDir, "icon.icon"));
+    }
     return;
   }
 
@@ -3903,6 +3911,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.platform,
     stageResourcesDir,
     {
+      ...(iconAssets.macIconComposerProject
+        ? { macIconComposerProject: path.join(repoRoot, iconAssets.macIconComposerProject) }
+        : {}),
       macIconPng: path.join(repoRoot, iconAssets.macIconPng),
       linuxIconPng: path.join(repoRoot, iconAssets.linuxIconPng),
       windowsIconIco: path.join(repoRoot, iconAssets.windowsIconIco),

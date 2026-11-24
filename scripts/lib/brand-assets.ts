@@ -35,9 +35,21 @@ export const BRAND_ASSET_PATHS = {
   developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
   developmentWebIcon192Png: "assets/dev/blueprint-web-icon-192x192.png",
   developmentWebIcon512Png: "assets/dev/blueprint-web-icon-512x512.png",
+
+  // Fork: Kaluwa icon for -local builds.
+  localIconComposerProject: "assets/local/app-icon.icon",
+  localMacIconPng: "assets/local/kaluwa-macos-1024.png",
+  localLinuxIconPng: "assets/local/kaluwa-universal-1024.png",
+  localWindowsIconIco: "assets/local/kaluwa-windows.ico",
+  localWebFaviconIco: "assets/local/kaluwa-web-favicon.ico",
+  localWebFavicon16Png: "assets/local/kaluwa-web-favicon-16x16.png",
+  localWebFavicon32Png: "assets/local/kaluwa-web-favicon-32x32.png",
+  localWebAppleTouchIconPng: "assets/local/kaluwa-web-apple-touch-180.png",
+  localWebIcon192Png: "assets/local/kaluwa-web-icon-192x192.png",
+  localWebIcon512Png: "assets/local/kaluwa-web-icon-512x512.png",
 } as const;
 
-export type WebAssetBrand = "development" | "nightly" | "production";
+export type WebAssetBrand = "development" | "local" | "nightly" | "production";
 
 export const WEB_ASSET_CHANNELS = ["latest", "nightly"] as const;
 
@@ -69,6 +81,14 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     appleTouchIconPng: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
     icon192Png: BRAND_ASSET_PATHS.developmentWebIcon192Png,
     icon512Png: BRAND_ASSET_PATHS.developmentWebIcon512Png,
+  },
+  local: {
+    faviconIco: BRAND_ASSET_PATHS.localWebFaviconIco,
+    favicon16Png: BRAND_ASSET_PATHS.localWebFavicon16Png,
+    favicon32Png: BRAND_ASSET_PATHS.localWebFavicon32Png,
+    appleTouchIconPng: BRAND_ASSET_PATHS.localWebAppleTouchIconPng,
+    icon192Png: BRAND_ASSET_PATHS.localWebIcon192Png,
+    icon512Png: BRAND_ASSET_PATHS.localWebIcon512Png,
   },
   nightly: {
     faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,

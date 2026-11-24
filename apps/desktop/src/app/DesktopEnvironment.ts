@@ -106,6 +106,10 @@ export function resolveDesktopAppBranding(input: {
   readonly appVersion: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  // Fork: local builds go by Kaluwa.
+  if (stageLabel === "Local") {
+    return { baseName: "Kaluwa", stageLabel, displayName: "Kaluwa" };
+  }
   return {
     baseName: APP_BASE_NAME,
     stageLabel,

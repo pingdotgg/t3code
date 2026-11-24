@@ -16,6 +16,7 @@ import {
 
 const WEB_ASSET_BRANDS = [
   "development",
+  "local",
   "nightly",
   "production",
 ] as const satisfies ReadonlyArray<WebAssetBrand>;
