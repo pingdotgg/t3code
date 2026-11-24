@@ -474,4 +474,221 @@ describe("WorkflowRunsView", () => {
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
+
+  const KIND_KEY = "t3code:workflows:question-kind";
+  const asked = (runId: string, kind?: string): WorkflowQuestion => ({
+    ...question,
+    runId,
+    ...(kind === undefined ? {} : { kind }),
+  });
+  const kindWorkflows = [
+    {
+      name: "release",
+      version: 1,
+      triggers: [],
+      asks: [
+        { kind: "feature", label: "Feature wanted?" },
+        { kind: "intended", label: "Bug or intended?" },
+      ],
+    },
+  ];
+  const otherKinds = [
+    run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
+    run({ runId: "plain", title: "Release 1.4", status: "waiting" }),
+  ];
+  const kindsAsked = () =>
+    setup({
+      workflows: kindWorkflows,
+      runs: [...otherKinds, run({ runId: "dark", title: "Dark mode", status: "waiting" })],
+      questions: [asked("sticky", "intended"), asked("plain"), asked("dark", "feature")],
+    });
+  const featureAnswered = () =>
+    setup({
+      workflows: kindWorkflows,
+      runs: [
+        ...otherKinds,
+        run({ runId: "dark", title: "Dark mode", status: "completed", endedAt: at(6) }),
+      ],
+      questions: [asked("sticky", "intended"), asked("plain")],
+    });
+
+  it("narrows what needs you to one kind of question, and stays there once it is answered", async () => {
+    localStorage.removeItem(KIND_KEY);
+    kindsAsked();
+    await using _desktop = await desktop();
+    // Opened by its link, as a run picked from the list is.
+    await using screen = await render(page("dark"));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(screen.getByText("Feature wanted? 1 · Bug or intended? 1 · Other 1"))
+      .toBeVisible();
+    await expect.element(runs.getByRole("button", { name: /Sticky header/ })).toBeVisible();
+
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await expect.element(runs.getByRole("button", { name: /Dark mode/ })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(runs.getByRole("button", { name: /Release 1\.4/ }))
+      .not.toBeInTheDocument();
+
+    // Answering the last question of the kind keeps the filter: the other kinds stay out.
+    await screen.getByRole("button", { name: "Ship", exact: true }).click();
+    await vi.waitFor(() => expect(state.commands).toHaveLength(1));
+    featureAnswered();
+    await screen.rerender(page("dark"));
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .toMatchTextContent("Feature wanted? 0");
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("lists a question of a kind its workflow does not declare under Other, with those of no kind", async () => {
+    localStorage.removeItem(KIND_KEY);
+    setup({
+      workflows: kindWorkflows,
+      runs: [...otherKinds, run({ runId: "typo", title: "Typo fix", status: "waiting" })],
+      questions: [asked("sticky", "intended"), asked("plain"), asked("typo", "feture")],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(screen.getByText("Bug or intended? 1 · Other 2")).toBeVisible();
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await expect.element(screen.getByRole("option", { name: /feture/ })).not.toBeInTheDocument();
+    await screen.getByRole("option", { name: "Other 2" }).click();
+    await expect.element(runs.getByRole("button", { name: /Typo fix/ })).toBeVisible();
+    await expect.element(runs.getByRole("button", { name: /Release 1\.4/ })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("shows by itself only a run that asks the picked kind, and none once it is answered", async () => {
+    localStorage.removeItem(KIND_KEY);
+    kindsAsked();
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    // With no kind picked, the first run that waits is shown: one of another kind.
+    await expect.element(screen.getByRole("heading", { name: "Sticky header" })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await expect.element(screen.getByRole("heading", { name: "Dark mode" })).toBeVisible();
+
+    await screen.getByRole("button", { name: "Ship", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        ["workflow answer", { runId: "dark", name: "approve", choice: "Ship" }],
+      ]),
+    );
+    featureAnswered();
+    await screen.rerender(page());
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    // No other kind's question, with its answers, takes the place beside the empty list.
+    await expect.element(screen.getByRole("article")).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Ship", exact: true }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("moves from an open run that asks another kind to one that asks the picked kind", async () => {
+    localStorage.removeItem(KIND_KEY);
+    kindsAsked();
+    const select = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page("sticky", { select }));
+
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await vi.waitFor(() => expect(select).toHaveBeenCalledWith("dark"));
+    // Until the address follows, the open run is still in the list, so nothing shown is unlisted.
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .toHaveAttribute("aria-current", "true");
+    await expect
+      .element(runs.getByRole("button", { name: /Release 1\.4/ }))
+      .not.toBeInTheDocument();
+
+    await screen.rerender(page("dark", { select }));
+    await expect.element(screen.getByRole("heading", { name: "Dark mode" })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("keeps a kind remembered from before through answering a run picked from the list", async () => {
+    localStorage.setItem(KIND_KEY, JSON.stringify("feature"));
+    kindsAsked();
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await runs.getByRole("button", { name: /Dark mode/ }).click();
+    featureAnswered();
+    await screen.rerender(page("dark"));
+    // The answered run is in no list that waits, and the list does not move on to All for it.
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .toMatchTextContent("Feature wanted? 0");
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("opens the run that asks the picked kind, from the row of the run that invoked it", async () => {
+    localStorage.setItem(KIND_KEY, JSON.stringify("feature"));
+    setup({
+      workflows: kindWorkflows,
+      runs: [
+        run({ runId: "epic", title: "Epic", status: "waiting" }),
+        run({ runId: "dark", title: "Dark mode", status: "waiting", parentRunId: "epic" }),
+      ],
+      questions: [asked("epic", "intended"), asked("dark", "feature")],
+    });
+    const select = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page(null, { select }));
+
+    // Listed for the question the run it invoked asks; its own is of another kind.
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await runs.getByRole("button", { name: /Epic/ }).click();
+    expect(select.mock.calls).toEqual([["dark"]]);
+    localStorage.removeItem(KIND_KEY);
+  });
+
+  it("still shows a run opened by its link in a list that has it, whatever kind was picked before", async () => {
+    localStorage.setItem(KIND_KEY, JSON.stringify("feature"));
+    setup({
+      workflows: kindWorkflows,
+      runs: [
+        run({ runId: "busy", title: "Nightly sync" }),
+        run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
+      ],
+      questions: [asked("sticky", "intended")],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page("busy"));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: /Nightly sync/ }))
+      .toHaveAttribute("aria-current", "true");
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .not.toBeInTheDocument();
+    localStorage.removeItem(KIND_KEY);
+  });
 });
