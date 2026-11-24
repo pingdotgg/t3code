@@ -42,7 +42,16 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
     effectType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  static mapCause(effect: { readonly id: string; readonly request: { readonly type: string } }) {
+    return (cause: unknown) =>
+      new OrchestrationEffectExecutionError({
+        effectId: effect.id,
+        effectType: effect.request.type,
+        cause,
+      });
+  }
+}
 
 const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
 
@@ -157,12 +166,7 @@ export const layerExecutor: Layer.Layer<
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
-        const toExecutionError = (cause: unknown) =>
-          new OrchestrationEffectExecutionError({
-            effectId: effect.id,
-            effectType: effect.request.type,
-            cause,
-          });
+        const toExecutionError = OrchestrationEffectExecutionError.mapCause(effect);
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;

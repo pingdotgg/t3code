@@ -30,6 +30,21 @@ export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<Run
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  static forRequest(
+    input: Pick<
+      RuntimeRequestResponseExecutionError,
+      "threadId" | "providerSessionId" | "requestId"
+    >,
+    reason: RuntimeRequestResponseExecutionError["reason"],
+  ) {
+    return new RuntimeRequestResponseExecutionError({
+      reason,
+      threadId: input.threadId,
+      providerSessionId: input.providerSessionId,
+      requestId: input.requestId,
+    });
+  }
+
   override get message(): string {
     switch (this.reason) {
       case "request-missing":
@@ -78,12 +93,7 @@ export const layer: Layer.Layer<
       respond: Effect.fn("RuntimeRequestService.respond")(
         function* (input) {
           const responseError = (reason: RuntimeRequestResponseExecutionError["reason"]) =>
-            new RuntimeRequestResponseExecutionError({
-              reason,
-              threadId: input.threadId,
-              providerSessionId: input.providerSessionId,
-              requestId: input.requestId,
-            });
+            RuntimeRequestResponseExecutionError.forRequest(input, reason);
           const request = yield* projections.getRuntimeRequest(input.threadId, input.requestId);
           if (request === undefined) {
             return yield* responseError("request-missing");
