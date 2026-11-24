@@ -573,10 +573,8 @@ export const make = Effect.gen(function* () {
       return true;
     }),
     runTitle: Effect.fn("WorkflowStore.runTitle")(function* (runId, title) {
-      yield* write(
-        runId,
-        sql`UPDATE workflow_runs SET title = ${title.slice(0, 200)} WHERE run_id = ${runId}`,
-      );
+      const kept = title.slice(0, splitsSurrogatePair(title, 200) ? 199 : 200);
+      yield* write(runId, sql`UPDATE workflow_runs SET title = ${kept} WHERE run_id = ${runId}`);
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
       const at = yield* now;
