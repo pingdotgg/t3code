@@ -57,6 +57,7 @@ const reactTests = [
   "src/features/threads/useSidebarRowThreadKey.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
+  "src/features/home/thread-swipe-actions.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",
   "src/features/layout/workspace/useSearchScrollRestoration.test.tsx",
   "src/features/connection/useRetryEnvironment.test.tsx",
