@@ -35,9 +35,10 @@ export class PcmResampler {
       if (this.phase >= this.ratio) {
         this.phase -= this.ratio;
         let value = 0;
+        let index = this.position;
         for (let tap = 0; tap < this.coefficients.length; tap++) {
-          const index = (this.position - tap + this.history.length) % this.history.length;
           value += this.history[index]! * this.coefficients[tap]!;
+          index = index === 0 ? this.history.length - 1 : index - 1;
         }
         output.push(Math.max(-1, Math.min(1, value)));
       }

@@ -147,6 +147,7 @@ export function makeThreadPullRequests(
   ): ThreadCurrentPullRequest | null {
     const visible = visibleThreadPullRequests(links);
     if (visible.length === 0) return null;
+    if (visible.length === 1) return { kind: "single", link: visible[0]! };
     const open = visible.filter(isOpen);
     if (open.length === 1) return { kind: "single", link: open[0]! };
     const chains = resolveThreadPullRequestChains(visible);

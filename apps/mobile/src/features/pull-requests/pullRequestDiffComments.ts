@@ -53,10 +53,10 @@ export function annotatePullRequestDiff(
   const lines = new Map<string, NativeReviewDiffRow>();
   const paths = new Map(data.files.map((file) => [file.id, file.path]));
   for (const original of data.rows) {
-    const row = {
-      ...original,
-      filePath: original.filePath ?? (original.fileId ? paths.get(original.fileId) : undefined),
-    };
+    const row =
+      original.filePath !== undefined || !original.fileId
+        ? original
+        : { ...original, filePath: paths.get(original.fileId) };
     if (row.kind === "file" && row.filePath) firstByPath.set(row.filePath, row);
     if (row.kind !== "line" || !row.filePath) continue;
     if (row.oldLineNumber)
