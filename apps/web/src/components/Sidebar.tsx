@@ -3588,7 +3588,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             variantAction={
                               section === "snoozed"
                                 ? "unsnooze"
-                                : section === "settled" || thread.settledOverride === "settled" // fork: roles
+                                : section === "settled" ||
+                                    (section === "roles" && thread.settledOverride === "settled") // fork: roles
                                   ? "unsettle"
                                   : "settle"
                             }
