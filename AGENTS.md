@@ -1,5 +1,12 @@
 # T3 Code
 
+> **Fork note (cogwal/t3code).** This fork is building the **Thread Board**: a live board
+> where threads are cards that move between lanes on their own. Before any board work,
+> read [fork/thread-board/VISION.md](fork/thread-board/VISION.md). It holds the end goal,
+> the principles, the open questions and the decision log. Record the developer's
+> decisions there. `fork/` is fork-only and is exempt from the "do not commit plans"
+> rule below. Leave `fork/` and this note out of any upstream PR.
+
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity, Kiro, Pi, Muse Code, fx) and serves web, desktop, and mobile clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
