@@ -783,28 +783,6 @@ export function ThemeEditorPanel({
     setShouldRegenerateGuidedColors(false);
   };
 
-  const saveToEnvironment = (
-    save: (theme: ThemeDefinition) => Promise<boolean>,
-    editedTheme: ThemeDefinition,
-  ) => {
-    setIsSavingToEnvironment(true);
-    void save(editedTheme).then(
-      (saved) => {
-        setIsSavingToEnvironment(false);
-        if (!saved) {
-          setError(gt("Could not save the theme."));
-          return;
-        }
-        onSaved(editedTheme, { created: false });
-        onOpenChange(false);
-      },
-      (cause: unknown) => {
-        setIsSavingToEnvironment(false);
-        setError(cause instanceof Error ? cause.message : gt("Could not save the theme."));
-      },
-    );
-  };
-
   const handleSubmit = () => {
     if (!name.trim()) {
       setError(gt("Name your theme first."));
@@ -888,7 +866,22 @@ export function ThemeEditorPanel({
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
         };
         if (onSaveToEnvironment) {
-          saveToEnvironment(onSaveToEnvironment, editedTheme);
+          setIsSavingToEnvironment(true);
+          void onSaveToEnvironment(editedTheme).then(
+            (saved) => {
+              setIsSavingToEnvironment(false);
+              if (!saved) {
+                setError(gt("Could not save the theme."));
+                return;
+              }
+              onSaved(editedTheme, { created: false });
+              onOpenChange(false);
+            },
+            (cause: unknown) => {
+              setIsSavingToEnvironment(false);
+              setError(cause instanceof Error ? cause.message : gt("Could not save the theme."));
+            },
+          );
           return;
         }
         savedTheme = updateCustomTheme(editedTheme);
