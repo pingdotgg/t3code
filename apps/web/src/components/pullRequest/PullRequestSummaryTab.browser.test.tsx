@@ -250,6 +250,25 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
   expect(onFixFinding).toHaveBeenCalledWith({ kind: "comment", comment: remark });
 });
 
+it("ticks a checkbox in a comment the viewer may edit", async () => {
+  setup();
+  const comment = {
+    id: "20",
+    kind: "issue-comment" as const,
+    body: "- [ ] Trigger review",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+    canEdit: true,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+  expect(screen.container.querySelector('[aria-label="Edit comment"]')).not.toBeNull();
+  const box = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  expect(box.disabled).toBe(false);
+});
+
 it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   setup();
   state.timestampFormat = "24-hour";
