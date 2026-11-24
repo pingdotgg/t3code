@@ -37,12 +37,28 @@ it.layer(NodeServices.layer)("service selection lock", (it) => {
       const lock = `${selectionPath}.selection-lock`;
 
       const releaseFirst = yield* Effect.promise(() => acquireServiceSelectionLock(selectionPath));
+      let signalRetryStarted!: () => void;
+      const retryStarted = new Promise<void>((resolve) => {
+        signalRetryStarted = resolve;
+      });
+      let releaseRetryGate!: () => void;
+      const retryGate = new Promise<void>((resolve) => {
+        releaseRetryGate = resolve;
+      });
       let secondAcquired = false;
-      const second = acquireServiceSelectionLock(selectionPath).then((release) => {
+      const second = acquireServiceSelectionLock(selectionPath, {
+        waitForRetry: () => {
+          signalRetryStarted();
+          return retryGate;
+        },
+      }).then((release) => {
         secondAcquired = true;
         return release;
       });
+      yield* Effect.promise(() => retryStarted);
+      assert.isFalse(secondAcquired);
       releaseFirst();
+      releaseRetryGate();
       const releaseSecond = yield* Effect.promise(() => second);
       assert.isTrue(secondAcquired);
       releaseSecond();
