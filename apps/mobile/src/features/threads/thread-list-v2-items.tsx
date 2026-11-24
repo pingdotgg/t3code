@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -11,6 +12,7 @@ import {
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -930,7 +932,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
-  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const hasOperateScope = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const isConnected = useAtomValue(connectedEnvironmentIdsAtom, (ids) =>
+    ids.includes(thread.environmentId),
+  );
+  const canOperateThread = hasOperateScope && isConnected;
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
   const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
@@ -1099,6 +1105,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
   );
   const menuActions = useMemo<MenuAction[]>(() => {
+    const copyActions: MenuAction[] = [
+      { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
+      { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
+    ];
+    if (!isConnected) return copyActions;
     const nested = Platform.OS === "ios";
     const localized = (action: MenuAction): MenuAction => ({ ...action, title: m(action.title) });
     const direct: MenuAction[] = [
@@ -1111,8 +1122,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             },
           ]
         : []),
-      { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
-      { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
+      ...copyActions,
       ...(canShareWithGuest
         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
         : []),
@@ -1197,6 +1207,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     autoSettleMenuItems,
     canShareWithGuest,
     canUnsettle,
+    isConnected,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
@@ -1757,7 +1768,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   if (!canOperateThread)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={rowAppearance.swipeContainerStyle}>
+        {hasOperateScope ? (
+          // Offline: the cached grant still allows the local copy actions.
+          <Menu
+            accessibilityLabel={rowAccessibilityLabel}
+            actions={menuActions}
+            onPressAction={handleMenuAction}
+            shouldOpenOnLongPress
+          >
+            {rowContent(() => {})}
+          </Menu>
+        ) : (
+          rowContent(() => {})
+        )}
+      </View>
+    );
 
   return (
     <View collapsable={false}>
