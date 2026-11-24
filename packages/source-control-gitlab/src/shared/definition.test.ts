@@ -139,3 +139,24 @@ describe("GitLab remotes", () => {
     expect(recognize("https://notgitlab.example.com/group/repo.git")).toBeNull();
   });
 });
+
+describe("GitLab media URLs", () => {
+  const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+
+  it("fetches a user's uploaded avatar through the host and leaves every other image alone", () => {
+    expect(
+      media("https://git.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382"),
+    ).toEqual({
+      fetchUrl: "https://git.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382",
+      fileName: "avatar.png",
+    });
+    for (const url of [
+      "https://secure.gravatar.com/avatar/c4b495b9?s=80&d=identicon",
+      "https://git.example.test/group/project/uploads/0123456789abcdef/shot.png",
+      "https://git.example.test/uploads/-/system/project/avatar/12/logo.png",
+      "https://user:secret@git.example.test/uploads/-/system/user/avatar/857/avatar.png",
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+});

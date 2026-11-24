@@ -64,6 +64,7 @@ export const sourceControlMediaResponse = Effect.fn(
   const response = yield* fetchMedia({
     url: asset.url,
     headers: forwarded,
+    cwd: asset.cwd,
     ...(repository === undefined ? {} : { repository }),
   });
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
