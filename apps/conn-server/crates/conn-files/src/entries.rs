@@ -172,7 +172,9 @@ pub enum FileLinks {
 /// order. `visit` returns false to stop. Nothing is kept between calls.
 ///
 /// Ignore rules are Git's (`.gitignore` in the tree and its parents, `.git/info/exclude`, the
-/// global excludes file), applied in and out of a Git checkout, as fff does. Hidden files are
+/// global excludes file), applied in and out of a Git checkout, as fff does. `.ignore` files
+/// come first, as in fff and ripgrep: the nearest matching rule decides, and a `!` rule there
+/// re-includes what Git ignores (`WorkspaceSearchIndex.ts` `decideByIgnoreFiles`). Hidden files are
 /// listed; `.git` and the server's internal files are not; links are never followed, and a
 /// link to a file is listed only with [`FileLinks::Listed`].
 pub fn walk_files(
@@ -189,7 +191,6 @@ pub fn walk_files(
     let internal = internal.clone();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(false)
-        .ignore(false)
         .require_git(false)
         // The `ignore` crate reads `~/.gitconfig` itself for the global excludes file. Git
         // reads no `~/.gitconfig` when `GIT_CONFIG_GLOBAL` names another file, so neither does
@@ -342,7 +343,9 @@ pub fn list_directory(
     })
 }
 
-fn symlink_kind(
+/// What `link` resolves to: a file or folder inside `real_root`, outside `.git` and server
+/// state. `None` for anything else.
+pub(crate) fn symlink_kind(
     link: &Path,
     real_root: &Path,
     ancestors: &[PathBuf],

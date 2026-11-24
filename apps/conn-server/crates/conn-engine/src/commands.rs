@@ -2,109 +2,84 @@
 //! effects to run after the commit. To support a new command, add one function and one line
 //! in [`handler`].
 
-use serde::Deserialize;
+use conn_provider::goal::GoalCommand;
+use conn_support::ids::join_id;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::shell::{ACTIVE_RUN_STATUSES, LIVE_RUN_STATUSES};
 use crate::store::{Draft, StoreResult, Tx};
 
-/// Work that touches a provider. Runs after the command's events are committed.
-#[derive(Debug)]
+/// Work that touches a provider. Runs after the command's events are committed. Stored as an
+/// outbox row (`outbox.rs`); the tag is the row's `effect_type`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
 pub(crate) enum Effect {
     /// Rolls a thread back to a checkpoint (`provider-thread.rollback`).
+    #[serde(rename = "provider-thread.rollback")]
     Rollback(crate::rollback::RollbackRequest),
     /// Captures a run's checkpoint and finishes it (`checkpoint.capture`).
-    CaptureCheckpoint {
-        thread_id: String,
-        run_id: String,
-    },
-    StartTurn {
-        thread_id: String,
-        run_id: String,
-    },
+    #[serde(rename = "checkpoint.capture")]
+    CaptureCheckpoint { thread_id: String, run_id: String },
+    #[serde(rename = "provider-turn.start")]
+    StartTurn { thread_id: String, run_id: String },
     /// Adds a message to a running turn. Falls back to the queue when the provider declines.
+    #[serde(rename = "provider-turn.steer")]
     Steer {
         thread_id: String,
         run_id: String,
         message_id: String,
     },
-    Interrupt {
-        thread_id: String,
-        run_id: String,
-    },
+    #[serde(rename = "provider-turn.interrupt")]
+    Interrupt { thread_id: String, run_id: String },
     /// Stop ended the run before the provider accepted its turn: the start still in flight is
     /// abandoned (T3 cancels `provider-turn.start`). Runs at once, outside the lane.
-    AbandonStart {
-        thread_id: String,
-        run_id: String,
-    },
+    #[serde(rename = "provider-turn.abandon-start")]
+    AbandonStart { thread_id: String, run_id: String },
     /// Stop on a thread whose latest run settled while its background work still runs: the
     /// provider gets `interruptTurn` with `requestRuntimeRestart` for that settled turn.
-    StopBackgroundWork {
-        thread_id: String,
-        run_id: String,
-    },
-    Respond {
-        thread_id: String,
-        request: Value,
-    },
+    #[serde(rename = "provider-turn.stop-background-work")]
+    StopBackgroundWork { thread_id: String, run_id: String },
+    #[serde(rename = "runtime-request.respond")]
+    Respond { thread_id: String, request: Value },
     /// Ends the provider session; a workspace move does this too. Its MCP credential is
     /// revoked when the process ends, and kept for the thread's next session while a shared
     /// process (Codex's `app-server`) still runs, as T3 does.
-    CloseSession {
-        thread_id: String,
-    },
+    #[serde(rename = "provider-session.detach")]
+    CloseSession { thread_id: String },
+    /// Ends every provider session of a deleted thread, the ones a fresh run moved aside too.
+    #[serde(rename = "provider-session.detach-thread")]
+    CloseThreadSessions { thread_id: String },
     /// Sends a model selection to the thread's running provider turn
     /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
     /// rest waits for the next turn.
-    ApplyModelSelection {
-        thread_id: String,
-        selection: Value,
-    },
+    #[serde(rename = "provider-session.apply-model-selection")]
+    ApplyModelSelection { thread_id: String, selection: Value },
+    /// Its outbox row outlives a server update, so each field a later build adds takes
+    /// `#[serde(default)]`: a row stored before the field existed still decodes.
+    #[serde(rename = "attachment.cleanup")]
     CleanupHtmlAttachments {
         thread_id: String,
+        #[serde(default)]
         ids: Vec<(String, String)>,
     },
     /// Tells the host a remote task of `thread_id` now owes its thread there a stop, so its
     /// follower runs again (T3's `RemoteDelegation.start` stream of `subagent.updated`).
-    RemoteTaskChanged {
-        thread_id: String,
-        task_id: String,
-    },
+    #[serde(rename = "delegated-task.remote-changed")]
+    RemoteTaskChanged { thread_id: String, task_id: String },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
+    #[serde(rename = "thread.closed")]
     ThreadClosed {
         thread_id: String,
         reason: crate::ThreadClose,
     },
     /// Asks the title generator; answers with `thread.title.regeneration.complete`.
+    #[serde(rename = "thread-title.generate")]
     GenerateTitle {
         thread_id: String,
         request_id: String,
         regenerate: bool,
     },
-}
-
-impl Effect {
-    /// The thread whose effect lane this effect waits in; `None` runs at once (title
-    /// generation, which T3 keeps out of a thread's lane).
-    pub(crate) fn lane(&self) -> Option<&str> {
-        match self {
-            Self::Rollback(request) => Some(&request.thread_id),
-            Self::CaptureCheckpoint { thread_id, .. }
-            | Self::StartTurn { thread_id, .. }
-            | Self::Steer { thread_id, .. }
-            | Self::Interrupt { thread_id, .. }
-            | Self::StopBackgroundWork { thread_id, .. }
-            | Self::Respond { thread_id, .. }
-            | Self::CloseSession { thread_id }
-            | Self::ApplyModelSelection { thread_id, .. }
-            | Self::CleanupHtmlAttachments { thread_id, .. }
-            | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
-            Self::GenerateTitle { .. }
-            | Self::AbandonStart { .. }
-            | Self::RemoteTaskChanged { .. } => None,
-        }
-    }
 }
 
 pub(crate) enum CommandError {
@@ -313,7 +288,11 @@ fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
             thread["delegatedFrom"] = from;
         }
     }
-    tx.append(Draft::new(&c.thread_id, "thread.created", thread).command(Some(&c.command_id)))?;
+    tx.append(
+        Draft::new(&c.thread_id, "thread.created", thread)
+            .command(Some(&c.command_id))
+            .payload_instance(),
+    )?;
     if let Some(mut message) = initial_message {
         message["type"] = json!("message.dispatch");
         message["threadId"] = json!(c.thread_id);
@@ -369,7 +348,11 @@ enum Delivery {
 
 /// `resolveDeliveryIntent` in `CommandPolicy.ts`, for one provider that may or may not steer:
 /// we steer into a running provider turn and let the provider decline (then it queues).
-fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>), CommandError> {
+fn delivery(
+    tx: &Tx<'_>,
+    c: &mut MessageDispatch,
+    goal: Option<&GoalCommand>,
+) -> Result<(Delivery, Option<Value>), CommandError> {
     let active = active_run(tx, &c.thread_id)?;
     let Some(active) = active else {
         return Ok((Delivery::Start, None));
@@ -402,11 +385,30 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
             }
         }
         "start_immediately" => match c.delivery_intent.as_deref() {
-            Some("steer" | "restart" | "auto") => Some(active),
+            Some("steer" | "restart" | "auto") => Some(active.clone()),
             _ => None,
         },
         _ => None,
     };
+    if let Some(goal) = goal {
+        let target = match c.dispatch_mode.kind.as_str() {
+            "queue_after_active" if c.delivery_intent.is_some() => Some(active),
+            _ => steer_target.clone(),
+        };
+        if let Some(target) = target {
+            let stops = goal_stops_run(tx, &c.thread_id, goal, &target)?;
+            // A goal stays its own run: never a steer, now or once the turn runs.
+            c.dispatch_mode = DispatchMode {
+                kind: "queue_after_active".into(),
+                target_run_id: None,
+            };
+            return Ok(if stops {
+                (Delivery::Queue { first: true }, Some(target))
+            } else {
+                (Delivery::Queue { first: false }, None)
+            });
+        }
+    }
     let restart =
         c.dispatch_mode.kind == "restart_active" || c.delivery_intent.as_deref() == Some("restart");
     Ok(match steer_target {
@@ -415,6 +417,64 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
         Some(target) if turn_running(&target)? => (Delivery::Steer(target), None),
         _ => (Delivery::Queue { first: false }, None),
     })
+}
+
+/// `isNativeMaintenanceCommand`: compaction and sign-out, which take no steering input.
+fn is_native_maintenance(message: &Value) -> bool {
+    let text =
+        conn_support::text::js_trim(message["text"].as_str().unwrap_or_default()).to_lowercase();
+    message["attachments"].as_array().is_none_or(Vec::is_empty)
+        && matches!(text.as_str(), "/compact" | "/logout")
+}
+
+/// `goalDriverFor` and `ensureGoalCommandSupported`: the `/goal` in a message sent to
+/// `instance`, when that provider runs native goals. A control it cannot run is refused.
+fn native_goal(
+    tx: &Tx<'_>,
+    text: &str,
+    has_attachments: bool,
+    instance: &str,
+) -> Result<Option<GoalCommand>, CommandError> {
+    let Some(goal) = conn_provider::goal::parse_command(text, has_attachments) else {
+        return Ok(None);
+    };
+    match tx.driver(instance).as_deref() {
+        Some("claudeAgent") if matches!(goal, GoalCommand::Pause | GoalCommand::Resume) => {
+            reject("Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.")
+        }
+        Some("codex" | "claudeAgent") => Ok(Some(goal)),
+        _ => Ok(None),
+    }
+}
+
+/// The goal rule of `dispatchMessage` and `promoteQueuedMessageToSteer` for a native `/goal`
+/// aimed at `target`: whether it stops the run (`goalCommandStopsActiveRun`), from the goal on
+/// the run's provider thread. A run that is only finishing is never stopped, nor a compaction
+/// or sign-out.
+fn goal_stops_run(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    goal: &GoalCommand,
+    target: &Value,
+) -> Result<bool, CommandError> {
+    let provider_thread = match target["providerThreadId"].as_str() {
+        Some(id) => tx.entity(thread_id, "providerThreads", id)?,
+        None => None,
+    };
+    let live = matches!(
+        target["status"].as_str(),
+        Some("preparing" | "starting" | "running")
+    );
+    let goal_status = provider_thread
+        .as_ref()
+        .and_then(|pt| pt["goal"]["status"].as_str());
+    let maintenance = match target["userMessageId"].as_str() {
+        Some(id) => tx
+            .entity(thread_id, "messages", id)?
+            .is_some_and(|m| is_native_maintenance(&m)),
+        None => false,
+    };
+    Ok(live && goal.stops_active_run(goal_status) && !maintenance)
 }
 
 pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
@@ -433,6 +493,17 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 target_run_id: None,
             };
         }
+    }
+    // A user's fresh send supersedes a pending fork, or the next send would bring the
+    // parent's context back; a schedule's is a side conversation and was refused above.
+    if fresh && let Some(mut transfer) = crate::fork::pending_fork(tx, &c.thread_id)? {
+        transfer["status"] = json!("superseded");
+        transfer["error"] = json!("Superseded by a fresh session.");
+        transfer["updatedAt"] = json!(tx.now());
+        tx.append(
+            Draft::new(&c.thread_id, "context-transfer.updated", transfer)
+                .command(Some(&c.command_id)),
+        )?;
     }
     crate::fork::ensure_native_fork(
         tx,
@@ -454,12 +525,40 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.dispatch_mode.kind
         ));
     }
-    let (delivery, interrupt) = delivery(tx, &c)?;
+    // After a failed or stopped worktree setup, work waits for a worktree rather than start
+    // in the project checkout (`worktreeMissingRun`).
+    let worktree_missing = matches!(
+        c.dispatch_mode.kind.as_str(),
+        "queue_after_active" | "start_immediately"
+    ) && active_run(tx, &c.thread_id)?.is_none()
+        && is_null(&thread, "worktreePath")
+        && latest_executed_run(tx, &c.thread_id)?.is_some_and(|run| failed_worktree_setup(&run));
+    let instance = normalize_model_selection(
+        c.model_selection
+            .as_ref()
+            .unwrap_or(&thread["modelSelection"]),
+    )["instanceId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let goal = native_goal(tx, &c.text, !c.attachments.is_empty(), &instance)?;
+    let (delivery, interrupt) = delivery(tx, &mut c, goal.as_ref())?;
     if let Delivery::Steer(target) = delivery {
         return steer_into(tx, &c, &target);
     }
-    // A user send releases a queue that Stop or a failure held.
-    if c.created_by == "user" {
+    let delivery = match delivery {
+        Delivery::Start if worktree_missing => Delivery::Queue { first: false },
+        other => other,
+    };
+    let setup_pending = worktree_setup_pending(tx, &c.thread_id)?;
+    // A client send releases a queue that Stop or a failure held; server messages, such as
+    // an async answer, scheduled tasks and steer follow-ups do not (`sentByUserFromClient`).
+    if c.created_by == "user"
+        && matches!(c.creation_source.as_str(), "web" | "mobile")
+        && c.steer_follow_up_of_run_id.is_none()
+        && c.scheduled_task_id.is_none()
+        && !setup_pending
+    {
         release_held(tx, &c.thread_id)?;
     }
     let queued = matches!(delivery, Delivery::Queue { .. });
@@ -524,10 +623,24 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         _ => Value::Null,
     };
-    let held = queued
-        && queued_runs(tx, &c.thread_id)?
-            .iter()
-            .any(|r| r["queueHeld"] == true);
+    // A provider result arriving while a held queue waits still drains, unless Stop reached
+    // the active run (`wakeSkipsHold`): it replays output the CLI already produced.
+    let wake_skips_hold = c.created_by == "agent"
+        && c.creation_source == "provider"
+        && !setup_pending
+        && match active_run(tx, &c.thread_id)? {
+            Some(active) => {
+                interrupt_request(tx, &c.thread_id, active["id"].as_str().unwrap_or_default())?
+                    .is_none()
+            }
+            None => false,
+        };
+    let held = worktree_missing
+        || (queued
+            && !wake_skips_hold
+            && queued_runs(tx, &c.thread_id)?
+                .iter()
+                .any(|r| r["queueHeld"] == true));
     let mut run = json!({
         "id": run_id,
         "threadId": c.thread_id,
@@ -568,7 +681,14 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         run["restartContinuationOfRunId"] = json!(source);
     }
     if let Some(merge_back) = &merge_back {
-        crate::merge_back::append_records(tx, merge_back, &run_id, cid, &c.thread_id)?;
+        crate::merge_back::append_records(
+            tx,
+            merge_back,
+            &run_id,
+            cid,
+            &c.thread_id,
+            model["instanceId"].as_str(),
+        )?;
     }
     tx.append(draft("run.created", run))?;
     tx.append(draft(
@@ -614,6 +734,10 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     // A scheduled run's message names its task; the client's timeline marks it.
     if let Some(task) = &c.scheduled_task_id {
         message["scheduledTaskId"] = json!(task);
+        // An unpinned scheduled run follows the thread's selection (`Orchestrator.ts`).
+        if c.model_selection.is_none() {
+            message["followsThreadSelection"] = json!(true);
+        }
     }
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
@@ -673,7 +797,11 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 regenerate: false,
             });
         }
-        tx.append(Draft::new(&c.thread_id, "thread.metadata-updated", thread).command(cid))?;
+        tx.append(
+            Draft::new(&c.thread_id, "thread.metadata-updated", thread)
+                .command(cid)
+                .payload_instance(),
+        )?;
     }
     if let Some(target) = interrupt {
         // A run stopped before its provider started also abandons that start, and the
@@ -767,8 +895,8 @@ fn queued_provider_thread(run: &Value, thread: &Value) -> Value {
     }
 }
 
-/// T3's refusals of a fresh start (`dispatchMessage`): not while a fork is still being
-/// applied, and not while the current session runs background work that a new session would
+/// T3's refusals of a fresh start (`dispatchMessage`): not a schedule's while a fork is still
+/// being applied (a user's supersedes the fork), and not while the current session runs background work that a new session would
 /// end, unless a schedule sent it (nobody is there to wait or press Stop).
 fn fresh_context_allowed(
     tx: &Tx<'_>,
@@ -778,7 +906,7 @@ fn fresh_context_allowed(
     if !crate::merge_back::pending(tx, &c.thread_id)?.is_empty() {
         return reject("Send a message without /clear to apply the merged context first.");
     }
-    if crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
+    if c.scheduled_task_id.is_some() && crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
         return reject("A fresh session can't start while a fork or merge is still being applied.");
     }
     if c.scheduled_task_id.is_some() {
@@ -861,6 +989,41 @@ fn steer_into(tx: &mut Tx<'_>, c: &MessageDispatch, target: &Value) -> Outcome {
     }])
 }
 
+/// `releaseUnattendedHolds`: a hold waits for a person to review what they queued. Nobody
+/// reviews what agents, the server or scheduled tasks queued, so the thread's newest run
+/// completing without a Stop releases those, before the next run is picked.
+pub(crate) fn release_unattended_holds(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    completed_run_id: &str,
+) -> StoreResult<()> {
+    let held: Vec<Value> = queued_runs(tx, thread_id)?
+        .into_iter()
+        .filter(|run| run["queueHeld"] == true)
+        .collect();
+    if held.is_empty()
+        || latest_executed_run(tx, thread_id)?.is_none_or(|run| run["id"] != completed_run_id)
+        || interrupt_request(tx, thread_id, completed_run_id)?.is_some()
+        || worktree_setup_pending(tx, thread_id)?
+    {
+        return Ok(());
+    }
+    for mut run in held {
+        let message = match run["userMessageId"].as_str() {
+            Some(id) => tx.entity(thread_id, "messages", id)?,
+            None => None,
+        };
+        let unattended =
+            message.is_some_and(|m| m["createdBy"] != "user" || !is_null(&m, "scheduledTaskId"));
+        if unattended {
+            run["queueHeld"] = json!(false);
+            let id = run["id"].as_str().unwrap_or_default().to_owned();
+            tx.append(Draft::new(thread_id, "run.updated", run).run(Some(&id)))?;
+        }
+    }
+    Ok(())
+}
+
 /// Clears `queueHeld` on every queued run.
 fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
     let mut released = false;
@@ -877,7 +1040,37 @@ fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
 
 /// Sets `queueHeld` on every queued run, so they wait for the user.
 pub(crate) fn hold_queue(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    hold_queued(tx, thread_id, Held::All)
+}
+
+/// Which queued runs a hold leaves free.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Held {
+    All,
+    /// A provider failure leaves buffered provider notifications free: they replay output the
+    /// CLI already produced and prompt nothing (T3's `startNextQueuedRun`).
+    ExceptBufferedWakes,
+}
+
+/// T3's `isBufferedProviderNotification`: a wake the provider buffered, not a delegated result.
+fn is_buffered_provider_notification(message: &Value) -> bool {
+    message["createdBy"] == "agent"
+        && message["creationSource"] == "provider"
+        && message["notification"].is_object()
+        && is_null(message, "delegatedCompletion")
+}
+
+pub(crate) fn hold_queued(tx: &mut Tx<'_>, thread_id: &str, held: Held) -> StoreResult<()> {
     for mut run in queued_runs(tx, thread_id)? {
+        if held == Held::ExceptBufferedWakes && run["queueHeld"] != true {
+            let message = match run["userMessageId"].as_str() {
+                Some(id) => tx.entity(thread_id, "messages", id)?,
+                None => None,
+            };
+            if message.is_some_and(|m| is_buffered_provider_notification(&m)) {
+                continue;
+            }
+        }
         if run["queueHeld"] != true {
             run["queueHeld"] = json!(true);
             let id = run["id"].as_str().unwrap_or_default().to_owned();
@@ -889,10 +1082,213 @@ pub(crate) fn hold_queue(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
 
 /// Starts the next queued run when nothing is active (`startNextQueuedRun`). `only` picks one
 /// queued run, as `queued-run.start` does. Returns the effect that starts it.
+/// Whether the next queued run the queue would start runs on the failed run's provider.
+/// Stale pull request wakes at the head of the queue are dropped first, as T3's
+/// `startNextQueuedRun` drops them before it compares providers.
+pub(crate) fn next_runs_on_failed_provider(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    failed_run_id: &str,
+) -> StoreResult<bool> {
+    let (Some(thread), Some(failed)) = (
+        tx.thread(thread_id)?,
+        tx.entity(thread_id, "runs", failed_run_id)?,
+    ) else {
+        return Ok(false);
+    };
+    let next = loop {
+        let Some(next) = queued_runs(tx, thread_id)?
+            .into_iter()
+            .find(|run| run["queueHeld"] != true)
+        else {
+            return Ok(false);
+        };
+        let message = match next["userMessageId"].as_str() {
+            Some(id) => tx.entity(thread_id, "messages", id)?,
+            None => None,
+        };
+        // Only a pull request wake needs the thread's history.
+        let stale = match message.filter(crate::pull_requests::is_watch_wake) {
+            Some(message) => crate::pull_requests::stale_wake(
+                &thread,
+                &tx.entities(thread_id, "messages")?,
+                &message,
+            ),
+            None => false,
+        };
+        if !stale {
+            break next;
+        }
+        let id = next["id"].as_str().unwrap_or_default().to_owned();
+        finish_run(tx, thread_id, &id, "cancelled", None)?;
+    };
+    Ok(
+        effective_selection(tx, thread_id, &thread, &next)?["instanceId"]
+            == failed["providerInstanceId"],
+    )
+}
+
+/// `latestExecutedRun`: the run that ran last. Unfinished runs count as latest, then by end
+/// time, then by ordinal; queued runs and runs cancelled before they started do not count.
+pub(crate) fn latest_executed_run(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<Value>> {
+    let key = |run: &Value| {
+        (
+            run["completedAt"]
+                .as_str()
+                .map_or("\u{10FFFF}".to_owned(), str::to_owned),
+            run["ordinal"].as_u64().unwrap_or(0),
+        )
+    };
+    Ok(tx
+        .entities(thread_id, "runs")?
+        .into_iter()
+        .filter(|run| {
+            run["status"] != "queued"
+                && !(run["status"] == "cancelled" && is_null(run, "startedAt"))
+        })
+        .max_by_key(key))
+}
+
+/// A run whose worktree setup failed or was stopped, on a thread with no checkout of its own:
+/// work started now would run in the project checkout (`worktreeSetupPending`). Runs imported
+/// from T3 carry `workspacePreparation`.
+fn failed_worktree_setup(run: &Value) -> bool {
+    matches!(run["status"].as_str(), Some("failed" | "interrupted"))
+        && run["workspacePreparation"]["type"] == "worktree"
+}
+
+/// `worktreeSetupPending`.
+pub(crate) fn worktree_setup_pending(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool> {
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(false);
+    };
+    Ok(is_null(&thread, "worktreePath")
+        && tx
+            .entities(thread_id, "runs")?
+            .iter()
+            .any(failed_worktree_setup))
+}
+
+/// `usageLimitHoldsQueue`: the provider instance's last run failed on its usage limit, and
+/// that is still the thread's last run, or (with `now`) its reset is still ahead.
+pub(crate) fn usage_limit_holds(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    instance: &str,
+    now: Option<&str>,
+) -> StoreResult<bool> {
+    let runs = tx.entities(thread_id, "runs")?;
+    let key = |run: &&Value| {
+        (
+            run["completedAt"]
+                .as_str()
+                .map_or("\u{10FFFF}".to_owned(), str::to_owned),
+            run["ordinal"].as_u64().unwrap_or(0),
+        )
+    };
+    let Some(limited) = runs
+        .iter()
+        .filter(|run| {
+            run["providerInstanceId"] == instance
+                && run["status"] != "queued"
+                && !(run["status"] == "cancelled" && is_null(run, "startedAt"))
+        })
+        .max_by_key(key)
+        .filter(|run| run["status"] == "failed")
+    else {
+        return Ok(false);
+    };
+    let run_id = limited["id"].as_str().unwrap_or_default();
+    let failure = tx
+        .entities_where(thread_id, "turnItems", "runId", run_id)?
+        .into_iter()
+        .filter(|item| {
+            item["type"] == "error"
+                && item["status"] == "failed"
+                && item["nodeId"] == limited["rootNodeId"]
+        })
+        .max_by(|a, b| {
+            let at = |i: &Value| i["updatedAt"].as_str().unwrap_or_default().to_owned();
+            at(a).cmp(&at(b))
+        })
+        .map(|item| item["failure"].clone());
+    let Some(failure) = failure.filter(|f| f["class"] == "usage_limit") else {
+        return Ok(false);
+    };
+    // A newer session error replaces the limit (`threadErrorSummary`).
+    let session_error = tx
+        .entities_where(
+            thread_id,
+            "providerSessions",
+            "providerInstanceId",
+            instance,
+        )?
+        .into_iter()
+        .max_by_key(|s| s["updatedAt"].as_str().unwrap_or_default().to_owned())
+        .map(|s| s["lastError"].clone())
+        .filter(|e| !e.is_null());
+    if session_error.is_some_and(|e| e != failure["message"]) {
+        return Ok(false);
+    }
+    if latest_executed_run(tx, thread_id)?.is_some_and(|latest| latest["id"] == run_id) {
+        return Ok(true);
+    }
+    Ok(match (now, failure["resetAt"].as_str()) {
+        (Some(now), Some(reset)) => {
+            match (
+                crate::time::millis_from_iso(reset),
+                crate::time::millis_from_iso(now),
+            ) {
+                (Some(reset), Some(now)) => reset > now,
+                _ => false,
+            }
+        }
+        _ => false,
+    })
+}
+
+/// `queuedRunModelSelection`: a queued run whose message follows the thread's conversation
+/// (a delegated result, a message that follows the selection, a monitor wake that is not
+/// buffered provider output) runs on the thread's current selection; others on their own.
+pub(crate) fn effective_selection(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    thread: &Value,
+    run: &Value,
+) -> StoreResult<Value> {
+    let message = match run["userMessageId"].as_str() {
+        Some(id) => tx.entity(thread_id, "messages", id)?,
+        None => None,
+    };
+    let follows = message.is_some_and(|m| {
+        is_delegated_completion(&m)
+            || m["followsThreadSelection"] == true
+            || (m["notification"]["source"]["kind"] == "monitor"
+                && !is_buffered_provider_notification(&m))
+    });
+    Ok(if follows && thread["modelSelection"].is_object() {
+        thread["modelSelection"].clone()
+    } else {
+        run["modelSelection"].clone()
+    })
+}
+
+/// Starts the next queued run on its own, as after a run ends.
 pub(crate) fn start_next_queued(
     tx: &mut Tx<'_>,
     thread_id: &str,
     only: Option<&str>,
+) -> StoreResult<Option<Effect>> {
+    start_next_queued_as(tx, thread_id, only, false)
+}
+
+/// `user_started`: the user asked for it (Send now, resume), so a usage limit's reset time
+/// does not hold it, only a limit that is still the thread's last run.
+fn start_next_queued_as(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    only: Option<&str>,
+    user_started: bool,
 ) -> StoreResult<Option<Effect>> {
     if active_run(tx, thread_id)?.is_some() {
         return Ok(None);
@@ -941,6 +1337,39 @@ pub(crate) fn start_next_queued(
         }
         break run;
     };
+    // A limited provider would fail and use up every waiting message; the queue keeps its
+    // order and waits (`usageLimitHoldsQueue`).
+    let now = (!user_started).then(|| tx.now().to_owned());
+    let selection = effective_selection(tx, thread_id, &thread, &run)?;
+    let instance = selection["instanceId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if usage_limit_holds(tx, thread_id, &instance, now.as_deref())? {
+        return Ok(None);
+    }
+    run["modelSelection"] = selection;
+    run["providerInstanceId"] = json!(instance);
+    // A provider turned off for the project holds the queue for the user instead of starting
+    // it (`startNextQueuedRun`).
+    if !tx.queue_enabled(thread["projectId"].as_str(), &instance) {
+        hold_queue(tx, thread_id)?;
+        return Ok(None);
+    }
+    // The thread moves to the run's selection as it starts, so a run queued behind it that
+    // follows the thread takes the same one (`startNextQueuedRun`).
+    if run["modelSelection"] != thread["modelSelection"] {
+        let event = if run["providerInstanceId"] == thread["providerInstanceId"] {
+            "thread.model-selection-updated"
+        } else {
+            "thread.provider-switched"
+        };
+        let mut moved = thread.clone();
+        moved["providerInstanceId"] = run["providerInstanceId"].clone();
+        moved["modelSelection"] = run["modelSelection"].clone();
+        moved["updatedAt"] = json!(tx.now());
+        tx.append(Draft::new(thread_id, event, moved).payload_instance())?;
+    }
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
     let now = tx.now().to_owned();
@@ -1026,17 +1455,42 @@ fn queued_run_start(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if active_run(tx, &c.thread_id)?.is_some() {
         return reject("A queued user message can only be sent now while the thread is stopped.");
     }
+    resumable(tx, &c.thread_id, Some(&c.run_id))?;
     release_held(tx, &c.thread_id)?;
-    Ok(start_next_queued(tx, &c.thread_id, Some(&c.run_id))?
+    Ok(
+        start_next_queued_as(tx, &c.thread_id, Some(&c.run_id), true)?
+            .into_iter()
+            .collect(),
+    )
+}
+
+/// `queue.resume`'s checks on the run it would start (the selected one, else the next): its
+/// effective provider must not be limited, and no worktree setup may be pending. A refusal
+/// leaves every hold as it was.
+fn resumable(tx: &Tx<'_>, thread_id: &str, selected: Option<&str>) -> Result<(), CommandError> {
+    let thread = live_thread(tx, thread_id)?;
+    let next = queued_runs(tx, thread_id)?
         .into_iter()
-        .collect())
+        .find(|run| selected.is_none_or(|id| run["id"] == id));
+    let instance = match &next {
+        Some(run) => effective_selection(tx, thread_id, &thread, run)?["instanceId"].clone(),
+        None => thread["modelSelection"]["instanceId"].clone(),
+    };
+    if usage_limit_holds(tx, thread_id, instance.as_str().unwrap_or_default(), None)? {
+        return reject("Continue the limited thread before resuming its queue.");
+    }
+    if worktree_setup_pending(tx, thread_id)? {
+        return reject("Retry worktree setup or choose a workspace before resuming the queue.");
+    }
+    Ok(())
 }
 
 fn queue_resume(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
     live_thread(tx, &c.thread_id)?;
+    resumable(tx, &c.thread_id, None)?;
     release_held(tx, &c.thread_id)?;
-    Ok(start_next_queued(tx, &c.thread_id, None)?
+    Ok(start_next_queued_as(tx, &c.thread_id, None, true)?
         .into_iter()
         .collect())
 }
@@ -1157,6 +1611,29 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let Some(message) = tx.entity(&c.thread_id, "messages", &message_id)? else {
         return reject(format!("Message {message_id} does not exist."));
     };
+    let has_attachments = message["attachments"]
+        .as_array()
+        .is_some_and(|a| !a.is_empty());
+    // A queued message goes to the provider its run selected (`queuedRunModelSelection`).
+    let instance = normalize_model_selection(&queued["modelSelection"])["instanceId"]
+        .as_str()
+        .or_else(|| queued["providerInstanceId"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(goal) = native_goal(
+        tx,
+        message["text"].as_str().unwrap_or_default(),
+        has_attachments,
+        &instance,
+    )? {
+        // A goal keeps its own run, first in the queue, and stops the turn it ends or replaces.
+        queue_first(tx, &c.thread_id, &queued)?;
+        return Ok(if goal_stops_run(tx, &c.thread_id, &goal, &target)? {
+            stop_run(tx, &c.thread_id, &target, None, false)?
+        } else {
+            vec![]
+        });
+    }
     finish_run(tx, &c.thread_id, &c.queued_run_id, "cancelled", None)?;
     let dispatch = MessageDispatch {
         command_id: String::new(),
@@ -1199,6 +1676,23 @@ fn queued_message_promote_to_steer(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }
     effects.truncate(1);
     Ok(effects)
+}
+
+/// Moves a queued run to the front; the others follow in their order (`stopRunForQueuedCommand`).
+fn queue_first(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
+    let others = queued_runs(tx, thread_id)?
+        .into_iter()
+        .filter(|r| r["id"] != run["id"]);
+    let positions = std::iter::once(run.clone()).chain(others).zip(1_u64..);
+    for (mut run, position) in positions {
+        if run["queuePosition"] == position {
+            continue;
+        }
+        run["queuePosition"] = json!(position);
+        let id = run["id"].as_str().unwrap_or_default().to_owned();
+        tx.append(Draft::new(thread_id, "run.updated", run).run(Some(&id)))?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -1253,7 +1747,8 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
         crate::pull_requests::end_watches(&mut thread);
         tx.append(
             Draft::new(&c.thread_id, "thread.pull-request-synced", thread)
-                .command(command_id.as_deref()),
+                .command(command_id.as_deref())
+                .payload_instance(),
         )?;
     }
     let children = crate::families::stop_children(tx, &c.thread_id)?;
@@ -1483,13 +1978,77 @@ pub(crate) fn mark_stop_unresponsive(
     Ok(())
 }
 
+/// The id of a run's provider stop reason notice (T3's `runSignalTurnItem`).
+pub fn provider_stop_reason_id(run_id: &str) -> String {
+    join_id(
+        "turn-item",
+        &["run", run_id, "signal", "provider-stop-reason"],
+    )
+}
+
+/// `subagentResultForRun`'s result for a completed child with no answer, with the hook's
+/// reason when a hook stopped it.
+pub fn completed_without_result(stop_reason: Option<&str>) -> String {
+    let text = "Child task completed without an assistant result.";
+    stop_reason.map_or_else(|| text.to_owned(), |reason| format!("{text}\n\n{reason}"))
+}
+
+/// `PROVIDER_STOP_REASON_SIGNAL`: Codex reports a turn a hook stopped as completed; the run
+/// keeps the hook's reason as a warning (`RunExecutionService`). Its id is T3's
+/// `runSignalTurnItem`, which `subagentProjection.ts` looks up.
+pub(crate) fn write_provider_stop_reason(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+    reason: &str,
+) -> StoreResult<()> {
+    let Some(run) = tx.entity(thread_id, "runs", run_id)? else {
+        return Ok(());
+    };
+    let Some(root) = run["rootNodeId"].as_str() else {
+        return Ok(());
+    };
+    let provider_turn = tx
+        .entity(thread_id, "nodes", root)?
+        .map(|node| node["providerTurnId"].clone())
+        .unwrap_or(Value::Null);
+    let now = tx.now().to_owned();
+    let item = json!({
+        "id": provider_stop_reason_id(run_id),
+        "threadId": thread_id,
+        "runId": run_id,
+        "nodeId": root,
+        "providerThreadId": run["providerThreadId"],
+        "providerTurnId": provider_turn,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": run["ordinal"].as_u64().unwrap_or(0) * 100 + 98,
+        "status": "completed",
+        "title": "Stopped by the provider",
+        "startedAt": now,
+        "completedAt": now,
+        "updatedAt": now,
+        "type": "system_notice",
+        "level": "warning",
+        "message": reason,
+    });
+    tx.append(
+        Draft::new(thread_id, "turn-item.updated", item)
+            .run(Some(run_id))
+            .node(Some(root)),
+    )?;
+    Ok(())
+}
+
 /// `makeInterruptResultTurnItem`: the Stop result of a run that ended interrupted. Its message
-/// is `reason`, else the Stop request's, else "Stopped by the provider". Written once.
+/// is `reason` (Force stop), else the Stop request's, else the provider's `fallback`, else
+/// "Stopped by the provider" (`RunExecutionService`). Written once.
 pub(crate) fn write_interrupt_result(
     tx: &mut Tx<'_>,
     thread_id: &str,
     run: &Value,
     reason: Option<&str>,
+    fallback: Option<&str>,
 ) -> StoreResult<()> {
     let (Some(run_id), Some(root)) = (run["id"].as_str(), run["rootNodeId"].as_str()) else {
         return Ok(());
@@ -1506,6 +2065,7 @@ pub(crate) fn write_interrupt_result(
                 .as_ref()
                 .and_then(|r| r["message"].as_str().map(str::to_owned))
         })
+        .or_else(|| fallback.map(str::to_owned))
         .unwrap_or_else(|| "Stopped by the provider".to_owned());
     let provider_turn = tx
         .entity(thread_id, "nodes", root)?
@@ -1541,6 +2101,7 @@ pub(crate) fn write_interrupt_result(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeRequestRespond {
+    command_id: String,
     thread_id: String,
     request_id: String,
     decision: Option<Value>,
@@ -1558,6 +2119,30 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if request["status"] != "pending" {
         return reject("This request was already answered or has expired.");
     }
+    let declined = matches!(
+        c.decision.as_ref().and_then(Value::as_str),
+        Some("decline" | "cancel")
+    );
+    let node = request["nodeId"].as_str().map(str::to_owned);
+    // A question the provider can no longer take live (an imported or async one) is answered
+    // with a user message that starts a turn (T3's `responseCapability.type: message`).
+    let is_message = request["responseCapability"]["type"] == "message";
+    let message_reply = match is_message {
+        true if !declined => {
+            let item = node
+                .as_deref()
+                .map(|node| request_item(tx, &c, node))
+                .transpose()?
+                .flatten()
+                .filter(|item| item["type"] == "user_input_request");
+            let Some(item) = item else {
+                return reject("The question for this request was not found.");
+            };
+            let answers = c.answers.as_ref().and_then(Value::as_object);
+            Some(async_reply(&item, answers).map_err(|e| CommandError::Rejected(e.into()))?)
+        }
+        _ => None,
+    };
     request["status"] = json!("resolved");
     request["resolvedAt"] = json!(tx.now());
     if let Some(decision) = &c.decision {
@@ -1569,9 +2154,19 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(answers) = &c.answers {
         request["answers"] = answers.clone();
     }
-    let node = request["nodeId"].as_str().map(str::to_owned);
-    tx.append(Draft::new(&c.thread_id, "runtime-request.updated", request).node(node.as_deref()))?;
-    settle_request_rows(tx, &c, node.as_deref())?;
+    let instance = respond_instance(tx, &c.thread_id, &request)?;
+    tx.append(
+        Draft::new(&c.thread_id, "runtime-request.updated", request)
+            .node(node.as_deref())
+            .provider_instance(instance.as_deref()),
+    )?;
+    settle_request_rows(tx, &c, node.as_deref(), instance.as_deref())?;
+    if is_message {
+        return match message_reply {
+            Some(text) => async_answer(tx, &c, text),
+            None => Ok(vec![]),
+        };
+    }
     Ok(vec![Effect::Respond {
         thread_id: c.thread_id,
         request: json!({
@@ -1583,6 +2178,167 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }])
 }
 
+/// The request's approval or question item on its node.
+fn request_item(
+    tx: &Tx<'_>,
+    c: &RuntimeRequestRespond,
+    node_id: &str,
+) -> StoreResult<Option<Value>> {
+    Ok(tx
+        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("approval_request" | "user_input_request")
+            ) && item["requestId"] == c.request_id.as_str()
+        })
+        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX)))
+}
+
+/// A non-blank string, or a non-empty list of non-blank strings (T3's
+/// `isMessageQuestionAnswer`). A `{answers: [...]}` object counts as its list.
+fn message_answer(answer: &Value) -> Option<String> {
+    let answer = answer.get("answers").unwrap_or(answer);
+    let blank = |text: &str| text.trim().is_empty();
+    match answer {
+        Value::String(text) if !blank(text) => Some(text.trim().to_owned()),
+        Value::Array(list) if !list.is_empty() => {
+            let parts: Option<Vec<&str>> = list
+                .iter()
+                .map(|v| v.as_str().filter(|text| !blank(text)))
+                .collect();
+            Some(parts?.join(", ").trim().to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// The user's reply to an async question: each answered question and its answer, in the
+/// question's order (`runtime-request.respond` in T3's `Orchestrator`). A skipped optional
+/// question is left out; a skipped required one, or an extra blank answer, is refused.
+fn async_reply(
+    item: &Value,
+    answers: Option<&serde_json::Map<String, Value>>,
+) -> Result<String, &'static str> {
+    const UNANSWERED: &str = "Answer each question before sending.";
+    let questions = item["questions"].as_array().map_or(&[][..], Vec::as_slice);
+    let empty = serde_json::Map::new();
+    let answers = answers.unwrap_or(&empty);
+    let known = |id: &str| questions.iter().any(|q| q["id"] == id);
+    if !answers
+        .iter()
+        .all(|(id, answer)| known(id) || message_answer(answer).is_some())
+    {
+        return Err(UNANSWERED);
+    }
+    let mut replies = vec![];
+    for question in questions {
+        let answer = question["id"]
+            .as_str()
+            .and_then(|id| answers.get(id))
+            .and_then(message_answer);
+        match answer {
+            Some(text) => replies.push(format!(
+                "{}\n{text}",
+                question["question"].as_str().unwrap_or_default()
+            )),
+            // Clients send "" for a skipped optional question.
+            None if question["required"] == false => {}
+            None => return Err(UNANSWERED),
+        }
+    }
+    if replies.is_empty() {
+        return Err("Enter an answer before sending.");
+    }
+    Ok(replies.join("\n\n"))
+}
+
+/// Whether the provider session the run's provider thread is on steers a running turn.
+fn session_steers(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+    let Some(provider_thread) = run["providerThreadId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "providerThreads", id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    let Some(session) = provider_thread["providerSessionId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "providerSessions", id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    Ok(session["capabilities"]["turns"]["supportsActiveSteering"] == true)
+}
+
+/// Sends the async answer as the user's message: it steers the active run, or queues or
+/// starts a turn, with a stable id so a second answer cannot add another.
+fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Outcome {
+    // It steers only into a provider turn that runs; a run still starting gets the answer
+    // as its own later run (T3's `getRunningTurnContext` admission). A session that cannot
+    // steer declines it at delivery, and the answer then queues.
+    let running = match active_run(tx, &c.thread_id)? {
+        Some(run) if run["status"] == "running" => tx
+            .entities_where(&c.thread_id, "providerTurns", "status", "running")?
+            .iter()
+            .any(|turn| turn["nodeId"] == run["rootNodeId"])
+            .then_some(run),
+        _ => None,
+    };
+    // Only a session that steers live takes it into the turn (`supportsActiveSteering`).
+    let running = match running {
+        Some(run) if session_steers(tx, &c.thread_id, &run)? => Some(run),
+        _ => None,
+    };
+    // A steer accepted after Stop never reaches the agent: refused, so the answer can be sent
+    // again (T3's `stopReachedRun`).
+    if let Some(run) = &running {
+        let id = run["id"].as_str().unwrap_or_default();
+        if interrupt_request(tx, &c.thread_id, id)?.is_some() {
+            return reject(format!(
+                "Target run {id} is stopping and cannot be steered."
+            ));
+        }
+    }
+    let dispatch_mode = match running {
+        Some(run) => json!({"type": "steer_active", "targetRunId": run["id"]}),
+        None => json!({"type": "queue_after_active"}),
+    };
+    message_dispatch(
+        tx,
+        json!({
+            "type": "message.dispatch",
+            "commandId": c.command_id,
+            "threadId": c.thread_id,
+            "messageId": format!("async-answer:{}", c.request_id),
+            "text": text,
+            "attachments": [],
+            "createdBy": "user",
+            "creationSource": "server",
+            "dispatchMode": dispatch_mode,
+        }),
+    )
+}
+
+/// The instance T3 names on a response's events: the live session's when the request is
+/// answered through one, else none (`dispatchRuntimeRequestRespond`).
+fn respond_instance(tx: &Tx<'_>, thread_id: &str, request: &Value) -> StoreResult<Option<String>> {
+    let capability = &request["responseCapability"];
+    let Some(session) = capability["providerSessionId"]
+        .as_str()
+        .filter(|_| capability["type"] == "live")
+    else {
+        return Ok(None);
+    };
+    Ok(tx
+        .entity(thread_id, "providerSessions", session)?
+        .and_then(|row| row["providerInstanceId"].as_str().map(str::to_owned)))
+}
+
 /// The answered request's node and its turn item end (`runtime-request.respond` in T3's
 /// `Orchestrator`): `cancelled` for a declined or cancelled request, else `completed`; a
 /// question's item carries the answer (`questionAnswer`).
@@ -1590,6 +2346,7 @@ fn settle_request_rows(
     tx: &mut Tx<'_>,
     c: &RuntimeRequestRespond,
     node_id: Option<&str>,
+    instance: Option<&str>,
 ) -> StoreResult<()> {
     let Some(node_id) = node_id else {
         return Ok(());
@@ -1606,20 +2363,11 @@ fn settle_request_rows(
         tx.append(
             Draft::new(&c.thread_id, "node.updated", node)
                 .run(run.as_deref())
-                .node(Some(node_id)),
+                .node(Some(node_id))
+                .provider_instance(instance),
         )?;
     }
-    let item = tx
-        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
-        .into_iter()
-        .filter(|item| {
-            matches!(
-                item["type"].as_str(),
-                Some("approval_request" | "user_input_request")
-            ) && item["requestId"] == c.request_id.as_str()
-        })
-        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX));
-    if let Some(mut item) = item {
+    if let Some(mut item) = request_item(tx, c, node_id)? {
         if item["type"] == "user_input_request"
             && let Some(answers) = &c.answers
         {
@@ -1656,7 +2404,8 @@ fn settle_request_rows(
         tx.append(
             Draft::new(&c.thread_id, "turn-item.updated", item)
                 .run(run.as_deref())
-                .node(Some(node_id)),
+                .node(Some(node_id))
+                .provider_instance(instance),
         )?;
     }
     Ok(())
@@ -1676,7 +2425,7 @@ fn patch_thread(
     if bump_updated_at {
         thread["updatedAt"] = json!(now);
     }
-    tx.append(Draft::new(thread_id, event_type, thread))?;
+    tx.append(Draft::new(thread_id, event_type, thread).payload_instance())?;
     Ok(())
 }
 
@@ -1712,7 +2461,7 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
         let run_id = run["id"].as_str().unwrap_or_default();
         finish_run(tx, &c.thread_id, run_id, "cancelled", None)?;
     }
-    effects.push(Effect::CloseSession {
+    effects.push(Effect::CloseThreadSessions {
         thread_id: c.thread_id.clone(),
     });
     patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {
@@ -1732,15 +2481,42 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadVisit {
+    command_id: String,
     thread_id: String,
     visited_at: Value,
 }
 
+/// `thread.visit`: the time parses as T3's `DateTime.make` reads it, or the command is refused.
 fn thread_visit(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadVisit = decode(command)?;
-    patch_thread(tx, &c.thread_id, "thread.visited", false, |t, _| {
-        t["lastVisitedAt"] = c.visited_at;
-    })?;
+    live_thread(tx, &c.thread_id)?;
+    let text = c.visited_at.as_str().unwrap_or_default();
+    let Some(visited) = tx.date_input_millis(text) else {
+        return reject(format!(
+            "Thread {} visit time {text} is not a valid timestamp.",
+            c.thread_id
+        ));
+    };
+    // T3's `dispatchThreadVisit`: only a later visit moves the read mark, compared as times,
+    // and the event carries the visit, not the thread.
+    let thread = live_thread(tx, &c.thread_id)?;
+    // The stored mark may be in any form main stored; read it as the command time is read.
+    let moves_forward = thread["lastVisitedAt"]
+        .as_str()
+        .and_then(|last| tx.date_input_millis(last))
+        .is_none_or(|last| visited > last);
+    if !moves_forward {
+        return Ok(vec![]);
+    }
+    tx.append(
+        Draft::new(
+            &c.thread_id,
+            "thread.visit-recorded",
+            json!({"lastVisitedAt": crate::time::iso_from_millis(visited)}),
+        )
+        .command(Some(&c.command_id))
+        .instance_of(&thread),
+    )?;
     Ok(vec![])
 }
 
@@ -2031,6 +2807,7 @@ pub(crate) fn finish_run(
         status,
         status,
         failure,
+        None,
         IdleWrite::WhileActive,
     )
     .map(drop)
@@ -2049,8 +2826,13 @@ pub(crate) enum IdleWrite {
 
 /// Ends a run's items with `status`, and the run and its root node with `persisted`: a
 /// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
-/// `completedAt` (`RunExecutionService.ts`). Returns whether it ended the run: `false` when
-/// the run is gone or already ended.
+/// `completedAt` (`RunExecutionService.ts`). An interrupted run's Stop result falls back to the
+/// provider's `stop_reason`. Returns whether it ended the run: `false` when the run is gone or
+/// already ended.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "T3's turn terminal (status, failure, reason) plus how the run persists"
+)]
 pub(crate) fn finish_run_as(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -2058,6 +2840,7 @@ pub(crate) fn finish_run_as(
     status: &str,
     persisted: &str,
     failure: Option<Value>,
+    stop_reason: Option<&str>,
     idle: IdleWrite,
 ) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
@@ -2068,7 +2851,7 @@ pub(crate) fn finish_run_as(
     }
     crate::secret_requests::cancel_pending(tx, thread_id, run_id)?;
     if status == "interrupted" {
-        write_interrupt_result(tx, thread_id, &run, None)?;
+        write_interrupt_result(tx, thread_id, &run, None, stop_reason)?;
     }
     let now = tx.now().to_owned();
     let root = run["rootNodeId"].as_str().map(str::to_owned);
@@ -2115,7 +2898,17 @@ pub(crate) fn finish_run_as(
             tx.append(draft("turn-item.updated", item))?;
         }
     }
+    // Only this run's requests end with it: a queued run removed while another run waits on
+    // an approval must leave that approval answerable. A request names its node; the node
+    // names its run.
     for mut request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+        let owner = match request["nodeId"].as_str() {
+            Some(node) => tx.entity(thread_id, "nodes", node)?,
+            None => None,
+        };
+        if owner.is_none_or(|node| node["runId"] != run_id) {
+            continue;
+        }
         request["status"] = json!("cancelled");
         request["resolvedAt"] = json!(now);
         tx.append(draft("runtime-request.updated", request))?;
@@ -2203,7 +2996,7 @@ pub(crate) fn settle_provider_thread(
     }
     thread["status"] = json!(status);
     thread["updatedAt"] = json!(tx.now());
-    tx.append(Draft::new(thread_id, "provider-thread.updated", thread))?;
+    tx.append(Draft::new(thread_id, "provider-thread.updated", thread).instance_of(run))?;
     Ok(())
 }
 
@@ -2227,15 +3020,28 @@ fn thread_patch(
 ) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let mut thread = live_thread(tx, &thread_id)?;
-    let before = thread.clone();
     let now = tx.now().to_owned();
     patch(&mut thread, &now)?;
-    // A setter that changes nothing writes nothing, so a retry or a double click is quiet.
-    if thread != before {
-        let cid = command["commandId"].as_str().map(str::to_owned);
-        tx.append(Draft::new(&thread_id, event_type, thread).command(cid.as_deref()))?;
-    }
+    // T3's `dispatchThreadMutation` records the event even when nothing changed (a re-pin keeps
+    // `updatedAt`); a retry of the same command id is answered by its receipt instead.
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, event_type, thread)
+            .command(cid.as_deref())
+            .payload_instance(),
+    )?;
     Ok(vec![])
+}
+
+/// T3's `dispatchThreadMutation` refuses settle, unsettle, snooze, unsnooze, auto-settle,
+/// pin, unpin and both reorders on an archived thread before any other check of its own.
+fn refuse_archived(tx: &Tx<'_>, command: &Value) -> Result<(), CommandError> {
+    let thread_id = command["threadId"].as_str().unwrap_or_default();
+    if is_null(&live_thread(tx, thread_id)?, "archivedAt") {
+        Ok(())
+    } else {
+        reject(format!("Thread {thread_id} is archived."))
+    }
 }
 
 fn is_null(thread: &Value, field: &str) -> bool {
@@ -2244,26 +3050,57 @@ fn is_null(thread: &Value, field: &str) -> bool {
 
 fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    // T3's `thread.auto-settle` rechecks the live thread against the sweep's snapshot: a user's
+    // own choice or any change since wins. Then it is a settle.
+    if command["type"] == "thread.auto-settle" {
+        let thread = live_thread(tx, &thread_id)?;
+        let changed_at = thread["updatedAt"]
+            .as_str()
+            .and_then(crate::time::millis_from_iso);
+        let snapshot = command["snapshotAt"]
+            .as_str()
+            .and_then(|at| tx.date_input_millis(at));
+        let unchanged = matches!((changed_at, snapshot), (Some(at), Some(seen)) if at <= seen);
+        if !is_null(&thread, "settledOverride") || !unchanged {
+            return reject(format!(
+                "Thread {thread_id} changed before automatic settlement."
+            ));
+        }
+    }
+    refuse_archived(tx, &command)?;
+    // T3 compares every run, queued ones too, and refuses when the latest is another.
     if let Some(expected) = command["expectedLatestRunId"].as_str() {
         let latest = tx
             .entities(&thread_id, "runs")?
             .into_iter()
-            .filter(|r| r["status"] != "queued")
             .max_by_key(|r| r["ordinal"].as_u64().unwrap_or(0));
-        if latest.is_some_and(|r| r["id"] != expected) {
-            return Ok(vec![]);
-        }
-    }
-    if command["type"] == "thread.auto-settle" {
-        let thread = live_thread(tx, &thread_id)?;
-        if !is_null(&thread, "autoSettleDisabledAt") || !is_null(&thread, "pinnedAt") {
-            return Ok(vec![]);
+        if latest.is_none_or(|r| r["id"] != expected) {
+            return reject("The thread received another run before settlement.");
         }
     }
     if active_run(tx, &thread_id)?.is_some() {
         return reject(format!(
             "Thread {thread_id} is still running and cannot be settled."
         ));
+    }
+    // T3 settles past a queued message the server or a schedule sent, never a user's own, and
+    // cancels those automatic runs so a later resume never starts them.
+    let mut automatic_runs = vec![];
+    for run in queued_runs(tx, &thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let message = tx.entity(&thread_id, "messages", message_id)?;
+        let automatic = message.as_ref().is_some_and(|m| {
+            m["createdBy"] != "user" || !is_null(m, "scheduledTaskId") || is_automatic(m)
+        });
+        if !automatic {
+            return reject(format!(
+                "Thread {thread_id} has a queued message. Send it or remove it from the queue before settling."
+            ));
+        }
+        automatic_runs.push(run["id"].as_str().unwrap_or_default().to_owned());
+    }
+    for run_id in automatic_runs {
+        finish_run(tx, &thread_id, &run_id, "cancelled", None)?;
     }
     let settled_at = command["settledAt"].clone();
     let current = live_thread(tx, &thread_id)?;
@@ -2273,6 +3110,7 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     thread_patch(tx, &command, "thread.settled", |t, now| {
         let already =
             t["settledOverride"] == "settled" && !is_null(t, "settledAt") && is_null(t, "pinnedAt");
+        let snoozed = !is_null(t, "snoozedUntil") || !is_null(t, "snoozedAt");
         t["settledOverride"] = json!("settled");
         crate::pull_requests::end_watches(t);
         if !already {
@@ -2292,7 +3130,8 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         ] {
             t[field] = Value::Null;
         }
-        if !already {
+        // T3 moves a settled thread that was still snoozed.
+        if !already || snoozed {
             t["updatedAt"] = json!(now);
         }
         Ok(())
@@ -2311,26 +3150,55 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }])
 }
 
+/// `thread.unsettle` as `Orchestrator.ts`. An undo of a settle sends `restoreUnsettledAt`, the
+/// Active anchor the settle cleared, so the thread goes back to its place, not to the top. An
+/// archived thread refuses it before the anchor is read. A thread already active keeps its
+/// anchor and `updatedAt`, but a fresh command still records `thread.unsettled`, as T3 does.
 fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    thread_patch(tx, &command, "thread.unsettled", |t, now| {
-        if t["settledOverride"] != "active" {
-            t["settledOverride"] = json!("active");
-            t["settledAt"] = Value::Null;
-            t["unsettledAt"] = json!(now);
-            t["updatedAt"] = json!(now);
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    refuse_archived(tx, &command)?;
+    let mut thread = live_thread(tx, &thread_id)?;
+    let now = tx.now().to_owned();
+    let anchor = match command.get("restoreUnsettledAt") {
+        None => json!(now),
+        Some(Value::Null) => Value::Null,
+        Some(at) => {
+            let text = at.as_str().unwrap_or_default();
+            let Some(millis) = tx.date_input_millis(text) else {
+                return reject(format!(
+                    "Thread {thread_id} unsettle anchor {text} is not a valid time."
+                ));
+            };
+            json!(crate::time::iso_from_millis(millis))
         }
-        Ok(())
-    })
+    };
+    if thread["settledOverride"] != "active" {
+        thread["settledOverride"] = json!("active");
+        thread["settledAt"] = Value::Null;
+        thread["unsettledAt"] = anchor;
+        thread["updatedAt"] = json!(now);
+    } else if thread.get("unsettledAt").is_none() {
+        thread["unsettledAt"] = Value::Null;
+    }
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    let instance = thread["providerInstanceId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, "thread.unsettled", thread)
+            .command(cid.as_deref())
+            .provider_instance(instance.as_deref()),
+    )?;
+    Ok(vec![])
 }
 
 /// `thread.snooze` as `Orchestrator.ts`: the wake time must parse and be in the future, a
 /// pending approval refuses it, and only queued runs a person asked for block it. The wake time
 /// is stored as UTC in the wire form.
 fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let requested = command["snoozedUntil"].as_str().unwrap_or_default();
     let now = crate::time::millis_from_iso(tx.now()).unwrap_or(0);
-    let Some(until) = crate::time::millis_from_iso(requested).filter(|at| *at > now) else {
+    let Some(until) = tx.date_input_millis(requested).filter(|at| *at > now) else {
         return reject(format!(
             "Thread {thread_id} snooze wake time {requested} is not in the future."
         ));
@@ -2362,17 +3230,22 @@ fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
     })
 }
 
-/// A message the server queued by itself: a notification or a delegated-task completion. This
-/// engine marks its completion wakes by their id (`families::deliver`).
-fn is_automatic(message: &Value) -> bool {
-    !is_null(message, "notification")
-        || !is_null(message, "delegatedCompletion")
+/// A delegated-task completion. This engine marks its completion wakes by their id
+/// (`families::deliver`).
+pub(crate) fn is_delegated_completion(message: &Value) -> bool {
+    !is_null(message, "delegatedCompletion")
         || message["id"]
             .as_str()
             .is_some_and(|id| id.starts_with("message:delegated-completion:"))
 }
 
+/// A message the server queued by itself: a notification or a delegated-task completion.
+fn is_automatic(message: &Value) -> bool {
+    !is_null(message, "notification") || is_delegated_completion(message)
+}
+
 fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     thread_patch(tx, &command, "thread.unsnoozed", |t, now| {
         if !is_null(t, "snoozedUntil") {
             t["snoozedUntil"] = Value::Null;
@@ -2385,6 +3258,7 @@ fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 fn thread_auto_settle_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     let enabled = command["enabled"] == true;
     thread_patch(tx, &command, "thread.auto-settle-set", |t, now| {
         if enabled != is_null(t, "autoSettleDisabledAt") {
@@ -2396,9 +3270,11 @@ fn thread_auto_settle_set(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 fn thread_pin(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     let order_key = command["orderKey"].clone();
     thread_patch(tx, &command, "thread.pinned", |t, now| {
         let was_pinned = !is_null(t, "pinnedAt");
+        let promotes = t["settledOverride"] == "settled" || !is_null(t, "snoozedUntil");
         if !was_pinned {
             t["pinnedAt"] = json!(now);
             if order_key.is_string() {
@@ -2415,12 +3291,15 @@ fn thread_pin(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         t["snoozedUntil"] = Value::Null;
         t["snoozedAt"] = Value::Null;
-        t["updatedAt"] = json!(now);
+        if !was_pinned || promotes {
+            t["updatedAt"] = json!(now);
+        }
         Ok(())
     })
 }
 
 fn thread_unpin(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     thread_patch(tx, &command, "thread.unpinned", |t, now| {
         if !is_null(t, "pinnedAt") {
             t["pinnedAt"] = Value::Null;
@@ -2432,6 +3311,7 @@ fn thread_unpin(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 fn thread_pin_reorder(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     let key = command["orderKey"].clone();
     thread_patch(tx, &command, "thread.pin-reordered", |t, now| {
         if t["pinOrderKey"] != key {
@@ -2443,6 +3323,7 @@ fn thread_pin_reorder(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 fn thread_active_reorder(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    refuse_archived(tx, &command)?;
     let key = command["orderKey"].clone();
     thread_patch(tx, &command, "thread.active-reordered", |t, _| {
         t["activeOrderKey"] = key;
@@ -2495,7 +3376,9 @@ fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let updated = crate::pull_requests::decide(&thread, &command, &now).unwrap_or(thread);
     let cid = command["commandId"].as_str().map(str::to_owned);
     tx.append(
-        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+        Draft::new(&thread_id, "thread.pull-request-synced", updated)
+            .command(cid.as_deref())
+            .payload_instance(),
     )?;
     Ok(vec![])
 }
@@ -2548,7 +3431,11 @@ fn thread_issue_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
         map.insert("updatedAt".into(), json!(now));
     }
     let cid = command["commandId"].as_str().map(str::to_owned);
-    tx.append(Draft::new(&thread_id, "thread.issue-synced", thread).command(cid.as_deref()))?;
+    tx.append(
+        Draft::new(&thread_id, "thread.issue-synced", thread)
+            .command(cid.as_deref())
+            .payload_instance(),
+    )?;
     Ok(vec![])
 }
 
@@ -2565,7 +3452,9 @@ fn thread_pull_request_link_sync(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(updated) = crate::pull_requests::decide_link_sync(&thread, &command) {
         let cid = command["commandId"].as_str().map(str::to_owned);
         tx.append(
-            Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+            Draft::new(&thread_id, "thread.pull-request-synced", updated)
+                .command(cid.as_deref())
+                .payload_instance(),
         )?;
     }
     Ok(vec![])
@@ -2612,7 +3501,9 @@ fn thread_pull_request_sync(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let updated = crate::pull_requests::decide_branch_sync(&thread, &command, &now);
     let cid = command["commandId"].as_str().map(str::to_owned);
     tx.append(
-        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+        Draft::new(&thread_id, "thread.pull-request-synced", updated)
+            .command(cid.as_deref())
+            .payload_instance(),
     )?;
     Ok(vec![])
 }
@@ -2674,7 +3565,9 @@ fn thread_pull_request_watch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let updated = crate::pull_requests::decide_watch(&thread, &command, &now).unwrap_or(thread);
     let cid = command["commandId"].as_str().map(str::to_owned);
     tx.append(
-        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+        Draft::new(&thread_id, "thread.pull-request-synced", updated)
+            .command(cid.as_deref())
+            .payload_instance(),
     )?;
     Ok(vec![])
 }
@@ -2687,7 +3580,9 @@ pub(crate) fn pull_request_watch_checks_reopen(tx: &mut Tx<'_>, command: Value) 
     if let Some(updated) = crate::pull_requests::reopen_checks(&thread) {
         let cid = command["commandId"].as_str().map(str::to_owned);
         tx.append(
-            Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+            Draft::new(&thread_id, "thread.pull-request-synced", updated)
+                .command(cid.as_deref())
+                .payload_instance(),
         )?;
     }
     Ok(vec![])
@@ -2761,7 +3656,9 @@ pub(crate) fn pull_request_watch_sync(tx: &mut Tx<'_>, command: Value) -> Outcom
     if changed {
         // T3 sends `thread.pull-request-link-updated` per link; this store keeps whole threads.
         tx.append(
-            Draft::new(&thread_id, "thread.pull-request-synced", thread).command(cid.as_deref()),
+            Draft::new(&thread_id, "thread.pull-request-synced", thread)
+                .command(cid.as_deref())
+                .payload_instance(),
         )?;
     }
     let Some(wake) = wake else {
@@ -2844,7 +3741,12 @@ fn thread_user_input_dismiss(tx: &mut Tx<'_>, command: Value) -> Outcome {
     request["status"] = json!("cancelled");
     request["resolvedAt"] = json!(tx.now());
     let node = request["nodeId"].as_str().map(str::to_owned);
-    tx.append(Draft::new(&thread_id, "runtime-request.updated", request).node(node.as_deref()))?;
+    let instance = respond_instance(tx, &thread_id, &request)?;
+    tx.append(
+        Draft::new(&thread_id, "runtime-request.updated", request)
+            .node(node.as_deref())
+            .provider_instance(instance.as_deref()),
+    )?;
     Ok(vec![Effect::Respond {
         thread_id,
         request: json!({"requestId": request_id, "decision": "cancel"}),
@@ -2864,7 +3766,7 @@ fn provider_session_detach(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(mut session) = tx.entity(&thread_id, "providerSessions", session_id)? {
         session["status"] = json!("stopped");
         session["updatedAt"] = json!(tx.now());
-        tx.append(Draft::new(&thread_id, "provider-session.updated", session))?;
+        tx.append(Draft::new(&thread_id, "provider-session.updated", session).payload_instance())?;
     }
     Ok(vec![Effect::CloseSession { thread_id }])
 }

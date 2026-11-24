@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::commands::{self, CommandError, Effect, is_live};
 use crate::engine::{Inner, project_id};
-use crate::store::{Tx, new_project};
+use crate::store::{Receipt, ReceiptKey, ReceiptOwner, StoredOwner, Tx, new_project};
 
 /// Title of the project that holds threads without a project (`ManagedProjectFolders.ts`).
 const SCRATCH_TITLE: &str = "No project";
@@ -22,6 +23,9 @@ pub(crate) struct ProjectFailure {
     pub message: String,
     pub cause: Option<Value>,
     pub internal: bool,
+    /// Refused by planning against the stored projects (T3's `planProjectCommand`): the
+    /// refusal is the command's receipt. Others (the folder, the store) can be retried.
+    planned: bool,
 }
 
 impl ProjectFailure {
@@ -30,6 +34,7 @@ impl ProjectFailure {
             message: message.into(),
             cause: None,
             internal: false,
+            planned: false,
         }
     }
     fn tagged(tag: &str, message: impl Into<String>) -> Self {
@@ -38,6 +43,33 @@ impl ProjectFailure {
             cause: Some(json!({"_tag": tag, "message": message})),
             message,
             internal: false,
+            planned: false,
+        }
+    }
+    fn planned(tag: &str, message: impl Into<String>) -> Self {
+        Self {
+            planned: true,
+            ..Self::tagged(tag, message)
+        }
+    }
+
+    /// The receipt's form of a planned refusal: the typed cause, as T3's
+    /// `encodeProjectCommandRejection`.
+    fn encode(&self) -> String {
+        self.cause
+            .clone()
+            .unwrap_or_else(|| json!({"message": self.message}))
+            .to_string()
+    }
+
+    fn decode(refusal: &str) -> Self {
+        let cause: Value =
+            serde_json::from_str(refusal).unwrap_or_else(|_| json!({"message": refusal}));
+        Self {
+            message: cause["message"].as_str().unwrap_or(refusal).to_owned(),
+            cause: Some(cause),
+            internal: false,
+            planned: true,
         }
     }
 }
@@ -48,6 +80,7 @@ impl From<String> for ProjectFailure {
             message,
             cause: None,
             internal: true,
+            planned: false,
         }
     }
 }
@@ -69,15 +102,6 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                     format!("`{project_id}` cannot be a project id."),
                 ));
             }
-            if tx
-                .project_any(&project_id)?
-                .is_some_and(|p| p["deletedAt"].is_null())
-            {
-                return Err(ProjectFailure::tagged(
-                    "ProjectConflictError",
-                    format!("Project {project_id} already exists."),
-                ));
-            }
             let raw = input["workspaceRoot"].as_str().unwrap_or_default().trim();
             if raw.is_empty() {
                 return Err(ProjectFailure::tagged(
@@ -87,15 +111,8 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
             }
             let normalized = normalize_workspace_root(raw);
             let root = normalized.as_str();
-            if tx
-                .project_by_root(root)?
-                .is_some_and(|p| p["deletedAt"].is_null())
-            {
-                return Err(ProjectFailure::tagged(
-                    "ProjectConflictError",
-                    format!("Another project already uses {root}."),
-                ));
-            }
+            // T3 checks the folder before it plans (`ProjectService.create`): a missing one
+            // is a retryable refusal, never a recorded conflict.
             let path = Path::new(root);
             if !path.is_dir() {
                 if input["createWorkspaceRootIfMissing"] == true {
@@ -112,6 +129,24 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                         format!("{root} is not a folder."),
                     ));
                 }
+            }
+            if tx
+                .project_any(&project_id)?
+                .is_some_and(|p| p["deletedAt"].is_null())
+            {
+                return Err(ProjectFailure::planned(
+                    "ProjectConflictError",
+                    format!("Project {project_id} already exists."),
+                ));
+            }
+            if tx
+                .project_by_root(root)?
+                .is_some_and(|p| p["deletedAt"].is_null())
+            {
+                return Err(ProjectFailure::planned(
+                    "ProjectConflictError",
+                    format!("Another project already uses {root}."),
+                ));
             }
             let title = input["title"].as_str().unwrap_or_default().trim();
             let mut project = new_project(&project_id, title, root, &now);
@@ -153,7 +188,7 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                     .project_by_root(root)?
                     .is_some_and(|p| p["id"] != project_id.as_str() && p["deletedAt"].is_null())
                 {
-                    return Err(ProjectFailure::tagged(
+                    return Err(ProjectFailure::planned(
                         "ProjectConflictError",
                         format!("Another project already uses {root}."),
                     ));
@@ -180,9 +215,11 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
             }
             if let Some(icon) = input["projectIcon"].as_object()
                 && icon.get("kind") == Some(&json!("monogram"))
-                && icon["text"].as_str().is_some_and(|t| t.chars().count() > 2)
+                && icon["text"]
+                    .as_str()
+                    .is_some_and(|t| t.graphemes(true).count() > 2)
             {
-                return Err(ProjectFailure::tagged(
+                return Err(ProjectFailure::planned(
                     "ProjectInvalidError",
                     "A monogram icon has at most two characters.",
                 ));
@@ -361,58 +398,146 @@ fn make_project_folder(home: &Path, name: &str) -> ProjectResult<(PathBuf, Optio
     Ok((folder, commit_error))
 }
 
+/// A project command's receipt key: its id, T3's command type and its project.
+struct ProjectCommand {
+    id: String,
+    kind: &'static str,
+    project_id: String,
+}
+
+impl ProjectCommand {
+    fn from_input(input: &Value) -> Self {
+        Self {
+            id: input["commandId"].as_str().unwrap_or_default().to_owned(),
+            // T3's receipt names the command it dispatched (`ProjectService.update`).
+            kind: match input["type"].as_str().unwrap_or_default() {
+                "project.update" => "project.meta.update",
+                "project.delete" => "project.delete",
+                _ => "project.create",
+            },
+            project_id: input["projectId"].as_str().unwrap_or_default().to_owned(),
+        }
+    }
+
+    fn key(&self) -> ReceiptKey<'_> {
+        ReceiptKey {
+            command_id: &self.id,
+            command_type: self.kind,
+            owner: ReceiptOwner::Project(&self.project_id),
+        }
+    }
+
+    /// Whether this command may answer from the receipt another write holds (T3's
+    /// `ProjectService.commit`): its own accepted one replays, its own refusal is refused
+    /// again, and any other is a conflict.
+    fn check(&self, receipt: Receipt) -> ProjectResult<()> {
+        let id = &self.id;
+        match receipt.owner {
+            Some(StoredOwner::Project(Some(project)))
+                if project == self.project_id && receipt.command_type == self.kind =>
+            {
+                match receipt.refusal {
+                    Some(refusal) => Err(ProjectFailure::decode(&refusal)),
+                    None => Ok(()),
+                }
+            }
+            Some(StoredOwner::Project(Some(project))) => Err(ProjectFailure::rejected(format!(
+                "Command {id} was already used by {} for {project}.",
+                receipt.command_type
+            ))),
+            Some(StoredOwner::Thread(_)) => Err(ProjectFailure::rejected(format!(
+                "Command {id} was already used by a thread command."
+            ))),
+            Some(StoredOwner::Project(None)) | None => Err(ProjectFailure::rejected(format!(
+                "Command {id} was handled before receipts named their owner; it cannot be replayed."
+            ))),
+        }
+    }
+}
+
 impl Inner {
-    /// Runs one project write, with a receipt when the input has a `commandId`.
+    /// Runs one project write that has no command id, so no receipt.
     async fn project_write<T: Send + 'static>(
         self: &Arc<Self>,
-        command_id: Option<String>,
         f: impl FnOnce(&mut Tx<'_>) -> ProjectResult<(T, Vec<Effect>)> + Send + 'static,
     ) -> ProjectResult<T> {
-        let result = self
-            .db(move |store| {
-                let mut tx = store.tx().map_err(ProjectFailure::from)?;
-                match f(&mut tx) {
-                    Ok((value, effects)) => {
-                        let receipt = command_id.as_deref().map(|id| (id, "project"));
-                        let seq = tx.commit(receipt).map_err(ProjectFailure::from)?;
-                        Ok((value, effects, seq))
-                    }
-                    Err(e) => {
+        let no_replay = |_: &Tx<'_>| Err(ProjectFailure::rejected("No receipt to replay."));
+        self.project_command_write(None, no_replay, f).await
+    }
+
+    /// Runs one project write. A command with an id reads its receipt in the same write, as
+    /// T3's `commitProjectCommand`: a retry of it answers with `replay`, and an id another
+    /// command used is refused with that receipt kept.
+    async fn project_command_write<T: Send + 'static>(
+        self: &Arc<Self>,
+        command: Option<ProjectCommand>,
+        replay: impl FnOnce(&Tx<'_>) -> ProjectResult<T> + Send + 'static,
+        f: impl FnOnce(&mut Tx<'_>) -> ProjectResult<(T, Vec<Effect>)> + Send + 'static,
+    ) -> ProjectResult<T> {
+        self.ensure_effect_worker();
+        self.db(move |store| {
+            let mut tx = store.tx().map_err(ProjectFailure::from)?;
+            // The id is taken inside this write; a receipt another command holds decides
+            // the answer here, and is never replaced.
+            if let Some(command) = &command
+                && !tx.reserve(&command.key()).map_err(ProjectFailure::from)?
+            {
+                let held = tx.outcome(&command.id).map_err(ProjectFailure::from)?;
+                let answer = held
+                    .ok_or_else(|| ProjectFailure::from("The receipt vanished.".to_owned()))
+                    .and_then(|receipt| command.check(receipt))
+                    .and_then(|()| replay(&tx));
+                tx.rollback();
+                return answer;
+            }
+            match f(&mut tx) {
+                Ok((value, effects)) => {
+                    let receipt = command.as_ref().map(ProjectCommand::key);
+                    let command_id = command.as_ref().map(|command| command.id.as_str());
+                    if let Err(e) = tx.enqueue(command_id, &effects) {
                         tx.rollback();
-                        Err(e)
+                        return Err(ProjectFailure::from(e));
                     }
+                    tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
+                    Ok(value)
                 }
-            })
-            .await;
-        let (value, effects, seq) = result?;
-        self.notify.send_replace(seq);
-        for effect in effects {
-            self.spawn_effect(effect);
-        }
-        Ok(value)
+                Err(e) => {
+                    tx.rollback();
+                    // A refusal from planning is the command's outcome (T3's
+                    // `commitRejectedProjectCommand`); others stay retryable.
+                    if e.planned
+                        && let Some(command) = &command
+                    {
+                        store
+                            .record_refusal(&command.key(), &e.encode())
+                            .map_err(ProjectFailure::from)?;
+                    }
+                    Err(e)
+                }
+            }
+        })
+        .await
     }
 
     pub(crate) async fn project_mutate(self: &Arc<Self>, input: Value) -> ProjectResult<Value> {
-        let command_id = input["commandId"].as_str().unwrap_or_default().to_owned();
-        let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
-        // A retried command returns the project as it is now.
-        let (cid, pid) = (command_id.clone(), project_id.clone());
-        let replay = self
-            .db(move |store| -> Result<Option<Value>, String> {
-                if store.receipt(&cid)?.is_none() {
-                    return Ok(None);
-                }
-                let tx = store.tx()?;
-                let project = tx.project_any(&pid);
-                tx.rollback();
-                project
-            })
-            .await?;
-        if let Some(project) = replay {
-            return Ok(project);
-        }
-        self.project_write(Some(command_id), move |tx| mutate(tx, &input))
-            .await
+        let command = ProjectCommand::from_input(&input);
+        // A retried command returns the project as it is now (T3's `readCommitted`).
+        let pid = command.project_id.clone();
+        self.project_command_write(
+            Some(command),
+            move |tx| {
+                tx.project_any(&pid)
+                    .map_err(ProjectFailure::from)?
+                    .ok_or_else(|| {
+                        ProjectFailure::tagged(
+                            "ProjectOperationError",
+                            "The accepted project command did not produce a project row.",
+                        )
+                    })
+            },
+            move |tx| mutate(tx, &input),
+        )
+        .await
     }
 
     pub(crate) async fn project_ensure_scratch(self: &Arc<Self>) -> ProjectResult<Value> {
@@ -426,7 +551,7 @@ impl Inner {
             })?;
         let root = root.to_string_lossy().into_owned();
         let id = self
-            .project_write(None, move |tx| {
+            .project_write(move |tx| {
                 let (id, created) = bootstrap(tx, SCRATCH_TITLE, &root)?;
                 if created && let Some(mut project) = tx.project(&id)? {
                     project["projectIcon"] =
@@ -453,7 +578,7 @@ impl Inner {
         let root = folder.to_string_lossy().into_owned();
         let written = root.clone();
         let created = self
-            .project_write(None, move |tx| {
+            .project_write(move |tx| {
                 // A fresh id, as T3's `createNamedProject`: a folder freed by a moved project
                 // must not bring that project's id back.
                 let id = conn_support::uuid_v4();
@@ -496,7 +621,7 @@ impl Inner {
         let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
         let scratch = self.home.join("scratch");
         let id = self
-            .project_write(None, move |tx| {
+            .project_write(move |tx| {
                 let refuse = || {
                     ProjectFailure::rejected(
                         "Only a No project thread with its own folder can become a project.",
@@ -547,7 +672,10 @@ impl Inner {
                     t["projectId"] = json!(id);
                     t["worktreePath"] = Value::Null;
                     t["updatedAt"] = json!(now);
-                    tx.append(crate::store::Draft::new(&tid, "thread.metadata-updated", t))?;
+                    tx.append(
+                        crate::store::Draft::new(&tid, "thread.metadata-updated", t)
+                            .payload_instance(),
+                    )?;
                 }
                 Ok((id, vec![]))
             })

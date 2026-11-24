@@ -25,6 +25,8 @@ mod calls;
 mod checkpoint;
 mod clock;
 mod commands;
+mod effect_worker;
+pub use commands::{completed_without_result, provider_stop_reason_id};
 mod engine;
 mod feedback;
 mod guard;
@@ -44,10 +46,12 @@ mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
 mod families;
+mod fold;
 mod fork;
 mod fresh;
 mod html_cleanup;
 mod link_requests;
+mod outbox;
 mod output;
 mod projects;
 mod pull_requests;
@@ -73,8 +77,9 @@ pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
-    SqliteEngine,
+    STORE_IN_USE, SqliteEngine,
 };
+pub use fold::{SearchField, field_holds_words, fold, fold_field, fold_search_query, match_fields};
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };
@@ -171,6 +176,20 @@ pub trait EngineHost: Send + Sync {
     /// dispatch, as T3's `assertDispatchTargetEnabled` does. The default allows all.
     fn provider_instance_enabled(&self, _project_id: Option<&str>, _instance_id: &str) -> bool {
         true
+    }
+
+    /// Whether a queued run may start on `instance_id`, by T3's queue rule
+    /// (`startNextQueuedRun`): only an explicit project override or a machine entry disables
+    /// it. Default: the dispatch rule.
+    fn queue_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        self.provider_instance_enabled(project_id, instance_id)
+    }
+
+    /// Reloads settings whose last load failed in a way that may have passed, before work is
+    /// admitted against them (T3 keeps a failed settings load for no time). Off the runtime
+    /// thread when it reads files.
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
     }
 
     /// `responseStreamingMode` of `project_id` (`resolveProjectSettings`): how streamed
@@ -278,7 +297,16 @@ pub struct ProvisionedWorktree {
     pub branch: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The query of `GET /api/orchestration/shell` (`answerShellSnapshot`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HttpShellQuery {
+    pub omit_idle_subagents: bool,
+    pub omit_older_settled: bool,
+    pub resume_from: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThreadClose {
     Archived,
     Deleted,
@@ -417,6 +445,16 @@ pub trait Engine: Send + Sync {
         unsupported("the shell snapshot")
     }
 
+    /// `GET /api/orchestration/shell` with the client's query: `None` when the shell stream
+    /// can resume from `resume_from` (the client keeps its rows), else the snapshot trimmed as
+    /// a fresh `subscribeShell` with the same options trims it.
+    fn http_shell_snapshot(
+        &self,
+        _options: HttpShellQuery,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetShellSnapshotError>>> {
+        unsupported("the shell snapshot")
+    }
+
     /// Live project summaries, without loading thread projections.
     fn projects_snapshot(
         &self,
@@ -497,6 +535,12 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Err(
             "Tasks in linked environments are not supported.".into(),
         )))
+    }
+
+    /// The thread's subagent rows alone (`getThreadRecords(threadId, ["subagents"])`), for a
+    /// follower that must not load the thread's whole history.
+    fn subagent_rows(&self, _thread_id: &str) -> BoxFuture<'_, Result<Vec<Value>, String>> {
+        Box::pin(std::future::ready(Ok(vec![])))
     }
 
     /// `(parentThreadId, taskId)` of each remote task a follower still owes something, at most

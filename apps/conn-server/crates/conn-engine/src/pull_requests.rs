@@ -589,6 +589,11 @@ fn stale_stamp(thread: &Value, messages: &[Value], stamp: &Value) -> bool {
         )
 }
 
+/// Whether a message carries a pull request watch stamp.
+pub(crate) fn is_watch_wake(message: &Value) -> bool {
+    !monitor_stamps(&message["notification"]).is_empty()
+}
+
 /// `isStalePullRequestWatchWake`: every pull request a queued wake speaks for has moved on.
 pub(crate) fn stale_wake(thread: &Value, messages: &[Value], message: &Value) -> bool {
     let stamps = monitor_stamps(&message["notification"]);

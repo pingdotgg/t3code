@@ -163,7 +163,11 @@ pub(crate) fn record(tx: &mut Tx<'_>, command: Value) -> Outcome {
             fields.insert("snoozedAt".into(), Value::Null);
             fields.insert("updatedAt".into(), json!(now));
         }
-        tx.append(Draft::new(&thread_id, "thread.unsnoozed", thread).command(Some(&command_id)))?;
+        tx.append(
+            Draft::new(&thread_id, "thread.unsnoozed", thread)
+                .command(Some(&command_id))
+                .payload_instance(),
+        )?;
     }
     let card_node = text(&item, "nodeId").unwrap_or(&node_id).to_owned();
     tx.append(
@@ -207,7 +211,8 @@ pub(crate) fn record(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 Draft::new(&thread_id, "turn-item.updated", other)
                     .run(run.as_deref())
                     .node(node.as_deref())
-                    .command(Some(&command_id)),
+                    .command(Some(&command_id))
+                    .without_instance(),
             )?;
         }
     }
@@ -279,7 +284,8 @@ pub(crate) fn close_pending(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()>
         tx.append(
             Draft::new(thread_id, "turn-item.updated", item)
                 .run(run.as_deref())
-                .node(node.as_deref()),
+                .node(node.as_deref())
+                .without_instance(),
         )?;
     }
     Ok(())
