@@ -11,10 +11,13 @@ import {
   type EnvironmentId as EnvironmentIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
+import type * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -99,10 +102,14 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
-  readonly refreshTrigger?: (target: {
-    readonly environmentId: EnvironmentIdType;
-    readonly input: Input;
-  }) => Atom.Atom<unknown> | undefined;
+  /** Each change of the returned signal refreshes the query; `query` is the data it refreshes. */
+  readonly refreshTrigger?: (
+    target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: Input;
+    },
+    query: Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
+  ) => Atom.Atom<unknown> | undefined;
   readonly isFinal?: (value: A) => boolean;
   /**
    * Runs where each server answer lands, before readers see it, so derived records (summaries,
@@ -140,6 +147,8 @@ export interface AtomCommandOptions {
   readonly label?: string;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
+  /** Aborting interrupts the run. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface AtomCommandReporter {
@@ -149,7 +158,11 @@ export interface AtomCommandReporter {
 
 export interface AtomCommand<W, A, E> {
   readonly label: string;
-  readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
+  /**
+   * Runs on the calling fiber, so interrupting the caller stops the command. Code outside
+   * Effect starts it with `runAtomCommand`.
+   */
+  readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Effect.Effect<A, E>;
 }
 
 export type AtomCommandConcurrency<W> =
@@ -159,194 +172,220 @@ export type AtomCommandConcurrency<W> =
       readonly key: (input: W) => string;
     };
 
-interface AtomCommandSchedulerState {
-  readonly serial: Map<string, Promise<unknown>>;
-  readonly singleFlight: Map<string, Promise<unknown>>;
-  readonly latest: Map<string, AtomCommandLatestLane>;
-}
-
-interface AtomCommandLatestBatch {
-  execute: () => Promise<AtomCommandResult<unknown, unknown>>;
-  readonly resolve: Array<(result: AtomCommandResult<unknown, unknown>) => void>;
+/** One run that several callers wait on. It is interrupted once the last of them stops waiting. */
+interface SharedRun {
+  readonly result: Deferred.Deferred<unknown, unknown>;
+  waiters: number;
+  fiber: Fiber.Fiber<unknown, unknown> | undefined;
 }
 
 interface AtomCommandLatestLane {
-  running: boolean;
-  pending: AtomCommandLatestBatch | undefined;
+  pending: (SharedRun & { start: Effect.Effect<void> }) | undefined;
+}
+
+interface AtomCommandSchedulerState {
+  readonly serial: Map<string, { readonly semaphore: Semaphore.Semaphore; users: number }>;
+  readonly singleFlight: Map<string, SharedRun>;
+  readonly latest: Map<string, AtomCommandLatestLane>;
 }
 
 export interface AtomCommandScheduler {
-  readonly schedule: <W, A, E>(
+  readonly schedule: <W, A, E, R>(
     registry: AtomRegistry.AtomRegistry,
-    concurrency: AtomCommandConcurrency<W>,
-    input: W,
-    execute: () => Promise<AtomCommandResult<A, E>>,
-  ) => Promise<AtomCommandResult<A, E>>;
-}
-
-async function settleAtomCommandResult<A, E>(
-  execute: () => Promise<AtomCommandResult<A, E>>,
-): Promise<AtomCommandResult<A, E>> {
-  try {
-    return await execute();
-  } catch (defect) {
-    return AsyncResult.failure(Cause.die(defect));
-  }
-}
-
-export function createAtomCommandScheduler(): AtomCommandScheduler {
-  const registryStates = new WeakMap<AtomRegistry.AtomRegistry, AtomCommandSchedulerState>();
-
-  const stateFor = (registry: AtomRegistry.AtomRegistry): AtomCommandSchedulerState => {
-    const existing = registryStates.get(registry);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const state: AtomCommandSchedulerState = {
-      serial: new Map(),
-      singleFlight: new Map(),
-      latest: new Map(),
-    };
-    registryStates.set(registry, state);
-    return state;
-  };
-
-  return {
-    schedule: <W, A, E>(
-      registry: AtomRegistry.AtomRegistry,
-      concurrency: AtomCommandConcurrency<W>,
-      input: W,
-      execute: () => Promise<AtomCommandResult<A, E>>,
-    ): Promise<AtomCommandResult<A, E>> => {
-      if (concurrency.mode === "parallel") {
-        return execute();
-      }
-
-      const key = concurrency.key(input);
-      const state = stateFor(registry);
-      if (concurrency.mode === "singleFlight") {
-        const existing = state.singleFlight.get(key) as
-          | Promise<AtomCommandResult<A, E>>
-          | undefined;
-        if (existing !== undefined) {
-          return existing;
-        }
-        const current = execute();
-        state.singleFlight.set(key, current);
-        void current.then(
-          () => {
-            if (state.singleFlight.get(key) === current) {
-              state.singleFlight.delete(key);
-            }
-          },
-          () => {
-            if (state.singleFlight.get(key) === current) {
-              state.singleFlight.delete(key);
-            }
-          },
-        );
-        return current;
-      }
-
-      if (concurrency.mode === "serial") {
-        const previous = state.serial.get(key);
-        const current = previous === undefined ? execute() : previous.then(execute, execute);
-        state.serial.set(key, current);
-        void current.then(
-          () => {
-            if (state.serial.get(key) === current) {
-              state.serial.delete(key);
-            }
-          },
-          () => {
-            if (state.serial.get(key) === current) {
-              state.serial.delete(key);
-            }
-          },
-        );
-        return current;
-      }
-
-      let lane = state.latest.get(key);
-      if (lane === undefined) {
-        lane = { running: false, pending: undefined };
-        state.latest.set(key, lane);
-      }
-      const activeLane = lane;
-
-      const result = new Promise<AtomCommandResult<A, E>>((resolve) => {
-        if (activeLane.pending === undefined) {
-          activeLane.pending = {
-            execute: execute as () => Promise<AtomCommandResult<unknown, unknown>>,
-            resolve: [resolve as (result: AtomCommandResult<unknown, unknown>) => void],
-          };
-          return;
-        }
-        activeLane.pending.execute = execute as () => Promise<AtomCommandResult<unknown, unknown>>;
-        activeLane.pending.resolve.push(
-          resolve as (result: AtomCommandResult<unknown, unknown>) => void,
-        );
-      });
-
-      if (!activeLane.running) {
-        activeLane.running = true;
-        void (async () => {
-          while (activeLane.pending !== undefined) {
-            const batch = activeLane.pending;
-            activeLane.pending = undefined;
-            let batchResult: AtomCommandResult<unknown, unknown>;
-            try {
-              batchResult = await batch.execute();
-            } catch (defect) {
-              batchResult = AsyncResult.failure(Cause.die(defect));
-            }
-            for (const resolve of batch.resolve) {
-              resolve(batchResult);
-            }
-          }
-          activeLane.running = false;
-          if (state.latest.get(key) === activeLane) {
-            state.latest.delete(key);
-          }
-        })();
-      }
-
-      return result;
-    },
-  };
-}
-
-export const scheduleAtomCommandEffect =
-  /* Every atom command passes through this scheduler; the command owns its tracing boundary. */
-  Effect.fnUntraced(function* <W, A, E, R>(
-    registry: AtomRegistry.AtomRegistry,
-    scheduler: AtomCommandScheduler,
     concurrency: AtomCommandConcurrency<W>,
     input: W,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.fn.Return<A, E, R> {
-    const context = yield* Effect.context<R>();
-    const result = yield* Effect.promise((signal) =>
-      scheduler.schedule<W, A, E>(registry, concurrency, input, async () => {
-        const exit = await Effect.runPromiseExitWith(context)(effect, { signal });
-        return Exit.isSuccess(exit)
-          ? AsyncResult.success(exit.value)
-          : AsyncResult.failure(exit.cause);
+  ) => Effect.Effect<A, E, R>;
+}
+
+const startSharedRun = <A, E>(run: SharedRun, effect: Effect.Effect<A, E>) =>
+  effect.pipe(
+    Effect.interruptible,
+    Effect.onExit((exit) => Deferred.done(run.result, exit)),
+    Effect.ignoreCause,
+    Effect.forkDetach({ startImmediately: true }),
+    Effect.map((fiber) => {
+      run.fiber = fiber;
+    }),
+  );
+
+const awaitSharedRun = <A, E>(
+  run: SharedRun,
+  restore: <X, XE, XR>(effect: Effect.Effect<X, XE, XR>) => Effect.Effect<X, XE, XR>,
+  abandon: Effect.Effect<void>,
+): Effect.Effect<A, E> => {
+  run.waiters++;
+  return restore(Deferred.await(run.result as Deferred.Deferred<A, E>)).pipe(
+    Effect.onInterrupt(() => (--run.waiters === 0 ? abandon : Effect.void)),
+  );
+};
+
+const interruptSharedRun = (run: SharedRun) =>
+  run.fiber === undefined ? Effect.void : Fiber.interrupt(run.fiber);
+
+export function createAtomCommandScheduler(): AtomCommandScheduler {
+  const registryStates = new WeakMap<AtomRegistry.AtomRegistry, AtomCommandSchedulerState>();
+  const stateFor = (registry: AtomRegistry.AtomRegistry) => {
+    let state = registryStates.get(registry);
+    if (state === undefined) {
+      state = { serial: new Map(), singleFlight: new Map(), latest: new Map() };
+      registryStates.set(registry, state);
+    }
+    return state;
+  };
+
+  const serial = <A, E, R>(
+    lanes: AtomCommandSchedulerState["serial"],
+    key: string,
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const lane = lanes.get(key) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+        lanes.set(key, lane);
+        lane.users++;
+        return lane;
+      }),
+      (lane) => lane.semaphore.withPermit(effect),
+      (lane) =>
+        Effect.sync(() => {
+          if (--lane.users === 0) lanes.delete(key);
+        }),
+    );
+
+  const singleFlight = <A, E, R>(
+    flights: AtomCommandSchedulerState["singleFlight"],
+    key: string,
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        let flight = flights.get(key);
+        if (flight === undefined) {
+          const started: SharedRun = {
+            result: Deferred.makeUnsafe(),
+            waiters: 0,
+            fiber: undefined,
+          };
+          flight = started;
+          flights.set(key, started);
+          const context = yield* Effect.context<R>();
+          yield* startSharedRun(
+            started,
+            effect.pipe(
+              Effect.provide(context),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (flights.get(key) === started) flights.delete(key);
+                }),
+              ),
+            ),
+          );
+        }
+        const joined = flight;
+        return yield* awaitSharedRun<A, E>(
+          joined,
+          restore,
+          Effect.suspend(() => {
+            // Left the map first, so a caller arriving during the interrupt starts a fresh run.
+            if (flights.get(key) === joined) flights.delete(key);
+            return interruptSharedRun(joined);
+          }),
+        );
       }),
     );
-    return result._tag === "Success" ? result.value : yield* Effect.failCause(result.cause);
+
+  const latest = <A, E, R>(
+    lanes: AtomCommandSchedulerState["latest"],
+    key: string,
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const context = yield* Effect.context<R>();
+        const existing = lanes.get(key);
+        const lane = existing ?? { pending: undefined };
+        lanes.set(key, lane);
+        // Callers that queue behind a run share the next one, which runs the newest of them.
+        const batch = lane.pending ?? {
+          result: Deferred.makeUnsafe(),
+          waiters: 0,
+          fiber: undefined,
+          start: Effect.void,
+        };
+        batch.start = startSharedRun(batch, Effect.provide(effect, context));
+        lane.pending = batch;
+
+        if (existing === undefined) {
+          const drain: Effect.Effect<void> = Effect.suspend(() => {
+            const next = lane.pending;
+            if (next === undefined) {
+              lanes.delete(key);
+              return Effect.void;
+            }
+            lane.pending = undefined;
+            return next.start.pipe(
+              Effect.andThen(Deferred.await(next.result)),
+              Effect.exit,
+              Effect.andThen(drain),
+            );
+          });
+          yield* drain.pipe(Effect.forkDetach({ startImmediately: true }));
+        }
+        return yield* awaitSharedRun<A, E>(
+          batch,
+          restore,
+          Effect.suspend(() => {
+            if (lane.pending === batch) lane.pending = undefined;
+            return interruptSharedRun(batch);
+          }),
+        );
+      }),
+    );
+
+  return {
+    schedule: (registry, concurrency, input, effect) =>
+      concurrency.mode === "parallel"
+        ? effect
+        : Effect.suspend(() => {
+            const key = concurrency.key(input);
+            const state = stateFor(registry);
+            switch (concurrency.mode) {
+              case "serial":
+                return serial(state.serial, key, effect);
+              case "singleFlight":
+                return singleFlight(state.singleFlight, key, effect);
+              case "latest":
+                return latest(state.latest, key, effect);
+            }
+          }),
+  };
+}
+
+const settleAtEdge = <A, E>(
+  effect: Effect.Effect<A, E>,
+  options: AtomCommandOptions,
+  reporter: AtomCommandReporter,
+): Promise<AtomCommandResult<A, E>> =>
+  Effect.runPromiseExit(effect, { signal: options.signal }).then((exit) => {
+    const result = AsyncResult.fromExit(exit);
+    reportAtomCommandResult(result, options, reporter);
+    return result;
   });
 
-export async function runAtomCommand<W, A, E>(
+/** Starts a command from outside Effect. Effect callers yield `command.run` instead. */
+export function runAtomCommand<W, A, E>(
   registry: AtomRegistry.AtomRegistry,
   command: AtomCommand<W, A, E>,
   input: W,
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
-  const result = await settleAtomCommandResult(() => command.run(registry, input));
-  reportAtomCommandResult(result, { ...options, label: options.label ?? command.label }, reporter);
-  return result;
+  return settleAtEdge(
+    Effect.suspend(() => command.run(registry, input)),
+    { ...options, label: options.label ?? command.label },
+    reporter,
+  );
 }
 
 export function mapAtomCommandResult<A, E, B>(
@@ -365,7 +404,9 @@ export function isAtomCommandInterrupted(result: AtomCommandResult<unknown, unkn
 export function squashAtomCommandFailure(result: {
   readonly cause: Cause.Cause<unknown>;
 }): unknown {
-  return Cause.squash(result.cause);
+  const squashed = Cause.squash(result.cause);
+  // A server `Effect.die("text")` decodes over RPC as a bare string; callers read `Error`s.
+  return typeof squashed === "string" ? new Error(squashed) : squashed;
 }
 
 export async function settleAsyncResult<A, E>(
@@ -378,16 +419,6 @@ export async function settleAsyncResult<A, E>(
   }
 }
 
-async function executeAtomCommand<A, E>(
-  execute: () => Promise<Exit.Exit<A, E>>,
-  options: AtomCommandOptions = {},
-  reporter: AtomCommandReporter = console,
-): Promise<AtomCommandResult<A, E>> {
-  const result = await settleAsyncResult(execute);
-  reportAtomCommandResult(result, options, reporter);
-  return result;
-}
-
 export interface AtomQueryOptions extends AtomCommandOptions {
   /**
    * Force a fresh execution instead of accepting a value the atom already
@@ -395,16 +426,18 @@ export interface AtomQueryOptions extends AtomCommandOptions {
    * verification flows where a cached failure must not satisfy a retry.
    */
   readonly refresh?: boolean;
-  readonly signal?: AbortSignal;
 }
 
-export async function executeAtomQuery<A, E>(
+/**
+ * A query atom's settled value. The atom stays mounted while the caller waits, and
+ * interrupting the caller releases it.
+ */
+export const awaitAtomResult = <A, E>(
   registry: AtomRegistry.AtomRegistry,
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
-  options: AtomQueryOptions = {},
-  reporter: AtomCommandReporter = console,
-): Promise<AtomCommandResult<A, E>> {
-  const query = Effect.scoped(
+  options: Pick<AtomQueryOptions, "refresh"> = {},
+): Effect.Effect<A, E> =>
+  Effect.scoped(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
       if (options.refresh) {
@@ -420,12 +453,27 @@ export async function executeAtomQuery<A, E>(
       });
     }),
   );
-  return executeAtomCommand(
-    () => Effect.runPromiseExit(query, { signal: options.signal }),
-    options,
-    reporter,
-  );
+
+/** Reads a query atom from outside Effect. Effect callers yield `awaitAtomResult` instead. */
+export function executeAtomQuery<A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  options: AtomQueryOptions = {},
+  reporter: AtomCommandReporter = console,
+): Promise<AtomCommandResult<A, E>> {
+  return settleAtEdge(awaitAtomResult(registry, atom, options), options, reporter);
 }
+
+/** Runs an effect on the calling fiber with the services of an atom runtime. */
+export const provideAtomRuntime =
+  <R, ER>(registry: AtomRegistry.AtomRegistry, runtime: Atom.AtomRuntime<R, ER>) =>
+  <A, E>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | ER> =>
+    Effect.scoped(
+      AtomRegistry.mount(registry, runtime).pipe(
+        Effect.andThen(AtomRegistry.getResult(registry, runtime)),
+        Effect.flatMap((context) => Effect.provide(effect, context)),
+      ),
+    );
 
 export function createRuntimeCommand<R, ER, W, A, E>(
   runtime: Atom.AtomRuntime<R, ER>,
@@ -441,13 +489,13 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   return {
     label: options.label,
     run: (registry, input) =>
-      settleAtomCommandResult(() =>
-        scheduler.schedule(registry, concurrency, input, () => {
-          const atom = runtime
-            .atom(options.execute(input, registry))
-            .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
-        }),
+      scheduler.schedule(
+        registry,
+        concurrency,
+        input,
+        Effect.suspend(() => options.execute(input, registry)).pipe(
+          provideAtomRuntime(registry, runtime),
+        ),
       ),
   };
 }
@@ -863,7 +911,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       options.refreshIntervalMs === undefined
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
-    const refreshTrigger = options.refreshTrigger?.(target);
+    const refreshTrigger = options.refreshTrigger?.(target, intervalQuery);
     return (
       refreshTrigger === undefined
         ? intervalQuery
@@ -1104,6 +1152,7 @@ export function createEnvironmentRpcCommand<
         readonly input: NoInfer<Input>;
       },
       registry: AtomRegistry.AtomRegistry,
+      exit: Exit.Exit<EnvironmentRpcSuccess<TTag>, unknown>,
     ) => Effect.Effect<void, never, R>;
   },
 ) {
@@ -1134,7 +1183,7 @@ export function createEnvironmentRpcCommand<
         Effect.tap(
           (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
         ),
-        Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
+        Effect.onExit((exit) => options.onSettled?.(target, registry, exit) ?? Effect.void),
       );
     },
   });

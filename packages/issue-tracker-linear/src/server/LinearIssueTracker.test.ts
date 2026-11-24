@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -74,21 +75,28 @@ const bareDetail = (identifier: string) =>
 function fakeLinear(
   answers: Record<string, (variables: Record<string, unknown>) => unknown>,
   stored: string | null = "lin_api_stored",
+  beforeAnswer?: (operation: string) => Effect.Effect<void>,
 ) {
   const requests: Array<{
     readonly authorization: string | undefined;
     readonly operation: string;
+    readonly query: string;
   }> = [];
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const body = request.body;
         const text =
           body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : String(body._tag);
         const parsed = JSON.parse(text) as { query: string; variables: Record<string, unknown> };
         const operation = /^(?:query|mutation) (\w+)/.exec(parsed.query)?.[1] ?? "?";
-        requests.push({ authorization: request.headers.authorization, operation });
+        requests.push({
+          authorization: request.headers.authorization,
+          operation,
+          query: parsed.query,
+        });
+        if (beforeAnswer !== undefined) yield* beforeAnswer(operation);
         const answer = answers[operation];
         const answered = answer?.(parsed.variables);
         const response =
@@ -127,6 +135,67 @@ function fakeLinear(
 const target = { cwd: "/w/web", host: "linear.app", scope: "ENG" };
 
 describe("LinearIssueTracker", () => {
+  it.effect("matches an issue number only in the team it names", () =>
+    Effect.gen(function* () {
+      const numbers: Array<number | undefined> = [];
+      const { tracker } = fakeLinear({
+        T3Issues: (variables) => {
+          const filter = variables.filter as {
+            or: ReadonlyArray<{ number?: { eq: number } }>;
+          };
+          numbers.push(filter.or.find((clause) => clause.number)?.number?.eq);
+          return { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } };
+        },
+      });
+      const api = yield* tracker;
+      for (const [scope, query] of [
+        [" eng ", "eng-42"],
+        ["OTHER", "ENG-42"],
+        ["OTHER", "42"],
+        ["OTHER", "#42"],
+      ] as const) {
+        yield* api.listIssues({
+          ...target,
+          scope,
+          query,
+          state: "all",
+          involvement: "all",
+          sort: "updated",
+          limit: 50,
+        });
+      }
+      expect(numbers).toEqual([42, undefined, 42, 42]);
+    }),
+  );
+
+  it.effect("cancels the in-flight viewer read when the issue is missing", () =>
+    Effect.gen(function* () {
+      const viewerStarted = yield* Deferred.make<void>();
+      const viewerCanceled = yield* Deferred.make<void>();
+      const { tracker } = fakeLinear(
+        {
+          T3Issue: () =>
+            new Response(JSON.stringify({ errors: [{ message: "Issue not found" }] }), {
+              headers: { "content-type": "application/json" },
+            }),
+        },
+        "lin_api_stored",
+        (operation) =>
+          operation === "T3Viewer"
+            ? Deferred.succeed(viewerStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(viewerCanceled, undefined)),
+              )
+            : Deferred.await(viewerStarted),
+      );
+
+      const api = yield* tracker;
+      const error = yield* Effect.flip(api.getIssue({ ...target, key: "ENG-1" }));
+      expect(error.reason).toBe("not-found");
+      expect(yield* Deferred.isDone(viewerCanceled)).toBe(true);
+    }),
+  );
+
   it.effect("parses Linear issue links with their workspace and team", () =>
     Effect.gen(function* () {
       const api = yield* fakeLinear({}).tracker;
@@ -224,6 +293,8 @@ describe("LinearIssueTracker", () => {
       });
       // The stored key goes in as-is, not as a bearer token.
       expect(requests.map((request) => request.authorization)).toEqual(["lin_api_stored"]);
+      // Rows never show a body, so the listing leaves descriptions to the detail query.
+      expect(requests[0]?.query).not.toMatch(/\bdescription\b/);
 
       // Linear's reset header is an absolute time in epoch milliseconds.
       const resetAt = 4_102_444_800_000;
@@ -297,6 +368,47 @@ describe("LinearIssueTracker", () => {
     }),
   );
 
+  it.effect("reads the viewer only for comment pages with reactions", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeLinear({
+        T3Comments: ({ after }) => ({
+          issue: {
+            comments: {
+              nodes: [
+                {
+                  id: "cmt_1",
+                  body: "hi",
+                  createdAt: "2026-07-02T01:00:00.000Z",
+                  url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
+                  user: THEO,
+                  botActor: null,
+                  reactions: after === "reacted" ? [{ id: "r1", emoji: "+1", user: JULIUS }] : [],
+                },
+              ],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
+      });
+      const api = yield* tracker;
+      const viewerReads = () => requests.filter((r) => r.operation === "T3Viewer").length;
+      const ref = { ...target, key: "ENG-7" };
+      const plain = yield* api.getComments({ ...ref, cursor: "plain" });
+      expect(plain.comments[0]?.reactions).toEqual([]);
+      expect(viewerReads()).toBe(0);
+      const reacted = yield* api.getComments({ ...ref, cursor: "reacted" });
+      expect(reacted.comments[0]?.reactions).toEqual([
+        { content: "thumbs-up", count: 1, actors: [], viewerHasReacted: true },
+      ]);
+      expect(viewerReads()).toBe(1);
+    }),
+  );
+
   it.effect("reads an issue with its comments, reactions, history and linked pull requests", () =>
     Effect.gen(function* () {
       const { tracker } = fakeLinear({
@@ -362,6 +474,7 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
+      expect(detail.body).toBe("body");
       expect((yield* api.probeCredential("token")).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([

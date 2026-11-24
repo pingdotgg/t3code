@@ -1,10 +1,18 @@
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import type { ComponentProps } from "react";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
+import { type ComponentProps, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
 
 import { act, render } from "../../../test/render";
+import { AppRouteModal } from "../AppRouteModal";
 import { ProviderModelsSection } from "./ProviderModelsSection";
+
+vi.mock("../chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
 
 function section(props: Partial<ComponentProps<typeof ProviderModelsSection>>) {
   return (
@@ -97,4 +105,77 @@ it("keeps changes typed while an earlier save succeeds", async () => {
   await save.click();
   await act(() => saves[1]!(true));
   await expect.element(displayName).not.toBeInTheDocument();
+});
+
+const models: ServerProviderModel[] = ["a", "b", "c", "d", "e"].map((id) => ({
+  slug: `model-${id}`,
+  name: `Model ${id.toUpperCase()}`,
+  isCustom: false,
+  capabilities: null,
+}));
+
+function StatefulModelsSection() {
+  const [hiddenModels, setHiddenModels] = useState<ReadonlyArray<string>>(
+    models.map((model) => model.slug),
+  );
+  return section({ models, hiddenModels, onHiddenModelsChange: setHiddenModels });
+}
+
+const rowSlugs = (container: HTMLElement) =>
+  Array.from(container.querySelectorAll<HTMLElement>("[data-model-slug]"), (row) =>
+    row.getAttribute("data-model-slug"),
+  );
+
+it("keeps a model in place when it is shown again after disabling all", async () => {
+  await using screen = await render(<StatefulModelsSection />);
+  const order = models.map((model) => model.slug);
+  expect(rowSlugs(screen.container)).toEqual(order);
+
+  const toggle = screen.getByRole("switch", { name: "Show Model C in the model picker" });
+  await toggle.click();
+  await expect.element(toggle).toBeChecked();
+
+  expect(rowSlugs(screen.container)).toEqual(order);
+});
+
+it("regroups the list when all models are disabled and enabled again", async () => {
+  await using screen = await render(<StatefulModelsSection />);
+  const toggle = screen.getByRole("switch", { name: "Show Model C in the model picker" });
+  await toggle.click();
+  await expect.element(toggle).toBeChecked();
+
+  await screen.getByRole("button", { name: "Disable all" }).click();
+  await screen.getByRole("button", { name: "Enable all" }).click();
+  await expect.element(toggle).toBeChecked();
+
+  expect(rowSlugs(screen.container)).toEqual(models.map((model) => model.slug));
+});
+
+it("cancels adding or editing a custom model on Escape without closing Settings", async () => {
+  const kept = { slug: "kept-model", name: "kept-model", capabilities: null };
+  await using _screen = await render(
+    <AppRouteModal label="Settings">
+      {section({ models: [{ ...kept, isCustom: true }], customModels: [kept] })}
+    </AppRouteModal>,
+    { router: "/settings/providers" },
+  );
+  const settings = page.getByRole("dialog", { name: "Settings" });
+
+  await userEvent.click(page.getByRole("button", { name: "Add custom model" }));
+  const addInput = page.getByRole("textbox");
+  await userEvent.type(addInput, "draft-model");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(addInput).not.toBeInTheDocument();
+  await expect.element(settings).toHaveAttribute("data-open");
+
+  await userEvent.click(page.getByRole("button", { name: "Edit kept-model", exact: true }));
+  const displayName = page.getByRole("textbox", { name: "Display name", exact: true });
+  await userEvent.click(displayName);
+  await expect.element(displayName).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(displayName).not.toBeInTheDocument();
+  await expect.element(settings).toHaveAttribute("data-open");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(settings).not.toBeInTheDocument();
 });

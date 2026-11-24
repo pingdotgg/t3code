@@ -1,16 +1,12 @@
-import * as Schema from "effect/Schema";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
-import {
-  ProjectMonogramText,
-  type ProjectIconColor,
-  type ProjectIconOverride,
-} from "@t3tools/contracts";
+import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 import { createElement, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
+  isValidProjectMonogram,
   PROJECT_EMOJIS,
   PROJECT_ICON_COLORS,
   projectIconColorClassName,
@@ -32,7 +28,6 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON = "folder-code";
-const isMonogramText = Schema.is(ProjectMonogramText);
 
 function PickerIcon({ name }: { name: string }) {
   const icon = lucideIconByName(name);
@@ -105,7 +100,7 @@ function ProjectIconPickerBody({
   const icons = filterProjectIconNames(query);
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
-  const validMonogram = isMonogramText(monogram);
+  const validMonogram = isValidProjectMonogram(monogram);
   const save = () => {
     if (mode === "monogram" && !validMonogram) return;
     onSelect(
@@ -176,12 +171,25 @@ function ProjectIconPickerBody({
 
         {mode === "lucide" ? (
           <>
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <Input
-              type="search"
+              type="text"
+              role="searchbox"
               value={query}
               aria-label={gt("Search Lucide icons")}
               placeholder={gt("Search all Lucide icons")}
               onChange={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.key !== "Escape" ||
+                  event.nativeEvent.isComposing ||
+                  event.keyCode === 229
+                )
+                  return;
+                if (!query && !event.repeat) return;
+                event.stopPropagation();
+                setQuery("");
+              }}
             />
             <ScrollArea scrollFade className="max-h-64">
               <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">

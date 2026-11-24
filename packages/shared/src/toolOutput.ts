@@ -253,6 +253,26 @@ export function previewRecordingIdFromToolItem(item: {
   return result.failed || budget.exceeded ? undefined : boundedId(result.data?.id);
 }
 
+/**
+ * Compact structured result a T3 MCP tool carries on its turn item.
+ * Preserves every metadata field clients, summaries, and attachment retention read.
+ */
+export function compactT3McpToolOutput(
+  toolName: string | null | undefined,
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const resolved = resolveT3McpToolId(toolName);
+  if (resolved === null) return undefined;
+  const compact = compactDynamicToolOutput(value);
+  if (resolved === "preview_recording_stop" && !compact?.isError) {
+    const recordingId = previewRecordingIdFromToolItem({ toolName: resolved, output: value });
+    if (recordingId !== undefined) {
+      return { ...compact, id: recordingId };
+    }
+  }
+  return compact === undefined ? undefined : { ...compact };
+}
+
 /** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */
 export function mcpAppFromToolItem(item: {
   readonly toolName: string | null | undefined;
@@ -281,6 +301,19 @@ export function toolOutputIndicatesFailure(text: string): boolean {
       (/is not recognized/i.test(text) && /the term '/i.test(text)) ||
       /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
       /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text))
+  );
+}
+
+/** Whether a command failed. A reported exit code outranks text in its output. */
+export function commandIndicatesFailure(command: {
+  readonly exitCode?: number | undefined;
+  readonly outputIndicatesFailure?: boolean | undefined;
+  readonly output?: string | undefined;
+}): boolean {
+  if (command.exitCode !== undefined) return command.exitCode !== 0;
+  return (
+    command.outputIndicatesFailure === true ||
+    (command.output !== undefined && toolOutputIndicatesFailure(command.output.slice(0, 32_768)))
   );
 }
 

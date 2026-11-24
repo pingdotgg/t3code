@@ -1029,6 +1029,7 @@ private struct ReviewDiffFileHeaderInteractiveRects {
   let chevron: CGRect
   let icon: CGRect
   let checkbox: CGRect
+  let checkboxHitTarget: CGRect
 }
 
 private struct ReviewDiffStickyFileHeaderIndex {
@@ -1643,7 +1644,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let interactiveRects = fileHeaderInteractiveRects(for: row, cardRect: rect)
     let fileId = resolvedFileId(for: row)
 
-    if interactiveRects.checkbox.contains(point) {
+    if interactiveRects.checkboxHitTarget.contains(point) {
       onToggleViewedFile?(fileId)
       return
     }
@@ -2349,10 +2350,17 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let chevronRect = CGRect(x: cardRect.minX + horizontalPadding, y: centerY - 10, width: 20, height: 20)
     let iconRect = CGRect(x: chevronRect.maxX + 8, y: centerY - 10, width: 20, height: 20)
     let checkboxRect = CGRect(x: cardRect.maxX - horizontalPadding - 20, y: centerY - 10, width: 20, height: 20)
+    let checkboxHitMinX = checkboxRect.minX - 14
     return ReviewDiffFileHeaderInteractiveRects(
       chevron: chevronRect,
       icon: iconRect,
-      checkbox: checkboxRect
+      checkbox: checkboxRect,
+      checkboxHitTarget: CGRect(
+        x: checkboxHitMinX,
+        y: cardRect.minY,
+        width: cardRect.maxX - checkboxHitMinX,
+        height: cardRect.height
+      )
     )
   }
 
@@ -2661,8 +2669,9 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
+    // Source files hide the change bar (width 0); the selection marker still needs to show.
     theme.hunkText.withAlphaComponent(0.95).setFill()
-    context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
+    context.fill(CGRect(x: 0, y: rect.minY, width: max(style.changeBarWidth, 4), height: rect.height))
   }
 
   private func drawWordDiffRanges(
