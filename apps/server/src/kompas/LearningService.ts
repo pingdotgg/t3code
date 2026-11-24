@@ -59,6 +59,8 @@ export class LearningService extends Context.Service<
     readonly review: (input: {
       readonly id: string;
       readonly rating: ReviewRating;
+      /** The reviews of the card the rating was made on. Fails when it has had another since. */
+      readonly reviewCount?: number | undefined;
     }) => Effect.Effect<Card, KompasError>;
     readonly stats: Effect.Effect<StudyStats, KompasError>;
     readonly exportCsv: (
@@ -334,16 +336,18 @@ const make = Effect.gen(function* () {
   const review: LearningService["Service"]["review"] = Effect.fn("LearningService.review")(
     function* (input) {
       const now = yield* nowDate;
-      const row = yield* getRow(input.id);
-      const before = fromState(
-        yield* decodeFsrs(row.fsrs_json).pipe(Effect.mapError(storageError)),
-      );
-      const { card } = scheduler.next(before, now, GRADES[input.rating]);
-      const fsrsJson = serializeFsrs(card);
       const reviewId = yield* database.newId;
-      yield* sql
+      // Read in the transaction too, or of two reviews at once the second undoes the first.
+      const reviewed = yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            const row = yield* getRow(input.id);
+            const before = fromState(yield* decodeFsrs(row.fsrs_json));
+            if (input.reviewCount !== undefined && input.reviewCount !== before.reps) {
+              return yield* kompasError("invalid", "This card was already reviewed.");
+            }
+            const { card } = scheduler.next(before, now, GRADES[input.rating]);
+            const fsrsJson = serializeFsrs(card);
             yield* sql`
               UPDATE kompas_cards SET fsrs_json = ${fsrsJson}, due = ${card.due.toISOString()}
               WHERE card_id = ${input.id}
@@ -352,11 +356,17 @@ const make = Effect.gen(function* () {
               INSERT INTO kompas_reviews (review_id, card_id, rating, reviewed_at, fsrs_json)
               VALUES (${reviewId}, ${input.id}, ${input.rating}, ${now.toISOString()}, ${fsrsJson})
             `;
+            return { ...row, fsrs_json: fsrsJson };
           }),
         )
-        .pipe(Effect.mapError(storageError));
+        .pipe(
+          Effect.catchTags({
+            SqlError: (cause) => Effect.fail(storageError(cause)),
+            SchemaError: (cause) => Effect.fail(storageError(cause)),
+          }),
+        );
       yield* database.notifyChanged;
-      return yield* toCard({ ...row, fsrs_json: fsrsJson }, now);
+      return yield* toCard(reviewed, now);
     },
   );
 

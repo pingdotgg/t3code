@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { PLUGIN_SECRET_REDACTED, type Plugin, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
@@ -161,6 +162,32 @@ describe("LearningService", () => {
         [second!.id],
       );
       assert.equal((yield* learning.stats).reviewsTotal, 2);
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("counts reviews made at once one after another, and one review once", () =>
+    Effect.gen(function* () {
+      const learning = yield* LearningService;
+      const deck = yield* learning.createDeck({
+        title: "Biology",
+        cards: [{ front: "Q", back: "A" }],
+        threadId: null,
+      });
+      const [card] = yield* learning.cards({ deckId: deck.id, dueOnly: false });
+      const review = (reviewCount?: number) =>
+        learning.review({ id: card!.id, rating: "good", reviewCount });
+
+      yield* Effect.all([review(), review()], { concurrency: "unbounded" });
+      assert.equal((yield* learning.getCard(card!.id)).reviewCount, 2);
+
+      // Two devices rating the same showing of the card.
+      const results = yield* Effect.forEach([2, 2], (seen) => Effect.exit(review(seen)), {
+        concurrency: "unbounded",
+      });
+      assert.equal(results.filter(Exit.isSuccess).length, 1);
+      assert.equal((yield* review(2).pipe(Effect.flip)).reason, "invalid");
+      assert.equal((yield* learning.getCard(card!.id)).reviewCount, 3);
+      assert.equal((yield* learning.stats).reviewsTotal, 3);
     }).pipe(Effect.provide(layer())),
   );
 

@@ -62,14 +62,19 @@ function StudySession(props: {
   );
   const [total, setTotal] = useState<number | null>(null);
   const [done, setDone] = useState(0);
-  // When the answer was shown; the rating buttons count from it.
-  const [flippedAt, setFlippedAt] = useState<number | null>(null);
-  const flip = () => setFlippedAt(flippedAt === null ? Date.now() : null);
+  // Which card shows its answer, and since when; the rating buttons count from it.
+  const [flipped, setFlipped] = useState<{ readonly card: string; readonly at: number } | null>(
+    null,
+  );
   // Reviewed here already: the query may still list a card until the server's answer arrives.
   const [reviewed, setReviewed] = useState<ReadonlyMap<string, string>>(new Map());
   const [busy, setBusy] = useState(false);
   const cards = (data?.cards ?? []).filter((card) => reviewed.get(card.id) !== card.due);
   const card: Card | undefined = cards[0];
+  // A review on another device can bring up the next card, which must not show its answer yet.
+  const face = card === undefined ? "" : `${card.id}:${card.reviewCount}`;
+  const flippedAt = flipped?.card === face ? flipped.at : null;
+  const flip = () => setFlipped(flippedAt === null ? { card: face, at: Date.now() } : null);
   if (total === null && data !== null) setTotal(data.cards.length);
 
   const rate = async (rating: ReviewRating) => {
@@ -77,12 +82,11 @@ function StudySession(props: {
     setBusy(true);
     const result = await review({
       environmentId: kompas.environmentId,
-      input: { id: card.id, rating },
+      input: { id: card.id, rating, reviewCount: card.reviewCount },
     });
     setBusy(false);
     if (!reportFailure(result)) return;
     setReviewed((current) => new Map(current).set(card.id, card.due));
-    setFlippedAt(null);
     setDone((count) => count + 1);
   };
   const onKey = useStableCallback((event: KeyboardEvent) => {

@@ -5,6 +5,7 @@ interface Flashcard {
   readonly front: string;
   readonly back: string;
   readonly hint: string | null;
+  readonly reviewCount: number;
 }
 
 void start<{ readonly deckId: string; readonly title: string }>((deck, root) => {
@@ -12,6 +13,7 @@ void start<{ readonly deckId: string; readonly title: string }>((deck, root) => 
   let index = 0;
   let flipped = false;
   let editing = false;
+  let rating = false;
 
   const show = (next: number) => {
     index = (next + cards.length) % cards.length;
@@ -20,12 +22,22 @@ void start<{ readonly deckId: string; readonly title: string }>((deck, root) => 
     draw();
   };
 
-  const rate = async (rating: string) => {
+  const replace = (saved: Flashcard) => {
+    cards = cards.map((entry) => (entry.id === saved.id ? saved : entry));
+  };
+
+  const rate = async (grade: string) => {
+    if (rating) return;
+    rating = true;
+    const { id, reviewCount } = cards[index]!;
     try {
-      await callTool("flashcards_review", { id: cards[index]!.id, rating });
+      const reviewed = await callTool("flashcards_review", { id, rating: grade, reviewCount });
+      replace(reviewed.card as Flashcard);
       show(index + 1);
     } catch (error) {
       root.append(failure(error));
+    } finally {
+      rating = false;
     }
   };
 
@@ -40,7 +52,7 @@ void start<{ readonly deckId: string; readonly title: string }>((deck, root) => 
           back: back.value,
           hint: current.hint,
         });
-        cards = cards.map((entry) => (entry.id === current.id ? (saved as Flashcard) : entry));
+        replace(saved as Flashcard);
         editing = false;
         draw();
       } catch (error) {

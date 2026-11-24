@@ -357,7 +357,12 @@ const KompasListCardsRpc = Rpc.make(KOMPAS_WS_METHODS.listCards, {
   error,
 });
 const KompasReviewCardRpc = Rpc.make(KOMPAS_WS_METHODS.reviewCard, {
-  payload: Schema.Struct({ id: Schema.String, rating: ReviewRating }),
+  payload: Schema.Struct({
+    id: Schema.String,
+    rating: ReviewRating,
+    /** The card's `reviewCount` when it was rated, so a review made elsewhere is not undone. */
+    reviewCount: Schema.optionalKey(Schema.Int),
+  }),
   success: Card,
   error,
 });

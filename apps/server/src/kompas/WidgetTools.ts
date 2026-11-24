@@ -103,9 +103,13 @@ const make = Effect.gen(function* () {
         return { cards: yield* learning.cards({ deckId: id, dueOnly: false }) };
       }
       case "flashcards_review": {
-        const review = yield* decode(Schema.Struct({ id: Schema.String, rating: ReviewRating }))(
-          args,
-        );
+        const review = yield* decode(
+          Schema.Struct({
+            id: Schema.String,
+            rating: ReviewRating,
+            reviewCount: Schema.optionalKey(Schema.Int),
+          }),
+        )(args);
         yield* ownCard(review.id, data);
         return { card: yield* learning.review(review) };
       }
