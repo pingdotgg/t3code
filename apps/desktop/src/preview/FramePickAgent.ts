@@ -101,8 +101,23 @@ export function installFramePickAgent(
   let active = false;
   let cursorStyle: HTMLStyleElement | null = null;
 
-  const childFrames = (): HTMLIFrameElement[] =>
-    Array.from(document.querySelectorAll<HTMLIFrameElement>("iframe, frame"));
+  // Frames inside open shadow roots count too. The walk is cached and redone on a lookup miss
+  // so per-pointermove relays do not rescan the whole document.
+  let frameCache: HTMLIFrameElement[] | null = null;
+  const scanFrames = (): HTMLIFrameElement[] => {
+    const found: HTMLIFrameElement[] = [];
+    const visit = (root: Document | ShadowRoot): void => {
+      for (const element of Array.from(root.querySelectorAll("*"))) {
+        if (element instanceof HTMLIFrameElement || element.tagName === "FRAME")
+          found.push(element as HTMLIFrameElement);
+        if (element.shadowRoot) visit(element.shadowRoot);
+      }
+    };
+    visit(document);
+    frameCache = found;
+    return found;
+  };
+  const childFrames = (): HTMLIFrameElement[] => frameCache ?? scanFrames();
 
   const post = (target: Window | null | undefined, envelope: unknown): void => {
     if (!target) return;
@@ -223,7 +238,9 @@ export function installFramePickAgent(
     post(childFrames()[index]?.contentWindow, { down, path });
 
   const broadcast = (down: FramePickDown): void => {
-    childFrames().forEach((_frame, index) => sendDown(index, down, []));
+    (down.kind === "refresh" ? childFrames() : scanFrames()).forEach((_frame, index) =>
+      sendDown(index, down, []),
+    );
   };
 
   const register = (element: Element): string => {
@@ -399,8 +416,10 @@ export function installFramePickAgent(
       | undefined;
     if (!envelope || typeof envelope !== "object" || !Array.isArray(envelope.path)) return;
     if (envelope.up) {
-      const frames = childFrames();
-      const index = frames.findIndex((frame) => frame.contentWindow === event.source);
+      const isSender = (frame: HTMLIFrameElement): boolean => frame.contentWindow === event.source;
+      let frames = childFrames();
+      if (!frames.some(isSender)) frames = scanFrames();
+      const index = frames.findIndex(isSender);
       const frame = frames[index];
       if (!frame) return;
       if (envelope.up.kind === "hello") {
