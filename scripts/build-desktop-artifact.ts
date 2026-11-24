@@ -997,6 +997,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/prod-resources/mac-trackpad",
+  "!apps/desktop/prod-resources/mac-trackpad/**/*",
   "!apps/desktop/prod-resources/apple-speech",
   "!apps/desktop/prod-resources/apple-speech/**/*",
   "!apps/desktop/prod-resources/windows-server",
@@ -1123,6 +1125,9 @@ export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
 ] as const;
 export const MAC_APPLE_SPEECH_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/apple-speech", to: "apple-speech" },
+] as const;
+const MAC_TRACKPAD_EXTRA_RESOURCES = [
+  { from: "apps/desktop/prod-resources/mac-trackpad", to: "mac-trackpad" },
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -2844,7 +2849,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
-      ...(platform === "mac" ? MAC_APPLE_SPEECH_EXTRA_RESOURCES : []),
+      ...(platform === "mac"
+        ? [...MAC_APPLE_SPEECH_EXTRA_RESOURCES, ...MAC_TRACKPAD_EXTRA_RESOURCES]
+        : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -3884,6 +3891,23 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+
+  if (options.platform === "mac") {
+    yield* runCommand(
+      ChildProcess.make(
+        "node",
+        [
+          path.join(repoRoot, "apps/desktop/scripts/build-mac-trackpad.mjs"),
+          "--arch",
+          options.arch,
+          "--output",
+          path.join(stageResourcesDir, "mac-trackpad", "libt3-trackpad.dylib"),
+        ],
+        { cwd: repoRoot },
+      ),
+      { label: "build macOS trackpad monitor", verbose: options.verbose },
+    );
+  }
 
   yield* assertPlatformBuildResources(
     options.platform,
