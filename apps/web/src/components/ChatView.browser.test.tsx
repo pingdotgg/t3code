@@ -165,7 +165,22 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   const grouped = threadWithHistory("issue-grouped", 1);
   using _environment = installFakeEnvironment([
     first,
-    { ...linked, issues: [issue] },
+    {
+      ...linked,
+      issues: [issue],
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 124,
+          url: "https://github.com/pingdotgg/t3code/pull/124",
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    },
     { ...grouped, issues: [completed, issue] },
   ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
@@ -235,6 +250,15 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   expect(badge.element().querySelector("span")).toHaveClass(/text-emerald-600/);
   expect(badge.element()).toHaveTextContent("123");
   expect(badge.element()).not.toHaveTextContent("#");
+  const prBadge = page.getByRole("link", { name: "PR #124, status pending" });
+  await expect.element(prBadge).toHaveTextContent("124");
+  for (const control of [badge, prBadge]) {
+    expect(control.element().querySelector("span")).toHaveClass(
+      "contents",
+      "text-xs",
+      "tabular-nums",
+    );
+  }
   const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
   await vi.waitFor(() =>
     expect(groupedBadge.element().querySelector("span")).toHaveClass(/text-emerald-600/),
