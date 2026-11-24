@@ -2069,6 +2069,14 @@ function runningSubagentsAtRunTail(feed: ReadonlyArray<ThreadFeedEntry>, runId: 
   let running = 0;
   for (let index = feed.length - 1; index >= 0; index -= 1) {
     const entry = feed[index]!;
+    // A finished reply is the parent parking on the children, not new work.
+    if (
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.streaming
+    ) {
+      continue;
+    }
     if (entry.type !== "activity-group" || entry.runId !== runId) break;
     const items = entry.activities.map((activity) => activity.projectedItem.item);
     if (items.some((item) => item.type !== "subagent")) break;
