@@ -132,6 +132,16 @@ it("preserves actionable T3 errors wrapped by turn startup", () => {
     });
     assert.equal(makeProviderFailure({ cause: Cause.fail(cause) }).message, error.message);
   }
+  const unanswered = {
+    _tag: "CodexAppServerUnresponsiveError",
+    message: "Codex app-server did not answer turn/start within 2 minutes.",
+  };
+  assert.equal(
+    makeProviderFailure({
+      cause: Cause.fail({ _tag: "ProviderAdapterEventStreamError", cause: unanswered }),
+    }).message,
+    unanswered.message,
+  );
 });
 
 it("names how the provider process exited and the stage it failed in, without its output", () => {
@@ -163,6 +173,16 @@ it("names how the provider process exited and the stage it failed in, without it
     makeProviderFailure({ cause: { _tag: "AcpProcessExitedError", code: 1 } }).message,
     "The provider process exited with code 1. Check the server logs for the provider's output, then retry the turn.",
   );
+  const denied = makeProviderFailure({
+    cause: {
+      _tag: "CodexAppServerProcessExitedError",
+      code: 1,
+      stderr: "Error: Operation not permitted (os error 1) at /Users/private/Desktop",
+    },
+  }).message;
+  assert.include(denied, "The provider process exited with code 1. It was denied access");
+  assert.include(denied, "Files and Folders");
+  assert.notInclude(denied, "/Users/private");
 });
 
 it("tells the user to sign in only when an ACP agent answers auth_required", () => {
