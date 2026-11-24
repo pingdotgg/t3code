@@ -49,6 +49,14 @@ export function offeredPromptSuggestion<Suggestion extends { readonly runId: Run
 }
 
 /**
+ * The suggestion to insert when Tab or the hint accepts it. The hint unmounts a render after
+ * typing starts, so a late accept must not prepend the suggestion to a draft that has text.
+ */
+export function promptSuggestionToAccept(suggestion: string | null, draft: string): string | null {
+  return draft.length === 0 ? suggestion : null;
+}
+
+/**
  * The provider's predicted next prompt, while the run that produced it is the thread's latest
  * completed run and Escape has not dismissed it.
  */
@@ -59,7 +67,7 @@ export function usePromptSuggestion(
 ): { readonly suggestion: string | null; readonly dismiss: () => void } {
   // Older servers decode the missing setting as false, so true also proves the method exists.
   const enabled = useServerConfigs().get(environmentId)?.settings.promptSuggestionsEnabled === true;
-  // Tab is the only way to accept one, so skip devices with no mouse or trackpad at all.
+  // Suggestions target keyboard and mouse setups, so skip devices with no mouse or trackpad at all.
   const hasFinePointer = useMediaQuery("(any-pointer: fine)");
   const { data } = useEnvironmentQuery(
     // A local draft has no run, and so no suggestion, until its first send.

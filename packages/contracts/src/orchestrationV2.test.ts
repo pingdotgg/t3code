@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   NodeId,
   RunAttemptId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -13,6 +14,7 @@ import {
 import {
   latestProviderTurnForAttempt,
   OrchestrationV2CheckpointFileSummary,
+  repositoryRewindCheckpoint,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -464,6 +466,37 @@ describe("orchestration V2 contracts", () => {
     expect(runtimeThread.contextUsage).toBeNull();
     expect(runtimeThread.nativeMetadata).toBeNull();
   });
+
+  it("preserves awaitingCompletion on command_execution items across JSON round-trip", () => {
+    const encoded = encodeOrchestrationV2TurnItemJson({
+      id: "item-cmd-1" as OrchestrationV2TurnItem["id"],
+      threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running",
+      title: "Run capture",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution",
+      input: "./fixture capture",
+      awaitingCompletion: true,
+    });
+    expect(encoded).toMatchObject({
+      type: "command_execution",
+      status: "running",
+      awaitingCompletion: true,
+    });
+    const decoded = decodeOrchestrationV2TurnItemJson(encoded);
+    expect(decoded.type === "command_execution" ? decoded.awaitingCompletion : undefined).toBe(
+      true,
+    );
+  });
 });
 
 describe("thread open stats", () => {
@@ -656,6 +689,45 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("repositoryRewindCheckpoint", () => {
+  const run = RunId.make("run");
+  // Runs 2 and 6 changed the repository; a rewind to run 3 already discarded what run 5 recorded.
+  // Run 11's snapshot failed, run 12 left the repository alone, run 13 changed it.
+  const checkpoints = [
+    { ordinalWithinScope: 1, runId: null, status: "ready" },
+    { ordinalWithinScope: 2, runId: run, status: "ready" },
+    { ordinalWithinScope: 4, runId: null, status: "stale" },
+    { ordinalWithinScope: 5, runId: run, status: "stale" },
+    { ordinalWithinScope: 5, runId: null, status: "ready" },
+    { ordinalWithinScope: 6, runId: run, status: "ready" },
+    { ordinalWithinScope: 8, runId: null, status: "missing" },
+    { ordinalWithinScope: 9, runId: run, status: "ready" },
+    { ordinalWithinScope: 10, runId: null, status: "missing" },
+    { ordinalWithinScope: 11, runId: run, status: "error" },
+    { ordinalWithinScope: 12, runId: null, status: "ready" },
+    { ordinalWithinScope: 13, runId: run, status: "ready" },
+  ] as const;
+
+  it.each([
+    { target: 0, restores: 1, why: "the baseline before the first change" },
+    { target: 2, restores: 2, why: "the target run's own checkpoint" },
+    { target: 3, restores: 5, why: "the baseline before the next change, past stale records" },
+    { target: 6, restores: 6, why: "the target run's own checkpoint" },
+    { target: 7, restores: null, why: "nothing: the state before run 9 was never snapshotted" },
+    { target: 10, restores: null, why: "nothing: run 11's failed snapshot hides what it changed" },
+    {
+      target: 11,
+      restores: 12,
+      why: "the baseline before the next change, its own snapshot failed",
+    },
+    { target: 14, restores: null, why: "nothing: no later run changed the repository" },
+  ])("a rewind to run $target restores $why", ({ target, restores }) => {
+    expect(repositoryRewindCheckpoint(checkpoints, target)?.ordinalWithinScope ?? null).toBe(
+      restores,
+    );
   });
 });
 
