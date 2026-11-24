@@ -8085,21 +8085,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
-    // Automatic wakes—including buffered provider notifications—must not start
-    // while usage-limited, or they become latestExecutedRun, drop armed
-    // auto-resume, and release held wakes. Hold them until reset or manual resume.
-    let limitedRunForAutomaticWake: OrchestrationV2Run | undefined;
-    if (
+    // An automatic wake (buffered provider output included) that starts while an
+    // auto-resume is armed would fail on the same limit and drop it. Hold the wake
+    // behind the limited run; the resumed run's completion releases it.
+    const armedRecovery = projection.thread.limitRecovery;
+    const limitedRun =
       activeRun === undefined &&
+      armedRecovery?.autoResume === true &&
       command.createdBy === "agent" &&
       command.usageLimitContinuationOfRunId === undefined &&
       (command.delegatedCompletion !== undefined || command.notification !== undefined) &&
       startsOrQueuesRun &&
       usageLimitHoldsQueue(projection, modelSelection.instanceId, yield* DateTime.now)
-    ) {
-      limitedRunForAutomaticWake =
-        usageLimitBlockedRunForInstance(projection, modelSelection.instanceId) ?? undefined;
-    }
+        ? usageLimitBlockedRunForInstance(projection, modelSelection.instanceId)
+        : null;
+    const limitedRunForAutomaticWake =
+      limitedRun !== null && limitedRun.id === armedRecovery?.runId ? limitedRun : undefined;
     const queueBehindRun =
       activeRun ?? worktreeMissingRun ?? steerFollowUpSource ?? limitedRunForAutomaticWake;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);

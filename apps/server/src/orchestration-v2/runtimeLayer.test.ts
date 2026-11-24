@@ -14037,6 +14037,111 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
+  it.effect("starts an agent wake after the reset when no auto-resume is armed", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("wake-limit:unarmed");
+      const projectId = ProjectId.make("wake-limit:project:unarmed");
+      const now = yield* DateTime.now;
+      yield* seedProject({
+        projectId,
+        title: "Wake limit project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("wake-limit:create:unarmed"),
+        threadId,
+        projectId,
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("wake-limit:start:unarmed"),
+        threadId,
+        messageId: MessageId.make("wake-limit:start:unarmed"),
+        text: "Work on this.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      yield* events.write({
+        commandId: CommandId.make("wake-limit:failure:unarmed"),
+        events: [
+          {
+            id: EventId.make("wake-limit:run:unarmed"),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...run, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make("wake-limit:error:unarmed"),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("wake-limit:error:unarmed"),
+              type: "error",
+              threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Plan limit reached.",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+              },
+            },
+          },
+        ],
+      });
+      yield* TestClock.adjust("2 minutes");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("wake-limit:wake:unarmed"),
+        threadId,
+        messageId: MessageId.make("wake-limit:message:unarmed"),
+        text: "Background task completed.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "updated",
+          summary: "Background task completed",
+        },
+      });
+      const wakeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!;
+      assert.notEqual(wakeRun.status, "queued");
+      assert.isNotTrue(wakeRun.queueHeld);
+    }),
+  );
+
   it.effect(
     "holds a buffered provider notification behind a usage limit so it cannot release a held wake before reset",
     () =>
