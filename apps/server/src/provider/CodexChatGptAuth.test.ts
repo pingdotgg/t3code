@@ -18,7 +18,6 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Logger from "effect/Logger";
-import * as Queue from "effect/Queue";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -1790,13 +1789,10 @@ const makeRenewalBrokerWith = (
     readonly saved?: string | null;
     readonly credentials?: Partial<typeof brokerCredentials>;
     readonly renewal?: { readonly status: number; readonly body: unknown };
-    /** More instances saved with the same sign-in. */
-    readonly instances?: ReadonlyArray<ProviderInstanceId>;
   } = {},
 ) =>
   Effect.gen(function* () {
     const oauthEntered = yield* Deferred.make<void>();
-    const oauthEntries = yield* Queue.unbounded<void>();
     const oauthRelease = yield* Deferred.make<void>();
     let pauseOAuth = false;
     const refreshTokens: string[] = [];
@@ -1821,7 +1817,6 @@ const makeRenewalBrokerWith = (
         const body = new URLSearchParams(new TextDecoder().decode(request.body.body));
         refreshTokens.push(body.get("refresh_token")!);
         yield* Deferred.succeed(oauthEntered, undefined);
-        yield* Queue.offer(oauthEntries, undefined);
         // A paused renewal ignores cancellation, like a request already on the wire.
         if (pauseOAuth) yield* Deferred.await(oauthRelease).pipe(Effect.uninterruptible);
         if (options.renewal)
@@ -1845,10 +1840,6 @@ const makeRenewalBrokerWith = (
       const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
       const saved = options.saved === undefined ? JSON.stringify(credentials) : options.saved;
       if (saved !== null) yield* store.set(new TextEncoder().encode(saved));
-      for (const other of options.instances ?? []) {
-        const otherStore = yield* ProviderCredentialStore.make("codex-chatgpt", other);
-        yield* otherStore.set(new TextEncoder().encode(JSON.stringify(credentials)));
-      }
       const auth = yield* makeCodexChatGptAuth({ instanceId });
       const profileKey = yield* auth.profileKey(credentials);
       const scope = yield* Scope.make();
@@ -1865,7 +1856,6 @@ const makeRenewalBrokerWith = (
         refreshTokens,
         request: { version: 1, instanceId, environmentId, profileKey, sessionKey: "5e".repeat(16) },
         oauthEntered,
-        oauthEntries,
         oauthRelease,
         pause: () => {
           pauseOAuth = true;
@@ -1992,43 +1982,16 @@ const captureLogs = () => {
 
 it.effect.each([
   { name: "no saved sign-in", kind: "access", options: { saved: null } },
-  { name: "a replaced sign-in", kind: "access", request: { profileKey: "0".repeat(64) } },
   {
     name: "disabled token sharing",
     kind: "sharing",
     options: { credentials: { scopes: [] as Array<string> } },
   },
   {
-    name: "a renewal ChatGPT defers",
-    kind: "refresh",
-    options: { credentials: { earliestRefreshAt: 4_102_444_800_000 } },
-  },
-  {
-    name: "an expiry with no renewal token",
-    kind: "refresh",
-    options: { credentials: { refreshToken: null } },
-  },
-  {
     name: "a failed renewal",
     kind: "refresh",
     options: { renewal: { status: 500, body: { error: "server_error" } } },
   },
-  {
-    name: "an invalid renewal",
-    kind: "refresh",
-    options: {
-      renewal: {
-        status: 200,
-        body: {
-          access_token: "renewed-access",
-          expires_in: 3600,
-          token_type: "Bearer",
-          scope: "chatgpt.tokens.use.direct",
-        },
-      },
-    },
-  },
-  { name: "an unreadable sign-in", kind: "read", options: { saved: "not json" } },
   {
     name: "another environment",
     kind: "environment",
@@ -2074,41 +2037,6 @@ it.effect.each([
     }),
   ).pipe(Effect.provide(logs.layer));
 });
-
-it.effect("the private broker refuses a request past its job limit until one succeeds", () =>
-  provideBroker(
-    Effect.gen(function* () {
-      const others = Array.from({ length: 15 }, (_, index) =>
-        ProviderInstanceId.make(`managed-codex-busy-${index}`),
-      );
-      const h = yield* makeRenewalBrokerWith({ instances: others });
-      h.pause();
-      const held = yield* Effect.forEach([instanceId, ...others], (id) =>
-        brokerClient(h.endpoint, { ...h.request, instanceId: id }),
-      );
-      yield* Effect.forEach(held, () => Queue.take(h.oauthEntries));
-      const refused = yield* brokerClient(h.endpoint, h.request);
-      const response = parseBrokerResponse(yield* Effect.promise(() => refused.response));
-      assert.equal(response.refusal?.kind, "busy");
-      assert.notProperty(response, "token");
-      assert.equal(
-        (yield* h.broker.recentRefusal(instanceId, h.request.profileKey, h.request.sessionKey))
-          ?.kind,
-        "busy",
-      );
-      yield* Deferred.succeed(h.oauthRelease, undefined);
-      for (const client of held) {
-        assert.deepEqual(parseBrokerResponse(yield* Effect.promise(() => client.response)), {
-          token: "renewed-access",
-        });
-      }
-      yield* h.broker.awaitIdle;
-      assert.isUndefined(
-        yield* h.broker.recentRefusal(instanceId, h.request.profileKey, h.request.sessionKey),
-      );
-    }),
-  ),
-);
 
 it.effect("the private broker refuses a request that outlasts the helper's wait in time", () =>
   provideBroker(

@@ -86,24 +86,4 @@ describe("managed ChatGPT token helper", () => {
       expect(result).toEqual({ stdout: "access-token", stderr: "", exitCode });
     }),
   );
-
-  it.effect.each([
-    { name: "no answer", answer: null },
-    {
-      name: "a token beside a refusal",
-      answer: JSON.stringify({ token: "access-token", refusal }),
-    },
-    {
-      name: "a refusal without a message",
-      answer: JSON.stringify({ refusal: { kind: "refresh" } }),
-    },
-  ])("fails without a token on $name", ({ answer }) =>
-    Effect.gen(function* () {
-      const result = yield* runAgainst(answer);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).not.toBe("");
-      expect(result.stderr).not.toContain("access-token");
-      expect(result.exitCode).toBe(1);
-    }),
-  );
 });

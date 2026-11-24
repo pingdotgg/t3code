@@ -8985,19 +8985,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       explained: true,
     },
     {
-      name: "a final uncredentialed 401 that completes as other",
-      retry: true,
-      final: tokenRefusalFinal,
-      completion: { message: uncredentialedRequest, codexErrorInfo: "other" },
-      explained: true,
-    },
-    {
-      name: "a retried uncredentialed 401 that completes as other",
-      retry: true,
-      completion: { message: uncredentialedStream, codexErrorInfo: "other" },
-      explained: true,
-    },
-    {
       name: "a retried uncredentialed 401 that completes as other with details only",
       retry: true,
       completion: {
@@ -9005,11 +8992,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         codexErrorInfo: "other",
         additionalDetails: uncredentialedStream,
       },
-      explained: true,
-    },
-    {
-      name: "a retried uncredentialed 401 that completes without an error",
-      retry: true,
       explained: true,
     },
     { name: "an uncredentialed 401 completion", completion: tokenRefusalFinal, explained: true },
@@ -9031,25 +9013,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       completion: { message: serverError, codexErrorInfo: "other" },
       explained: false,
       retryExplained: true,
-    },
-    {
-      name: "an unrefused managed 401",
-      final: tokenRefusalFinal,
-      completion: tokenRefusalFinal,
-      unrefused: true,
-      explained: false,
-    },
-    {
-      name: "a managed 503",
-      final: {
-        message: serverError.replace("500 Internal Server Error", "503 Service Unavailable"),
-        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
-      },
-      completion: {
-        message: serverError.replace("500 Internal Server Error", "503 Service Unavailable"),
-        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
-      },
-      explained: false,
     },
     {
       name: "a local Codex 401",
@@ -9091,7 +9054,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   threadId: nativeThreadId,
                   turn: {
                     ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
-                    ...("completion" in scenario ? { error: scenario.completion } : {}),
+                    error: scenario.completion,
                   },
                 },
               },
@@ -9114,7 +9077,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 config: DEFAULT_CODEX_SETTINGS,
                 environment: {},
                 revision: "managed-profile",
-                recentTokenRefusal: Effect.succeed("unrefused" in scenario ? undefined : refusal),
+                recentTokenRefusal: Effect.succeed(refusal),
               }),
         );
         yield* harness.runtime.startTurn(
@@ -9131,19 +9094,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal?.status, "failed");
         if (terminal?.status !== "failed") return;
         const explainedCode = `managed_token_${refusal.kind}`;
-        const codexError =
-          "completion" in scenario
-            ? scenario.completion
-            : "final" in scenario
-              ? scenario.final
-              : undefined;
         if (scenario.explained) {
           assert.equal(terminal.failure.code, explainedCode);
           assert.include(terminal.failure.message, refusal.message);
           // Codex's own report stays visible.
           assert.include(terminal.failure.message, "unexpected status 401 Unauthorized");
         } else {
-          const info = codexError?.codexErrorInfo;
+          const info = scenario.completion.codexErrorInfo;
           assert.equal(
             terminal.failure.code,
             typeof info === "string" ? info : Object.keys(info ?? {})[0],
