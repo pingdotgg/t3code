@@ -4489,6 +4489,38 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${withoutTrailingHighSurrogate(serialized.slice(0, 397))}...`;
 }
 
+// Claude titles a file edit with its bare file name, so the approval shows the change itself.
+function claudeFileChangeApprovalPrompt(
+  toolName: string,
+  input: ClaudeNativeToolInput,
+): string | undefined {
+  const path = firstStringInputField(input, ["file_path"]);
+  if (path === undefined) return undefined;
+  const lines = (prefix: string, text: unknown) =>
+    typeof text === "string" ? text.split("\n").map((line) => `${prefix}${line}`) : [];
+  const edits =
+    toolName === "Edit"
+      ? [input.type === "record" ? input.value : {}]
+      : toolName === "MultiEdit"
+        ? inputRecordValue(input, "edits")
+        : undefined;
+  if (Array.isArray(edits)) {
+    const change = edits.flatMap((edit: unknown) =>
+      typeof edit === "object" && edit !== null
+        ? [
+            ...lines("-", Reflect.get(edit, "old_string")),
+            ...lines("+", Reflect.get(edit, "new_string")),
+          ]
+        : [],
+    );
+    return change.length === 0 ? undefined : [path, ...change].join("\n");
+  }
+  if (toolName === "Write") {
+    return [path, ...lines("+", inputRecordValue(input, "content"))].join("\n");
+  }
+  return undefined;
+}
+
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -4714,7 +4746,10 @@ export function claudeApprovalPresentation(input: {
   readonly callbackOptions: Pick<
     Parameters<CanUseTool>[2],
     "decisionReason" | "matchedAskRule" | "suppressAlwaysAllowRule"
-  >;
+  > & {
+    /** The CLI's decision_reason_type: the SDK passes it at runtime but leaves it out of its types. */
+    readonly decisionReasonType?: string;
+  };
 }): {
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
@@ -4725,14 +4760,15 @@ export function claudeApprovalPresentation(input: {
     input.callbackOptions.decisionReason ?? "",
   ).trim();
   // Bypass auto-allows everything it can, so any ask that still reaches the
-  // callback is one bypass refused. The SDK drops the CLI's decision_reason_type,
-  // leaving the matched ask rule as the only way to tell the two causes apart.
+  // callback is one bypass refused. A plain ask-rule hit has type "rule"; the
+  // SDK sets matchedAskRule only when the ask carries the tool's own reason.
   const fullAccessOverride: ProviderApprovalFullAccessOverride | undefined =
     input.permissionMode !== "bypassPermissions"
       ? undefined
-      : input.callbackOptions.matchedAskRule === undefined
-        ? "provider_check"
-        : "ask_rule";
+      : input.callbackOptions.matchedAskRule !== undefined ||
+          input.callbackOptions.decisionReasonType === "rule"
+        ? "ask_rule"
+        : "provider_check";
   return {
     ...(reason === "" || reason === input.prompt ? {} : { reason }),
     ...(fullAccessOverride === undefined ? {} : { fullAccessOverride }),
@@ -13077,6 +13113,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const command = inputRecordValue(nativeToolInput, "command");
           const prompt =
             (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
+            claudeFileChangeApprovalPrompt(toolName, nativeToolInput) ??
             callbackOptions.title ??
             callbackOptions.description ??
             callbackOptions.decisionReason ??

@@ -1102,6 +1102,16 @@ describe("ClaudeAdapterV2 approval presentation", () => {
     assert.deepEqual(presentation, { fullAccessOverride: "ask_rule" });
   });
 
+  // regression: #42390 a plain permissions.ask hit carries no matchedAskRule
+  it("attributes a bypass ask to the user's ask rule when the CLI says a rule asked", () => {
+    const presentation = ClaudeAdapterV2.claudeApprovalPresentation({
+      permissionMode: "bypassPermissions",
+      prompt: "AGENTS.md",
+      callbackOptions: { decisionReasonType: "rule" },
+    });
+    assert.deepEqual(presentation, { fullAccessOverride: "ask_rule" });
+  });
+
   it("adds nothing to ordinary approvals outside full access", () => {
     const presentation = ClaudeAdapterV2.claudeApprovalPresentation({
       permissionMode: "default",
