@@ -800,7 +800,7 @@ export const make = Effect.gen(function* () {
                 `;
           if (newest === undefined) continue;
           const ids = (yield* sql<{ run_id: string }>`
-            SELECT run_id FROM workflow_runs r
+            SELECT run_id FROM workflow_runs r INDEXED BY workflow_runs_skipped
             WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
               AND (started_at, rowid) < (${newest.started_at}, ${newest.id})
               AND ended_at IS NOT NULL AND engine_pruned_at IS NOT NULL
@@ -893,9 +893,10 @@ export const make = Effect.gen(function* () {
         )
       `.pipe(Effect.orDie);
     }),
+    // CROSS JOIN keeps the few open waits outside: SQLite would otherwise read every run.
     untold: sql<RunRow>`
       SELECT c.* FROM workflow_waits w
-      JOIN workflow_runs c ON c.parent_run_id = w.run_id AND c.parent_wait = w.name
+      CROSS JOIN workflow_runs c ON c.parent_run_id = w.run_id AND c.parent_wait = w.name
       WHERE w.signalled_at IS NULL AND c.ended_at IS NOT NULL
     `.pipe(Effect.orDie),
     stepThread: Effect.fn("WorkflowStore.stepThread")(
@@ -1059,14 +1060,18 @@ export const make = Effect.gen(function* () {
     }),
     runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {
       const prefix = filter.keyPrefix ?? null;
-      // A range, not LIKE, which would read `%` and `_` in a key as patterns.
+      // Only the filters given, so SQLite can use an index for them.
+      const where = sql.and([
+        ...(filter.workflow === undefined ? [] : [sql`workflow = ${filter.workflow}`]),
+        ...(filter.status === undefined ? [] : [sql`status = ${filter.status}`]),
+        // A range, not LIKE, which would read `%` and `_` in a key as patterns.
+        ...(prefix === null
+          ? []
+          : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix}\u{10FFFF}`}`]),
+      ]);
       return yield* sql<RunSummaryRow>`
         SELECT ${summaryColumns} FROM workflow_runs
-        WHERE (${filter.workflow ?? null} IS NULL OR workflow = ${filter.workflow ?? null})
-          AND (${filter.status ?? null} IS NULL OR status = ${filter.status ?? null})
-          AND (${prefix} IS NULL OR (
-            idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix ?? ""}\u{10FFFF}`}
-          ))
+        WHERE ${where}
         ORDER BY started_at DESC, rowid DESC LIMIT 500
       `.pipe(Effect.orDie);
     }),
