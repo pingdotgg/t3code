@@ -158,17 +158,23 @@ function ProviderSetupActions({
           ? gt("Extracting Antigravity.")
           : installation?.phase === "verifying"
             ? gt("Checking the downloaded runtime.")
-            : installed
-              ? gt("Installed.")
-              : usesCustomBinary
-                ? enabled
-                  ? gt("The configured Antigravity runtime is unavailable.")
-                  : gt("The configured Antigravity runtime has not been checked.")
-                : installation?.totalBytes
-                  ? gt("{size} MB download.", {
-                      size: Math.ceil(installation.totalBytes / 1_000_000),
-                    })
-                  : gt("Not installed.");
+            : installation?.phase === "succeeded" &&
+                installation.installedVersion !== null &&
+                !usesCustomBinary
+              ? gt("Antigravity {version} installed successfully.", {
+                  version: installation.installedVersion,
+                })
+              : installed
+                ? gt("Installed.")
+                : usesCustomBinary
+                  ? enabled
+                    ? gt("The configured Antigravity runtime is unavailable.")
+                    : gt("The configured Antigravity runtime has not been checked.")
+                  : installation?.totalBytes
+                    ? gt("{size} MB download.", {
+                        size: Math.ceil(installation.totalBytes / 1_000_000),
+                      })
+                    : gt("Not installed.");
 
   async function runCommand<A, E>(
     label: string,

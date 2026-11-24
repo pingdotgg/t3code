@@ -216,6 +216,41 @@ describe("Antigravity setup", () => {
       .toBeVisible();
   });
 
+  it("confirms completion when reinstalling the same managed version", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    const initialInstallation = {
+      ...setup.installation!,
+      version: "1.5.16",
+      installedVersion: "1.5.16",
+      canRemove: true,
+    };
+    setup.installation = initialInstallation;
+    await using screen = await renderSetup();
+
+    await screen.click("Reinstall Antigravity");
+    setup.installation = {
+      ...initialInstallation,
+      operationId: "reinstall-1",
+      phase: "verifying",
+    };
+    await publish();
+    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeVisible();
+
+    setup.installation = { ...setup.installation, phase: "succeeded" };
+    await publish();
+    await expect
+      .element(
+        screen
+          .getByRole("status")
+          .filter({ hasText: "Antigravity 1.5.16 installed successfully." }),
+      )
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Reinstall Antigravity" }))
+      .toBeEnabled();
+  });
+
   it("waits for verified auth after submitting a callback to the selected environment", async () => {
     resetSetup();
     const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
