@@ -12798,5 +12798,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
-  "012c67c7f1a99e33": "Fusion automatique de la pile"
+  "012c67c7f1a99e33": "Fusion automatique de la pile",
+  "17c2c3f06943156e": "Effectuez les étapes dans votre navigateur, puis choisissez Continuer.",
+  "802a10810a7f044e": "Ouvrir {host}",
+  "b477f81121abcb00": "Impossible d'ouvrir le lien. Copiez-le dans votre navigateur pour continuer."
 }

@@ -12805,5 +12805,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Avbryt automatisk merge för stacken",
-  "012c67c7f1a99e33": "Merga stacken automatiskt"
+  "012c67c7f1a99e33": "Merga stacken automatiskt",
+  "17c2c3f06943156e": "Slutför stegen i webbläsaren och välj sedan Fortsätt.",
+  "802a10810a7f044e": "Öppna {host}",
+  "b477f81121abcb00": "Det gick inte att öppna länken. Kopiera den till webbläsaren för att fortsätta."
 }

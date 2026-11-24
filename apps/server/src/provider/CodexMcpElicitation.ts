@@ -1,6 +1,16 @@
-import type { ProviderApprovalDecision, ProviderApprovalOption } from "@t3tools/contracts";
+import {
+  httpPageUrl,
+  type ProviderApprovalDecision,
+  type ProviderApprovalOption,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
+
+export const MCP_URL_ELICITATION_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "cancel", label: "Cancel" },
+  { decision: "decline", label: "Decline" },
+  { decision: "accept", label: "Continue" },
+];
 
 const NullableMcpElicitationString = Schema.NullOr(Schema.String);
 const McpElicitationMetadata = Schema.Struct({
@@ -80,6 +90,7 @@ function mcpElicitationPersistenceDecision(
 // only fields the response is built from.
 type McpElicitationResponseInput = {
   readonly mode: string;
+  readonly url?: string | undefined;
   readonly requestedSchema?: unknown;
 };
 
@@ -128,6 +139,12 @@ export function describeMcpElicitation(
     metadata?.connector_name ??
     metadata?.connectorName ??
     payload.serverName;
+  if (payload.mode === "url") {
+    return {
+      appName: payload.serverName,
+      options: MCP_URL_ELICITATION_OPTIONS,
+    };
+  }
   const persistenceOptions = new Map<McpElicitationPersistenceDecision, string>();
   const persist = metadata?.persist;
   for (const value of typeof persist === "string" ? [persist] : (persist ?? [])) {
@@ -185,10 +202,14 @@ export function toMcpElicitationResponse(
     return { action: decision };
   }
 
-  // T3 cannot answer these itself. `decline` reads as the user's refusal, and Codex's browser
-  // plugin saves it as a thread-wide site denial; `cancel` leaves no saved decision.
   if (payload.mode === "url") {
-    return { action: "cancel" };
+    const url = payload.url;
+    return {
+      action:
+        decision === "accept" && url !== undefined && httpPageUrl(url) !== null
+          ? "accept"
+          : "cancel",
+    };
   }
 
   const persist =

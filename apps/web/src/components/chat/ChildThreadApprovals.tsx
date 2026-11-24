@@ -11,6 +11,7 @@ import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { McpElicitationLink } from "./McpElicitationLink";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
@@ -39,6 +40,14 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
         <p className="mt-2 text-warning">
           <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
         </p>
+      ) : null}
+      {approval.elicitationUrl && approval.responseCapability === "live" ? (
+        <div className="mt-2">
+          <McpElicitationLink
+            url={approval.elicitationUrl}
+            disabled={!canRespond || responding || approval.responseCapability !== "live"}
+          />
+        </div>
       ) : null}
       {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}
       {approval.fullAccessOverride ? (

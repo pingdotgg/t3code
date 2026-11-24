@@ -8,6 +8,7 @@ const ExternalUrlTarget = Schema.Literals([
   "provider-auth",
   "mcp-app",
   "secret-request",
+  "mcp-elicitation",
   "external-link",
 ]);
 

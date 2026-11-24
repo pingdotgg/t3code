@@ -17,7 +17,7 @@ vi.mock("../../state/threads", () => ({
 
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 
-function setup() {
+function setup(responseCapability: "live" | "not_resumable" = "live") {
   state.respond.mockReset();
   state.respond
     .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Child environment offline"))))
@@ -35,7 +35,8 @@ function setup() {
         requestKind: "command",
         detail: "Run compiler",
         createdAt: "2026-11-01T00:00:00.000Z",
-        responseCapability: "live",
+        responseCapability,
+        elicitationUrl: "https://example.com/authorize",
       },
     },
   ]);
@@ -50,3 +51,21 @@ it("shows a failed decision and clears the error when the user retries", async (
   await screen.getByRole("button", { name: "Approve", exact: true }).click();
   await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
 });
+
+it.each(["live", "not_resumable"] as const)(
+  "shows browser steps only for live approvals (%s)",
+  async (responseCapability) => {
+    const thread = setup(responseCapability);
+    await using screen = await render(<ChildThreadApprovals threadRef={thread} />);
+    const link = screen.getByRole("link", { name: "Open example.com", exact: true });
+    if (responseCapability === "live") {
+      await expect.element(link).toHaveAttribute("href", "https://example.com/authorize");
+      await expect.element(link).toHaveAttribute("rel", "noopener noreferrer");
+    } else {
+      await expect.element(link).not.toBeInTheDocument();
+      await expect
+        .element(screen.getByText("Complete the steps in your browser, then choose Continue."))
+        .not.toBeInTheDocument();
+    }
+  },
+);

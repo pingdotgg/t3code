@@ -12807,5 +12807,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
-  "012c67c7f1a99e33": "Auto-merge stack"
+  "012c67c7f1a99e33": "Auto-merge stack",
+  "17c2c3f06943156e": "Complete the steps in your browser, then choose Continue.",
+  "802a10810a7f044e": "Open {host}",
+  "b477f81121abcb00": "Could not open the link. Copy it into your browser to continue."
 }
