@@ -1611,8 +1611,17 @@ const make = Effect.gen(function* () {
                       branch: workspaceStrategy.branch,
                     }
                   : workspaceStrategy;
+            // The thread's link decides, as it does when preparation is retried: a request
+            // that reuses a thread names none.
+            const { linkOrigin: _requestLinkOrigin, ...preparation } = input;
             yield* schedulePreparation(
-              { ...input, workspaceStrategy: preparationStrategy },
+              {
+                ...preparation,
+                workspaceStrategy: preparationStrategy,
+                ...(committedThread.linkOrigin === undefined
+                  ? {}
+                  : { linkOrigin: committedThread.linkOrigin }),
+              },
               threadId,
               runId,
             );
