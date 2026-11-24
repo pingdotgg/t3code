@@ -1021,7 +1021,7 @@ it.effect.each(["steer", "promoted_queued_to_steer"] as const)(
       const runId = RunId.make("run:thread-management:settle-after-steer");
       yield* TestClock.adjust(Duration.millis(60_000));
       const dispatched: Array<string> = [];
-      const layerTest = ThreadManagementService.layer.pipe(
+      const layerTest = layerThreadManagementTest.pipe(
         Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
         Layer.provide(
           Layer.mock(Orchestrator.OrchestratorV2)({
