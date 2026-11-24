@@ -14,6 +14,7 @@ import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
+import { useEditorMenuIcons } from "./editorMenuIcons";
 import { readLocalApi } from "./localApi";
 import {
   openRemoteEditorUrl,
@@ -73,6 +74,7 @@ export interface FileContextMenuCapabilities {
 function buildFileContextMenuItems(input: {
   readonly hasAbsolutePath: boolean;
   readonly capabilities: FileContextMenuCapabilities;
+  readonly editorIcons: ReadonlyMap<EditorId, string>;
   readonly resolve: MessageResolver;
 }): readonly ContextMenuItem<FileContextMenuAction>[] {
   if (!input.hasAbsolutePath) return [];
@@ -96,10 +98,14 @@ function buildFileContextMenuItems(input: {
     items.push({
       id: "open-with",
       label: input.resolve(msg("Open with")),
-      children: editorIds.map((editorId) => ({
-        id: `editor:${editorId}` as FileContextMenuAction,
-        label: EDITOR_LABEL_BY_ID.get(editorId) ?? editorId,
-      })),
+      children: editorIds.map((editorId) => {
+        const iconImage = input.editorIcons.get(editorId);
+        return {
+          id: `editor:${editorId}` as FileContextMenuAction,
+          label: EDITOR_LABEL_BY_ID.get(editorId) ?? editorId,
+          ...(iconImage === undefined ? {} : { iconImage }),
+        };
+      }),
     });
   }
   return items;
@@ -136,6 +142,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     canOpenDefault: isLocalExec && availableEditors.includes("file-manager"),
     editorIds: availableEditors,
   };
+  const editorIcons = useEditorMenuIcons(availableEditors);
 
   const editorFailureTitle = (editor: EditorId) =>
     resolve(
@@ -202,6 +209,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     const items = buildFileContextMenuItems({
       hasAbsolutePath: resolveFileContextMenuAbsolutePath(target) !== null,
       capabilities,
+      editorIcons,
       resolve,
     });
     if (items.length === 0 || api === undefined) return;
@@ -215,6 +223,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       buildFileContextMenuItems({
         hasAbsolutePath: resolveFileContextMenuAbsolutePath(target) !== null,
         capabilities,
+        editorIcons,
         resolve,
       }),
     capabilities,

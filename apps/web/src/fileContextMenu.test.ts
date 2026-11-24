@@ -26,6 +26,7 @@ vi.mock(import("./state/session"), async (original) => ({
   ...(await original()),
   useEnvironmentScope: () => true,
 }));
+vi.mock("./editorMenuIcons", () => ({ useEditorMenuIcons: () => new Map() }));
 vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.openInEditor }));
 vi.mock(import("./remoteOpen"), async (original) => ({
   ...(await original()),
