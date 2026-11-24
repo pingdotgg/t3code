@@ -311,7 +311,7 @@ ${action.text}`,
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
-        if (!info.value.readOnly) {
+        if (!info.value.readOnly && info.value.trusted !== true) {
           const approved = await ask(
             `${m(msg("Allow {server} to run {tool}?", { server: app.server, tool: info.value.title ?? name }))}\n${JSON.stringify(args, null, 2)}`,
           );

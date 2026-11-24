@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -36,6 +37,8 @@ const MAP_CSP: McpAppCsp = {
   resourceDomains: ["https://tiles.openfreemap.org", "blob:"],
 };
 const cspOf = (widget: string) => (widget === "map" ? MAP_CSP : undefined);
+
+const widgetUri = (widget: string) => `ui://widgets/${widget}`;
 
 const MARKER = /^<!doctype html><!--kompas-widget:([a-z]+)-->/;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -83,6 +86,22 @@ export const composeWidgetDocument = Effect.fn("WidgetDocument.compose")(functio
     .replace(DATA_SLOT, () => stored.replace(MARKER, ""));
 });
 
+/** A widget as it was published: what it draws, and the data it was given. */
+export interface StoredWidget {
+  readonly name: string;
+  readonly data: unknown;
+}
+
+const DATA = /<script type="application\/json" id="widget-data">(.*)<\/script>$/s;
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+export const readStoredWidget = (stored: string): StoredWidget | undefined => {
+  const name = MARKER.exec(stored)?.[1];
+  const json = DATA.exec(stored)?.[1];
+  if (name === undefined || json === undefined) return undefined;
+  return Option.getOrUndefined(Option.map(decodeJson(json), (data) => ({ name, data })));
+};
+
 export class WidgetPublisher extends Context.Service<
   WidgetPublisher,
   {
@@ -93,6 +112,10 @@ export class WidgetPublisher extends Context.Service<
       readonly widget: WidgetName;
       readonly data: unknown;
     }) => Effect.Effect<Omit<McpAppReference, "server">, KompasError>;
+    /** Undefined when the reference names no widget, or not the one it was published as. */
+    readonly read: (
+      reference: Pick<McpAppReference, "attachmentId" | "resourceUri">,
+    ) => Effect.Effect<StoredWidget | undefined>;
   }
 >()("t3/kompas/WidgetDocument/WidgetPublisher") {}
 
@@ -128,13 +151,30 @@ const make = Effect.gen(function* () {
       return {
         attachmentId,
         tool: input.tool,
-        resourceUri: `ui://widgets/${input.widget}`,
+        resourceUri: widgetUri(input.widget),
         prefersBorder: false,
       };
     },
   );
 
-  return WidgetPublisher.of({ publish });
+  const read: WidgetPublisher["Service"]["read"] = Effect.fn("WidgetPublisher.read")(
+    function* (reference) {
+      const filePath = resolveAttachmentRelativePath({
+        attachmentsDir: config.attachmentsDir,
+        relativePath: `${reference.attachmentId}.html`,
+      });
+      if (filePath === null) return undefined;
+      const stored = yield* fileSystem
+        .readFileString(filePath)
+        .pipe(Effect.orElseSucceed(() => ""));
+      const widget = readStoredWidget(stored);
+      return widget !== undefined && widgetUri(widget.name) === reference.resourceUri
+        ? widget
+        : undefined;
+    },
+  );
+
+  return WidgetPublisher.of({ publish, read });
 });
 
 export const layer = Layer.effect(WidgetPublisher, make);

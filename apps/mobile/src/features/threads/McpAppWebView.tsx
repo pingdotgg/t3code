@@ -338,6 +338,7 @@ export function ThreadMcpApp(props: {
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         if (
           !info.value.readOnly &&
+          info.value.trusted !== true &&
           !(await confirm(
             m(
               msg("Allow {server} to run {tool}?", {

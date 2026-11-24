@@ -38,12 +38,11 @@ export const layerThreadProfiles = ThreadProfiles.layer.pipe(
 export const layerApplication = Layer.mergeAll(
   KompasRpc.layer,
   KompasApps.layer,
-  WidgetDocument.layer,
   Layer.effectDiscard(
     Effect.flatMap(WorkstreamService.WorkstreamService, (service) => service.start()),
   ),
 ).pipe(
-  Layer.provideMerge(WidgetTools.layer),
+  Layer.provideMerge(Layer.merge(WidgetTools.layer, WidgetDocument.layer)),
   Layer.provideMerge(WorkstreamService.layer),
   Layer.provideMerge(Layer.merge(layerCore, layerThreadProfiles)),
 );

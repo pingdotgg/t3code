@@ -15,7 +15,8 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { PluginProxy } from "./PluginProxy.ts";
 import { PluginService } from "./PluginService.ts";
 import { PluginStore } from "./PluginStore.ts";
-import { WidgetTools } from "./WidgetTools.ts";
+import { WidgetPublisher } from "./WidgetDocument.ts";
+import { widgetCall, WidgetTools } from "./WidgetTools.ts";
 
 /**
  * What an app in a thread may ask for. Kompas's own widgets and plugins are answered here, so
@@ -30,6 +31,7 @@ const make = Effect.gen(function* () {
   const agentApps = yield* McpAppRequests.McpAppRequests;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const widgetTools = yield* WidgetTools;
+  const widgets = yield* WidgetPublisher;
   const pluginStore = yield* PluginStore;
   const plugins = yield* PluginService;
   const proxy = yield* PluginProxy;
@@ -48,7 +50,11 @@ const make = Effect.gen(function* () {
       .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
     const app = item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (app?.server === T3_WIDGET_SERVER) return { type: "widget" as const };
+    if (app?.server === T3_WIDGET_SERVER) {
+      const widget = yield* widgets.read(app);
+      if (widget === undefined) return yield* fail(input.threadId, "not-an-app");
+      return { type: "widget" as const, widget };
+    }
     if (app === undefined) return { type: "agent" as const };
     const plugin = yield* pluginStore.forThread(input.threadId).pipe(
       Effect.map((enabled) => enabled.find(({ name }) => name === app.server)),
@@ -76,8 +82,10 @@ const make = Effect.gen(function* () {
     toolInfo: Effect.fn("KompasApps.toolInfo")(function* (input) {
       const owner = yield* ownerOf(input);
       if (owner.type === "agent") return yield* agentApps.toolInfo(input);
-      // Our own page, calling our own service on the user's data: no prompt per click.
-      if (owner.type === "widget") return { callable: true, readOnly: true };
+      if (owner.type === "widget") {
+        const call = widgetCall(owner.widget.name, input.name);
+        return { callable: call !== undefined, readOnly: call?.readOnly === true, trusted: true };
+      }
       const tool = yield* pluginTool(input.threadId, owner.plugin, input.name);
       return {
         callable: tool !== undefined && mcpAppToolCallableByApp(tool._meta),
@@ -91,7 +99,12 @@ const make = Effect.gen(function* () {
       if (owner.type === "agent") return yield* agentApps.callTool(input);
       if (owner.type === "widget") {
         return yield* widgetTools
-          .call({ threadId: input.threadId, name: input.name, arguments: input.arguments })
+          .call({
+            threadId: input.threadId,
+            widget: owner.widget,
+            name: input.name,
+            arguments: input.arguments,
+          })
           .pipe(
             Effect.map((result): McpAppCallToolResult => ({
               content: [{ type: "text", text: "" }],
