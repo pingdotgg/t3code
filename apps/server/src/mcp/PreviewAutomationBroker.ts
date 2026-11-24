@@ -167,6 +167,10 @@ const selectorDiagnosticsFromInput = (
 const hostAssignmentKey = (scope: McpInvocationContext.McpThreadInvocationScope): string =>
   `${scope.environmentId}\u0000${scope.thread.providerSessionId}\u0000${scope.thread.threadId}`;
 
+/** A thread holds one MCP credential at a time and gets a new one per session, so tabs belong to the thread. */
+const tabOwnerKey = (scope: McpInvocationContext.McpThreadInvocationScope): string =>
+  `${scope.environmentId}\u0000${scope.thread.threadId}`;
+
 const isPreviewTabId = Schema.is(PreviewTabId);
 const decodeControlReason = Schema.decodeUnknownOption(PreviewAutomationControlReason);
 
@@ -644,7 +648,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             threadId: input.scope.thread.threadId,
             tabId: requestContext.tabId,
             tabIdExplicit: input.tabId !== undefined,
-            agentSessionId: hostAssignmentKey(input.scope),
+            agentSessionId: tabOwnerKey(input.scope),
             operation: input.operation,
             input: input.input,
             timeoutMs,
