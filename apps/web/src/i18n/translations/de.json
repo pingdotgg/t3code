@@ -3239,7 +3239,8 @@
   "49e3cf16b3ac3e5f": "Zugriff",
   "9699d255b374e215": "Was es tun darf",
   "86f5769278f5fa4d": "Über das reine Lesen hinaus kann es Threads starten, Nachrichten senden und Threads stoppen, und keiner davon kann mit mehr als dem gewählten Modus laufen.",
-  "693a1983e099523a": "Verbindung mit diesem Backend.",
+  "4f3982f640dfed5b": "Dieser Link fügt diesem Browser ein Backend hinzu. Fahre nur fort, wenn du ihm vertraust.",
+  "41b32a424841adb7": "Dieser Kopplungslink enthält einen ungültigen Backend-Host.",
   "ec2a82b05e616aa0": "Diesem Kopplungslink fehlen Backend-Host oder Token.",
   "630d4f04309bc19a": "Authentifizierung fehlgeschlagen.",
   "63bc32e8544f4de1": "Diese Umgebung erwartet vertrauenswürdige Kopplungsdaten, bevor die App sich verbinden kann.",
@@ -3253,11 +3254,13 @@
   "55c59743f7fdd7fa": "Einmaltoken oder Kopplungsgeheimnis einfügen",
   "ca6a0c94398d763d": "Wird gekoppelt...",
   "989f56b8297dd684": "Dieses einmalige Kopplungstoken wurde bereits übermittelt. Fordere einen neuen Kopplungslink an.",
+  "693a1983e099523a": "Verbindung mit diesem Backend.",
   "db3dcafc90d10405": "{environment} ist in diesem Browser gespeichert.",
   "47d4ab320c4c394c": "Die Umgebung ist in diesem Browser gespeichert.",
   "d235c6bfa25870a4": "{error} Falls das Backend dieses Einmaltoken akzeptiert hat, fordere vor einem neuen Versuch einen neuen Kopplungslink an.",
   "00c1dcaef4762f18": "Backend gekoppelt",
   "aac4a30e5912c01c": "Kopplung fehlgeschlagen",
+  "c142c3f3bed15f8d": "Dieses Backend hinzufügen?",
   "dbb27f4ee8ecfa8e": "Backend wird gekoppelt",
   "8049e9ba2e8b4867": "Kopplungstoken",
   "0528294df7656322": [
@@ -3274,6 +3277,7 @@
     }
   ],
   "ff5f1c260e87ecde": "Prüfe, ob das Backend von diesem Browser aus erreichbar ist, CORS für gehostete Clients unterstützt und über HTTPS ausgeliefert wird, wenn du diese Seite über HTTPS öffnest.",
+  "984c25ffcae69300": "Backend hinzufügen",
   "08570ee0982df89d": "Wird gekoppelt...",
   "3bbae7c96b6cbfc3": "App öffnen",
   "49cc06e79f21f85a": "{seconds} s",
@@ -12783,5 +12787,24 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "99963c0142e17f00": "Für das neue {tracker}-Konto.",
-  "6d8e4ebc889bace9": "Konto hinzufügen"
+  "6d8e4ebc889bace9": "Konto hinzufügen",
+  "8a883c4fbc127b68": "Auto-Merge für den Stack wird aktiviert...",
+  "5fb2a26ae31e8983": "Auto-Merge für den Stack konnte nicht aktiviert werden",
+  "986d0dcbf4dd0098": "Auto-Merge für den Stack aktiviert",
+  "f3ed1f63c8a3eef2": "{host} mergt den Stack bis #{number}, sobald die Anforderungen erfüllt sind.",
+  "bd536a0a1754f6cb": "Auto-Merge für den Stack konnte nicht abgebrochen werden",
+  "bb90ac3b2f3a72d5": "Der Host hat das Abbrechen des Auto-Merge abgelehnt. Aktualisiere und versuche es erneut.",
+  "9c28753c777c37b7": "{count, plural, one {Auto-Merge für {count} {term, select, mr {Merge Request} cr {Änderungsanfrage} other {Pull Request}}?} other {Auto-Merge für {count} {term, select, mr {Merge Requests} cr {Änderungsanfragen} other {Pull Requests}}?}}",
+  "a86b49982e18784d": "#{number} und die darunterliegenden nicht gemergten Ebenen per {method} in {base} mergen, sobald jede davon die Anforderungen auf {host} erfüllt. Das kann sofort passieren.",
+  "b1afda5c964deee4": [
+    "Auto-Merge für Stack (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Auto-Merge für Stack abbrechen",
+  "012c67c7f1a99e33": "Auto-Merge für Stack"
 }

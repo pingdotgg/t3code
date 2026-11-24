@@ -1,3 +1,5 @@
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -19,6 +21,7 @@ import {
   ServerMetrics,
   slope,
 } from "./server-metrics-report.ts";
+import { runAbRounds } from "./server-metrics.ts";
 
 const decodeMetrics = Schema.decodeSync(ServerMetrics);
 
@@ -103,6 +106,17 @@ describe("compareMetrics", () => {
     expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9), 10, gatedRules).regressed).toEqual([]);
   });
 
+  it("compares the unequal run counts an ab that stopped early leaves", () => {
+    const steady = cpuRuns(26.1, 27.4, 25.8);
+    const partial = compareMetrics(steady, cpuRuns(2.2, 2.5), 10, gatedRules);
+    expect(partial.improved).toContain("quiet.cpuPct");
+    expect(partial.table).toContain("(3 runs), after `abc` (2 runs)");
+    const single = compareMetrics(steady, cpuRuns(2.2), 10, gatedRules);
+    expect(single.improved).toContain("quiet.cpuPct");
+    expect(single.table).toContain("| quiet.cpuPct | 26.1 | 2.2 | -92% |  | better |");
+    expect(compareMetrics(steady, cpuRuns(), 10, gatedRules).compared).toBe(0);
+  });
+
   it("reads a file written before loop delay and GC were recorded", () => {
     const older = decodeMetrics({
       meta,
@@ -170,6 +184,55 @@ describe("compareMetrics with noise rules", () => {
   it("marks an ungated metric in the table either way", () => {
     const result = compareMetrics(quietRuns(base), quietRuns(base), 10, rules);
     expect(result.table).toContain("| quiet.loopDelayMaxMs | 8 | 8 | 0% |  | noisy |");
+  });
+});
+
+describe("compareMetrics on each platform's noise floors", () => {
+  // The default floor for working.rssMBPerThread is 0.2 MB; Windows A/A runs needed 0.6.
+  const onPlatform = (platform: string, rssMBPerThread: number) => {
+    const working = {
+      active: {},
+      heapMBPerThread: 0.2,
+      rssMBPerThread,
+      cpuPctPerThread: 0,
+      loopDelayP99MsPerThread: 0,
+    };
+    return {
+      meta: { ...meta, platform },
+      runs: [{ working }, { working }],
+    } satisfies ServerMetrics;
+  };
+  const regressed = (before: ServerMetrics, after: ServerMetrics) =>
+    compareMetrics(before, after, 10).regressed;
+
+  it("gates Linux files on the default floor", () => {
+    expect(regressed(onPlatform("linux-x64", 1), onPlatform("linux-x64", 1.4))).toEqual([
+      "working.rssMBPerThread",
+    ]);
+  });
+
+  it("gates Windows files on the Windows floor", () => {
+    expect(regressed(onPlatform("win32-x64", 1), onPlatform("win32-x64", 1.4))).toEqual([]);
+    expect(regressed(onPlatform("win32-x64", 1), onPlatform("win32-x64", 1.8))).toEqual([
+      "working.rssMBPerThread",
+    ]);
+  });
+
+  it("falls back to the default floor with a warning when the platforms differ", () => {
+    const result = compareMetrics(onPlatform("linux-x64", 1), onPlatform("win32-x64", 1.4));
+    expect(result.regressed).toEqual(["working.rssMBPerThread"]);
+    expect(result.warnings).toEqual([
+      "the files come from linux-x64 and win32-x64, so the default noise floors apply",
+    ]);
+  });
+
+  it("marks the noise report against the platform's floor", () => {
+    const pair = (platform: string) => [onPlatform(platform, 1), onPlatform(platform, 1)] as const;
+    const floor = (platform: string) =>
+      noiseReport([pair(platform)]).rows.find(({ metric }) => metric === "working.rssMBPerThread")
+        ?.floor;
+    expect(floor("linux-x64")).toBe(0.2);
+    expect(floor("win32-x64")).toBe(0.6);
   });
 });
 
@@ -551,4 +614,22 @@ describe("activityRenewalMissed", () => {
   ])("%s", (_name, sentAt, repliedAt, missed) => {
     expect(activityRenewalMissed(0, sentAt, repliedAt)).toBe(missed);
   });
+});
+
+describe("runAbRounds", () => {
+  effectIt.effect("keeps the runs that finished when a later run fails", () =>
+    Effect.gen(function* () {
+      const files: Record<0 | 1, ReadonlyArray<string>> = { 0: [], 1: [] };
+      const failure = yield* Effect.flip(
+        runAbRounds({
+          rounds: 3,
+          outDir: "out",
+          runSide: (side) => (side === 0 ? Effect.succeed("a1") : Effect.fail("b crashed")),
+          save: (side, runs) => Effect.sync(() => (files[side] = [...runs])),
+        }),
+      );
+      expect(failure).toBe("b crashed");
+      expect(files).toEqual({ 0: ["a1"], 1: [] });
+    }),
+  );
 });

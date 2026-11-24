@@ -3238,7 +3238,8 @@
   "49e3cf16b3ac3e5f": "Acceso",
   "9699d255b374e215": "Lo que puede hacer",
   "86f5769278f5fa4d": "Además de leer, puede iniciar, enviar mensajes a y detener hilos, y ninguno puede ejecutarse con más permisos que el modo que elijas.",
-  "693a1983e099523a": "Conectando con este backend.",
+  "4f3982f640dfed5b": "Este enlace añade un backend a este navegador. Continúa solo si confías en él.",
+  "41b32a424841adb7": "Este enlace de emparejamiento tiene un host de backend no válido.",
   "ec2a82b05e616aa0": "A este enlace de emparejamiento le falta el host del backend o el token.",
   "630d4f04309bc19a": "Falló la autenticación.",
   "63bc32e8544f4de1": "Este entorno espera una credencial de emparejamiento de confianza antes de que la app pueda conectarse.",
@@ -3252,11 +3253,13 @@
   "55c59743f7fdd7fa": "Pega un token de un solo uso o un secreto de emparejamiento",
   "ca6a0c94398d763d": "Emparejando...",
   "989f56b8297dd684": "Este token de emparejamiento de un solo uso ya se envió. Solicita un enlace de emparejamiento nuevo.",
+  "693a1983e099523a": "Conectando con este backend.",
   "db3dcafc90d10405": "{environment} está guardado en este navegador.",
   "47d4ab320c4c394c": "El entorno está guardado en este navegador.",
   "d235c6bfa25870a4": "{error} Si el backend aceptó este token de un solo uso, solicita un enlace de emparejamiento nuevo antes de reintentarlo.",
   "00c1dcaef4762f18": "Backend emparejado",
   "aac4a30e5912c01c": "Falló el emparejamiento",
+  "c142c3f3bed15f8d": "¿Añadir este backend?",
   "dbb27f4ee8ecfa8e": "Backend de emparejamiento",
   "8049e9ba2e8b4867": "Token de emparejamiento",
   "0528294df7656322": [
@@ -3273,6 +3276,7 @@
     }
   ],
   "ff5f1c260e87ecde": "Comprueba que se puede acceder al backend desde este navegador, que admite CORS para clientes alojados y que se sirve por HTTPS cuando abres esta página desde HTTPS.",
+  "984c25ffcae69300": "Añadir backend",
   "08570ee0982df89d": "Emparejando...",
   "3bbae7c96b6cbfc3": "Abrir app",
   "49cc06e79f21f85a": "{seconds} s",
@@ -12778,5 +12782,24 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "6d8e4ebc889bace9": "Añadir cuenta",
+  "8a883c4fbc127b68": "Activando la fusión automática de la pila...",
+  "5fb2a26ae31e8983": "No se pudo activar la fusión automática de la pila",
+  "986d0dcbf4dd0098": "Fusión automática de la pila activada",
+  "f3ed1f63c8a3eef2": "{host} fusionará la pila hasta #{number} cuando se cumplan sus requisitos.",
+  "bd536a0a1754f6cb": "No se pudo cancelar la fusión automática de la pila",
+  "bb90ac3b2f3a72d5": "El host rechazó cancelar la fusión automática. Actualiza e inténtalo de nuevo.",
+  "9c28753c777c37b7": "{count, plural, one {¿Fusionar automáticamente {count} {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}?} other {¿Fusionar automáticamente {count} {term, select, mr {merge requests} cr {solicitudes de cambios} other {pull requests}}?}}",
+  "a86b49982e18784d": "Fusiona #{number} y sus capas sin fusionar de debajo en {base} mediante {method} cuando todas cumplan los requisitos de {host}. Puede ocurrir de inmediato.",
+  "b1afda5c964deee4": [
+    "Fusión automática de la pila (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Cancelar la fusión automática de la pila",
+  "012c67c7f1a99e33": "Fusión automática de la pila"
 }
