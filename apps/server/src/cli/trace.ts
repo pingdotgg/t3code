@@ -138,7 +138,9 @@ export function formatTraceSummary(
       String(span.failures),
     ]);
   const table = [header, ...rows];
-  const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
+  const widths = header.map((_, column) =>
+    table.reduce((max, row) => Math.max(max, row[column]!.length), 0),
+  );
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
     `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
