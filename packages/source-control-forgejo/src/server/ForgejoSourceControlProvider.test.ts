@@ -339,6 +339,15 @@ it.effect("follows the Forgejo repository's delete-branch-after-merge setting", 
         `repository setting ${JSON.stringify(setting)}`,
       );
     }
+    const { provider, writes } = forgejoMergeProvider(
+      Effect.succeed(JSON.stringify({ full_name: "reviewer/project" })),
+    );
+    yield* (yield* provider).runAction({ ...forgejoMergeInput, expectedHeadSha: "0a1b2c3d4" });
+    assert.deepStrictEqual(writes[0]?.body, {
+      Do: "squash",
+      delete_branch_after_merge: false,
+      head_commit_id: "0a1b2c3d4",
+    });
   }),
 );
 

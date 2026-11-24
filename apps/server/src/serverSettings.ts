@@ -426,11 +426,15 @@ function decodeSettingsFile(
   const settings: ServerSettings =
     Exit.isSuccess(decoded) && failure === undefined
       ? decoded.value
-      : // The file may hold an opt-out we can no longer read; never resume threads on a guess.
+      : // The file may hold choices we can no longer read, so opt-in behaviour stays off.
         {
           ...managed.defaults,
           continueThreadsAfterServerUpdate: false,
           usageHistoryRetentionDays: "unlimited",
+          requireConnectDeviceApproval: true,
+          enablePreviewTunnel: false,
+          enableAgentBrowserAccess: false,
+          defaultRuntimeMode: "approval-required",
         };
   return { settings, legacy: Exit.isSuccess(legacy) ? legacy.value : undefined, failure };
 }

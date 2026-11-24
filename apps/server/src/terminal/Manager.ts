@@ -918,11 +918,12 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const powershell = windowsPowerShellPath(yield* HostProcess.Environment);
   const command =
     '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
-      command: "powershell.exe",
+      command: powershell,
       args: ["-NoProfile", "-NonInteractive", "-Command", command],
       timeout,
       maxOutputBytes: 262_144,
