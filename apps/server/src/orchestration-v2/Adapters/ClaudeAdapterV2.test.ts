@@ -7016,10 +7016,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         server: "probe.server",
       });
       assert.deepInclude(tool, { name: "show_weather", inputSchema: { type: "object" } });
-      // T3 skips the app-call confirmation only for `readOnlyHint` tools.
       assert.deepInclude(appOnlyTool, {
         annotations: { readOnlyHint: true, destructiveHint: false },
       });
+      assert.notProperty(appOnlyTool, "requiresApproval");
       const result = yield* mcpApps.callTool({
         providerThread: harness.providerThread,
         server: "probe.server",
@@ -7267,12 +7267,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const mcpApps = harness.runtime.mcpApps!;
       const target = { providerThread: harness.providerThread, server };
       const [listed] = yield* mcpApps.listTools(target);
-      assert.deepEqual(
-        listed?.annotations,
-        testCase.readOnly
-          ? { readOnlyHint: true, destructiveHint: false }
-          : { destructiveHint: false },
-      );
+      assert.equal(listed?.requiresApproval === true, !testCase.readOnly);
       const exit = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
       assert.equal(Exit.isSuccess(exit), testCase.called);
       assert.equal(

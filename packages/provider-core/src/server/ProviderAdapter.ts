@@ -709,6 +709,8 @@ export interface ProviderAdapterV2McpTool {
   readonly inputSchema: unknown;
   readonly _meta?: unknown;
   readonly annotations?: unknown;
+  /** Provider permission rules may cover the tool, so T3 asks before every app call. */
+  readonly requiresApproval?: boolean;
 }
 
 export interface ProviderAdapterV2McpCallToolResult {
