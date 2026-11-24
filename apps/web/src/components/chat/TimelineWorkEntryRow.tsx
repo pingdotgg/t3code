@@ -363,10 +363,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         wrapLabel
         icon={
           <CircleAlertIcon
-            className={cn(
-              "size-4",
-              warning ? "text-warning-foreground" : "text-destructive-foreground",
-            )}
+            className={cn("size-4", warning ? "text-warning" : "text-destructive")}
           />
         }
         label={
@@ -517,9 +514,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
     showWarningIndicator
-      ? "text-warning-foreground"
+      ? "text-warning"
       : showDestructiveRowStyle
-        ? "text-destructive-foreground"
+        ? "text-destructive"
         : showFailedIndicator
           ? failedToolIconClassName
           : workEntry.tone === "tool"
