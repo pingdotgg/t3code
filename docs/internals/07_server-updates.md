@@ -14,6 +14,12 @@ launcher protocol unless impossible, and validate protocol compatibility during 
 Installations use exact versions and stage/preflight before publishing an immutable runtime so
 restarts never depend on npm cache eviction or a moving tag.
 
+On macOS, the launchd plist names a [fixed-path copy](../../apps/server/src/cloud/stableLauncher.ts)
+of the selected runtime's executable rather than the versioned runtime, because TCC keys privacy
+grants to the launch agent's program path. Installs and the launcher replace that copy by rename
+under the unit lease so a running launcher keeps its inode, and the launcher migrates legacy
+versioned plists on update.
+
 ## Commit boundary and database rollback
 
 1. Record the pending update durably (atomic rename + fsync) before stopping the old child.

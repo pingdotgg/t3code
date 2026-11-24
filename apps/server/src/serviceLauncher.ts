@@ -8,6 +8,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import { publishStableLauncher, stableLauncherPaths } from "./cloud/stableLauncher.ts";
 import { RESTORE_OOMD_WATCH_SCRIPT } from "./cloud/userManagerOom.ts";
 import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { isNoCopyOnWrite, markNoCopyOnWrite } from "./noCopyOnWrite.ts";
@@ -23,6 +24,7 @@ import type {
 import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
+  escapeXmlText,
   isExactServiceVersion,
   parseLegacyServiceState,
   decodeServiceUnit,
@@ -32,6 +34,7 @@ import {
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
   serviceUnitLogPathOf,
+  serviceUnitProgramOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_LOCK_FILE,
   SERVICE_SERVING_LOCK_FILE,
@@ -253,12 +256,10 @@ async function serviceUnitFromEnvironment(
   };
 }
 
-// systemd's ExecStart value, or the plist string or task argument before __service-launcher.
+// systemd's ExecStart value, or the task argument before __service-launcher.
 // Only the version segment changes, so quoted or escaped paths stay as rendered.
-// The launch agent's PATH names a versions directory without the executable; leave it.
 const SERVICE_UNIT_PROGRAMS = [
   /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
-  /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
   /(<Arguments>--headless "[^"<]*?[\\/]runtime[\\/]versions[\\/])([^\\/"<]+)([\\/]t3\.exe" "__service-launcher")/,
 ] as const;
 
@@ -278,6 +279,33 @@ function repointServiceUnit(contents: string, version: string): string {
     return contents.replace(program, () => `${prefix}${version}${suffix}`);
   }
   return contents;
+}
+
+// The launch agent's PATH names a versions directory without the executable; leave it.
+const LAUNCH_AGENT_RUNTIME_PROGRAM =
+  /<string>[^<]*?[\\/]runtime[\\/]versions[\\/]([^\\/<]+)[\\/]t3<\/string>(\s*<string>__service-launcher<\/string>)/;
+
+/**
+ * A launch agent that names a versioned runtime, moved to the stable launcher. One naming a
+ * runtime newer than `version` is returned unchanged, like in `repointServiceUnit`.
+ */
+function moveLaunchAgentToStableLauncher(
+  contents: string,
+  version: string,
+  launcherEntryPath: string,
+): string {
+  const current = LAUNCH_AGENT_RUNTIME_PROGRAM.exec(contents)?.[1];
+  if (
+    current === undefined ||
+    (isExactServiceVersion(current) && compareExactServiceVersions(current, version) > 0)
+  ) {
+    return contents;
+  }
+  return contents.replace(
+    LAUNCH_AGENT_RUNTIME_PROGRAM,
+    (_program, _version, launcherArgument: string) =>
+      `<string>${escapeXmlText(launcherEntryPath)}</string>${launcherArgument}`,
+  );
 }
 
 const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;
@@ -1426,12 +1454,47 @@ export class Launcher {
         ) {
           return;
         }
-        const repointed = repointServiceUnit(contents, version);
-        if (repointed !== contents) {
-          await replaceFileDurably(
-            unit.path,
-            unit.path.endsWith(".xml") ? encodeServiceTask(repointed) : repointed,
+        const launcher = stableLauncherPaths(this.#baseDir);
+        const installedLauncher = stableLauncherPaths(installedBaseDir);
+        const program = serviceUnitProgramOf(contents);
+        if (
+          program !== undefined &&
+          (NodePath.resolve(program) === NodePath.resolve(launcher.entryPath) ||
+            NodePath.resolve(program) === NodePath.resolve(installedLauncher.entryPath))
+        ) {
+          const published = await NodeFSP.readFile(launcher.sentinelPath, "utf8").catch(() => "");
+          if (
+            !isExactServiceVersion(published.trim()) ||
+            compareExactServiceVersions(published.trim(), version) < 0
+          ) {
+            await publishStableLauncher(
+              this.#baseDir,
+              runtimePaths(this.#baseDir, version).entryPath,
+              version,
+            );
+          }
+        } else {
+          const moved = moveLaunchAgentToStableLauncher(
+            contents,
+            version,
+            installedLauncher.entryPath,
           );
+          if (moved !== contents) {
+            await publishStableLauncher(
+              this.#baseDir,
+              runtimePaths(this.#baseDir, version).entryPath,
+              version,
+            );
+            await replaceFileDurably(unit.path, moved);
+          } else {
+            const repointed = repointServiceUnit(contents, version);
+            if (repointed !== contents) {
+              await replaceFileDurably(
+                unit.path,
+                unit.path.endsWith(".xml") ? encodeServiceTask(repointed) : repointed,
+              );
+            }
+          }
         }
         // A previous rename may have succeeded before reload failed.
         await unit.reload();
