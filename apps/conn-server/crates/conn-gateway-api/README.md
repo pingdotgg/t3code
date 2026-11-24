@@ -33,9 +33,7 @@ CONN_UNSEALED=1 cargo run -p conn-gateway-api --features gen -- --fetch https://
 
 `--fetch` reads `GET /api/v1/openapi.json` with the system `curl`, checks the body against
 `X-Orbit-OpenAPI-SHA256`, then writes `openapi.json` and `openapi.source` and regenerates. Run it
-on mini (WireGuard); CI cannot reach the Gateway. Orbit group 6200 adds that route; until it is
-released, `--fetch` fails and the pin comes from Orbit's `docs-site` branch
-(`docs/openapi.json`, built by `bin/docs-openapi`).
+on mini (WireGuard); CI cannot reach the Gateway.
 
 To take a new Orbit release: `--fetch`, commit `openapi.json`, `openapi.source` and `src/`, and
 fix the compile errors in the callers.
@@ -47,13 +45,16 @@ fix the compile errors in the callers.
   validates them; strings stay `String` and numbers `i64`.
 - An untyped `{"type": "object"}` becomes `serde_json::Value`, marked `TODO(6200)` in the docs
   of the type and the operation.
-- The document names no auth (`securitySchemes`). Routes under `/api/v1/conn/managed/` get
-  `AuthKind::ManagedBearer`, the rest `WireGuardPeer` (`TODO(6200)`). The generator fails once
-  the document sets `security`, so the mapping is written then.
+- Auth comes from each route's `security`, else the document's: `managedTargetBearer` gives
+  `AuthKind::ManagedBearer`, the document's default `wireguardPeer` gives `WireGuardPeer`. Any
+  other scheme fails the generator, and so does a `/api/v1/conn/managed/` route without the
+  managed bearer.
+- `ADDED_FIELDS` in the generator makes fields a newer Gateway added optional, with a default,
+  so answers from older live Gateways still decode (`ConnEnvironment.is_primary_agent` and
+  `roles`, release 2214). Drop an entry once every Gateway serves the field.
 
-## Known gaps of the current document (Orbit group 6200)
+## The current document
 
-The gaps listed in #227 hold here as generated: untyped `data` on many operations, few
-`required` lists (most fields are `Option`), free strings for status fields, managed bodies
-that copy the broadcasting-auth body, and `Error.details` typed as an object although the
-Gateway can send `[]` (such an error answer does not decode yet).
+The Gateway document of release 2214 closed the gaps listed in #227: it types every schema the
+listed operations use (no `TODO(6200)` remains), lists `required` fields, documents `security`,
+and allows `[]` for an empty `Error.details`.

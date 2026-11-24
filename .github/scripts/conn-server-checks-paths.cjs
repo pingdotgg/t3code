@@ -35,6 +35,7 @@ const READ = [
   "packages/client-runtime/src/state/threadCheckpoints.ts",
   "packages/client-runtime/src/state/threadExecution.ts",
   "packages/client-runtime/src/state/threadRelationships.ts",
+  "packages/client-runtime/src/state/threadWorkflows.ts",
   "packages/client-runtime/src/threadPullRequests.ts",
   "packages/client-runtime/src/work-log/commandLabel.ts",
   "infra/task-cache/src/remoteCache.ts",

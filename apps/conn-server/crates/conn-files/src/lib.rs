@@ -104,21 +104,8 @@ impl KnownWorkspaces {
 }
 
 fn git_worktrees(project: &Path) -> Vec<PathBuf> {
-    let Some(output) = git::run(
-        project,
-        &["worktree", "list", "--porcelain"],
-        None,
-        1024 * 1024,
-        std::time::Duration::from_secs(5),
-    ) else {
-        return Vec::new();
-    };
-    if output.code != Some(0) {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
+    git::worktrees(project)
+        .iter()
         .filter_map(|p| std::fs::canonicalize(p).ok())
         .collect()
 }

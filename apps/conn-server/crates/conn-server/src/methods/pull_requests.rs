@@ -82,6 +82,56 @@ struct ReadKey {
     repo: String,
     number: Option<u32>,
     input: String,
+    /// An unpinned diff's held `updatedAt`, so each PR revision has its own key.
+    revision: Option<String>,
+}
+
+/// T3's `DETAIL_CACHE_CAPACITY`, which bounds `lastGoodSummary`.
+const READING_CAPACITY: usize = 128;
+/// T3's `DIFF_CACHE_CAPACITY`.
+const DIFF_CACHE_CAPACITY: usize = 128;
+/// T3's `DIFF_CACHE_PATCH_BUDGET_BYTES`, counted as UTF-16 bytes there.
+const DIFF_PATCH_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
+/// T3's `PullRequestReading`: the parts of a summary that `supersedesReading` compares.
+struct Reading {
+    merged: bool,
+    updated: String,
+    observed: u64,
+}
+impl Reading {
+    fn of(value: &Value, observed: u64) -> Option<Self> {
+        Some(Self {
+            merged: value.get("state").and_then(Value::as_str) == Some("merged"),
+            updated: value.get("updatedAt")?.as_str()?.to_owned(),
+            observed,
+        })
+    }
+    /// `supersedesReading`: a merged PR stays merged, then the newer `updatedAt` wins, then
+    /// the later observation.
+    fn supersedes(&self, current: Option<&Self>) -> bool {
+        let Some(current) = current else {
+            return true;
+        };
+        if current.merged && !self.merged {
+            return false;
+        }
+        if self.updated != current.updated {
+            return self.updated > current.updated;
+        }
+        self.observed >= current.observed
+    }
+}
+
+/// T3's diff cache weighs an entry by its patch's UTF-16 bytes. Twice the UTF-8 length is
+/// the same for ASCII patches and never less otherwise.
+fn patch_weight(result: &Result<Value, Failure>) -> usize {
+    result
+        .as_ref()
+        .ok()
+        .and_then(|value| value.get("patch"))
+        .and_then(Value::as_str)
+        .map_or(0, |patch| patch.len().saturating_mul(2))
 }
 
 fn cache_ttl(result: &Result<Value, Failure>, seconds: u64) -> Duration {
@@ -95,12 +145,16 @@ struct Panel {
     engine: Arc<dyn Engine>,
     environment: Option<Arc<ServerEnvironment>>,
     cache: TtlCache<ReadKey, Result<Value, Failure>>,
+    /// T3's `diffCache`: its own capacity and patch budget, apart from the other reads.
+    diffs: TtlCache<ReadKey, Result<Value, Failure>>,
     identities: TtlCache<u64, Result<Value, Error>>,
     endpoints: Endpoints,
     host_environment: Environment,
     child_env: Vec<(&'static str, std::ffi::OsString)>,
     credentials: Mutex<VecDeque<(Client, u64)>>,
     next_scope: AtomicU64,
+    /// T3's `lastGoodSummary` for each credential's PRs, least recently recorded first.
+    readings: Mutex<VecDeque<(ReadKey, Reading)>>,
     refreshes: watch::Sender<u64>,
     linked: watch::Sender<u64>,
     monitor: OnceCell<tokio::task::JoinHandle<()>>,
@@ -170,13 +224,16 @@ fn failure_message(failure: &Failure) -> String {
             .unwrap_or_else(|| text(error, "detail").to_owned()),
     }
 }
+/// Invalidates a PR's cached reads when a write ends: on success, error or cancellation.
 struct MutationReads<'a> {
     panel: &'a Panel,
     reference: ReadKey,
+    files_viewed_only: bool,
 }
 impl Drop for MutationReads<'_> {
     fn drop(&mut self) {
-        self.panel.invalidate_cached(Some(&self.reference), false);
+        self.panel
+            .invalidate_cached(Some(&self.reference), self.files_viewed_only);
     }
 }
 impl Drop for Panel {
@@ -371,7 +428,7 @@ impl Panel {
             if let Some((_, scope)) = held.pop_front() {
                 self.identities.invalidate(&scope);
             }
-            self.cache.invalidate_all();
+            self.forget_reads();
         }
         held.push_back((client.clone(), id));
         id
@@ -539,6 +596,7 @@ impl Panel {
                     number: Some(lookup.number),
                     ..ReadKey::default()
                 },
+                files_viewed_only: false,
             };
             self.invalidate_cached(Some(&reads.reference), false);
             reads
@@ -926,10 +984,7 @@ impl Panel {
         } else {
             Value::Null
         };
-        let detail = client
-            .detail(&lookup)
-            .await
-            .map_err(|error| host_error(&error, "detail"))?;
+        let detail = self.fresh_detail(&project, &client, &lookup).await?;
         Ok(json!({"guide":guide,"run":run,"currentHeadSha":detail.get("headSha")}))
     }
     async fn report_state(&self, input: &Value) -> Result<Value, Failure> {
@@ -955,7 +1010,7 @@ impl Panel {
             reports.pop_front();
         }
         reports.push_back((key, value, now));
-        self.cache.invalidate_all();
+        self.forget_reads();
         self.refreshes.send_modify(|v| *v = v.saturating_add(1));
         Ok(Value::Null)
     }
@@ -1018,23 +1073,106 @@ impl Panel {
         Ok((project, client, lookup))
     }
     async fn set_files_viewed(&self, input: &Value) -> Result<Value, Failure> {
-        let (_, client, lookup) = self.reference_client("setFilesViewed", input).await?;
+        let (project, client, lookup) = self.reference_client("setFilesViewed", input).await?;
+        // The host applies files one by one, so a failed or cancelled batch may be partly applied.
+        let _reads = MutationReads {
+            panel: self,
+            reference: ReadKey {
+                host: project.host,
+                repo: project.repository.to_lowercase(),
+                number: Some(lookup.number),
+                ..ReadKey::default()
+            },
+            files_viewed_only: true,
+        };
         client
             .set_files_viewed(&lookup, array(input.get("files")))
             .await
             .map_err(|e| host_error(&e, "setFilesViewed"))?;
-        self.invalidate(Some(input), true).await;
         Ok(Value::Null)
     }
-    async fn cached_read(&self, method: &str, input: &Value) -> Result<Value, Failure> {
-        let (project, client, lookup) = self.reference_client(method, input).await?;
-        let key = ReadKey {
-            scope: self.credential_scope(&client),
-            method: method.into(),
+    /// The key that identifies one PR for one credential.
+    fn pull_request_key(&self, client: &Client, project: &Project, lookup: &Lookup) -> ReadKey {
+        ReadKey {
+            scope: self.credential_scope(client),
             host: project.host.clone(),
             repo: project.repository.to_lowercase(),
             number: Some(lookup.number),
+            ..ReadKey::default()
+        }
+    }
+    /// T3's `lastGoodSummary.record` behind `shouldReplaceHeldSummary`: a reading that
+    /// supersedes the held one becomes the most recent entry. A late, older reading is
+    /// dropped while the newer one is held; once that PR has been evicted, it is recorded.
+    fn record_reading(&self, pull_request: ReadKey, value: &Value, observed: u64) {
+        let Some(next) = Reading::of(value, observed) else {
+            return;
+        };
+        let mut held = self.readings.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = held.iter().position(|(key, _)| *key == pull_request);
+        let previous = current.and_then(|index| held.get(index));
+        if !next.supersedes(previous.map(|(_, reading)| reading)) {
+            return;
+        }
+        if let Some(index) = current {
+            held.remove(index);
+        }
+        if held.len() >= READING_CAPACITY {
+            held.pop_front();
+        }
+        held.push_back((pull_request, next));
+    }
+    /// An uncached host detail read that still records the reading it saw, as T3 routes
+    /// the guide's reads through PR detail.
+    async fn fresh_detail(
+        &self,
+        project: &Project,
+        client: &Client,
+        lookup: &Lookup,
+    ) -> Result<Value, Failure> {
+        let observed = conn_support::time::now_ms();
+        let detail = client
+            .detail(lookup)
+            .await
+            .map_err(|error| host_error(&error, "detail"))?;
+        self.record_reading(
+            self.pull_request_key(client, project, lookup),
+            &detail,
+            observed,
+        );
+        Ok(detail)
+    }
+    /// `lastGoodSummary.peek(...)?.updatedAt`.
+    fn held_update(&self, pull_request: &ReadKey) -> Option<String> {
+        self.readings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|(key, _)| key == pull_request)
+            .map(|(_, reading)| reading.updated.clone())
+    }
+    fn forget_reads(&self) {
+        self.cache.invalidate_all();
+        self.diffs.invalidate_all();
+    }
+    async fn cached_read(&self, method: &str, input: &Value) -> Result<Value, Failure> {
+        let (project, client, lookup) = self.reference_client(method, input).await?;
+        let pull_request = self.pull_request_key(&client, &project, &lookup);
+        if method == "diff" {
+            return self
+                .read_diff(input, pull_request, &project, &client, &lookup)
+                .await;
+        }
+        // T3 reads unpinned contents uncached, so expansion matches the head the diff shows.
+        if method == "diffFileContents" && input.get("commit").is_none_or(Value::is_null) {
+            return self
+                .load_read(method, input, &project, &client, &lookup)
+                .await;
+        }
+        let key = ReadKey {
+            method: method.into(),
             input: input.to_string(),
+            ..pull_request
         };
         self.cache
             .get_with(
@@ -1052,6 +1190,42 @@ impl Panel {
                 || self.load_read(method, input, &project, &client, &lookup),
             )
             .await
+    }
+    /// T3's `readDiff`: the branch diff is keyed on the held summary's `updatedAt`, so it
+    /// moves on with each push; a pinned commit's diff never changes and keeps its key.
+    async fn read_diff(
+        &self,
+        input: &Value,
+        pull_request: ReadKey,
+        project: &Project,
+        client: &Client,
+        lookup: &Lookup,
+    ) -> Result<Value, Failure> {
+        let pinned = input.get("commit").is_some_and(|commit| !commit.is_null());
+        let key = ReadKey {
+            method: "diff".into(),
+            input: input.to_string(),
+            revision: if pinned {
+                None
+            } else {
+                self.held_update(&pull_request)
+            },
+            ..pull_request
+        };
+        let read = self
+            .diffs
+            .get_with(
+                key,
+                |result| match result {
+                    Ok(_) => Duration::from_secs(if pinned { 600 } else { 60 }),
+                    Err(_) => Duration::ZERO,
+                },
+                || self.load_read("diff", input, project, client, lookup),
+            )
+            .await;
+        self.diffs
+            .evict_beyond(DIFF_PATCH_BUDGET_BYTES, patch_weight);
+        read
     }
     async fn load_read(
         &self,
@@ -1087,6 +1261,13 @@ impl Panel {
         if method == "checks" {
             return Ok(
                 json!({"state":value.get("state"),"checks":value.get("checks"),"observedAt":observed}),
+            );
+        }
+        if matches!(method, "summary" | "detail") {
+            self.record_reading(
+                self.pull_request_key(client, project, lookup),
+                &value,
+                observed,
             );
         }
         if matches!(method, "summary" | "preview" | "detail") {
@@ -1127,7 +1308,7 @@ impl Panel {
         self.invalidate_cached(canonical.as_ref(), viewed);
     }
     fn invalidate_cached(&self, canonical: Option<&ReadKey>, viewed: bool) {
-        self.cache.invalidate_where(|key| {
+        let stale = |key: &ReadKey| {
             if !viewed && matches!(key.method.as_str(), "list" | "listStats") {
                 return true;
             }
@@ -1137,7 +1318,9 @@ impl Panel {
                         && key.repo == reference.repo
                         && key.number == reference.number
                 })
-        });
+        };
+        self.cache.invalidate_where(stale);
+        self.diffs.invalidate_where(stale);
     }
     async fn cached_listing(&self, method: &str, input: &Value) -> Result<Value, Failure> {
         let mut projects = self
@@ -1553,7 +1736,7 @@ impl Panel {
                                     && !next.completed.is_null()
                                     && previous.map(|v| &v.completed) != Some(&next.completed)
                                 {
-                                    panel.cache.invalidate_all();
+                                    panel.forget_reads();
                                     panel.refreshes.send_modify(|v| *v = v.saturating_add(1));
                                 }
                                 remember_view(&mut linked_views, next);
@@ -1570,7 +1753,7 @@ impl Panel {
                                 }
                                 linked_views.retain(|v| v.id != id);
                             }
-                            "project.updated" | "project.removed" => panel.cache.invalidate_all(),
+                            "project.updated" | "project.removed" => panel.forget_reads(),
                             _ => {}
                         }
                     }
@@ -1735,12 +1918,14 @@ impl Shared {
                         engine,
                         environment: deps.environment.clone(),
                         cache: TtlCache::new(32),
+                        diffs: TtlCache::new(DIFF_CACHE_CAPACITY),
                         identities: TtlCache::new(8),
                         endpoints: Endpoints::default(),
                         host_environment: Environment::process(),
                         child_env: Vec::new(),
                         credentials: Mutex::new(VecDeque::new()),
                         next_scope: AtomicU64::new(1),
+                        readings: Mutex::new(VecDeque::new()),
                         refreshes: watch::channel(0).0,
                         linked: watch::channel(0).0,
                         monitor: OnceCell::new(),

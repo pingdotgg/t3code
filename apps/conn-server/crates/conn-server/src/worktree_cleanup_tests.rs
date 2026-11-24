@@ -482,6 +482,8 @@ impl Fixture {
             scheduled_tasks: std::sync::OnceLock::new(),
             devices: std::sync::OnceLock::new(),
             worktree_cleanup: std::sync::OnceLock::new(),
+            previews: std::sync::OnceLock::new(),
+            settle_cleanups: Arc::default(),
         });
         let mut config = EngineConfig::new(state.join("engine.sqlite"));
         config.projects = vec![ProjectConfig {
@@ -932,7 +934,7 @@ async fn a_dev_home_manages_only_its_own_worktrees_folder() {
     let folder = real.to_string_lossy().into_owned();
     for setting in [
         json!({"worktreesDirectory": folder}),
-        json!({"worktreesDirectory": null, "previousWorktreesDirectories": [folder]}),
+        json!({"worktreesDirectory": "", "previousWorktreesDirectories": [folder]}),
     ] {
         fx.environment.settings.update_server(setting).unwrap();
         assert_eq!(

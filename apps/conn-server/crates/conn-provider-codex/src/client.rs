@@ -67,6 +67,16 @@ pub enum SessionMsg {
         thread: String,
         response: Value,
     },
+    /// A held goal run's grace ran out ([`crate::mapper::Out::GoalHeld`]).
+    GoalGrace {
+        thread: String,
+        seq: u64,
+    },
+    /// The answer to the pause that ends a goal Codex did not continue (`None`: none came).
+    GoalPaused {
+        thread: String,
+        response: Option<Value>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

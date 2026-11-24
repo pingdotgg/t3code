@@ -33,6 +33,10 @@ pub(crate) struct FileTreeState {
     selected_path: Option<String>,
     /// Active case-insensitive filter query.
     query: String,
+    /// Matches the server found for the query (`projects.searchEntries`), with their folders,
+    /// by parent directory. Merged into the rows only while filtering, so a folder never looks
+    /// loaded because a search touched it.
+    search: BTreeMap<String, Vec<ProjectEntry>>,
 }
 
 impl FileTreeState {
@@ -42,6 +46,59 @@ impl FileTreeState {
         self.expanded.clear();
         self.loading.clear();
         self.selected_path = None;
+        self.search.clear();
+    }
+
+    /// Keeps the server's matches (`buildTreeEntries`): each match, and every folder above it,
+    /// is listed under its parent directory.
+    pub(crate) fn set_search_results(&mut self, matches: &[ProjectEntry]) {
+        let mut search: BTreeMap<String, Vec<ProjectEntry>> = BTreeMap::new();
+        let mut add = |entry: ProjectEntry| {
+            let parent = entry
+                .path
+                .rsplit_once('/')
+                .map_or(String::new(), |(parent, _)| parent.to_owned());
+            let list = search.entry(parent).or_default();
+            if !list.iter().any(|e| e.path == entry.path) {
+                list.push(entry);
+            }
+        };
+        for entry in matches {
+            add(entry.clone());
+            let mut path = String::new();
+            let parts: Vec<&str> = entry.path.split('/').collect();
+            for part in &parts[..parts.len().saturating_sub(1)] {
+                if !path.is_empty() {
+                    path.push('/');
+                }
+                path.push_str(part);
+                add(ProjectEntry {
+                    path: path.clone(),
+                    kind: ProjectEntryKind::Directory,
+                    ignored: None,
+                });
+            }
+        }
+        self.search = search;
+    }
+
+    /// Drops the server's matches (the query was cleared or changed).
+    pub(crate) fn clear_search(&mut self) {
+        self.search.clear();
+    }
+
+    /// The children of `dir` that are loaded or that a search found.
+    fn merged_children(&self, dir: &str) -> Vec<ProjectEntry> {
+        let mut out = self.children.get(dir).cloned().unwrap_or_default();
+        if let Some(found) = self.search.get(dir) {
+            for entry in found {
+                if !out.iter().any(|e| e.path == entry.path) {
+                    out.push(entry.clone());
+                }
+            }
+            out.sort_by(compare_entries);
+        }
+        out
     }
 
     /// Replaces the loaded children of `directory` (`""` for root) and clears its loading flag.
@@ -69,6 +126,11 @@ impl FileTreeState {
     #[must_use]
     pub(crate) fn has_loaded(&self, directory: &str) -> bool {
         self.children.contains_key(directory)
+    }
+
+    /// Returns whether any directory is loading (the refresh button spins meanwhile).
+    pub(crate) fn is_loading(&self) -> bool {
+        !self.loading.is_empty()
     }
 
     /// Returns whether the root directory is currently loading.
@@ -127,6 +189,26 @@ impl FileTreeState {
                 to_load.push(dir);
             }
         }
+        to_load
+    }
+
+    /// Expands `folder` and every folder above it, and selects it. Returns the folders among
+    /// them that still need a lazy load.
+    pub(crate) fn reveal_folder(&mut self, folder: &str) -> Vec<String> {
+        let mut to_load = Vec::new();
+        let mut path = String::new();
+        let parts: Vec<&str> = folder.split('/').filter(|p| !p.is_empty()).collect();
+        for part in parts {
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(part);
+            self.expanded.insert(path.clone());
+            if !self.children.contains_key(&path) && !self.loading.contains(&path) {
+                to_load.push(path.clone());
+            }
+        }
+        self.selected_path = (!path.is_empty()).then_some(path);
         to_load
     }
 
@@ -213,11 +295,12 @@ impl FileTreeState {
         needle: &str,
         out: &mut Vec<VisibleTreeRow>,
     ) -> bool {
-        let Some(entries) = self.children.get(dir) else {
+        let entries = self.merged_children(dir);
+        if entries.is_empty() {
             return false;
-        };
+        }
         let mut any_match = false;
-        for entry in entries {
+        for entry in &entries {
             let self_matches = entry.path.to_ascii_lowercase().contains(needle);
             if entry.kind == ProjectEntryKind::Directory {
                 let mut child_rows = Vec::new();
@@ -294,6 +377,40 @@ mod tests {
             kind: ProjectEntryKind::File,
             ignored: None,
         }
+    }
+
+    #[test]
+    fn server_matches_show_in_a_filtered_tree_without_marking_folders_loaded() {
+        let mut tree = FileTreeState::default();
+        tree.set_directory_entries("", vec![dir("src")]);
+        tree.set_search_results(&[ProjectEntry {
+            path: "src/deep/needle.rs".to_owned(),
+            kind: ProjectEntryKind::File,
+            ignored: None,
+        }]);
+        tree.set_query("needle".to_owned());
+        let rows = tree.visible_rows();
+        let paths: Vec<_> = rows.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, ["src", "src/deep", "src/deep/needle.rs"]);
+        assert!(!tree.has_loaded("src"), "a search does not load folders");
+        tree.clear_search();
+        assert!(
+            tree.visible_rows().is_empty(),
+            "no loaded match without the server's"
+        );
+    }
+
+    #[test]
+    fn revealing_a_folder_expands_it_and_its_ancestors_and_selects_it() {
+        let mut tree = FileTreeState::default();
+        tree.set_directory_entries("", vec![dir("a")]);
+        let to_load = tree.reveal_folder("a/b/c");
+        assert_eq!(
+            to_load,
+            vec!["a".to_owned(), "a/b".to_owned(), "a/b/c".to_owned()]
+        );
+        assert_eq!(tree.selected(), Some("a/b/c"));
+        assert!(tree.expanded_directories().contains(&"a".to_owned()));
     }
 
     #[test]

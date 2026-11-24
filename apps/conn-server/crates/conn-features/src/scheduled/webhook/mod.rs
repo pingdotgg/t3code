@@ -386,20 +386,42 @@ struct LogDetails {
 pub(super) struct WebhookSave {
     pub schedule: ScheduledTaskSchedule,
     pub credentials: Credentials,
+    /// The secretRef this save read, held until the task write; spend it once that lands.
+    pub claim: Option<crate::secrets::Claim>,
+}
+
+/// Decodes and checks an upsert's webhook schedule, before anything is read or spent.
+pub(super) fn decode(
+    request: &super::UpsertInput,
+) -> Result<ScheduledTaskUpsertScheduleWebhook, super::Failure> {
+    let mut input: ScheduledTaskUpsertScheduleWebhook = from_json(request.schedule.clone())
+        .map_err(|e| super::Failure::Invalid(format!("Invalid schedule: {e}")))?;
+    check_schedule(&input)?;
+    // T3's `SecretRef` decodes trimmed and non-blank.
+    if let Some(Some(signature)) = &mut input.signature
+        && let Some(reference) = &mut signature.secret_ref
+    {
+        let trimmed = reference.trim();
+        if trimmed.is_empty() {
+            return Err(super::Failure::Invalid(
+                "Invalid schedule: signature.secretRef must be a non-blank string".into(),
+            ));
+        }
+        *reference = trimmed.to_owned();
+    }
+    Ok(input)
 }
 
 /// `upsert` for a webhook schedule: lowercases the signature header, keeps stored dedupe and
 /// filters a client left out, keeps the token, and takes a new secret or keeps the stored
 /// one. `existing` is the stored task and its credentials.
 pub(super) async fn prepare_save(
+    input: ScheduledTaskUpsertScheduleWebhook,
     request: &super::UpsertInput,
     task_id: &str,
     existing: Option<(&ScheduledTask, Option<&Credentials>)>,
     secrets: Option<&crate::secrets::SecretRequests>,
 ) -> Result<WebhookSave, super::Failure> {
-    let input: ScheduledTaskUpsertScheduleWebhook = from_json(request.schedule.clone())
-        .map_err(|e| super::Failure::Invalid(format!("Invalid schedule: {e}")))?;
-    check_schedule(&input)?;
     let stored_schedule = existing.and_then(|(task, _)| match &task.schedule {
         ScheduledTaskSchedule::Webhook(webhook) => Some(webhook),
         _ => None,
@@ -440,18 +462,22 @@ pub(super) async fn prepare_save(
         Some(stored) => stored.token.clone(),
         None => new_token().map_err(|e| TaskError::new(e.message, Some(task_id)))?,
     };
+    let mut claim = None;
     let secret = match &signature {
         None => None,
         Some(signature) => {
             let provided = match &signature.secret_ref {
                 None => signature.secret.clone(),
                 Some(reference) => {
-                    let consumed = match secrets {
-                        Some(secrets) => secrets.consume(reference, &request.project_id).await,
+                    let read = match secrets {
+                        Some(secrets) => read_held(secrets, reference, &request.project_id).await,
                         None => Err(crate::secrets::SecretError("ref_unavailable")),
                     };
-                    match consumed {
-                        Ok(value) => Some(value),
+                    match read {
+                        Ok((value, held)) => {
+                            claim = Some(held);
+                            Some(value)
+                        }
                         Err(_)
                             if request.command_id.is_some()
                                 && stored.is_some_and(|s| s.secret.is_some()) =>
@@ -477,7 +503,19 @@ pub(super) async fn prepare_save(
     Ok(WebhookSave {
         schedule,
         credentials: Credentials { token, secret },
+        claim,
     })
+}
+
+/// Claims `reference` and reads its value, leaving it in the store.
+async fn read_held(
+    secrets: &crate::secrets::SecretRequests,
+    reference: &str,
+    project: &str,
+) -> Result<(String, crate::secrets::Claim), crate::secrets::SecretError> {
+    let claim = secrets.claim(reference).await?;
+    let value = claim.read(project).await?;
+    Ok((value, claim))
 }
 
 /// The contract's checks on a webhook schedule that the generated types do not hold. A

@@ -618,4 +618,20 @@ mod tests {
         assert_rgba_near(tokens.background, "#123456", 1.0, "orbit-custom.background");
         assert!(theme.roles.contains_key("accent"));
     }
+
+    #[test]
+    fn popover_is_opaque_even_when_the_theme_role_is_translucent() {
+        for theme in builtin_themes() {
+            assert_eq!(Tokens::derive(&theme).popover.a, 1.0, "{}", theme.id);
+        }
+        let Some(mut theme) = theme_by_id("dark-ocean") else {
+            panic!("dark-ocean must be built in");
+        };
+        theme
+            .roles
+            .insert("surfaceOverlay".to_owned(), Rgba::new(0.2, 0.3, 0.4, 0.5));
+        let popover = Tokens::derive(&theme).popover;
+        assert_eq!(popover.a, 1.0);
+        assert_eq!((popover.r, popover.g, popover.b), (0.2, 0.3, 0.4));
+    }
 }

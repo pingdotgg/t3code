@@ -117,7 +117,9 @@ pub(crate) fn recover(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreRes
         if session["status"] != "stopped" {
             session["status"] = json!("stopped");
             session["updatedAt"] = json!(now);
-            tx.append(Draft::new(thread_id, "provider-session.updated", session))?;
+            tx.append(
+                Draft::new(thread_id, "provider-session.updated", session).payload_instance(),
+            )?;
         }
     }
     if !continues {
