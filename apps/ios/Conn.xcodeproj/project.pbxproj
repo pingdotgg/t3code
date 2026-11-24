@@ -12,6 +12,7 @@
 		0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */; };
 		12A10ADA099500D133C5F214 /* ConnSpikeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */; };
 		155A6C09FC940518D0D86F26 /* ConnTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1785EB0CC38B9B367514E3D9 /* ConnTheme.swift */; };
+		17CA94C6E222134A31BF4D14 /* OrbitConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26EA68AF617A11A6E036C60 /* OrbitConnectView.swift */; };
 		215CE6E0AD4A4E4588E30A90 /* ConnAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0ABEB932FF5357EF1B48C2F /* ConnAppDelegate.swift */; };
 		2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7425B395B824B6191534A3E /* SettingsView.swift */; };
 		3A296D5A1DBE936247D7E801 /* ProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E5F7BBA19D8EDDBBF83177C7 /* ProviderIcons.xcassets */; };
@@ -78,6 +79,7 @@
 		DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingURLParser.swift; sourceTree = "<group>"; };
 		E08A1B9DE873B63FCAC345CB /* DesignKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DesignKit; path = "../../../design-kit/DesignKit"; sourceTree = SOURCE_ROOT; };
 		E0F3FADEDA515DE053342539 /* TasksTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksTab.swift; sourceTree = "<group>"; };
+		E26EA68AF617A11A6E036C60 /* OrbitConnectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbitConnectView.swift; sourceTree = "<group>"; };
 		E5F7BBA19D8EDDBBF83177C7 /* ProviderIcons.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ProviderIcons.xcassets; sourceTree = "<group>"; };
 		EA5CC6AF7EE210056A5ED571 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		ED2E8A42C2F26EBE74993384 /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
@@ -176,6 +178,7 @@
 				953DAB675D1E26DF4D62D777 /* MarkdownView.swift */,
 				195AC4C2F3764E276F2218A3 /* ModelPickerSheet.swift */,
 				3341300D754CB97F598B98C8 /* NewThreadView.swift */,
+				E26EA68AF617A11A6E036C60 /* OrbitConnectView.swift */,
 				DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */,
 				6BEEC1EEE1A9677F008F2091 /* PairingView.swift */,
 				C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */,
@@ -313,6 +316,7 @@
 				5202B5BF50FD24ED57D8454C /* MarkdownView.swift in Sources */,
 				61076398806FFD92BE0A5E40 /* ModelPickerSheet.swift in Sources */,
 				A48B0233539A33A746A0C0A0 /* NewThreadView.swift in Sources */,
+				17CA94C6E222134A31BF4D14 /* OrbitConnectView.swift in Sources */,
 				9955DFD2D19FE1A3E8D199B7 /* PairingURLParser.swift in Sources */,
 				3C02BE75CFA0F738CEEBD65B /* PairingView.swift in Sources */,
 				B41AE3C505014F8382E4184F /* PendingApprovalCard.swift in Sources */,

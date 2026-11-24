@@ -168,7 +168,10 @@ struct WorkspaceRootView: View {
         isSearching = false
         searchQuery = ""
         selectedTab = .threads
-        let scope = store.linked.first { $0.value.environmentId == link.environmentId }?.key ?? ""
+        // An environment opened from a link is keyed by its id before it knows it.
+        let scope = store.linked[link.environmentId] != nil
+            ? link.environmentId
+            : store.linked.first { $0.value.environmentId == link.environmentId }?.key ?? ""
         navigationPath = [.thread(link.threadId, scope: scope)]
     }
 }

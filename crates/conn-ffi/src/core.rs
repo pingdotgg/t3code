@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use conn_client::commands::{SECRETS_ANSWER_REQUEST, WorkspaceStrategyChoice};
-use conn_client::{ClientEvent, Connection, ServerConfig};
+use conn_client::{ClientEvent, Connection, ServerConfig, StartOptions};
 use conn_contract::{
     OrchestrationV2Command, OrchestrationV2ThreadLaunchResult, OrchestrationV2ThreadProjection,
     OrchestrationV2ThreadStreamItem,
@@ -24,8 +24,8 @@ use crate::model_picker::{
     model_to_save,
 };
 use crate::types::{
-    FfiApprovalDecision, FfiConnectionStatus, FfiCredential, FfiError, FfiSendMode,
-    FfiShellSnapshot, FfiThreadSnapshot, FfiUserInputSubmission, ThreadSnapshotMeta,
+    FfiApprovalDecision, FfiConnectionStatus, FfiCredential, FfiError, FfiSavedSession,
+    FfiSendMode, FfiShellSnapshot, FfiThreadSnapshot, FfiUserInputSubmission, ThreadSnapshotMeta,
     build_shell_snapshot, build_thread_snapshot,
 };
 use conn_state::thread_models::{
@@ -48,7 +48,9 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
 #[uniffi::export(with_foreign)]
 pub trait CoreListener: Send + Sync {
     fn on_status(&self, status: FfiConnectionStatus);
-    fn on_bearer_issued(&self, token: String);
+    /// A bearer to store, with the server it belongs to. Fires after a pairing exchange, and at
+    /// the start of an Orbit connection that reuses a saved bearer.
+    fn on_bearer_issued(&self, session: FfiSavedSession);
     fn on_shell(&self, snapshot: FfiShellSnapshot);
     fn on_thread(&self, snapshot: FfiThreadSnapshot);
     fn on_error(&self, message: String);
@@ -152,6 +154,7 @@ pub struct ConnCore {
     shell_watch: watch::Receiver<Option<FfiShellSnapshot>>,
     status_watch: watch::Receiver<FfiConnectionStatus>,
     disconnected: AtomicBool,
+    started_with_bearer: bool,
 }
 
 impl fmt::Debug for ConnCore {
@@ -178,6 +181,118 @@ impl Drop for ConnCore {
 }
 
 impl ConnCore {
+    /// Starts a connection. `orbit_server_id` marks an Orbit session: its bearers are reported
+    /// with that id, and a rejected bearer ends it so the session can re-pair through Orbit.
+    pub(crate) fn start(
+        server_url: String,
+        credential: FfiCredential,
+        listener: Arc<dyn CoreListener>,
+        orbit_server_id: Option<String>,
+    ) -> Result<Arc<Self>, FfiError> {
+        Self::start_checked(server_url, credential, listener, orbit_server_id, None)
+    }
+
+    /// [`Self::start`], sending the bearer only to a server whose descriptor names
+    /// `expected_environment` (a manual server's saved identity).
+    pub(crate) fn start_checked(
+        server_url: String,
+        credential: FfiCredential,
+        listener: Arc<dyn CoreListener>,
+        orbit_server_id: Option<String>,
+        expected_environment: Option<String>,
+    ) -> Result<Arc<Self>, FfiError> {
+        let http_base_url = parse_server_url(&server_url)?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("conn-ffi")
+            .enable_all()
+            .build()
+            .map_err(|err| FfiError::Connection {
+                message: format!("failed to build tokio runtime: {err}"),
+            })?;
+
+        let runtime_handle = runtime.handle().clone();
+        let normalized_url = http_base_url.to_string();
+        let started_with_bearer = matches!(credential, FfiCredential::Bearer { .. });
+        let reused_session = match (&credential, &orbit_server_id) {
+            (FfiCredential::Bearer { token }, Some(id)) => Some(FfiSavedSession {
+                server_url: normalized_url.clone(),
+                bearer: token.clone(),
+                orbit_server_id: Some(id.clone()),
+                environment_id: Some(id.clone()),
+            }),
+            _ => None,
+        };
+        let config = ServerConfig {
+            http_base_url,
+            credential: credential.into(),
+        };
+        // An Orbit session can re-pair through the Gateway, so a rejected bearer ends it.
+        let (connection, events_rx) = Connection::start_with_options(
+            config,
+            &runtime_handle,
+            StartOptions {
+                stop_on_auth_rejection: orbit_server_id.is_some(),
+                expected_environment,
+            },
+        );
+        connection.subscribe_shell_with_idle_subagents();
+        connection.subscribe_server_config();
+
+        let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
+        let thread_runs = Arc::new(RwLock::new(HashMap::new()));
+        let (shell_watch_tx, shell_watch) = watch::channel(None);
+        let (status_watch_tx, status_watch) = watch::channel(FfiConnectionStatus::Connecting);
+
+        runtime_handle.spawn(run_pump(
+            connection.clone(),
+            events_rx,
+            ctrl_rx,
+            listener,
+            Arc::clone(&thread_runs),
+            (shell_watch_tx, status_watch_tx),
+            SessionIdentity {
+                server_url: normalized_url.clone(),
+                orbit_server_id,
+                reused_session,
+            },
+        ));
+
+        Ok(Arc::new(Self {
+            runtime: Some(runtime),
+            runtime_handle,
+            server_url: normalized_url,
+            connection,
+            ctrl_tx,
+            thread_runs,
+            shell_watch,
+            status_watch,
+            disconnected: AtomicBool::new(false),
+            started_with_bearer,
+        }))
+    }
+
+    /// True once the server refused this connection's bearer at the WebSocket handshake.
+    pub(crate) fn auth_rejected(&self) -> bool {
+        self.connection.auth_rejected()
+    }
+
+    /// From the next handshake on, sends the bearer only to `environment_id`'s server.
+    pub(crate) fn expect_environment(&self, environment_id: String) {
+        self.connection
+            .set_expected_environment(Some(environment_id));
+    }
+
+    /// True when another environment answered at this server's address (the bearer wasn't sent).
+    pub(crate) fn identity_changed(&self) -> bool {
+        self.connection.identity_mismatch().is_some()
+    }
+
+    /// True when this connection started from a saved bearer rather than a pairing code.
+    pub(crate) fn reused_bearer(&self) -> bool {
+        self.started_with_bearer
+    }
+
     fn thread_run_meta(&self, thread_id: &str) -> ThreadRunMeta {
         self.thread_runs
             .read()
@@ -305,64 +420,22 @@ impl ConnCore {
         credential: FfiCredential,
         listener: Arc<dyn CoreListener>,
     ) -> Result<Arc<Self>, FfiError> {
-        let http_base_url = parse_server_url(&server_url)?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("conn-ffi")
-            .enable_all()
-            .build()
-            .map_err(|err| FfiError::Connection {
-                message: format!("failed to build tokio runtime: {err}"),
-            })?;
-
-        let runtime_handle = runtime.handle().clone();
-        let normalized_url = http_base_url.to_string();
-        let config = ServerConfig {
-            http_base_url,
-            credential: credential.into(),
-        };
-        let (connection, events_rx) = Connection::start(config, &runtime_handle);
-        connection.subscribe_shell_with_idle_subagents();
-        connection.subscribe_server_config();
-
-        let (ctrl_tx, ctrl_rx) = mpsc::unbounded_channel();
-        let thread_runs = Arc::new(RwLock::new(HashMap::new()));
-        let (shell_watch_tx, shell_watch) = watch::channel(None);
-        let (status_watch_tx, status_watch) = watch::channel(FfiConnectionStatus::Connecting);
-
-        runtime_handle.spawn(run_pump(
-            connection.clone(),
-            events_rx,
-            ctrl_rx,
-            listener,
-            Arc::clone(&thread_runs),
-            shell_watch_tx,
-            status_watch_tx,
-        ));
-
-        Ok(Arc::new(Self {
-            runtime: Some(runtime),
-            runtime_handle,
-            server_url: normalized_url,
-            connection,
-            ctrl_tx,
-            thread_runs,
-            shell_watch,
-            status_watch,
-            disconnected: AtomicBool::new(false),
-        }))
+        Self::start(server_url, credential, listener, None)
     }
 
     /// Opens this pairing's cache on the connection runtime.
+    /// `identity` names the server the cache belongs to (its Orbit server id or environment id),
+    /// not its URL: another server at the same URL must not read this one's cache.
     pub async fn prepare_offline(
         &self,
         directory: String,
+        identity: String,
     ) -> Result<Arc<crate::OfflineReader>, FfiError> {
         let reader = self
             .runtime_handle
             .spawn(crate::OfflineReader::open(
                 directory.into(),
-                self.server_url(),
+                identity,
                 self.connection.clone(),
             ))
             .await
@@ -829,8 +902,17 @@ fn parse_server_url(raw: &str) -> Result<url::Url, FfiError> {
     }
 }
 
+/// The server a connection's bearers belong to.
+struct SessionIdentity {
+    server_url: String,
+    orbit_server_id: Option<String>,
+    /// A reused Orbit bearer, reported once when the pump starts.
+    reused_session: Option<FfiSavedSession>,
+}
+
 struct PumpState {
     offline: Option<crate::offline::SyncState>,
+    identity: SessionIdentity,
     connection: Connection,
     listener: Arc<dyn CoreListener>,
     shell: ShellState,
@@ -1193,7 +1275,12 @@ impl PumpState {
                 self.listener.on_status(ffi_status);
             }
             ClientEvent::BearerIssued(token) => {
-                self.listener.on_bearer_issued(token);
+                self.listener.on_bearer_issued(FfiSavedSession {
+                    server_url: self.identity.server_url.clone(),
+                    bearer: token,
+                    orbit_server_id: self.identity.orbit_server_id.clone(),
+                    environment_id: self.identity.orbit_server_id.clone(),
+                });
             }
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
@@ -1349,11 +1436,18 @@ async fn run_pump(
     mut ctrl_rx: mpsc::UnboundedReceiver<PumpControl>,
     listener: Arc<dyn CoreListener>,
     thread_runs: Arc<RwLock<HashMap<String, ThreadRunMeta>>>,
-    shell_watch: watch::Sender<Option<FfiShellSnapshot>>,
-    status_watch: watch::Sender<FfiConnectionStatus>,
+    (shell_watch, status_watch): (
+        watch::Sender<Option<FfiShellSnapshot>>,
+        watch::Sender<FfiConnectionStatus>,
+    ),
+    mut identity: SessionIdentity,
 ) {
+    if let Some(session) = identity.reused_session.take() {
+        listener.on_bearer_issued(session);
+    }
     let mut state = PumpState {
         offline: None,
+        identity,
         connection,
         listener,
         shell: ShellState::default(),
@@ -1430,7 +1524,7 @@ mod tests {
     #[derive(Default)]
     struct RecordedState {
         statuses: Vec<FfiConnectionStatus>,
-        bearers: Vec<String>,
+        bearers: Vec<FfiSavedSession>,
         shells: Vec<FfiShellSnapshot>,
         threads: Vec<FfiThreadSnapshot>,
         errors: Vec<String>,
@@ -1475,9 +1569,9 @@ mod tests {
             self.notify.notify_all();
         }
 
-        fn on_bearer_issued(&self, token: String) {
+        fn on_bearer_issued(&self, session: FfiSavedSession) {
             let mut guard = self.inner.lock().expect("listener mutex not poisoned");
-            guard.bearers.push(token);
+            guard.bearers.push(session);
             self.notify.notify_all();
         }
 

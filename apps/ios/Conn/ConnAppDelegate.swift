@@ -6,6 +6,11 @@ struct ThreadLink: Equatable, Sendable {
     let environmentId: String
     let threadId: String
 
+    init(environmentId: String, threadId: String) {
+        self.environmentId = environmentId
+        self.threadId = threadId
+    }
+
     /// `conn://thread/<environment>/<thread>`.
     init?(url: URL) {
         guard url.scheme == "conn", url.host() == "thread" else { return nil }

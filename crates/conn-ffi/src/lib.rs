@@ -13,6 +13,7 @@ mod offline;
 mod orbit;
 mod phone_tasks;
 mod questions;
+mod session;
 mod theme;
 mod types;
 
@@ -30,16 +31,17 @@ pub use crate::orbit::{
     FfiDeliverable, FfiImplementerMode, FfiInsightCard, FfiInsightId, FfiInsightTrendPoint,
     FfiInsightsPeriod, FfiOrbitAppearance, FfiOrbitAppearanceMode, FfiOrbitBoundProfile,
     FfiOrbitBranch, FfiOrbitBranchInstance, FfiOrbitBranchPullRequest, FfiOrbitBranchSelection,
-    FfiOrbitBranches, FfiOrbitCustomTheme, FfiOrbitEnvironment, FfiOrbitInstanceNameCheck,
-    FfiOrbitInstanceNameReason, FfiOrbitMe, FfiOrbitPowerState, FfiOrbitProfile,
-    FfiOrbitProfileSettings, FfiOrbitProject, FfiOrbitProjectCheck, FfiOrbitProjectCheckStatus,
-    FfiOrbitProjectTarget, FfiOrbitReservation, FfiOrbitReservationState, FfiOrbitTargetStatus,
-    FfiOrbitThemeSlot, FfiOrbitThemeSlotSource, FfiOrbitWorkspace, FfiPullRequestState,
-    FfiStartedOrbitThread, FfiStatusTone, FfiSubtask, FfiSubtaskCounts, FfiSubtaskStatus,
-    FfiTaskAgent, FfiTaskAttention, FfiTaskBoardLane, FfiTaskDetail, FfiTaskEnvironmentState,
-    FfiTaskInsightsStrip, FfiTaskLabelTone, FfiTaskLane, FfiTaskMetrics, FfiTaskProject,
-    FfiTaskPullRequest, FfiTaskStatus, FfiTaskSummary, FfiTaskWorkspace, FfiTasksBoard,
-    FfiTasksBoardQuery, FfiTasksLiveStatus, OrbitCore, OrbitListener, orbit_derive_instance_name,
+    FfiOrbitBranches, FfiOrbitConnectFailure, FfiOrbitConnectOutcome, FfiOrbitCustomTheme,
+    FfiOrbitEnvironment, FfiOrbitInstanceNameCheck, FfiOrbitInstanceNameReason, FfiOrbitMe,
+    FfiOrbitPowerState, FfiOrbitProfile, FfiOrbitProfileSettings, FfiOrbitProject,
+    FfiOrbitProjectCheck, FfiOrbitProjectCheckStatus, FfiOrbitProjectTarget, FfiOrbitReservation,
+    FfiOrbitReservationState, FfiOrbitSession, FfiOrbitTargetStatus, FfiOrbitThemeSlot,
+    FfiOrbitThemeSlotSource, FfiOrbitWorkspace, FfiPullRequestState, FfiStartedOrbitThread,
+    FfiStatusTone, FfiSubtask, FfiSubtaskCounts, FfiSubtaskStatus, FfiTaskAgent, FfiTaskAttention,
+    FfiTaskBoardLane, FfiTaskDetail, FfiTaskEnvironmentState, FfiTaskInsightsStrip,
+    FfiTaskLabelTone, FfiTaskLane, FfiTaskMetrics, FfiTaskProject, FfiTaskPullRequest,
+    FfiTaskStatus, FfiTaskSummary, FfiTaskWorkspace, FfiTasksBoard, FfiTasksBoardQuery,
+    FfiTasksLiveStatus, OrbitCore, OrbitListener, orbit_derive_instance_name,
     orbit_workspace_matches_project,
 };
 pub use crate::phone_tasks::{
@@ -51,16 +53,20 @@ pub use crate::questions::{
     question_answers, question_context_clamp, question_panel, question_set_custom_answer,
     question_toggle_option,
 };
+pub use crate::session::{
+    ConnSession, FfiLinkRoute, FfiSessionPhase, FfiSessionState, FfiSessionTarget, SessionListener,
+};
 pub use crate::theme::{
     FfiAppearance, FfiColor, FfiShellGeometry, FfiThemeSummary, FfiThemeTokens, builtin_themes,
     custom_theme_tokens, theme_tokens,
 };
 pub use crate::types::{
     FfiApprovalDecision, FfiAttachment, FfiConnectionStatus, FfiCredential, FfiError,
-    FfiItemStatus, FfiOrbitErrorReason, FfiProject, FfiSecretRequestStatus, FfiSendMode,
-    FfiShellSnapshot, FfiThreadActivity, FfiThreadSnapshot, FfiThreadSummary, FfiTimelineEntry,
-    FfiTurnCheckpointFile, FfiTurnItemStatus, FfiUserInputAnswer, FfiUserInputAnswerValue,
-    FfiUserInputOption, FfiUserInputQuestion, FfiUserInputSubmission, FfiWorkGroupTiming,
+    FfiItemStatus, FfiOrbitErrorReason, FfiProject, FfiSavedSession, FfiSecretRequestStatus,
+    FfiSendMode, FfiShellSnapshot, FfiThreadActivity, FfiThreadSnapshot, FfiThreadSummary,
+    FfiTimelineEntry, FfiTurnCheckpointFile, FfiTurnItemStatus, FfiUserInputAnswer,
+    FfiUserInputAnswerValue, FfiUserInputOption, FfiUserInputQuestion, FfiUserInputSubmission,
+    FfiWorkGroupTiming,
 };
 
 const _: () = {

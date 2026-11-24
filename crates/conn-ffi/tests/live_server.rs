@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use conn_client::{Connection, Credential, ServerConfig};
 use conn_ffi::{
-    ConnCore, CoreListener, FfiConnectionStatus, FfiCredential, FfiSendMode, FfiShellSnapshot,
-    FfiThreadSnapshot,
+    ConnCore, CoreListener, FfiConnectionStatus, FfiCredential, FfiSavedSession, FfiSendMode,
+    FfiShellSnapshot, FfiThreadSnapshot,
 };
 use serde_json::json;
 
@@ -86,9 +86,9 @@ impl CoreListener for LiveListener {
         }
     }
 
-    fn on_bearer_issued(&self, token: String) {
+    fn on_bearer_issued(&self, session: FfiSavedSession) {
         if let Ok(mut guard) = self.inner.lock() {
-            guard.bearer = Some(token);
+            guard.bearer = Some(session.bearer);
             self.notify.notify_all();
         }
     }

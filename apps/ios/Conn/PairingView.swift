@@ -86,6 +86,15 @@ struct PairingView: View {
                         }
                         .buttonStyle(.kit)
                         .accessibilityIdentifier("pairing.pasteButton")
+
+                        Button("Connect through Orbit") {
+                            fieldFocused = false
+                            store.connectThroughOrbit()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.kitDetail)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("pairing.orbitButton")
                     }
                 }
                 .padding(.horizontal, Kit.contentInset)

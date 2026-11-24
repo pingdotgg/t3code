@@ -24,8 +24,12 @@ struct ConnApp: App {
         WindowGroup {
             ConnThemeProvider {
                 Group {
-                    if store.isPaired {
+                    // Rust's state decides: the full Orbit or pairing screen only until this
+                    // scope has connected; after that a reconnect shows inline in the workspace.
+                    if store.showsWorkspace {
                         WorkspaceRootView(store: store)
+                    } else if let orbitConnect = store.orbitConnect {
+                        OrbitConnectView(store: store, state: orbitConnect)
                     } else {
                         PairingView(store: store)
                     }

@@ -113,6 +113,86 @@ impl From<OrbitNode> for FfiOrbitMe {
     }
 }
 
+/// The Orbit connection the app saved last time, handed back at launch.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FfiOrbitSession {
+    pub server_id: String,
+    pub server_url: String,
+    pub bearer: String,
+}
+
+/// Why [`OrbitCore::connect_primary_agent`] could not connect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum FfiOrbitConnectFailure {
+    /// The Gateway doesn't know this device's WireGuard address.
+    NotANode,
+    /// The Gateway did not answer.
+    GatewayUnreachable,
+    /// No registered Node carries the `agent` role.
+    NoAgentNode,
+    /// The Gateway would not mint a pairing for the agent Node.
+    PairingRefused,
+}
+
+/// Result of [`OrbitCore::connect_primary_agent`].
+#[derive(Debug, uniffi::Enum)]
+pub enum FfiOrbitConnectOutcome {
+    /// `core` is connecting; it reports the bearer to store through `on_bearer_issued`.
+    Connected {
+        core: Arc<ConnCore>,
+        server_id: String,
+        server_url: String,
+        label: String,
+    },
+    /// `message` says what went wrong in plain words; `detail` is the raw error, if any.
+    Failed {
+        reason: FfiOrbitConnectFailure,
+        message: String,
+        detail: Option<String>,
+    },
+}
+
+impl FfiOrbitConnectOutcome {
+    fn failed(reason: FfiOrbitConnectFailure, detail: Option<String>) -> Self {
+        let message = match reason {
+            FfiOrbitConnectFailure::NotANode => {
+                "This iPhone isn't an Orbit Node. Turn on its WireGuard tunnel, then try again."
+            }
+            FfiOrbitConnectFailure::GatewayUnreachable => "Can't reach the Orbit Gateway.",
+            FfiOrbitConnectFailure::NoAgentNode => "Orbit has no agent Node to connect to.",
+            FfiOrbitConnectFailure::PairingRefused => "Orbit couldn't pair this iPhone.",
+        };
+        Self::Failed {
+            reason,
+            message: message.to_owned(),
+            detail,
+        }
+    }
+}
+
+/// Maps a Gateway error to a launch failure; `fallback` covers reasons with no closer match.
+pub(crate) fn orbit_connect_failure(
+    err: &FfiError,
+    fallback: FfiOrbitConnectFailure,
+) -> FfiOrbitConnectOutcome {
+    let reason = match err {
+        FfiError::Orbit {
+            reason: FfiOrbitErrorReason::NotANode,
+            ..
+        } => FfiOrbitConnectFailure::NotANode,
+        FfiError::Orbit {
+            reason: FfiOrbitErrorReason::Unreachable,
+            ..
+        } => FfiOrbitConnectFailure::GatewayUnreachable,
+        _ => fallback,
+    };
+    let detail = match err {
+        FfiError::Orbit { message, .. } => message.clone(),
+        other => other.to_string(),
+    };
+    FfiOrbitConnectOutcome::failed(reason, Some(detail))
+}
+
 /// Registration status of an Orbit Node or Instance on the Gateway.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum FfiOrbitTargetStatus {
@@ -1619,6 +1699,11 @@ impl OrbitCore {
         }))
     }
 
+    /// The runtime Orbit work runs on.
+    pub(crate) fn handle(&self) -> tokio::runtime::Handle {
+        self.runtime_handle.clone()
+    }
+
     fn profile_client(&self) -> OrbitProfileClient {
         OrbitProfileClient::new(Arc::clone(&self.transport))
     }
@@ -1658,6 +1743,91 @@ impl OrbitCore {
         Fut: std::future::Future<Output = BearerCheckOutcome> + Send + 'static,
     {
         let fleet = self.fleet_client();
+        let id = server_id.clone();
+        let plan = self
+            .spawn_on_rt(async move {
+                fleet
+                    .resolve_environment_connect(&id, cached_bearer.as_deref(), verify_bearer)
+                    .await
+                    .map_err(FfiError::from)
+            })
+            .await?;
+
+        let (server_url, credential) = match plan {
+            EnvironmentConnectPlan::ReuseBearer { server_url, bearer } => {
+                (server_url, FfiCredential::Bearer { token: bearer })
+            }
+            EnvironmentConnectPlan::PairWithCode {
+                server_url,
+                pairing_code,
+                ..
+            } => (
+                server_url,
+                FfiCredential::PairingCode { code: pairing_code },
+            ),
+        };
+        ConnCore::start(server_url, credential, listener, Some(server_id))
+    }
+
+    async fn connect_primary_agent_with_probe<F, Fut>(
+        &self,
+        saved: Option<FfiOrbitSession>,
+        listener: Arc<dyn CoreListener>,
+        verify_bearer: F,
+    ) -> FfiOrbitConnectOutcome
+    where
+        F: FnOnce(String, String) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = BearerCheckOutcome> + Send + 'static,
+    {
+        let client = self.fleet_client();
+        let fleet = self
+            .spawn_on_rt(async move { client.list_fleet(None).await.map_err(FfiError::from) })
+            .await;
+        let target = match fleet {
+            Ok(fleet) => select_primary_agent_node(&fleet.nodes, None).cloned(),
+            Err(err) => {
+                // Only a Gateway that can't be reached falls back to the saved session; one that
+                // answers and refuses this device must not be bypassed.
+                let unreachable = matches!(
+                    err,
+                    FfiError::Orbit {
+                        reason: FfiOrbitErrorReason::Unreachable,
+                        ..
+                    }
+                );
+                if let Some(saved) = saved.filter(|_| unreachable) {
+                    return match ConnCore::start(
+                        saved.server_url.clone(),
+                        FfiCredential::Bearer {
+                            token: saved.bearer,
+                        },
+                        listener,
+                        Some(saved.server_id.clone()),
+                    ) {
+                        Ok(core) => FfiOrbitConnectOutcome::Connected {
+                            core,
+                            label: saved.server_url.clone(),
+                            server_id: saved.server_id,
+                            server_url: saved.server_url,
+                        },
+                        Err(_) => {
+                            orbit_connect_failure(&err, FfiOrbitConnectFailure::GatewayUnreachable)
+                        }
+                    };
+                }
+                return orbit_connect_failure(&err, FfiOrbitConnectFailure::GatewayUnreachable);
+            }
+        };
+        let Some(target) = target else {
+            return FfiOrbitConnectOutcome::failed(FfiOrbitConnectFailure::NoAgentNode, None);
+        };
+
+        let cached_bearer = saved
+            .filter(|s| s.server_id == target.server_id)
+            .map(|s| s.bearer);
+        let label = target.display_title();
+        let server_id = target.server_id.clone();
+        let fleet = self.fleet_client();
         let plan = self
             .spawn_on_rt(async move {
                 fleet
@@ -1669,23 +1839,36 @@ impl OrbitCore {
                     .await
                     .map_err(FfiError::from)
             })
-            .await?;
-
-        match plan {
-            EnvironmentConnectPlan::ReuseBearer { server_url, bearer } => ConnCore::connect(
-                server_url,
-                FfiCredential::Bearer { token: bearer },
-                listener,
-            ),
-            EnvironmentConnectPlan::PairWithCode {
+            .await;
+        let (server_url, credential) = match plan {
+            Ok(EnvironmentConnectPlan::ReuseBearer { server_url, bearer }) => {
+                (server_url, FfiCredential::Bearer { token: bearer })
+            }
+            Ok(EnvironmentConnectPlan::PairWithCode {
                 server_url,
                 pairing_code,
                 ..
-            } => ConnCore::connect(
+            }) => (
                 server_url,
                 FfiCredential::PairingCode { code: pairing_code },
-                listener,
             ),
+            Err(err) => {
+                return orbit_connect_failure(&err, FfiOrbitConnectFailure::PairingRefused);
+            }
+        };
+        match ConnCore::start(
+            server_url.clone(),
+            credential,
+            listener,
+            Some(target.server_id.clone()),
+        ) {
+            Ok(core) => FfiOrbitConnectOutcome::Connected {
+                core,
+                server_id: target.server_id,
+                server_url,
+                label,
+            },
+            Err(err) => orbit_connect_failure(&err, FfiOrbitConnectFailure::PairingRefused),
         }
     }
 }
@@ -1793,6 +1976,21 @@ impl OrbitCore {
             listener,
             |url, bearer| async move { check_bearer_session(&url, &bearer).await },
         )
+        .await
+    }
+
+    /// The app's launch path (`docs/scope.md` §5.4): selects the primary `agent`-role Node and
+    /// connects to it, reusing `saved` when it belongs to that Node and the server still accepts
+    /// it, else minting a fresh pairing through the Gateway. When the Gateway can't be read but
+    /// `saved` exists, connects with `saved` directly, as a plain saved connection would.
+    pub async fn connect_primary_agent(
+        &self,
+        saved: Option<FfiOrbitSession>,
+        listener: Arc<dyn CoreListener>,
+    ) -> FfiOrbitConnectOutcome {
+        self.connect_primary_agent_with_probe(saved, listener, |url, bearer| async move {
+            check_bearer_session(&url, &bearer).await
+        })
         .await
     }
 
@@ -2126,7 +2324,12 @@ impl OrbitCore {
                             .http_base_url()
                             .map(|u| u.to_string())
                             .unwrap_or_else(|| prepared.server_url.clone());
-                        ConnCore::connect(url, FfiCredential::PairingCode { code }, listener)?
+                        ConnCore::start(
+                            url,
+                            FfiCredential::PairingCode { code },
+                            listener,
+                            Some(prepared.environment_id.clone()),
+                        )?
                     } else {
                         self.connect_environment(prepared.environment_id.clone(), None, listener)
                             .await?
@@ -2335,7 +2538,7 @@ impl OrbitCore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Condvar, Mutex};
 
@@ -2352,15 +2555,15 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message;
 
     use super::*;
-    use crate::types::{FfiConnectionStatus, FfiShellSnapshot, FfiThreadSnapshot};
+    use crate::types::{FfiConnectionStatus, FfiSavedSession, FfiShellSnapshot, FfiThreadSnapshot};
 
-    struct MockGateway {
+    pub(crate) struct MockGateway {
         handler:
             Mutex<Box<dyn FnMut(GatewayRequest) -> Result<GatewayResponse, GatewayError> + Send>>,
     }
 
     impl MockGateway {
-        fn new(
+        pub(crate) fn new(
             f: impl FnMut(GatewayRequest) -> Result<GatewayResponse, GatewayError> + Send + 'static,
         ) -> Arc<Self> {
             Arc::new(Self {
@@ -2383,8 +2586,10 @@ mod tests {
     struct TestCoreState {
         connected: bool,
         bearer: Option<String>,
+        session: Option<FfiSavedSession>,
         shell: Option<FfiShellSnapshot>,
         failed: Option<String>,
+        reconnecting: bool,
     }
 
     #[derive(Default)]
@@ -2424,15 +2629,17 @@ mod tests {
                 match status {
                     FfiConnectionStatus::Connected => guard.connected = true,
                     FfiConnectionStatus::Failed { message } => guard.failed = Some(message),
-                    FfiConnectionStatus::Connecting | FfiConnectionStatus::Reconnecting { .. } => {}
+                    FfiConnectionStatus::Reconnecting { .. } => guard.reconnecting = true,
+                    FfiConnectionStatus::Connecting => {}
                 }
                 self.notify.notify_all();
             }
         }
 
-        fn on_bearer_issued(&self, token: String) {
+        fn on_bearer_issued(&self, session: FfiSavedSession) {
             if let Ok(mut guard) = self.inner.lock() {
-                guard.bearer = Some(token);
+                guard.bearer = Some(session.bearer.clone());
+                guard.session = Some(session);
                 self.notify.notify_all();
             }
         }
@@ -2458,7 +2665,7 @@ mod tests {
     /// - `POST /oauth/token` (exchanges `expected_code` for `issued_bearer`)
     /// - `GET /ws` (Effect RPC: `orchestration.subscribeShell`, `projects.ensureScratch`,
     ///   `orchestration.launchThread`)
-    async fn spawn_mock_conn_server(
+    pub(crate) async fn spawn_mock_conn_server(
         valid_bearer: &'static str,
         expected_code: &'static str,
         issued_bearer: &'static str,
@@ -3012,6 +3219,341 @@ mod tests {
             "General thread has no instance_id"
         );
         started.core.disconnect();
+
+        server_task.abort();
+    }
+
+    pub(crate) fn gateway_error(status: u16, code: &str) -> Result<GatewayResponse, GatewayError> {
+        Ok(GatewayResponse {
+            status,
+            body: json!({ "error": { "code": code, "message": code } }).to_string(),
+        })
+    }
+
+    fn failure_reason(outcome: FfiOrbitConnectOutcome) -> FfiOrbitConnectFailure {
+        match outcome {
+            FfiOrbitConnectOutcome::Failed { reason, .. } => reason,
+            FfiOrbitConnectOutcome::Connected { core, .. } => {
+                core.disconnect();
+                panic!("expected a failed outcome")
+            }
+        }
+    }
+
+    #[test]
+    fn connect_primary_agent_names_why_it_failed() {
+        let cases: Vec<(
+            &str,
+            Box<dyn FnMut(GatewayRequest) -> Result<GatewayResponse, GatewayError> + Send>,
+            FfiOrbitConnectFailure,
+        )> = vec![
+            (
+                "unknown WireGuard address",
+                Box::new(|_| gateway_error(403, "peer.identity_unknown")),
+                FfiOrbitConnectFailure::NotANode,
+            ),
+            (
+                "Gateway down",
+                Box::new(|_| Err(GatewayError::Network("connection refused".to_owned()))),
+                FfiOrbitConnectFailure::GatewayUnreachable,
+            ),
+            (
+                "no agent role",
+                Box::new(|req| match req.path.as_str() {
+                    "/environments" => Ok(GatewayResponse {
+                        status: 200,
+                        body: json!({ "data": [{
+                            "environment_id": "node-mini",
+                            "label": "mini",
+                            "url": "http://127.0.0.1:9",
+                            "status": "registered",
+                            "cleanup_pending": false,
+                            "instance_id": null,
+                            "roles": []
+                        }]})
+                        .to_string(),
+                    }),
+                    other => panic!("unexpected path: {other}"),
+                }),
+                FfiOrbitConnectFailure::NoAgentNode,
+            ),
+            (
+                "pairing refused",
+                Box::new(|req| match req.path.as_str() {
+                    "/environments" => Ok(GatewayResponse {
+                        status: 200,
+                        body: json!({ "data": [{
+                            "environment_id": "node-agent",
+                            "label": "agent",
+                            "url": "http://127.0.0.1:9",
+                            "status": "registered",
+                            "cleanup_pending": false,
+                            "instance_id": null,
+                            "roles": ["agent"]
+                        }]})
+                        .to_string(),
+                    }),
+                    _ => gateway_error(422, "conn.pairing_unavailable"),
+                }),
+                FfiOrbitConnectFailure::PairingRefused,
+            ),
+        ];
+        for (name, handler, expected) in cases {
+            let orbit = OrbitCore::with_transport(MockGateway::new(handler)).expect("core");
+            let outcome = futures::executor::block_on(orbit.connect_primary_agent_with_probe(
+                None,
+                Arc::new(TestCoreListener::default()),
+                |_, _| async { BearerCheckOutcome::Valid },
+            ));
+            assert_eq!(failure_reason(outcome), expected, "{name}");
+        }
+
+        // A Gateway that answers and refuses this device is not bypassed by a saved session.
+        let orbit = OrbitCore::with_transport(MockGateway::new(|_| {
+            gateway_error(403, "peer.identity_unknown")
+        }))
+        .expect("core");
+        let outcome = futures::executor::block_on(orbit.connect_primary_agent_with_probe(
+            Some(FfiOrbitSession {
+                server_id: "node-agent".to_owned(),
+                server_url: "http://127.0.0.1:9".to_owned(),
+                bearer: "good-bearer".to_owned(),
+            }),
+            Arc::new(TestCoreListener::default()),
+            |_, _| async { BearerCheckOutcome::Valid },
+        ));
+        assert_eq!(
+            failure_reason(outcome),
+            FfiOrbitConnectFailure::NotANode,
+            "a 403 with a saved session still says not an Orbit Node"
+        );
+    }
+
+    /// A server that answers every request, the WebSocket handshake included, with 401.
+    pub(crate) async fn spawn_rejecting_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut tcp, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = tcp.read(&mut buf).await;
+                let _ = tcp
+                    .write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn a_rejected_bearer_ends_an_orbit_session_but_not_a_manual_one() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("test tokio rt");
+        let url = rt.block_on(spawn_rejecting_server());
+        let bearer = || FfiCredential::Bearer {
+            token: "revoked".to_owned(),
+        };
+
+        // A reused Orbit bearer the server rejects ends the connection, and says why.
+        let listener = Arc::new(TestCoreListener::default());
+        let core = ConnCore::start(
+            url.clone(),
+            bearer(),
+            listener.clone(),
+            Some("node-agent".to_owned()),
+        )
+        .expect("start");
+        assert!(
+            listener.wait_for(Duration::from_secs(10), |s| s.failed.is_some()),
+            "a rejected Orbit bearer ends the connection"
+        );
+        assert!(
+            core.auth_rejected() && core.reused_bearer(),
+            "the session sees a rejected, reused bearer"
+        );
+        core.disconnect();
+
+        // A pairing the server refuses ends the connection; no bearer was reused.
+        let listener = Arc::new(TestCoreListener::default());
+        let core = ConnCore::start(
+            url.clone(),
+            FfiCredential::PairingCode {
+                code: "refused".to_owned(),
+            },
+            listener.clone(),
+            Some("node-agent".to_owned()),
+        )
+        .expect("start");
+        assert!(
+            listener.wait_for(Duration::from_secs(10), |s| s.failed.is_some()),
+            "a refused pairing ends the connection"
+        );
+        assert!(
+            !core.reused_bearer(),
+            "a pairing code is not a reused bearer"
+        );
+        core.disconnect();
+
+        // A manual session keeps retrying, as before.
+        let listener = Arc::new(TestCoreListener::default());
+        let core = ConnCore::connect(url, bearer(), listener.clone()).expect("connect");
+        assert!(
+            listener.wait_for(Duration::from_secs(10), |s| s.reconnecting),
+            "a manual session retries"
+        );
+        assert!(core.auth_rejected(), "the rejection is still recorded");
+        core.disconnect();
+    }
+
+    #[test]
+    fn connect_primary_agent_reuses_saved_bearer_and_survives_a_down_gateway() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("test tokio rt");
+        let (server_url, server_task) = rt.block_on(spawn_mock_conn_server(
+            "good-bearer",
+            "minted-pair-code",
+            "fresh-bearer",
+            "/srv/workspace",
+        ));
+        let gateway_up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mint_count = Arc::new(AtomicUsize::new(0));
+        let (up, mints, url) = (
+            Arc::clone(&gateway_up),
+            Arc::clone(&mint_count),
+            server_url.clone(),
+        );
+        let transport = MockGateway::new(move |req| {
+            if !up.load(Ordering::SeqCst) {
+                return Err(GatewayError::Network("connection refused".to_owned()));
+            }
+            match req.path.as_str() {
+                "/environments" => Ok(GatewayResponse {
+                    status: 200,
+                    body: json!({ "data": [{
+                        "environment_id": "node-agent",
+                        "label": "agent",
+                        "url": url,
+                        "status": "registered",
+                        "cleanup_pending": false,
+                        "instance_id": null,
+                        "roles": ["agent"]
+                    }]})
+                    .to_string(),
+                }),
+                "/environments/node-agent/pairings" => {
+                    mints.fetch_add(1, Ordering::SeqCst);
+                    Ok(GatewayResponse {
+                        status: 200,
+                        body: json!({ "data": {
+                            "pairing_url": format!("{url}/pair#token=minted-pair-code"),
+                            "pairing": { "environment_id": "node-agent" }
+                        }})
+                        .to_string(),
+                    })
+                }
+                other => panic!("unexpected path: {other}"),
+            }
+        });
+        let orbit = OrbitCore::with_transport(transport).expect("OrbitCore");
+        let saved = |server_id: &str, bearer: &str| FfiOrbitSession {
+            server_id: server_id.to_owned(),
+            server_url: server_url.clone(),
+            bearer: bearer.to_owned(),
+        };
+        let session_of = |listener: &TestCoreListener| {
+            listener
+                .inner
+                .lock()
+                .expect("state")
+                .session
+                .clone()
+                .expect("a session to store")
+        };
+        let connect = |saved: Option<FfiOrbitSession>| {
+            let listener = Arc::new(TestCoreListener::default());
+            let outcome =
+                futures::executor::block_on(orbit.connect_primary_agent(saved, listener.clone()));
+            let FfiOrbitConnectOutcome::Connected {
+                core, server_id, ..
+            } = outcome
+            else {
+                panic!("expected a connection, got {outcome:?}");
+            };
+            assert_eq!(server_id, "node-agent", "connects to the agent-role Node");
+            assert!(
+                listener.wait_for(Duration::from_secs(5), |s| s.connected),
+                "the connection comes up"
+            );
+            core.disconnect();
+            listener
+        };
+
+        let agent_session = |bearer: &str| FfiSavedSession {
+            server_url: format!("{server_url}/"),
+            bearer: bearer.to_owned(),
+            orbit_server_id: Some("node-agent".to_owned()),
+            environment_id: Some("node-agent".to_owned()),
+        };
+
+        // No saved session (first launch): mints a pairing; the bearer comes with its Node.
+        let first = connect(None);
+        assert!(
+            first.wait_for(Duration::from_secs(5), |s| s.session.is_some()),
+            "the pairing issues a bearer to save"
+        );
+        assert_eq!(
+            session_of(&first),
+            agent_session("fresh-bearer"),
+            "a first launch keeps the bearer, saved under the agent Node"
+        );
+        assert_eq!(mint_count.load(Ordering::SeqCst), 1, "one pairing minted");
+
+        // A valid saved bearer for the agent Node is reused and reported as-is.
+        let reused = connect(Some(saved("node-agent", "good-bearer")));
+        assert_eq!(
+            session_of(&reused),
+            agent_session("good-bearer"),
+            "a reused bearer is reported with its Node"
+        );
+        assert_eq!(
+            mint_count.load(Ordering::SeqCst),
+            1,
+            "valid bearer mints nothing"
+        );
+
+        // A rejected bearer, or one for another Node, mints a new pairing instead.
+        connect(Some(saved("node-agent", "stale-bearer")));
+        let switched = connect(Some(saved("node-old", "good-bearer")));
+        assert!(
+            switched.wait_for(Duration::from_secs(5), |s| {
+                s.session
+                    .as_ref()
+                    .is_some_and(|x| x.bearer == "fresh-bearer")
+            }),
+            "the switch pairs with the agent Node"
+        );
+        assert_eq!(
+            session_of(&switched),
+            agent_session("fresh-bearer"),
+            "a Node switch saves the new Node's bearer under the new Node"
+        );
+        assert_eq!(
+            mint_count.load(Ordering::SeqCst),
+            3,
+            "each needed a new pairing"
+        );
+
+        // Gateway down: the saved bearer still connects directly.
+        gateway_up.store(false, Ordering::SeqCst);
+        connect(Some(saved("node-agent", "good-bearer")));
 
         server_task.abort();
     }

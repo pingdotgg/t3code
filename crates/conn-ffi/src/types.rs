@@ -36,6 +36,29 @@ impl fmt::Debug for FfiCredential {
     }
 }
 
+/// A bearer and the server it belongs to, handed to [`crate::core::CoreListener::on_bearer_issued`]
+/// for the app to store as-is.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiSavedSession {
+    pub server_url: String,
+    pub bearer: String,
+    /// The Orbit environment, or `None` for a manually paired server.
+    pub orbit_server_id: Option<String>,
+    /// Which server this is: the Orbit server id, or a manual server's environment id once
+    /// known. The offline cache belongs to it.
+    pub environment_id: Option<String>,
+}
+
+impl fmt::Debug for FfiSavedSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FfiSavedSession")
+            .field("server_url", &self.server_url)
+            .field("orbit_server_id", &self.orbit_server_id)
+            .field("environment_id", &self.environment_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl From<FfiCredential> for Credential {
     fn from(value: FfiCredential) -> Self {
         match value {

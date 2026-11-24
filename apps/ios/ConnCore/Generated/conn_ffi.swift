@@ -747,8 +747,10 @@ public protocol ConnCoreProtocol: AnyObject, Sendable {
     
     /**
      * Opens this pairing's cache on the connection runtime.
+     * `identity` names the server the cache belongs to (its Orbit server id or environment id),
+     * not its URL: another server at the same URL must not read this one's cache.
      */
-    func prepareOffline(directory: String) async throws  -> OfflineReader
+    func prepareOffline(directory: String, identity: String) async throws  -> OfflineReader
     
     /**
      * Drops the active socket or reconnect backoff and reconnects immediately (e.g. when the
@@ -1174,13 +1176,15 @@ open func pinThread(threadId: String, pinned: Bool)async throws   {
     
     /**
      * Opens this pairing's cache on the connection runtime.
+     * `identity` names the server the cache belongs to (its Orbit server id or environment id),
+     * not its URL: another server at the same URL must not read this one's cache.
      */
-open func prepareOffline(directory: String)async throws  -> OfflineReader  {
+open func prepareOffline(directory: String, identity: String)async throws  -> OfflineReader  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_conn_ffi_fn_method_conncore_prepare_offline(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(directory)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(directory),FfiConverterString.lower(identity)
                 )
             },
             pollFunc: ffi_conn_ffi_rust_future_poll_u64,
@@ -1462,6 +1466,352 @@ public func FfiConverterTypeConnCore_lower(_ value: ConnCore) -> UInt64 {
 
 
 /**
+ * UniFFI handle to the app's connection: one state machine plus the Orbit client it uses.
+ */
+public protocol ConnSessionProtocol: AnyObject, Sendable {
+    
+    /**
+     * The user left this thread: unsubscribe it.
+     */
+    func closeThread(threadId: String) 
+    
+    /**
+     * A linked scope's session connects to its Orbit environment.
+     */
+    func connectEnvironment(environmentId: String) 
+    
+    func connectManually() 
+    
+    func connectPrimaryAgent() 
+    
+    /**
+     * The live connection, for thread and command calls.
+     */
+    func core()  -> ConnCore?
+    
+    func foreground() 
+    
+    /**
+     * The app's main session at launch: a saved manual server, else the primary agent.
+     */
+    func launch(saved: FfiSavedSession?) 
+    
+    /**
+     * The current connection's offline thread cache, once open.
+     */
+    func offlineReader()  -> OfflineReader?
+    
+    /**
+     * Where a link for `environment_id` opens: here only when it is this session's already
+     * known server (trying again if its last attempt failed); otherwise in that environment's
+     * own scope.
+     */
+    func openLink(environmentId: String)  -> FfiLinkRoute
+    
+    /**
+     * The user opened this thread (closing the scope's other one); it stays subscribed across
+     * this session's connections.
+     */
+    func openThread(threadId: String) 
+    
+    func pairManual(serverUrl: String, pairingCode: String) 
+    
+    /**
+     * A linked environment's session at launch: its saved Orbit environment or manual server.
+     */
+    func restore(saved: FfiSavedSession?) 
+    
+    func retry() 
+    
+    func signOut() 
+    
+    func state()  -> FfiSessionState
+    
+}
+/**
+ * UniFFI handle to the app's connection: one state machine plus the Orbit client it uses.
+ */
+open class ConnSession: ConnSessionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_conn_ffi_fn_clone_connsession(self.handle, $0) }
+    }
+    /**
+     * Creates the session over an Orbit Gateway client (`gateway_url`, or the default).
+     *
+     * # Errors
+     *
+     * Returns the [`FfiError`] of [`OrbitCore::new`].
+     */
+public convenience init(gatewayUrl: String?, cacheDirectory: String?, listener: SessionListener)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_constructor_connsession_new(
+        FfiConverterOptionString.lower(gatewayUrl),
+        FfiConverterOptionString.lower(cacheDirectory),
+        FfiConverterTypeSessionListener_lower(listener),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_conn_ffi_fn_free_connsession(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * The user left this thread: unsubscribe it.
+     */
+open func closeThread(threadId: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_close_thread(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(threadId),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * A linked scope's session connects to its Orbit environment.
+     */
+open func connectEnvironment(environmentId: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_connect_environment(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(environmentId),uniffiCallStatus
+    )
+}
+}
+    
+open func connectManually()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_connect_manually(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func connectPrimaryAgent()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_connect_primary_agent(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The live connection, for thread and command calls.
+     */
+open func core() -> ConnCore?  {
+    return try!  FfiConverterOptionTypeConnCore.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_core(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func foreground()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_foreground(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The app's main session at launch: a saved manual server, else the primary agent.
+     */
+open func launch(saved: FfiSavedSession?)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_launch(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeFfiSavedSession.lower(saved),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The current connection's offline thread cache, once open.
+     */
+open func offlineReader() -> OfflineReader?  {
+    return try!  FfiConverterOptionTypeOfflineReader.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_offline_reader(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Where a link for `environment_id` opens: here only when it is this session's already
+     * known server (trying again if its last attempt failed); otherwise in that environment's
+     * own scope.
+     */
+open func openLink(environmentId: String) -> FfiLinkRoute  {
+    return try!  FfiConverterTypeFfiLinkRoute_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_open_link(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(environmentId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The user opened this thread (closing the scope's other one); it stays subscribed across
+     * this session's connections.
+     */
+open func openThread(threadId: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_open_thread(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(threadId),uniffiCallStatus
+    )
+}
+}
+    
+open func pairManual(serverUrl: String, pairingCode: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_pair_manual(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(serverUrl),
+        FfiConverterString.lower(pairingCode),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * A linked environment's session at launch: its saved Orbit environment or manual server.
+     */
+open func restore(saved: FfiSavedSession?)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_restore(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeFfiSavedSession.lower(saved),uniffiCallStatus
+    )
+}
+}
+    
+open func retry()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_retry(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func signOut()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_sign_out(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func state() -> FfiSessionState  {
+    return try!  FfiConverterTypeFfiSessionState_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_connsession_state(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeConnSession: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ConnSession
+
+    public static func lift(_ handle: UInt64) throws -> ConnSession {
+        return ConnSession(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ConnSession) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ConnSession {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ConnSession, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConnSession_lift(_ handle: UInt64) throws -> ConnSession {
+    return try FfiConverterTypeConnSession.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeConnSession_lower(_ value: ConnSession) -> UInt64 {
+    return FfiConverterTypeConnSession.lower(value)
+}
+
+
+
+
+
+
+/**
  * Foreign callback listener implemented in Swift to receive state updates from [`ConnCore`].
  *
  * Every method is called with no internal locks held. Shell and thread snapshot callbacks are
@@ -1471,7 +1821,11 @@ public protocol CoreListener: AnyObject, Sendable {
     
     func onStatus(status: FfiConnectionStatus) 
     
-    func onBearerIssued(token: String) 
+    /**
+     * A bearer to store, with the server it belongs to. Fires after a pairing exchange, and at
+     * the start of an Orbit connection that reuses a saved bearer.
+     */
+    func onBearerIssued(session: FfiSavedSession) 
     
     func onShell(snapshot: FfiShellSnapshot) 
     
@@ -1558,11 +1912,15 @@ open func onStatus(status: FfiConnectionStatus)  {try! rustCall() {
 }
 }
     
-open func onBearerIssued(token: String)  {try! rustCall() {
+    /**
+     * A bearer to store, with the server it belongs to. Fires after a pairing exchange, and at
+     * the start of an Orbit connection that reuses a saved bearer.
+     */
+open func onBearerIssued(session: FfiSavedSession)  {try! rustCall() {
         uniffiCallStatus in
     uniffi_conn_ffi_fn_method_corelistener_on_bearer_issued(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(token),uniffiCallStatus
+        FfiConverterTypeFfiSavedSession_lower(session),uniffiCallStatus
     )
 }
 }
@@ -1671,7 +2029,7 @@ fileprivate struct UniffiCallbackInterfaceCoreListener {
         },
         onBearerIssued: { (
             uniffiHandle: UInt64,
-            token: RustBuffer,
+            session: RustBuffer,
             uniffiOutReturn: UnsafeMutableRawPointer,
             uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
         ) in
@@ -1681,7 +2039,7 @@ fileprivate struct UniffiCallbackInterfaceCoreListener {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
                 return uniffiObj.onBearerIssued(
-                     token: try FfiConverterString.lift(token)
+                     session: try FfiConverterTypeFfiSavedSession_lift(session)
                 )
             }
 
@@ -2365,6 +2723,14 @@ public protocol OrbitCoreProtocol: AnyObject, Sendable {
     func connectEnvironment(serverId: String, cachedBearer: String?, listener: CoreListener) async throws  -> ConnCore
     
     /**
+     * The app's launch path (`docs/scope.md` §5.4): selects the primary `agent`-role Node and
+     * connects to it, reusing `saved` when it belongs to that Node and the server still accepts
+     * it, else minting a fresh pairing through the Gateway. When the Gateway can't be read but
+     * `saved` exists, connects with `saved` directly, as a plain saved connection would.
+     */
+    func connectPrimaryAgent(saved: FfiOrbitSession?, listener: CoreListener) async  -> FfiOrbitConnectOutcome
+    
+    /**
      * Lists all Orbit Nodes and Instances registered on the Gateway (`GET /api/v1/conn/environments`).
      *
      * # Errors
@@ -2699,6 +3065,29 @@ open func connectEnvironment(serverId: String, cachedBearer: String?, listener: 
             freeFunc: ffi_conn_ffi_rust_future_free_u64,
             liftFunc: FfiConverterTypeConnCore_lift,
             errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+    /**
+     * The app's launch path (`docs/scope.md` §5.4): selects the primary `agent`-role Node and
+     * connects to it, reusing `saved` when it belongs to that Node and the server still accepts
+     * it, else minting a fresh pairing through the Gateway. When the Gateway can't be read but
+     * `saved` exists, connects with `saved` directly, as a plain saved connection would.
+     */
+open func connectPrimaryAgent(saved: FfiOrbitSession?, listener: CoreListener)async  -> FfiOrbitConnectOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_orbitcore_connect_primary_agent(
+                        self.uniffiCloneHandle(),FfiConverterOptionTypeFfiOrbitSession.lower(saved),FfiConverterTypeCoreListener_lower(listener)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiOrbitConnectOutcome_lift,
+            errorHandler: nil
+            
         )
 }
     
@@ -3517,6 +3906,438 @@ public func FfiConverterTypeOrbitListener_lift(_ handle: UInt64) throws -> Orbit
 #endif
 public func FfiConverterTypeOrbitListener_lower(_ value: OrbitListener) -> UInt64 {
     return FfiConverterTypeOrbitListener.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Implemented in Swift. Every method is called with no internal locks held.
+ */
+public protocol SessionListener: AnyObject, Sendable {
+    
+    func onState(state: FfiSessionState) 
+    
+    /**
+     * Store this session (or clear it with `None`) exactly as given.
+     */
+    func onSave(session: FfiSavedSession?) 
+    
+    func onShell(connectionId: UInt64, snapshot: FfiShellSnapshot) 
+    
+    func onThread(connectionId: UInt64, snapshot: FfiThreadSnapshot) 
+    
+    func onError(message: String) 
+    
+    func onProvidersChanged() 
+    
+    /**
+     * The thread's stream reported `thread.deleted` on this connection.
+     */
+    func onThreadDeleted(connectionId: UInt64, threadId: String) 
+    
+}
+/**
+ * Implemented in Swift. Every method is called with no internal locks held.
+ */
+open class SessionListenerImpl: SessionListener, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_conn_ffi_fn_clone_sessionlistener(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_conn_ffi_fn_free_sessionlistener(handle, $0) }
+    }
+
+    
+
+    
+open func onState(state: FfiSessionState)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_state(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiSessionState_lower(state),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Store this session (or clear it with `None`) exactly as given.
+     */
+open func onSave(session: FfiSavedSession?)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_save(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeFfiSavedSession.lower(session),uniffiCallStatus
+    )
+}
+}
+    
+open func onShell(connectionId: UInt64, snapshot: FfiShellSnapshot)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_shell(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(connectionId),
+        FfiConverterTypeFfiShellSnapshot_lower(snapshot),uniffiCallStatus
+    )
+}
+}
+    
+open func onThread(connectionId: UInt64, snapshot: FfiThreadSnapshot)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_thread(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(connectionId),
+        FfiConverterTypeFfiThreadSnapshot_lower(snapshot),uniffiCallStatus
+    )
+}
+}
+    
+open func onError(message: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_error(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(message),uniffiCallStatus
+    )
+}
+}
+    
+open func onProvidersChanged()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_providers_changed(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The thread's stream reported `thread.deleted` on this connection.
+     */
+open func onThreadDeleted(connectionId: UInt64, threadId: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_sessionlistener_on_thread_deleted(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(connectionId),
+        FfiConverterString.lower(threadId),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceSessionListener {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceSessionListener = UniffiVTableCallbackInterfaceSessionListener(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeSessionListener.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface SessionListener: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeSessionListener.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface SessionListener: handle missing in uniffiClone")
+            }
+        },
+        onState: { (
+            uniffiHandle: UInt64,
+            state: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onState(
+                     state: try FfiConverterTypeFfiSessionState_lift(state)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onSave: { (
+            uniffiHandle: UInt64,
+            session: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onSave(
+                     session: try FfiConverterOptionTypeFfiSavedSession.lift(session)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onShell: { (
+            uniffiHandle: UInt64,
+            connectionId: UInt64,
+            snapshot: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onShell(
+                     connectionId: try FfiConverterUInt64.lift(connectionId),
+                     snapshot: try FfiConverterTypeFfiShellSnapshot_lift(snapshot)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onThread: { (
+            uniffiHandle: UInt64,
+            connectionId: UInt64,
+            snapshot: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onThread(
+                     connectionId: try FfiConverterUInt64.lift(connectionId),
+                     snapshot: try FfiConverterTypeFfiThreadSnapshot_lift(snapshot)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onError: { (
+            uniffiHandle: UInt64,
+            message: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onError(
+                     message: try FfiConverterString.lift(message)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onProvidersChanged: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onProvidersChanged(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onThreadDeleted: { (
+            uniffiHandle: UInt64,
+            connectionId: UInt64,
+            threadId: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeSessionListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onThreadDeleted(
+                     connectionId: try FfiConverterUInt64.lift(connectionId),
+                     threadId: try FfiConverterString.lift(threadId)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceSessionListener> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceSessionListener>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitSessionListener() {
+    uniffi_conn_ffi_fn_init_callback_vtable_sessionlistener(UniffiCallbackInterfaceSessionListener.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSessionListener: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<SessionListener>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = SessionListener
+
+    public static func lift(_ handle: UInt64) throws -> SessionListener {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return SessionListenerImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: SessionListener) -> UInt64 {
+         if let rustImpl = value as? SessionListenerImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SessionListener {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: SessionListener, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionListener_lift(_ handle: UInt64) throws -> SessionListener {
+    return try FfiConverterTypeSessionListener.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSessionListener_lower(_ value: SessionListener) -> UInt64 {
+    return FfiConverterTypeSessionListener.lower(value)
 }
 
 
@@ -5341,6 +6162,67 @@ public func FfiConverterTypeFfiOrbitReservation_lower(_ value: FfiOrbitReservati
 
 
 /**
+ * The Orbit connection the app saved last time, handed back at launch.
+ */
+public struct FfiOrbitSession: Equatable, Hashable {
+    public var serverId: String
+    public var serverUrl: String
+    public var bearer: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(serverId: String, serverUrl: String, bearer: String) {
+        self.serverId = serverId
+        self.serverUrl = serverUrl
+        self.bearer = bearer
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiOrbitSession: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiOrbitSession: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiOrbitSession {
+        return
+            try FfiOrbitSession(
+                serverId: FfiConverterString.read(from: &buf), 
+                serverUrl: FfiConverterString.read(from: &buf), 
+                bearer: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiOrbitSession, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.serverId, into: &buf)
+        FfiConverterString.write(value.serverUrl, into: &buf)
+        FfiConverterString.write(value.bearer, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrbitSession_lift(_ buf: RustBuffer) throws -> FfiOrbitSession {
+    return try FfiConverterTypeFfiOrbitSession.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrbitSession_lower(_ value: FfiOrbitSession) -> RustBuffer {
+    return FfiConverterTypeFfiOrbitSession.lower(value)
+}
+
+
+/**
  * One theme slot (`themes.light` or `themes.dark`) from the Orbit profile `appearance` section.
  */
 public struct FfiOrbitThemeSlot: Equatable, Hashable {
@@ -6628,6 +7510,202 @@ public func FfiConverterTypeFfiQuestionPanelOption_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeFfiQuestionPanelOption_lower(_ value: FfiQuestionPanelOption) -> RustBuffer {
     return FfiConverterTypeFfiQuestionPanelOption.lower(value)
+}
+
+
+/**
+ * A bearer and the server it belongs to, handed to [`crate::core::CoreListener::on_bearer_issued`]
+ * for the app to store as-is.
+ */
+public struct FfiSavedSession: Equatable, Hashable {
+    public var serverUrl: String
+    public var bearer: String
+    /**
+     * The Orbit environment, or `None` for a manually paired server.
+     */
+    public var orbitServerId: String?
+    /**
+     * Which server this is: the Orbit server id, or a manual server's environment id once
+     * known. The offline cache belongs to it.
+     */
+    public var environmentId: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(serverUrl: String, bearer: String, 
+        /**
+         * The Orbit environment, or `None` for a manually paired server.
+         */orbitServerId: String?, 
+        /**
+         * Which server this is: the Orbit server id, or a manual server's environment id once
+         * known. The offline cache belongs to it.
+         */environmentId: String?) {
+        self.serverUrl = serverUrl
+        self.bearer = bearer
+        self.orbitServerId = orbitServerId
+        self.environmentId = environmentId
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSavedSession: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSavedSession: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSavedSession {
+        return
+            try FfiSavedSession(
+                serverUrl: FfiConverterString.read(from: &buf), 
+                bearer: FfiConverterString.read(from: &buf), 
+                orbitServerId: FfiConverterOptionString.read(from: &buf), 
+                environmentId: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSavedSession, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.serverUrl, into: &buf)
+        FfiConverterString.write(value.bearer, into: &buf)
+        FfiConverterOptionString.write(value.orbitServerId, into: &buf)
+        FfiConverterOptionString.write(value.environmentId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSavedSession_lift(_ buf: RustBuffer) throws -> FfiSavedSession {
+    return try FfiConverterTypeFfiSavedSession.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSavedSession_lower(_ value: FfiSavedSession) -> RustBuffer {
+    return FfiConverterTypeFfiSavedSession.lower(value)
+}
+
+
+/**
+ * The one observable state. `revision` grows with every change, so an older state that
+ * arrives late can be dropped.
+ */
+public struct FfiSessionState: Equatable, Hashable {
+    public var revision: UInt64
+    /**
+     * The current attempt; snapshots carry it.
+     */
+    public var connectionId: UInt64
+    public var phase: FfiSessionPhase
+    public var serverUrl: String?
+    /**
+     * The connected server's Conn environment id, once known.
+     */
+    public var environmentId: String?
+    /**
+     * The connection's offline thread cache is open; read it with [`ConnSession::offline_reader`].
+     */
+    public var offlineReady: Bool
+    /**
+     * This session has had a working connection since launch (or since the user last chose to
+     * connect manually). The app then keeps the workspace up through reconnects and re-pairs.
+     */
+    public var hasConnected: Bool
+    /**
+     * Grows when this scope connects to a different server than before (an Orbit primary
+     * switch, say): the previous environment's threads are gone.
+     */
+    public var identityEpoch: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: UInt64, 
+        /**
+         * The current attempt; snapshots carry it.
+         */connectionId: UInt64, phase: FfiSessionPhase, serverUrl: String?, 
+        /**
+         * The connected server's Conn environment id, once known.
+         */environmentId: String?, 
+        /**
+         * The connection's offline thread cache is open; read it with [`ConnSession::offline_reader`].
+         */offlineReady: Bool, 
+        /**
+         * This session has had a working connection since launch (or since the user last chose to
+         * connect manually). The app then keeps the workspace up through reconnects and re-pairs.
+         */hasConnected: Bool, 
+        /**
+         * Grows when this scope connects to a different server than before (an Orbit primary
+         * switch, say): the previous environment's threads are gone.
+         */identityEpoch: UInt64) {
+        self.revision = revision
+        self.connectionId = connectionId
+        self.phase = phase
+        self.serverUrl = serverUrl
+        self.environmentId = environmentId
+        self.offlineReady = offlineReady
+        self.hasConnected = hasConnected
+        self.identityEpoch = identityEpoch
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSessionState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSessionState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSessionState {
+        return
+            try FfiSessionState(
+                revision: FfiConverterUInt64.read(from: &buf), 
+                connectionId: FfiConverterUInt64.read(from: &buf), 
+                phase: FfiConverterTypeFfiSessionPhase.read(from: &buf), 
+                serverUrl: FfiConverterOptionString.read(from: &buf), 
+                environmentId: FfiConverterOptionString.read(from: &buf), 
+                offlineReady: FfiConverterBool.read(from: &buf), 
+                hasConnected: FfiConverterBool.read(from: &buf), 
+                identityEpoch: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSessionState, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterUInt64.write(value.connectionId, into: &buf)
+        FfiConverterTypeFfiSessionPhase.write(value.phase, into: &buf)
+        FfiConverterOptionString.write(value.serverUrl, into: &buf)
+        FfiConverterOptionString.write(value.environmentId, into: &buf)
+        FfiConverterBool.write(value.offlineReady, into: &buf)
+        FfiConverterBool.write(value.hasConnected, into: &buf)
+        FfiConverterUInt64.write(value.identityEpoch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSessionState_lift(_ buf: RustBuffer) throws -> FfiSessionState {
+    return try FfiConverterTypeFfiSessionState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSessionState_lower(_ value: FfiSessionState) -> RustBuffer {
+    return FfiConverterTypeFfiSessionState.lower(value)
 }
 
 
@@ -10179,6 +11257,81 @@ public func FfiConverterTypeFfiItemStatus_lower(_ value: FfiItemStatus) -> RustB
 
 
 /**
+ * Where a thread link opens.
+ */
+
+public enum FfiLinkRoute: Equatable, Hashable {
+    
+    /**
+     * In this session: the link's environment is this session's known identity.
+     */
+    case here
+    /**
+     * In the link environment's own scope.
+     */
+    case elsewhere
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiLinkRoute: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiLinkRoute: FfiConverterRustBuffer {
+    typealias SwiftType = FfiLinkRoute
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiLinkRoute {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .here
+        
+        case 2: return .elsewhere
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiLinkRoute, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .here:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .elsewhere:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLinkRoute_lift(_ buf: RustBuffer) throws -> FfiLinkRoute {
+    return try FfiConverterTypeFfiLinkRoute.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiLinkRoute_lower(_ value: FfiLinkRoute) -> RustBuffer {
+    return FfiConverterTypeFfiLinkRoute.lower(value)
+}
+
+
+
+/**
  * What Save did (`commitPendingModel`).
  */
 
@@ -10427,6 +11580,187 @@ public func FfiConverterTypeFfiOrbitBranchSelection_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeFfiOrbitBranchSelection_lower(_ value: FfiOrbitBranchSelection) -> RustBuffer {
     return FfiConverterTypeFfiOrbitBranchSelection.lower(value)
+}
+
+
+
+/**
+ * Why [`OrbitCore::connect_primary_agent`] could not connect.
+ */
+
+public enum FfiOrbitConnectFailure: Equatable, Hashable {
+    
+    /**
+     * The Gateway doesn't know this device's WireGuard address.
+     */
+    case notANode
+    /**
+     * The Gateway did not answer.
+     */
+    case gatewayUnreachable
+    /**
+     * No registered Node carries the `agent` role.
+     */
+    case noAgentNode
+    /**
+     * The Gateway would not mint a pairing for the agent Node.
+     */
+    case pairingRefused
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiOrbitConnectFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiOrbitConnectFailure: FfiConverterRustBuffer {
+    typealias SwiftType = FfiOrbitConnectFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiOrbitConnectFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .notANode
+        
+        case 2: return .gatewayUnreachable
+        
+        case 3: return .noAgentNode
+        
+        case 4: return .pairingRefused
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiOrbitConnectFailure, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .notANode:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .gatewayUnreachable:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .noAgentNode:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .pairingRefused:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrbitConnectFailure_lift(_ buf: RustBuffer) throws -> FfiOrbitConnectFailure {
+    return try FfiConverterTypeFfiOrbitConnectFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrbitConnectFailure_lower(_ value: FfiOrbitConnectFailure) -> RustBuffer {
+    return FfiConverterTypeFfiOrbitConnectFailure.lower(value)
+}
+
+
+
+/**
+ * Result of [`OrbitCore::connect_primary_agent`].
+ */
+
+public enum FfiOrbitConnectOutcome {
+    
+    /**
+     * `core` is connecting; it reports the bearer to store through `on_bearer_issued`.
+     */
+    case connected(core: ConnCore, serverId: String, serverUrl: String, label: String
+    )
+    /**
+     * `message` says what went wrong in plain words; `detail` is the raw error, if any.
+     */
+    case failed(reason: FfiOrbitConnectFailure, message: String, detail: String?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiOrbitConnectOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiOrbitConnectOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = FfiOrbitConnectOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiOrbitConnectOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .connected(core: try FfiConverterTypeConnCore.read(from: &buf), serverId: try FfiConverterString.read(from: &buf), serverUrl: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 2: return .failed(reason: try FfiConverterTypeFfiOrbitConnectFailure.read(from: &buf), message: try FfiConverterString.read(from: &buf), detail: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiOrbitConnectOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .connected(core,serverId,serverUrl,label):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeConnCore.write(core, into: &buf)
+            FfiConverterString.write(serverId, into: &buf)
+            FfiConverterString.write(serverUrl, into: &buf)
+            FfiConverterString.write(label, into: &buf)
+            
+        
+        case let .failed(reason,message,detail):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeFfiOrbitConnectFailure.write(reason, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterOptionString.write(detail, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrbitConnectOutcome_lift(_ buf: RustBuffer) throws -> FfiOrbitConnectOutcome {
+    return try FfiConverterTypeFfiOrbitConnectOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiOrbitConnectOutcome_lower(_ value: FfiOrbitConnectOutcome) -> RustBuffer {
+    return FfiConverterTypeFfiOrbitConnectOutcome.lower(value)
 }
 
 
@@ -11368,6 +12702,206 @@ public func FfiConverterTypeFfiSendMode_lift(_ buf: RustBuffer) throws -> FfiSen
 #endif
 public func FfiConverterTypeFfiSendMode_lower(_ value: FfiSendMode) -> RustBuffer {
     return FfiConverterTypeFfiSendMode.lower(value)
+}
+
+
+
+/**
+ * What the app shows.
+ */
+
+public enum FfiSessionPhase: Equatable, Hashable {
+    
+    /**
+     * No attempt: the pairing form, with the last manual failure if any.
+     */
+    case idle(message: String?
+    )
+    /**
+     * Finding the server; no connection yet.
+     */
+    case connecting(target: FfiSessionTarget
+    )
+    /**
+     * A connection exists: the workspace, with its status.
+     */
+    case live(status: FfiConnectionStatus
+    )
+    /**
+     * The attempt ended. `retry` is what Try again repeats.
+     */
+    case failed(message: String, detail: String?, retry: FfiSessionTarget
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiSessionPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSessionPhase: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSessionPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSessionPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .idle(message: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        case 2: return .connecting(target: try FfiConverterTypeFfiSessionTarget.read(from: &buf)
+        )
+        
+        case 3: return .live(status: try FfiConverterTypeFfiConnectionStatus.read(from: &buf)
+        )
+        
+        case 4: return .failed(message: try FfiConverterString.read(from: &buf), detail: try FfiConverterOptionString.read(from: &buf), retry: try FfiConverterTypeFfiSessionTarget.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSessionPhase, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .idle(message):
+            writeInt(&buf, Int32(1))
+            FfiConverterOptionString.write(message, into: &buf)
+            
+        
+        case let .connecting(target):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeFfiSessionTarget.write(target, into: &buf)
+            
+        
+        case let .live(status):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeFfiConnectionStatus.write(status, into: &buf)
+            
+        
+        case let .failed(message,detail,retry):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterOptionString.write(detail, into: &buf)
+            FfiConverterTypeFfiSessionTarget.write(retry, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSessionPhase_lift(_ buf: RustBuffer) throws -> FfiSessionPhase {
+    return try FfiConverterTypeFfiSessionPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSessionPhase_lower(_ value: FfiSessionPhase) -> RustBuffer {
+    return FfiConverterTypeFfiSessionPhase.lower(value)
+}
+
+
+
+/**
+ * What an attempt connects to; Retry repeats it.
+ */
+
+public enum FfiSessionTarget: Equatable, Hashable {
+    
+    /**
+     * The primary `agent`-role Node, found through Orbit.
+     */
+    case primaryAgent
+    /**
+     * One Orbit environment (a linked scope).
+     */
+    case environment(environmentId: String
+    )
+    /**
+     * A server paired by URL.
+     */
+    case manual(serverUrl: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiSessionTarget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSessionTarget: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSessionTarget
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSessionTarget {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .primaryAgent
+        
+        case 2: return .environment(environmentId: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .manual(serverUrl: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSessionTarget, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .primaryAgent:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .environment(environmentId):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(environmentId, into: &buf)
+            
+        
+        case let .manual(serverUrl):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(serverUrl, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSessionTarget_lift(_ buf: RustBuffer) throws -> FfiSessionTarget {
+    return try FfiConverterTypeFfiSessionTarget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSessionTarget_lower(_ value: FfiSessionTarget) -> RustBuffer {
+    return FfiConverterTypeFfiSessionTarget.lower(value)
 }
 
 
@@ -12796,6 +14330,54 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeConnCore: FfiConverterRustBuffer {
+    typealias SwiftType = ConnCore?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeConnCore.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeConnCore.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeOfflineReader: FfiConverterRustBuffer {
+    typealias SwiftType = OfflineReader?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeOfflineReader.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeOfflineReader.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiConversationRef: FfiConverterRustBuffer {
     typealias SwiftType = FfiConversationRef?
 
@@ -12964,6 +14546,30 @@ fileprivate struct FfiConverterOptionTypeFfiOrbitProfile: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiOrbitSession: FfiConverterRustBuffer {
+    typealias SwiftType = FfiOrbitSession?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiOrbitSession.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiOrbitSession.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiPendingQuestion: FfiConverterRustBuffer {
     typealias SwiftType = FfiPendingQuestion?
 
@@ -13004,6 +14610,30 @@ fileprivate struct FfiConverterOptionTypeFfiQuestionPanel: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiQuestionPanel.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiSavedSession: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSavedSession?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiSavedSession.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiSavedSession.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -14655,7 +16285,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_method_conncore_pin_thread() != 33458) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_conn_ffi_checksum_method_conncore_prepare_offline() != 62782) {
+    if (uniffi_conn_ffi_checksum_method_conncore_prepare_offline() != 26956) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_conncore_reconnect() != 9304) {
@@ -14691,7 +16321,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_method_corelistener_on_status() != 22783) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_conn_ffi_checksum_method_corelistener_on_bearer_issued() != 7129) {
+    if (uniffi_conn_ffi_checksum_method_corelistener_on_bearer_issued() != 44946) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_corelistener_on_shell() != 7380) {
@@ -14734,6 +16364,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_orbitcore_connect_environment() != 34306) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_orbitcore_connect_primary_agent() != 11306) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_orbitcore_fleet() != 23169) {
@@ -14808,16 +16441,86 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_method_ffitextfits_fits() != 56087) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_conn_ffi_checksum_method_connsession_close_thread() != 18448) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_connect_environment() != 29138) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_connect_manually() != 23016) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_connect_primary_agent() != 43391) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_core() != 31451) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_foreground() != 24799) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_launch() != 24523) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_offline_reader() != 43115) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_open_link() != 58654) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_open_thread() != 19746) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_pair_manual() != 12047) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_restore() != 5191) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_retry() != 5291) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_sign_out() != 51503) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_connsession_state() != 16395) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_state() != 42113) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_save() != 47827) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_shell() != 11746) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_thread() != 42157) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_error() != 12345) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_providers_changed() != 34283) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_sessionlistener_on_thread_deleted() != 52403) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_conn_ffi_checksum_constructor_conncore_connect() != 19757) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_constructor_orbitcore_new() != 57795) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_conn_ffi_checksum_constructor_connsession_new() != 1365) {
+        return InitializationResult.apiChecksumMismatch
+    }
 
     uniffiCallbackInitCoreListener()
     uniffiCallbackInitFfiTextFits()
     uniffiCallbackInitOrbitListener()
+    uniffiCallbackInitSessionListener()
     return InitializationResult.ok
 }()
 

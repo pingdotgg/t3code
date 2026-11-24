@@ -25,7 +25,7 @@ final class ConnSpikeUITests: XCTestCase {
         }
 
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-session"]
+        app.launchArguments = ["--reset-session", "--manual-pairing"]
         app.launch()
 
         // 1. Pair
@@ -209,7 +209,7 @@ final class ConnSpikeUITests: XCTestCase {
         }
 
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-session"]
+        app.launchArguments = ["--reset-session", "--manual-pairing"]
         app.launch()
         let urlField = app.textFields["pairing.urlField"]
         XCTAssertTrue(urlField.waitForExistence(timeout: 10), "Pairing URL field should appear")
@@ -491,7 +491,7 @@ final class ConnSpikeUITests: XCTestCase {
             }
         } else {
             app = XCUIApplication()
-            app.launchArguments = ["--reset-session"]
+            app.launchArguments = ["--reset-session", "--manual-pairing"]
             app.launch()
             let urlField = app.textFields["pairing.urlField"]
             XCTAssertTrue(urlField.waitForExistence(timeout: 10), "Pairing URL field should appear")
@@ -601,11 +601,31 @@ final class ConnSpikeUITests: XCTestCase {
         if barTap(["inbox.newThreadButton", "New chat"], swiftX: 0.885) { settle(2); capture("new-chat") }
     }
 
+    /// With no saved session the app connects through Orbit. A simulator is no Orbit Node, so it
+    /// shows why it failed, then "Connect manually" opens the pairing form.
+    func testOrbitLaunchFailureFallsBackToManualPairing() throws {
+        let env = ProcessInfo.processInfo.environment
+        let screensDir = env["CONN_SCREENS_DIR"]
+        let suffix = env["CONN_SCREEN_SUFFIX"] ?? ""
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-session"]
+        app.launch()
+
+        let error = app.staticTexts["orbit.errorText"]
+        XCTAssertTrue(error.waitForExistence(timeout: 60), "the Orbit failure shows")
+        XCTAssertTrue(app.buttons["orbit.retryButton"].exists, "Try again shows")
+        saveScreenshot(named: "orbit-failed\(suffix)", dir: screensDir)
+
+        app.buttons["orbit.manualButton"].tap()
+        XCTAssertTrue(app.textFields["pairing.urlField"].waitForExistence(timeout: 5), "the pairing form shows")
+        saveScreenshot(named: "orbit-manual\(suffix)", dir: screensDir)
+    }
+
     /// Pairing's "Paste from Clipboard" takes a URL item ("Copy Link"), a string item, and says so
     /// when the clipboard is empty; a long-press paste into the field takes a URL item too.
     func testPairingPasteTakesURLAndStringItems() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-session"]
+        app.launchArguments = ["--reset-session", "--manual-pairing"]
         app.launch()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let field = app.textFields["pairing.urlField"]
