@@ -9,7 +9,6 @@ import { AsyncResult } from "effect/reactivity";
 import {
   ADD_PROJECT_SCOPE_ITEM_VALUE,
   filterSidebarProjectScopeItems,
-  shouldCreateNewThreadInCurrentProject,
   resolveScopedNewThreadProjectRef,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -1762,16 +1761,6 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
-  });
-});
-
-describe("shouldCreateNewThreadInCurrentProject", () => {
-  it("opens the picker when several projects are open, or only archived ones exist", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 2, 3)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 2)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
   });
 });
 

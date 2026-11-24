@@ -32,8 +32,8 @@ function project(id: string): Project {
 
 describe("new thread commands", () => {
   it.each([
-    { mode: "normal", count: 2, command: "chat.new", picker: true },
-    { mode: "boring", count: 2, command: "chat.new", picker: true },
+    { mode: "normal", count: 2, command: "chat.new", picker: false },
+    { mode: "boring", count: 2, command: "chat.new", picker: false },
     { mode: "boring", count: 1, command: "chat.new", picker: false },
     { mode: "boring", count: 2, command: "chat.newLocal", picker: false },
   ] as const)("$mode sidebar, $count projects, $command: picker=$picker", (scenario) => {
@@ -74,6 +74,32 @@ describe("new thread commands", () => {
         projectId: scenario.count === 1 ? "active" : "idle",
       });
     }
+  });
+
+  it("chat.new falls back to the project picker when no project can start", async () => {
+    using _projects = vi.spyOn(entities, "readProjects").mockReturnValue([]);
+    using _ready = vi
+      .spyOn(projectsState, "defaultProjectFallbackReadyAtom")
+      .mockReturnValue(Atom.make(true));
+    using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
+    using startLocal = vi
+      .spyOn(threadActions, "startNewThreadFromContext")
+      .mockResolvedValue(false);
+    using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
+    const router = { state: { matches: [] } } as unknown as AnyRouter;
+    using stack = new DisposableStack();
+    stack.defer(installChatRouteCommands(router));
+    const commands = register.mock.calls[0]![0];
+    const event = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    commands["chat.new"]!(event);
+    expect(startLocal).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(openPicker).toHaveBeenCalledWith({ open: "new-thread-in" });
+    });
   });
 });
 

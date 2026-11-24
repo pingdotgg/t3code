@@ -225,7 +225,7 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { ComposerFooterModeControls, ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
@@ -447,8 +447,6 @@ export interface ChatComposerProps {
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   onComposerOverlayHeightChange: (height: number) => void;
-  /** The new-thread strip names the permissions, so the controls row hides its chip. */
-  permissionsShownInStrip: boolean;
 
   promptRef: React.RefObject<string>;
   composerImagesRef: React.RefObject<ComposerImageAttachment[]>;
@@ -2657,6 +2655,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   if (composerMenusClosed && isComposerModelPickerOpen) {
     setIsComposerModelPickerOpen(false);
   }
+  const showLeadingPermissionsChip =
+    !isComposerCollapsedMobile && !showProviderUnavailable && !dictationTakesFooter;
   const collapsedComposerImagePreviews =
     standaloneComposerImages.length > 0 ? (
       <ComposerRestingImagePreviews
@@ -2708,7 +2708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       handleRuntimeModeChange={handleRuntimeModeChange}
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
-      permissionsShownInStrip={props.permissionsShownInStrip}
+      permissionsShownExternally={showLeadingPermissionsChip}
       composerControlsHidden={composerMenusClosed}
       restingHiddenBlockCount={restingHiddenBlockCount}
       iconOnlyBlockCount={iconOnlyBlockCount}
@@ -4053,8 +4053,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     "hidden sm:flex",
                 )}
               >
-                {composerAttachButton && !dictationTakesFooter ? (
-                  <div className="me-2">{composerAttachButton}</div>
+                {(composerAttachButton && !dictationTakesFooter) || showLeadingPermissionsChip ? (
+                  <div className="me-2 flex shrink-0 items-center gap-1">
+                    {composerAttachButton && !dictationTakesFooter ? composerAttachButton : null}
+                    {showLeadingPermissionsChip ? (
+                      <ComposerFooterModeControls
+                        runtimeMode={compatibleRuntimeMode}
+                        runtimeModeOptions={compatibleRuntimeModeOptions}
+                        size="sm"
+                        hidden={composerMenusClosed}
+                        accessDisplay={isComposerPrimaryActionsCompact ? "icon" : "label"}
+                        emphasized={compatibleRuntimeMode !== props.defaultRuntimeMode}
+                        onRuntimeModeChange={handleRuntimeModeChange}
+                      />
+                    ) : null}
+                  </div>
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

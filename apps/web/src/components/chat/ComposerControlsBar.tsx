@@ -55,8 +55,8 @@ export function ComposerControlsBar(props: {
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
   effortDisplay: EffortDisplay;
-  /** The strip under a new thread names the permissions, so the row does not repeat them. */
-  permissionsShownInStrip: boolean;
+  /** Leading footer chip owns Permissions when expanded, so this row avoids repeating it. */
+  permissionsShownExternally: boolean;
   compatibleRuntimeMode: RuntimeMode;
   defaultRuntimeMode: RuntimeMode | undefined;
   compatibleRuntimeModeOptions: ReadonlyArray<RuntimeModeOption>;
@@ -141,7 +141,7 @@ export function ComposerControlsBar(props: {
     overflowShowsPermissions,
     pickerOwnsModeShortcut,
   } = resolveComposerControlsOwnership({
-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
+    matchesDefault: accessMatchesDefault || props.permissionsShownExternally,
     collapsed: composerControlsCollapsed,
     measuredHiddenBlockCount,
   });
@@ -222,7 +222,9 @@ export function ComposerControlsBar(props: {
       triggerSuffix={effort.suffix}
       triggerDetail={effort.detail}
       triggerShortcuts={
-        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
+        pickerOwnsModeShortcut && !props.permissionsShownExternally
+          ? "composer.effort composer.mode"
+          : "composer.effort"
       }
       effortColumn={<ComposerEffortColumn traits={traitsInput} />}
       footer={

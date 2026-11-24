@@ -48,7 +48,6 @@ import {
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
-import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { WorktreeRepositoriesControl } from "./WorktreeRepositoriesControl";
 import { useWorktreeBaseBranch } from "../worktreeRepositoryChoiceStore";
@@ -72,7 +71,6 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "./ui/menu";
-import { Separator } from "./ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -96,7 +94,8 @@ interface BranchToolbarProps {
   ref?: Ref<BranchToolbarHandle>;
   environmentId: EnvironmentId;
   threadId: ThreadId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
+  projectPicker?: ReactNode;
   worktreePath: string | null;
   isServerThread: boolean;
   /** Offers the workspace choice: the project folder is a repository or tracks one. */
@@ -240,7 +239,9 @@ const RunContextSelector = memo(function RunContextSelector({
   const workspaceIcon = (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <WorkspaceIcon className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"} />
+        <WorkspaceIcon
+          className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5 shrink-0"}
+        />
       </TooltipTrigger>
       <TooltipPopup>
         {isPanel
@@ -256,7 +257,7 @@ const RunContextSelector = memo(function RunContextSelector({
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         {autoEnvironmentLabel ? (
           <ScaleIcon
-            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5 shrink-0"}
             aria-hidden="true"
           />
         ) : (
@@ -264,7 +265,7 @@ const RunContextSelector = memo(function RunContextSelector({
             kind={activeEnvironment?.machine ?? "server"}
             // Wide machine glyphs need a little more box to match the square row icons.
             className={
-              isPanel ? cn(THREAD_DETAILS_PANEL_ICON_CLASS, "-mx-px size-4.5") : "size-3 shrink-0"
+              isPanel ? cn(THREAD_DETAILS_PANEL_ICON_CLASS, "-mx-px size-4.5") : "size-3.5 shrink-0"
             }
           />
         )}
@@ -274,14 +275,18 @@ const RunContextSelector = memo(function RunContextSelector({
       </TooltipPopup>
     </Tooltip>
   );
-  const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
+  const showWorktreePill =
+    !isPanel && offersWorkspaceModes && (effectiveEnvMode === "worktree" || forceNewWorktree);
+  const showMachineLabel = showEnvironmentIndicator && !showWorktreePill;
+  const icon = showMachineLabel ? environmentIcon : workspaceIcon;
+  const pillLabel = showWorktreePill
+    ? workspaceLabel
+    : (autoEnvironmentLabel ??
+      (showEnvironmentIndicator ? (activeEnvironment?.label ?? gt("Run on")) : workspaceLabel));
   const triggerContent = (
     <>
       {icon}
-      <ComposerContextLabel displayMode={displayMode}>
-        {autoEnvironmentLabel ??
-          (showEnvironmentIndicator ? (activeEnvironment?.label ?? gt("Run on")) : workspaceLabel)}
-      </ComposerContextLabel>
+      <ComposerContextLabel displayMode={displayMode}>{pillLabel}</ComposerContextLabel>
       {/* Trailing in the panel, so every row label starts on the same edge. */}
       {isPanel && showEnvironmentIndicator ? workspaceIcon : null}
     </>
@@ -291,8 +296,10 @@ const RunContextSelector = memo(function RunContextSelector({
     return (
       <span
         className={cn(
-          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-foreground/70 text-sm sm:h-6 sm:text-xs dark:text-muted-foreground",
-          isPanel && "max-w-full",
+          "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-sm sm:h-6 sm:text-xs",
+          isPanel
+            ? "max-w-full text-foreground/70 dark:text-muted-foreground"
+            : "text-foreground/85 dark:text-foreground/85",
           isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
         )}
         onContextMenu={handleContextMenu}
@@ -315,7 +322,16 @@ const RunContextSelector = memo(function RunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
+        render={
+          isPanel ? (
+            <ThreadDetailsControl part="select" />
+          ) : (
+            <ComposerControl
+              size="xs"
+              className="text-foreground/85 hover:text-foreground dark:text-foreground/85"
+            />
+          )
+        }
         className={isPanel ? undefined : "min-w-0 max-w-[48%] flex-initial justify-start"}
         onContextMenu={handleContextMenu}
         onMouseDownCapture={
@@ -648,6 +664,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   environmentId,
   threadId,
   projectId,
+  projectPicker,
   worktreePath,
   isServerThread,
   showGitControls,
@@ -673,14 +690,16 @@ export const BranchToolbar = memo(function BranchToolbar({
   const threadRef = scopeThreadRef(environmentId, threadId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   // The composer retains resolved thread details while bootstrap cleanup can remove its shell.
-  const activeProjectRef = scopeProjectRef(environmentId, projectId);
+  const activeProjectRef = projectId === null ? null : scopeProjectRef(environmentId, projectId);
   const activeProject = useProject(activeProjectRef);
   const activeWorktreePath = forceNewWorktree ? null : worktreePath;
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (isServerThread && activeWorktreePath !== null);
 
-  const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forceNewWorktree;
-  const projectRefsForWorktreeLookup = canUsePreviousWorktree ? [activeProjectRef] : [];
+  const canUsePreviousWorktree =
+    activeProjectRef !== null && !isServerThread && !envModeLocked && !forceNewWorktree;
+  const projectRefsForWorktreeLookup =
+    canUsePreviousWorktree && activeProjectRef !== null ? [activeProjectRef] : [];
   const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
   const previousWorktreeSeed = canUsePreviousWorktree
     ? resolvePreviousWorktreeSeed({
@@ -692,7 +711,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     ? resolvePreviousWorktreeLabel(previousWorktreeSeed, m)
     : null;
   const onUsePreviousWorktree = () => {
-    if (!previousWorktreeSeed) return;
+    if (!previousWorktreeSeed || activeProjectRef === null) return;
     setDraftThreadContext(draftId ?? threadRef, {
       branch: previousWorktreeSeed.branch,
       worktreePath: previousWorktreeSeed.worktreePath,
@@ -721,8 +740,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   const addTargets = useAddProjectTargets(activeProject, availableEnvironments);
-  const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
+  const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) => {
+    if (activeProjectRef === null) return;
     openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
+  };
   // A project on one machine still gets the picker when it can be added to another.
   const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1 || addTargets.length > 0;
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
@@ -737,17 +758,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   const [attachStrip, labelsOverflow] = useLabelsOverflow();
   const plainProjectBaseBranch = useWorktreeBaseBranch(activeProject ?? null);
 
-  if (!activeProject) return null;
-
-  const startsNewWorktree =
-    showGitControls && effectiveEnvMode === "worktree" && activeWorktreePath === null;
-  const offersRepositoryChoice =
-    startsNewWorktree &&
-    !isServerThread &&
-    !envModeLocked &&
-    (activeProject.trackedFolders?.length ?? 0) > 0;
-
   if (layout === "panel") {
+    if (!activeProject) return null;
     return (
       <div className="flex w-full flex-col" data-thread-panel-run-context>
         {panelSection !== "branch" ? (
@@ -796,14 +808,30 @@ export const BranchToolbar = memo(function BranchToolbar({
     );
   }
 
+  if (!activeProject && !projectPicker && !showEnvironmentIndicator) {
+    return null;
+  }
+
+  const startsNewWorktree =
+    activeProject !== null &&
+    showGitControls &&
+    effectiveEnvMode === "worktree" &&
+    activeWorktreePath === null;
+  const offersRepositoryChoice =
+    activeProject !== null &&
+    startsNewWorktree &&
+    !isServerThread &&
+    !envModeLocked &&
+    (activeProject.trackedFolders?.length ?? 0) > 0;
+
   return (
     <ComposerSurface.ContextStrip
       ref={attachStrip}
       data-compact={labelsOverflow ? "" : undefined}
-      className={cn("gap-1 text-xs font-normal text-foreground/70 dark:text-muted-foreground")}
+      className={cn("gap-1.5 text-xs font-normal text-foreground/70 dark:text-muted-foreground")}
     >
-      {showGitControls ? (
-        <div className="contents @xl/composer-surface:hidden">
+      <div className="flex min-h-7 min-w-10 flex-1 items-center gap-1.5 sm:min-h-6">
+        {activeProject !== null && showGitControls ? (
           <RunContextSelector
             forceNewWorktree={forceNewWorktree}
             offersWorkspaceModes={showGitControls}
@@ -825,50 +853,21 @@ export const BranchToolbar = memo(function BranchToolbar({
             addTargets={addTargets}
             onAddToMachine={onAddToMachine}
           />
-        </div>
-      ) : null}
-      {showGitControls || showEnvironmentIndicator ? (
-        <div
-          className={cn(
-            "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
-            showGitControls ? "hidden @xl/composer-surface:flex" : "flex",
-            "flex-1",
-          )}
-        >
-          {showEnvironmentIndicator && availableEnvironments && (
-            <>
-              <BranchToolbarEnvironmentSelector
-                autoEnvironmentLabel={autoEnvironmentLabel}
-                onAutoEnvironment={onAutoEnvironment}
-                envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
-                {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
-              />
-              {showGitControls ? (
-                <Separator
-                  orientation="vertical"
-                  className="mx-0.5 h-3.5!"
-                  data-composer-context-control
-                />
-              ) : null}
-            </>
-          )}
-          {showGitControls ? (
-            <BranchToolbarEnvModeSelector
-              forceNewWorktree={forceNewWorktree}
-              envLocked={envModeLocked}
-              effectiveEnvMode={effectiveEnvMode}
-              activeWorktreePath={activeWorktreePath}
-              onEnvModeChange={onEnvModeChange}
-              previousWorktreeLabel={previousWorktreeLabel}
-              previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
-              onUsePreviousWorktree={onUsePreviousWorktree}
-            />
-          ) : null}
-        </div>
-      ) : null}
+        ) : showEnvironmentIndicator &&
+          availableEnvironments &&
+          availableEnvironments.length > 0 ? (
+          <BranchToolbarEnvironmentSelector
+            autoEnvironmentLabel={autoEnvironmentLabel}
+            onAutoEnvironment={onAutoEnvironment}
+            envLocked={envLocked}
+            environmentId={environmentId}
+            availableEnvironments={availableEnvironments}
+            {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
+            {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
+          />
+        ) : null}
+        {projectPicker}
+      </div>
 
       {offersRepositoryChoice ? (
         <WorktreeRepositoriesControl
@@ -877,7 +876,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           offersBaseBranch={!showBranchControls}
         />
       ) : null}
-      {!showGitControls ? null : !showBranchControls ? (
+      {activeProject === null || !showGitControls ? null : !showBranchControls ? (
         startsNewWorktree ? (
           <span
             className="min-w-0 flex-initial truncate px-1.75 @xl/composer-surface:ml-auto"
@@ -896,7 +895,10 @@ export const BranchToolbar = memo(function BranchToolbar({
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
-          className="min-w-0 flex-initial justify-end @xl/composer-surface:ml-auto"
+          className={cn(
+            "min-w-0 flex-initial justify-end",
+            offersRepositoryChoice ? "@xl/composer-surface:ml-auto" : "ml-auto",
+          )}
           environmentId={environmentId}
           threadId={threadId}
           {...(draftId ? { draftId } : {})}
@@ -910,7 +912,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
       )}
-      {trailing}
+      {activeProject !== null ? trailing : null}
     </ComposerSurface.ContextStrip>
   );
 });

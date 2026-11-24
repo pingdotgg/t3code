@@ -22,6 +22,8 @@ import {
   shouldIncludeBranchPickerItem,
   isBranchHoldCurrent,
   offersWorkspaceModes,
+  shouldShowComposerContextStrip,
+  shouldShowEnvironmentIndicator,
   toBranchActionErrorMessage,
 } from "./BranchToolbar.logic";
 
@@ -467,5 +469,60 @@ describe("resolveConfirmedSelectedRef", () => {
     expect(resolveConfirmedSelectedRef(listed, refs === null ? null : { refs }).worktreePath).toBe(
       expected,
     );
+  });
+});
+
+describe("shouldShowEnvironmentIndicator", () => {
+  it("shows a single primary machine when present and hides only when none exist", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: null,
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: null,
+        canPickEnvironment: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("shouldShowComposerContextStrip", () => {
+  it("always shows the strip in draft hero state and respects persistInActiveThreads on active threads", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        isDraftHeroState: true,
+        persistInActiveThreads: false,
+        hasActiveProject: false,
+        isGitRepo: false,
+        showEnvironmentIndicator: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowComposerContextStrip({
+        isDraftHeroState: false,
+        persistInActiveThreads: false,
+        hasActiveProject: true,
+        isGitRepo: true,
+        showEnvironmentIndicator: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowComposerContextStrip({
+        isDraftHeroState: false,
+        persistInActiveThreads: true,
+        hasActiveProject: true,
+        isGitRepo: true,
+        showEnvironmentIndicator: false,
+      }),
+    ).toBe(true);
   });
 });

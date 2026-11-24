@@ -48,6 +48,7 @@ export function ChatCanvas({
   preview,
   composerOverlayElement,
   detailsCardTopInset = 0,
+  suppressInlineDetailsCard = false,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
@@ -58,6 +59,7 @@ export function ChatCanvas({
   preview: ChatCanvasPreview | null;
   composerOverlayElement: HTMLElement | null;
   detailsCardTopInset?: number;
+  suppressInlineDetailsCard?: boolean;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -148,6 +150,7 @@ export function ChatCanvas({
     threadRef,
     preview,
     detailsCardInlineOpen,
+    suppressInlineDetailsCard,
   });
   const context = {
     container: model.container,

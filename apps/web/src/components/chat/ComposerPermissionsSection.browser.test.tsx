@@ -5,7 +5,6 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { ComposerHandleContext, type ComposerHandleRef } from "../../composerHandleContext";
-import { ComposerContextPermissions } from "../ComposerContextPermissions";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -182,20 +181,22 @@ it("returns focus to the editor when picking the default hides the chip", async 
   await expect.element(screen.getByRole("button", { name: "Model" })).not.toHaveFocus();
 });
 
-function ContextPermissions() {
+function LeadingFooterPermissions() {
   const [mode, setMode] = useState<RuntimeMode>("full-access");
+  const supportedOptions = (["approval-required", "full-access"] as const).map((value) =>
+    resolveRuntimeModeOption(value),
+  );
   return (
-    <ComposerContextPermissions
-      environmentId={null}
+    <ComposerFooterModeControls
       runtimeMode={mode}
-      supportedRuntimeModes={["approval-required", "full-access"]}
+      runtimeModeOptions={supportedOptions}
       onRuntimeModeChange={setMode}
     />
   );
 }
 
-it("opens permissions directly from the context strip and applies a supported mode", async () => {
-  await using screen = await render(<ContextPermissions />, { router: false }); // no routes involved
+it("opens permissions directly from the leading footer chip and applies a supported mode", async () => {
+  await using screen = await render(<LeadingFooterPermissions />, { router: false }); // no routes involved
   await userEvent.click(screen.getByRole("button", { name: "Permissions: Full access" }));
   await expect
     .element(page.getByRole("menuitemradio", { name: "Full access" }))

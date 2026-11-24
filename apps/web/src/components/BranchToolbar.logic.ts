@@ -77,8 +77,7 @@ export function shouldShowEnvironmentIndicator(input: {
   activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
   canPickEnvironment: boolean;
 }): boolean {
-  if (input.canPickEnvironment) return true;
-  return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
+  return input.canPickEnvironment || input.activeEnvironment !== null;
 }
 
 /** Whether a new thread here may choose between Current checkout and New worktree. */
@@ -98,11 +97,11 @@ export function shouldShowComposerContextStrip(input: {
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
 }): boolean {
-  // A new thread always shows the strip, since it names the permissions the first send uses.
+  if (input.isDraftHeroState) return true;
   return (
     input.hasActiveProject &&
-    (input.isDraftHeroState ||
-      (input.persistInActiveThreads && (input.isGitRepo || input.showEnvironmentIndicator)))
+    input.persistInActiveThreads &&
+    (input.isGitRepo || input.showEnvironmentIndicator)
   );
 }
 
