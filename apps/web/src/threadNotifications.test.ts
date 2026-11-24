@@ -1,3 +1,15 @@
+import {
+  EMPTY_TEAM_ENVIRONMENT_STATE,
+  type TeamEnvironmentState,
+} from "@t3tools/client-runtime/team";
+import {
+  TeamId,
+  TeamMemberId,
+  TeamViewId,
+  ThreadId,
+  type TeamMember,
+  type TeamPseudo,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const SOUND_SECONDS = 0.6;
@@ -100,5 +112,131 @@ describe("playNotificationSound", () => {
     await playNotificationSound("completion", () => true);
 
     expect(audio.started).toBe(1);
+  });
+});
+
+describe("team notification gating helpers", () => {
+  const teamId = TeamId.make("team-1");
+  const viewId = TeamViewId.make("view-1");
+  const aliceId = TeamMemberId.make("member-alice");
+  const bobId = TeamMemberId.make("member-bob");
+  const aliceThreadId = ThreadId.make("thread-alice");
+
+  const makeTeamState = (overrides: Partial<TeamEnvironmentState> = {}): TeamEnvironmentState => {
+    const alice: TeamMember = {
+      id: aliceId,
+      teamId,
+      pseudo: "alice" as TeamPseudo,
+      role: "owner",
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const bob: TeamMember = {
+      id: bobId,
+      teamId,
+      pseudo: "bob" as TeamPseudo,
+      role: "regular",
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const attribution = {
+      threadId: aliceThreadId,
+      teamId,
+      creatorMemberId: aliceId,
+      creatorPseudo: alice.pseudo,
+      viewId,
+      locked: false,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    return {
+      team: {
+        id: teamId,
+        name: "Core",
+        defaultViewId: viewId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      currentMember: bob,
+      members: [alice, bob],
+      invites: [],
+      threadAttributions: [attribution],
+      followedThreadIds: new Set(),
+      latestTurnByThreadId: new Map(),
+      memberById: new Map([
+        [aliceId, alice],
+        [bobId, bob],
+      ]),
+      attributionByThreadId: new Map([[aliceThreadId, attribution]]),
+      ...overrides,
+    };
+  };
+
+  it("leaves personal mode untouched and gates team threads by creator, follow, or completing turn author", async () => {
+    const { formatTeamNotificationThreadTitle, shouldNotifyForTeamEnvironmentThread } =
+      await import("./threadNotifications");
+
+    expect(
+      shouldNotifyForTeamEnvironmentThread({
+        teamState: EMPTY_TEAM_ENVIRONMENT_STATE,
+        threadId: aliceThreadId,
+        latestRunId: "run-1",
+      }),
+    ).toBe(true);
+    expect(
+      formatTeamNotificationThreadTitle({
+        title: "Personal task",
+        teamState: EMPTY_TEAM_ENVIRONMENT_STATE,
+        threadId: aliceThreadId,
+      }),
+    ).toBe("Personal task");
+
+    const silenced = makeTeamState();
+    expect(
+      shouldNotifyForTeamEnvironmentThread({
+        teamState: silenced,
+        threadId: aliceThreadId,
+        latestRunId: "run-alice-1",
+      }),
+    ).toBe(false);
+    expect(
+      formatTeamNotificationThreadTitle({
+        title: "Fix login",
+        teamState: silenced,
+        threadId: aliceThreadId,
+      }),
+    ).toBe("alice: Fix login");
+
+    const followed = makeTeamState({ followedThreadIds: new Set([aliceThreadId]) });
+    expect(
+      shouldNotifyForTeamEnvironmentThread({
+        teamState: followed,
+        threadId: aliceThreadId,
+        latestRunId: "run-alice-1",
+      }),
+    ).toBe(true);
+
+    const ownTurn = makeTeamState({
+      latestTurnByThreadId: new Map([
+        [
+          aliceThreadId,
+          {
+            turnId: "run-bob-2",
+            threadId: aliceThreadId,
+            authorMemberId: bobId,
+            authorPseudo: "bob" as TeamPseudo,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+        ],
+      ]),
+    });
+    expect(
+      shouldNotifyForTeamEnvironmentThread({
+        teamState: ownTurn,
+        threadId: aliceThreadId,
+        latestRunId: "run-bob-2",
+      }),
+    ).toBe(true);
   });
 });

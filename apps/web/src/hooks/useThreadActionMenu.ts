@@ -48,6 +48,8 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { readTeamThreadFollowActionState } from "../state/team";
+import { useTeamThreadFollowToggle } from "../components/team/useTeamThreadFollowToggle";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
@@ -96,6 +98,7 @@ export function useThreadActionMenu(input: {
   const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
+  const { setFollowing } = useTeamThreadFollowToggle();
   const handleNewThread = useNewThreadHandler();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -156,6 +159,7 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        teamFollow: readTeamThreadFollowActionState(threadRef.environmentId, threadRef.threadId),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position, source));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -231,6 +235,14 @@ export function useThreadActionMenu(input: {
         }
         case "settle":
           await reportFailure(m(msg("Failed to settle thread")), () => settleThread(threadRef));
+          return;
+        case "follow":
+        case "unfollow":
+          await setFollowing({
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+            follow: action === "follow",
+          });
           return;
         case "unsettle":
           await reportFailure(m(msg("Failed to un-settle thread")), () =>

@@ -44,6 +44,8 @@ const makeTeamState = (id: string, name: string, pseudo: string): TeamEnvironmen
     members: [member],
     invites: [],
     threadAttributions: [],
+    followedThreadIds: new Set(),
+    latestTurnByThreadId: new Map(),
     memberById: new Map([[memberId, member]]),
     attributionByThreadId: new Map(),
   };

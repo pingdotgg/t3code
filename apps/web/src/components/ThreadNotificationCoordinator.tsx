@@ -24,12 +24,15 @@ import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
+import { readTeamEnvironmentStateFromRegistry, teamEnvironment } from "../state/team";
 import { environmentThreadShells } from "../state/threads";
 import {
+  formatTeamNotificationThreadTitle,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
   setNotificationBadge,
+  shouldNotifyForTeamEnvironmentThread,
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
@@ -142,6 +145,20 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
+    const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
+    if (
+      !shouldNotifyForTeamEnvironmentThread({
+        teamState,
+        threadId: thread.id,
+        latestRunId: thread.latestRun?.runId ?? null,
+      })
+    )
+      return;
+    const notificationThreadTitle = formatTeamNotificationThreadTitle({
+      title: thread.title,
+      teamState,
+      threadId: thread.id,
+    });
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
     const title =
@@ -172,7 +189,7 @@ export function startThreadNotifications(
         onRemove: (): void => forgetToast(toastKey, toastId),
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
         title,
-        description: thread.title,
+        description: notificationThreadTitle,
         data: {
           hideCopyButton: true,
           leadingIcon:
@@ -211,7 +228,7 @@ export function startThreadNotifications(
       return;
     try {
       const notification = new Notification(title, {
-        body: thread.title,
+        body: notificationThreadTitle,
         tag: threadNotificationTag(environmentId, thread.id),
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.
@@ -351,10 +368,32 @@ export function startThreadNotifications(
       environmentThreadShells.delegatedUnderParentAtom,
       reobserve,
     );
+    const unsubscribeTeam = registry.subscribe(teamEnvironment.state(environmentId), () => {
+      const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
+      const isSilenced = (threadId: ThreadId) =>
+        !shouldNotifyForTeamEnvironmentThread({
+          teamState,
+          threadId,
+          latestRunId: entry.previous.get(threadId)?.thread.latestRun?.runId ?? null,
+        });
+      closeToasts((key) => {
+        const parsed = parseThreadKey(key);
+        return parsed.environmentId === environmentId && isSilenced(parsed.threadId);
+      });
+      const count = pending.size;
+      for (const [tag, item] of pending) {
+        if (item.environmentId === environmentId && isSilenced(item.threadId)) {
+          item.notification.close();
+          pending.delete(tag);
+        }
+      }
+      if (count !== pending.size) setNotificationBadge(pending.size);
+    });
     entry.unsubscribe = () => {
       unsubscribeShell();
       unsubscribeRequests();
       unsubscribeDelegated();
+      unsubscribeTeam();
       entry.gate.clear();
     };
     return entry;

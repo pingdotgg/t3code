@@ -88,4 +88,28 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
     expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
   });
+
+  it("includes follow/unfollow for colleagues' team threads and keeps them available to read-only viewers", () => {
+    const ownItems = buildThreadActionMenuItems({ ...baseState, teamFollow: null });
+    expect(ownItems.map((item) => item.id)).not.toContain("follow");
+    expect(ownItems.map((item) => item.id)).not.toContain("unfollow");
+
+    const unfollowed = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      teamFollow: { isFollowing: false },
+    });
+    const followItem = unfollowed.find((item) => item.id === "follow");
+    expect(followItem).toMatchObject({ id: "follow", icon: "bell" });
+    expect(followItem?.disabled).not.toBe(true);
+
+    const followed = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      teamFollow: { isFollowing: true },
+    });
+    const unfollowItem = followed.find((item) => item.id === "unfollow");
+    expect(unfollowItem).toMatchObject({ id: "unfollow", icon: "bell-off" });
+    expect(unfollowItem?.disabled).not.toBe(true);
+  });
 });

@@ -10,6 +10,8 @@ export type ThreadActionMenuId =
   | "filter-by-project"
   | "turn-into-project"
   | "project-settings"
+  | "follow"
+  | "unfollow"
   | "pin"
   | "unpin"
   | "settle"
@@ -125,14 +127,18 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Non-null only for colleagues' threads in an active team environment. */
+  readonly teamFollow?: { readonly isFollowing: boolean } | null;
 }
 
-/** Local navigation, read markers, and copying remain available to read-only clients. */
+/** Local navigation, read markers, follow preferences, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "find",
     "new-thread-on-branch",
     "project-settings",
+    "follow",
+    "unfollow",
     "mark-unread",
     "share-guest",
     "copy",
@@ -158,6 +164,21 @@ export function buildThreadActionMenuItems(
             label: resolve(msg("New thread on {branch}", { branch: state.branch })),
             icon: "message-square-plus",
           },
+        ]
+      : []),
+    ...(state.teamFollow
+      ? [
+          state.teamFollow.isFollowing
+            ? {
+                id: "unfollow" as const,
+                label: resolve(msg("Unfollow thread")),
+                icon: "bell-off",
+              }
+            : {
+                id: "follow" as const,
+                label: resolve(msg("Follow thread")),
+                icon: "bell",
+              },
         ]
       : []),
     ...(state.supports.pinning

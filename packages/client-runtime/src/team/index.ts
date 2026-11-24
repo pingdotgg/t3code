@@ -10,8 +10,12 @@ export {
   type TeamInvitePreviewInput,
 } from "./state.ts";
 export {
+  countFollowedTeamThreads,
   formatTeamThreadTitle,
   hasActiveTeamEnvironment,
+  isFollowingTeamThread,
+  isTeamColleagueThread,
   resolveTeamThreadCreatorPseudo,
+  shouldNotifyForTeamThread,
   shouldShowThreadInTeamFilter,
 } from "./presentation.ts";

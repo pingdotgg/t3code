@@ -1,8 +1,20 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EMPTY_TEAM_ENVIRONMENT_STATE,
+  type TeamEnvironmentState,
+} from "@t3tools/client-runtime/team";
+import {
+  EnvironmentId,
+  TeamId,
+  TeamMemberId,
+  TeamViewId,
+  ThreadId,
+  type TeamMember,
+  type TeamPseudo,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, stubGlobal } from "../../test/render";
@@ -14,6 +26,7 @@ const state = vi.hoisted(() => ({
   toast: vi.fn(),
   closeToast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
+  teamStates: null as unknown as { set: (id: string, value: TeamEnvironmentState) => void },
   navigate: vi.fn(),
   sound: vi.fn(),
   unlock: vi.fn(),
@@ -39,6 +52,20 @@ vi.mock(import("../state/shell"), async (original) => {
       ...actual.environmentShell,
       stateValueAtom: ((id: string) => shellAtom(id)) as never,
     },
+  };
+});
+vi.mock(import("../state/team"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    teamEnvironment: {
+      ...actual.teamEnvironment,
+      state: ((id: string) => teamStateAtom(id)) as never,
+    },
+    readTeamEnvironmentStateFromRegistry: ((reg: AtomRegistry.AtomRegistry, id: EnvironmentId) => {
+      const result = reg.get(teamStateAtom(id));
+      return result._tag === "Success" ? result.value : EMPTY_TEAM_ENVIRONMENT_STATE;
+    }) as never,
   };
 });
 vi.mock(import("../state/presentation"), async (original) => {
@@ -89,10 +116,18 @@ import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
+const teamStateAtom = Atom.family((_id: string) =>
+  Atom.make<AsyncResult.AsyncResult<TeamEnvironmentState, unknown>>(
+    AsyncResult.success(EMPTY_TEAM_ENVIRONMENT_STATE),
+  ),
+);
 const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 const noRequestsAtom = Atom.make(new Map());
 const noDelegatedAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
+state.teamStates = {
+  set: (id, value) => registry.set(teamStateAtom(id), AsyncResult.success(value)),
+};
 
 class TestNotification extends EventTarget {
   static permission = "granted";
@@ -203,6 +238,8 @@ function setup() {
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
   state.shells.set("two", shell());
+  state.teamStates.set("one", EMPTY_TEAM_ENVIRONMENT_STATE);
+  state.teamStates.set("two", EMPTY_TEAM_ENVIRONMENT_STATE);
   focused = false;
   visibility = "visible";
   TestNotification.permission = "granted";
@@ -466,4 +503,125 @@ it("opening a thread or removing its environment closes only its in-app toasts, 
   state.inApp = false;
   app.changeSettings();
   expect(state.closeToast.mock.calls.slice(3)).toEqual([["one-other"]]);
+});
+
+it("gates team thread notifications by creator, follow state, and completing turn author, and clears pending notifications on unfollow", async () => {
+  await using app = setup();
+  const teamId = TeamId.make("team-1");
+  const viewId = TeamViewId.make("view-1");
+  const aliceId = TeamMemberId.make("member-alice");
+  const bobId = TeamMemberId.make("member-bob");
+  const threadId = ThreadId.make("thread");
+  const alice: TeamMember = {
+    id: aliceId,
+    teamId,
+    pseudo: "alice" as TeamPseudo,
+    role: "owner",
+    status: "active",
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const bob: TeamMember = {
+    id: bobId,
+    teamId,
+    pseudo: "bob" as TeamPseudo,
+    role: "regular",
+    status: "active",
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const attribution = {
+    threadId,
+    teamId,
+    creatorMemberId: aliceId,
+    creatorPseudo: alice.pseudo,
+    viewId,
+    locked: false,
+    createdAt: "2026-09-13T07:00:00.000Z",
+  };
+  const baseTeamState: TeamEnvironmentState = {
+    team: {
+      id: teamId,
+      name: "Core",
+      defaultViewId: viewId,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+    currentMember: bob,
+    members: [alice, bob],
+    invites: [],
+    threadAttributions: [attribution],
+    followedThreadIds: new Set(),
+    latestTurnByThreadId: new Map(),
+    memberById: new Map([
+      [aliceId, alice],
+      [bobId, bob],
+    ]),
+    attributionByThreadId: new Map([[threadId, attribution]]),
+  };
+
+  state.teamStates.set("one", baseTeamState);
+  app.start();
+
+  // 1. Alice's turn completes while Bob is not following -> 0 notifications.
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "run-1", state: "completed", completedAt: "2026-09-13T07:01:00.000Z" },
+    }),
+  );
+  expect(TestNotification.sent).toHaveLength(0);
+
+  // 2. Bob follows Alice's thread -> Alice's next turn notifies with pseudo-prefixed body.
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    followedThreadIds: new Set([threadId]),
+  });
+  state.shells.set(
+    "one",
+    shell({ latestTurn: { turnId: "run-2", state: "running", completedAt: null } }),
+  );
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "run-2", state: "completed", completedAt: "2026-09-13T07:02:00.000Z" },
+    }),
+  );
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(TestNotification.sent[0]?.options.body).toBe("alice: Test thread");
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  // 3. Bob unfollows while the notification is pending -> pending notification closes & badge resets.
+  state.teamStates.set("one", baseTeamState);
+  expect(TestNotification.sent[0]?.close).toHaveBeenCalled();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+
+  // 4. Bob authors his own turn on Alice's unfollowed thread -> notifies Bob when it completes.
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    latestTurnByThreadId: new Map([
+      [
+        threadId,
+        {
+          turnId: "run-3",
+          threadId,
+          authorMemberId: bobId,
+          authorPseudo: bob.pseudo,
+          createdAt: "2026-09-13T07:02:30.000Z",
+        },
+      ],
+    ]),
+  });
+  state.shells.set(
+    "one",
+    shell({ latestTurn: { turnId: "run-3", state: "running", completedAt: null } }),
+  );
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "run-3", state: "completed", completedAt: "2026-09-13T07:03:00.000Z" },
+    }),
+  );
+  expect(TestNotification.sent).toHaveLength(2);
+  expect(TestNotification.sent[1]?.options.body).toBe("alice: Test thread");
 });

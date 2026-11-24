@@ -8,6 +8,7 @@ import {
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
+  type TeamTurnAttribution,
   type TeamWorkspace,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -45,6 +46,8 @@ export interface TeamEnvironmentState {
   readonly members: ReadonlyArray<TeamMember>;
   readonly invites: ReadonlyArray<TeamInvite>;
   readonly threadAttributions: ReadonlyArray<TeamThreadAttribution>;
+  readonly followedThreadIds: ReadonlySet<ThreadId>;
+  readonly latestTurnByThreadId: ReadonlyMap<ThreadId, TeamTurnAttribution>;
   readonly memberById: ReadonlyMap<TeamMemberId, TeamMember>;
   readonly attributionByThreadId: ReadonlyMap<ThreadId, TeamThreadAttribution>;
 }
@@ -55,6 +58,8 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   members: [],
   invites: [],
   threadAttributions: [],
+  followedThreadIds: new Set(),
+  latestTurnByThreadId: new Map(),
   memberById: new Map(),
   attributionByThreadId: new Map(),
 };
@@ -66,12 +71,18 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
   const attributionByThreadId = new Map<ThreadId, TeamThreadAttribution>(
     snapshot.threadAttributions.map((attribution) => [attribution.threadId, attribution] as const),
   );
+  const followedThreadIds = new Set<ThreadId>(snapshot.followedThreadIds);
+  const latestTurnByThreadId = new Map<ThreadId, TeamTurnAttribution>(
+    snapshot.latestTurnAttributions.map((turn) => [turn.threadId, turn] as const),
+  );
   return {
     team: snapshot.team,
     currentMember: snapshot.currentMember,
     members: snapshot.members,
     invites: snapshot.invites,
     threadAttributions: snapshot.threadAttributions,
+    followedThreadIds,
+    latestTurnByThreadId,
     memberById,
     attributionByThreadId,
   };
@@ -107,6 +118,14 @@ export function applyTeamStreamEvent(
           attributionsChanged = true;
         }
       }
+      const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
+      let turnsChanged = false;
+      for (const [threadId, turn] of latestTurnByThreadId) {
+        if (turn.authorMemberId === member.id && turn.authorPseudo !== member.pseudo) {
+          latestTurnByThreadId.set(threadId, { ...turn, authorPseudo: member.pseudo });
+          turnsChanged = true;
+        }
+      }
       return {
         ...current,
         currentMember,
@@ -118,6 +137,7 @@ export function applyTeamStreamEvent(
               attributionByThreadId,
             }
           : {}),
+        ...(turnsChanged ? { latestTurnByThreadId } : {}),
       };
     }
 
@@ -139,6 +159,33 @@ export function applyTeamStreamEvent(
         ...current,
         threadAttributions: [...attributionByThreadId.values()],
         attributionByThreadId,
+      };
+    }
+
+    case "turnAttributed": {
+      const turn = event.payload;
+      const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
+      latestTurnByThreadId.set(turn.threadId, turn);
+      return {
+        ...current,
+        latestTurnByThreadId,
+      };
+    }
+
+    case "threadFollowChanged": {
+      const change = event.payload;
+      if (current.currentMember?.id !== change.memberId) {
+        return current;
+      }
+      const followedThreadIds = new Set(current.followedThreadIds);
+      if (change.isFollowing) {
+        followedThreadIds.add(change.threadId);
+      } else {
+        followedThreadIds.delete(change.threadId);
+      }
+      return {
+        ...current,
+        followedThreadIds,
       };
     }
   }
@@ -179,6 +226,14 @@ export function createTeamEnvironmentAtoms<R, E>(
     revokeInvite: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:revoke-invite",
       tag: TEAM_WS_METHODS.teamRevokeInvite,
+    }),
+    followThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:follow-thread",
+      tag: TEAM_WS_METHODS.teamFollowThread,
+    }),
+    unfollowThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:unfollow-thread",
+      tag: TEAM_WS_METHODS.teamUnfollowThread,
     }),
   };
 }

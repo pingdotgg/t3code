@@ -61,6 +61,8 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  BellIcon,
+  BellOffIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -86,12 +88,20 @@ import {
   UsersIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { hasActiveTeamEnvironment } from "@t3tools/client-runtime/team";
 import {
+  hasActiveTeamEnvironment,
+  isFollowingTeamThread,
+  isTeamColleagueThread,
+} from "@t3tools/client-runtime/team";
+import {
+  teamEnvironment,
   toggleShowColleaguesThreads,
+  toggleShowFollowedThreadsOnly,
   useShowColleaguesThreads,
+  useShowFollowedThreadsOnly,
   useTeamStatesByEnvironment,
 } from "../state/team";
+import { useTeamThreadFollowToggle } from "./team/useTeamThreadFollowToggle";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -1869,6 +1879,53 @@ function OpenCommandPaletteDialog(props: {
 
   const teamStatesByEnvironment = useTeamStatesByEnvironment();
   const showColleaguesThreads = useShowColleaguesThreads();
+  const showFollowedThreadsOnly = useShowFollowedThreadsOnly();
+  const { setFollowing: setTeamThreadFollowing } = useTeamThreadFollowToggle();
+  const activeTeamState = activeThread
+    ? teamStatesByEnvironment.get(activeThread.environmentId)
+    : undefined;
+  const canFollowActiveThread =
+    activeThread !== null &&
+    activeThread !== undefined &&
+    isTeamColleagueThread({ teamState: activeTeamState, threadId: activeThread.id });
+  const isFollowingActiveThread =
+    canFollowActiveThread &&
+    isFollowingTeamThread({ teamState: activeTeamState, threadId: activeThread.id });
+  const canToggleActiveThreadFollow = useAtomValue(
+    (isFollowingActiveThread
+      ? teamEnvironment.unfollowThread
+      : teamEnvironment.followThread
+    ).permissionAtom(activeThread?.environmentId ?? null),
+  );
+  if (canFollowActiveThread && canToggleActiveThreadFollow && activeThread) {
+    actionItems.push({
+      kind: "action",
+      value: "action:team-toggle-follow",
+      searchTerms: [
+        "team",
+        "follow",
+        "unfollow",
+        "notifications",
+        "bell",
+        "subscribe",
+        "mute",
+        "thread",
+      ],
+      title: isFollowingActiveThread ? gt("Unfollow current thread") : gt("Follow current thread"),
+      icon: isFollowingActiveThread ? (
+        <BellOffIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <BellIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => {
+        await setTeamThreadFollowing({
+          environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
+          follow: !isFollowingActiveThread,
+        });
+      },
+    });
+  }
   if (hasActiveTeamEnvironment(teamStatesByEnvironment)) {
     actionItems.push({
       kind: "action",
@@ -1881,6 +1938,18 @@ function OpenCommandPaletteDialog(props: {
       icon: <UsersIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         toggleShowColleaguesThreads();
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:team-toggle-followed-filter",
+      searchTerms: ["team", "followed", "following", "filter", "sidebar", "notifications"],
+      title: showFollowedThreadsOnly
+        ? gt("Show all visible team threads")
+        : gt("Filter sidebar to followed threads"),
+      icon: <BellIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        toggleShowFollowedThreadsOnly();
       },
     });
   }
