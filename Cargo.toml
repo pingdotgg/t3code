@@ -67,3 +67,8 @@ rc_buffer = "warn"
 large_futures = "warn"
 type_complexity = "allow"
 large_enum_variant = "allow"
+
+[profile.dev.package."*"]
+# Dependencies keep line tables only: backtraces and debugger file:line still work, and
+# `target` stays far smaller. Workspace crates keep full debuginfo.
+debug = "line-tables-only"

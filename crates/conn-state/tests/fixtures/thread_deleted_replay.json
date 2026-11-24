@@ -1,0 +1,46 @@
+{
+  "about": "The item conn-engine replays to a client that resumes a thread stream after the thread's deletion (engine_tests::streams_resume_after_a_sequence).",
+  "item": {
+    "event": {
+      "id": "event:5",
+      "occurredAt": "2026-11-23T20:57:41.519Z",
+      "payload": {
+        "activeProviderThreadId": null,
+        "archivedAt": null,
+        "branch": null,
+        "createdAt": "2026-11-23T20:57:41.513Z",
+        "createdBy": "user",
+        "creationSource": "web",
+        "deletedAt": "2026-11-23T20:57:41.519Z",
+        "forkedFrom": null,
+        "id": "t1",
+        "interactionMode": "default",
+        "lastVisitedAt": "2026-11-13T09:01:00.000Z",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "t1"
+        },
+        "modelSelection": {
+          "instanceId": "claudeAgent",
+          "model": "claude-haiku-4-5"
+        },
+        "projectId": "project:f139233adf6acc7b",
+        "providerInstanceId": "claudeAgent",
+        "pullRequests": [],
+        "runtimeMode": "full-access",
+        "settledAt": null,
+        "settledOverride": null,
+        "snoozedAt": null,
+        "snoozedUntil": null,
+        "title": "New thread",
+        "updatedAt": "2026-11-23T20:57:41.519Z",
+        "worktreePath": null
+      },
+      "threadId": "t1",
+      "type": "thread.deleted"
+    },
+    "kind": "event",
+    "sequence": 5
+  }
+}

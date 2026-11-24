@@ -8,7 +8,7 @@
 //! - Version Control: branch row (right-click `Copy branch name`), linked PRs with
 //!   `Show N more` / `Show less`, `Initialize Git` or `Changes +ins -del`.
 //! - Automations: scheduled tasks bound to this thread.
-//! - Lineage (`Lineage · N running`): parent / fork link, running subagents, and the
+//! - Subagents (`Subagents · N running`): parent / fork link, running subagents, and the
 //!   collapsed `Previous agents` group.
 //!
 //! Out of scope here (tracked in `docs/parity/shell-sidebar.md` §8): inline placement and
@@ -37,6 +37,8 @@ use crate::theme::{hsla, hsla_alpha};
 
 /// `--thread-details-panel-width`.
 pub(crate) const DETAILS_CARD_WIDTH_PX: f32 = 280.0;
+/// `THREAD_DETAILS_CARD_GAP`: the card's gap to the chat card's top and right edges.
+pub(crate) const THREAD_DETAILS_CARD_GAP_PX: f32 = 12.0;
 /// `rounded-bubble` (`--radius + 6px` = `14px`).
 const CARD_RADIUS_PX: f32 = 14.0;
 /// `h-8` rows, `rounded-lg`, `gap-2.5 px-2.5`.
@@ -202,13 +204,13 @@ impl Lineage<'_> {
         self.parent.is_none() && self.running.is_empty() && self.previous.is_empty()
     }
 
-    /// `Lineage · N running` when children run, else `Lineage`.
+    /// `Subagents · N running` when children run, else `Subagents` (Nick, #315: was `Lineage`).
     #[must_use]
     pub(crate) fn title(&self) -> String {
         if self.running.is_empty() {
-            "Lineage".to_owned()
+            "Subagents".to_owned()
         } else {
-            format!("Lineage · {} running", self.running.len())
+            format!("Subagents · {} running", self.running.len())
         }
     }
 }
@@ -442,6 +444,7 @@ pub(crate) fn render_thread_details_card(
 
     let mut body = div()
         .id("thread-details-scroll")
+        .a11y_group("thread-details.scroll", "Thread details")
         .flex()
         .flex_col()
         .max_h(px(props.max_height))
@@ -1052,15 +1055,13 @@ fn render_automations_section(
                     .relative()
                     .flex_shrink_0()
                     .child(icons::concept("superhero/scheduled.svg", ICON_PX, muted))
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(-1.0))
-                            .right(px(-1.0))
-                            .size(px(6.0))
-                            .rounded_full()
-                            .bg(dot),
-                    ),
+                    // The shared status dot with its card-coloured cutout ring (Nick, #317).
+                    .child(crate::panels::chrome::status_dot_cutout(
+                        dot,
+                        hsla(tokens.popover),
+                        None,
+                        false,
+                    )),
             )
             .child(
                 div()
@@ -1218,11 +1219,12 @@ fn relationship_icon(child: &ThreadShell, dot: Hsla, tokens: &Tokens) -> AnyElem
             ICON_PX,
             hsla(tokens.muted_foreground),
         ))
+        // Top right, as on the sidebar rows and subagent cards (Nick, #314).
         .child(crate::panels::chrome::status_dot_cutout(
             dot,
             hsla(tokens.popover),
             None,
-            true,
+            false,
         ))
         .into_any_element()
 }
@@ -1364,7 +1366,7 @@ fn render_lineage_section(
 
     section(
         "thread-details.lineage",
-        "Lineage",
+        "Subagents",
         Some(lineage.title()),
         true,
         None,
@@ -1391,7 +1393,7 @@ mod tests {
     #[test]
     fn lineage_title_counts_running() {
         let empty = Lineage::default();
-        assert_eq!(empty.title(), "Lineage");
+        assert_eq!(empty.title(), "Subagents");
         assert!(empty.is_empty());
     }
 

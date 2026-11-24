@@ -147,13 +147,7 @@ pub(crate) fn demo_shell_state() -> ShellState {
         .filter_map(|value| from_json::<ThreadShell>(value).ok())
         .collect();
 
-    ShellState {
-        projects,
-        threads,
-        archived_threads: Vec::new(),
-        sequence: Some(42),
-        synchronized: true,
-    }
+    ShellState::from_parts(projects, threads, Vec::new(), Some(42))
 }
 
 /// Resolves a thread's sidebar activity indicator.

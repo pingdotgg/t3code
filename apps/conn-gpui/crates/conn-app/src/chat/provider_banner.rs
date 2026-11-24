@@ -14,7 +14,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::color::{hsla, hsla_alpha};
+use super::color::{hsla, hsla_alpha, opaque};
 use super::{ChatEvent, ChatView, icons};
 use crate::a11y::ConnA11yExt as _;
 
@@ -42,9 +42,9 @@ impl ChatView {
 
     /// The banner for the composer's provider, unless the user dismissed this status.
     fn visible_provider_banner(&self, cx: &App) -> Option<(String, ProviderBanner)> {
-        let instance = self.composer.read(cx).selected_provider_instance()?;
-        let banner = self
-            .server_config
+        let composer = self.composer.read(cx);
+        let instance = composer.selected_provider_instance()?;
+        let banner = composer
             .catalog()
             .providers
             .iter()
@@ -217,9 +217,19 @@ impl ChatView {
                 .px(px(12.0))
                 .py(px(10.0))
                 .rounded(px(10.0))
-                .bg(hsla_alpha(accent, 0.10))
+                // Opaque: the banner floats over the timeline, so a see-through tint let the
+                // messages show through (Annotator #344). Same 10% tint, pre-mixed on the page.
+                .bg(opaque(conn_theme::color_mix_oklab(
+                    accent,
+                    0.10,
+                    tokens.background,
+                )))
                 .border_1()
-                .border_color(hsla_alpha(accent, 0.30))
+                .border_color(opaque(conn_theme::color_mix_oklab(
+                    accent,
+                    0.30,
+                    tokens.background,
+                )))
                 .child(icons::icon(icons::INFO, 15.0, hsla(accent)))
                 .child(body)
                 .child(

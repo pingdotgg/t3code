@@ -4,6 +4,7 @@
 //! Port of `apps/web/src/orbit/tasks/TaskDetail.tsx`.
 
 use crate::a11y::ConnA11yExt as _;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use conn_desktop::orbit::board::tasks_error_notice;
@@ -74,6 +75,7 @@ pub(super) fn render_task_detail(
     list_title: Option<&str>,
     notice: Option<&str>,
     scroll: &ScrollHandle,
+    padded: &Cell<bool>,
     callbacks: DetailCallbacks,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
@@ -95,6 +97,8 @@ pub(super) fn render_task_detail(
 
     let on_board = Rc::clone(&callbacks.on_show_board);
     let mut nav = h_flex()
+        .id("tasks-detail-nav")
+        .a11y_group("panel.tasks.detail.breadcrumbs", "Task breadcrumbs")
         .w_full()
         .h(px(NAV_HEIGHT_PX))
         .flex_shrink_0()
@@ -161,6 +165,8 @@ pub(super) fn render_task_detail(
 
     nav = nav.child(
         div()
+            .id("tasks-detail-live-status")
+            .a11y_group("panel.tasks.detail.live-status", "Live status")
             .ml_auto()
             .flex_shrink_0()
             .text_color(muted.opacity(0.70))
@@ -235,7 +241,7 @@ pub(super) fn render_task_detail(
                 .into_any_element()
         }
         DetailLoadState::Ready(task) => {
-            render_detail_body(tokens, navigation, task, scroll, &callbacks)
+            render_detail_body(tokens, navigation, task, scroll, padded, &callbacks)
         }
     };
 
@@ -251,11 +257,30 @@ pub(super) fn render_task_detail(
         .into_any_element()
 }
 
+/// Space under the scrolling content (`pb-8` in Conn's `TaskDetailBody`).
+const DETAIL_BOTTOM_PAD_PX: f32 = 32.0;
+
+/// The bottom spacing for this frame, given the scroll range of the last one.
+///
+/// The spacing only exists while the content itself overflows. Otherwise a brief that fits the
+/// box but not its 32px of spacing would scroll by the difference (a "two-pixel scroll").
+/// `padded` remembers whether the last frame had the spacing, since the range then includes it.
+fn bottom_padding(padded: &Cell<bool>, range: f32) -> f32 {
+    let overflows = if padded.get() {
+        range > DETAIL_BOTTOM_PAD_PX + 0.5
+    } else {
+        range > 0.5
+    };
+    padded.set(overflows);
+    if overflows { DETAIL_BOTTOM_PAD_PX } else { 0.0 }
+}
+
 fn render_detail_body(
     tokens: &Tokens,
     navigation: &TasksNavigation,
     task: &TaskDetail,
     scroll: &ScrollHandle,
+    padded: &Cell<bool>,
     callbacks: &DetailCallbacks,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
@@ -276,6 +301,8 @@ fn render_detail_body(
         .unwrap_or(task.summary.title.as_str());
 
     let title_block = div()
+        .id("tasks-detail-title")
+        .a11y_group("panel.tasks.detail.title", title_text.to_owned())
         .w_full()
         .px(px(DETAIL_PAD_X_PX))
         .py(px(16.0))
@@ -316,26 +343,40 @@ fn render_detail_body(
         _ => render_brief(tokens, task, subtask),
     };
 
-    div()
-        .id("tasks-detail-scroll")
+    // The title stays fixed under the breadcrumbs; only the content below it scrolls.
+    let bottom_padding = bottom_padding(padded, scroll.max_offset().y.into());
+    v_flex()
+        .id("tasks-detail-body")
+        .a11y_group("panel.tasks.detail", "Task detail")
         .flex_1()
         .min_h_0()
         .w_full()
-        .overflow_y_scroll()
-        .track_scroll(scroll)
-        .pb(px(32.0))
+        .overflow_hidden()
+        .child(title_block.flex_shrink_0())
         .child(
-            v_flex()
+            div()
+                .id("tasks-detail-scroll")
+                .a11y_group("panel.tasks.detail.content", "Task detail content")
+                .flex_1()
+                .min_h_0()
                 .w_full()
-                .child(title_block)
-                .when_some(key_values, |col, kv| col.child(kv))
-                .child(tabs)
+                .overflow_x_hidden()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .pb(px(bottom_padding))
                 .child(
-                    div()
+                    v_flex()
                         .w_full()
-                        .px(px(DETAIL_PAD_X_PX))
-                        .pt(px(18.0))
-                        .child(tab_body),
+                        .min_w_0()
+                        .when_some(key_values, |col, kv| col.child(kv))
+                        .child(tabs)
+                        .child(
+                            div()
+                                .w_full()
+                                .px(px(DETAIL_PAD_X_PX))
+                                .pt(px(18.0))
+                                .child(tab_body),
+                        ),
                 ),
         )
         .into_any_element()
@@ -498,6 +539,7 @@ fn render_key_values(
         "Usage",
         div()
             .id("tasks-detail-usage")
+            .a11y_group("panel.tasks.detail.usage", "Usage")
             .min_w_0()
             .truncate()
             .conn_tooltip(usage.description, tokens)
@@ -829,6 +871,7 @@ fn render_subtask_row(
             let on_agents = Rc::clone(&callbacks.on_open_subtask);
             div()
                 .id(SharedString::from(format!("tasks-subtask-agent-{sub_id}")))
+                .a11y_button(format!("panel.tasks.subtask-agent.{sub_id}"), "Open agents")
                 .ml(px(9.0))
                 .mt(px(6.0))
                 .size(px(20.0))
@@ -1052,6 +1095,7 @@ fn render_agent_row(
 
     let mut el = h_flex()
         .id(SharedString::from(format!("tasks-agent-{}", row.agent.id)))
+        .a11y_button(format!("panel.tasks.agent.{}", row.agent.id), "Agent")
         .w_full()
         .min_h(px(32.0))
         .px(px(10.0))
@@ -1188,6 +1232,27 @@ fn render_agent_state(tokens: &Tokens, agent: &TaskAgent) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottom_spacing_never_makes_fitting_content_scroll() {
+        let padded = Cell::new(true);
+        // Content fits, but spacing pushes the range to 2px: the spacing goes away.
+        assert_eq!(bottom_padding(&padded, 2.0), 0.0);
+        // With no spacing the range is 0 and stays settled.
+        assert_eq!(bottom_padding(&padded, 0.0), 0.0);
+        assert_eq!(bottom_padding(&padded, 0.0), 0.0);
+    }
+
+    #[test]
+    fn bottom_spacing_returns_when_the_content_overflows() {
+        let padded = Cell::new(false);
+        // Without spacing the content overflows by 10px: the spacing is added.
+        assert_eq!(bottom_padding(&padded, 10.0), DETAIL_BOTTOM_PAD_PX);
+        // With spacing the range is 42px (10 + 32): it stays.
+        assert_eq!(bottom_padding(&padded, 42.0), DETAIL_BOTTOM_PAD_PX);
+        // A taller brief keeps it too.
+        assert_eq!(bottom_padding(&padded, 900.0), DETAIL_BOTTOM_PAD_PX);
+    }
 
     #[test]
     fn formats_subtask_meta_text_with_dashes_for_missing_values() {

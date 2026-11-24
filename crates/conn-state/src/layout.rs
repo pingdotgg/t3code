@@ -145,6 +145,14 @@ impl LayoutState {
         self.right_panel_open = !self.right_panel_open;
     }
 
+    /// Whether the open right panel shows the surface launcher (Conn's `Open a surface` list, the
+    /// items of the `+` menu) instead of a surface: it is open and has no tab. A panel with tabs
+    /// shows its active one, so toggling it back open restores them.
+    #[must_use]
+    pub fn shows_surface_launcher(&self, open_tab_count: usize) -> bool {
+        self.right_panel_open && open_tab_count == 0
+    }
+
     /// Opens the right panel on `tab`, or closes it when `tab` is already open.
     pub fn open_panel(&mut self, tab: RightPanelTab) {
         if self.right_panel_open && self.right_panel_tab == tab {
@@ -192,6 +200,60 @@ impl LayoutState {
     }
 }
 
+/// What the chat and the right panel need to the right of the thread sidebar
+/// (`THREAD_MAIN_CONTENT_MIN_WIDTH`, `threadSidebarWidth.ts`).
+pub const MAIN_CONTENT_MIN_WIDTH: f32 = 640.0;
+/// The chat column's least width beside an open right panel (`SIBLING_COLUMN_MIN_WIDTH`).
+pub const CHAT_BESIDE_PANEL_MIN_WIDTH: f32 = 360.0;
+/// The right panel's widest share of the window (`PREVIEW_PANEL_MAX_WIDTH_FRACTION`).
+const RIGHT_PANEL_MAX_WINDOW_FRACTION: f32 = 0.7;
+
+/// How wide the thread sidebar may be in a window `viewport_w` wide with the rail `rail_w` wide:
+/// the rest must keep `MAIN_CONTENT_MIN_WIDTH` (`resolveThreadSidebarMaximumWidth`). The right
+/// panel does not count: it is part of that rest and gives way (`shouldAcceptWidth`).
+#[must_use]
+pub fn sidebar_max_width(viewport_w: f32, rail_w: f32) -> f32 {
+    (viewport_w - rail_w - MAIN_CONTENT_MIN_WIDTH).clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+}
+
+/// How wide the right panel may be with `left_w` of rail and sidebar beside it
+/// (`getPreviewPanelMaxWidth`): at most 70% of the window and leaving the chat
+/// `CHAT_BESIDE_PANEL_MIN_WIDTH`, never under its own minimum.
+#[must_use]
+pub fn right_panel_max_width(viewport_w: f32, left_w: f32) -> f32 {
+    let by_fraction = (viewport_w * RIGHT_PANEL_MAX_WINDOW_FRACTION).floor();
+    let by_chat = (viewport_w - left_w).floor() - CHAT_BESIDE_PANEL_MIN_WIDTH;
+    by_fraction
+        .min(by_chat)
+        .clamp(RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH)
+}
+
+impl LayoutState {
+    /// A sidebar seam drag: the width `wanted` by the pointer, held between the minimum and
+    /// what the window allows. `rail_w` is the workspace rail beside the sidebar.
+    pub fn drag_sidebar_width(&mut self, wanted: f32, viewport_w: f32, rail_w: f32) {
+        if wanted.is_finite() {
+            let max = sidebar_max_width(viewport_w, rail_w);
+            self.sidebar_width = wanted.clamp(SIDEBAR_MIN_WIDTH, max);
+        }
+    }
+
+    /// A right-panel seam drag: the width `wanted` by the pointer, held between the minimum and
+    /// what the window and the sidebar leave.
+    pub fn drag_right_panel_width(&mut self, wanted: f32, viewport_w: f32, rail_w: f32) {
+        if wanted.is_finite() {
+            // The rail goes with the sidebar when it is closed.
+            let left = if self.sidebar_open {
+                rail_w + self.sidebar_width
+            } else {
+                0.0
+            };
+            let max = right_panel_max_width(viewport_w, left);
+            self.right_panel_width = wanted.clamp(RIGHT_PANEL_MIN_WIDTH, max);
+        }
+    }
+}
+
 fn clamp_or_default(value: f32, min: f32, max: f32, default: f32) -> f32 {
     if value.is_finite() {
         value.clamp(min, max)
@@ -218,8 +280,98 @@ mod surface_tests {
     }
 
     #[test]
+    fn opening_the_right_panel_with_no_tabs_shows_the_launcher() {
+        let mut layout = LayoutState::default();
+        // Closed: nothing shows, tabs or not.
+        assert!(!layout.shows_surface_launcher(0));
+        assert!(!layout.shows_surface_launcher(2));
+        layout.toggle_right_panel();
+        // Open with no tab: the launcher, never Files by default.
+        assert!(layout.shows_surface_launcher(0));
+        // Open with tabs: the active tab shows.
+        assert!(!layout.shows_surface_launcher(1));
+        // Closing and reopening a panel that has tabs restores them, with no launcher.
+        layout.toggle_right_panel();
+        layout.toggle_right_panel();
+        assert!(!layout.shows_surface_launcher(3));
+    }
+
+    #[test]
     fn file_is_not_in_the_add_menu() {
         assert!(!RightPanelTab::MENU_ORDER.contains(&RightPanelTab::File));
         assert_eq!(RightPanelTab::from_menu_shortcut(""), None);
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    const RAIL: f32 = 54.0;
+
+    #[test]
+    fn the_sidebar_may_grow_until_the_rest_has_640() {
+        assert_eq!(sidebar_max_width(1440.0, RAIL), SIDEBAR_MAX_WIDTH);
+        // 1000 - 54 - 640 = 306.
+        assert_eq!(sidebar_max_width(1000.0, RAIL), 306.0);
+        // A window too narrow for it leaves the minimum, not less.
+        assert_eq!(sidebar_max_width(700.0, RAIL), SIDEBAR_MIN_WIDTH);
+    }
+
+    #[test]
+    fn an_open_right_panel_does_not_stop_the_sidebar_growing() {
+        let mut layout = LayoutState {
+            right_panel_open: true,
+            right_panel_width: 600.0,
+            sidebar_width: 233.0,
+            ..LayoutState::default()
+        };
+        layout.drag_sidebar_width(300.0, 1440.0, RAIL);
+        assert_eq!(layout.sidebar_width, 300.0);
+        layout.drag_sidebar_width(900.0, 1440.0, RAIL);
+        assert_eq!(layout.sidebar_width, SIDEBAR_MAX_WIDTH);
+        layout.drag_sidebar_width(10.0, 1440.0, RAIL);
+        assert_eq!(layout.sidebar_width, SIDEBAR_MIN_WIDTH);
+        layout.drag_sidebar_width(f32::NAN, 1440.0, RAIL);
+        assert_eq!(
+            layout.sidebar_width, SIDEBAR_MIN_WIDTH,
+            "a bad value changes nothing"
+        );
+    }
+
+    #[test]
+    fn the_right_panel_may_grow_until_the_chat_has_360_or_it_takes_70_percent() {
+        // 1440 - 287 - 360 = 793, under 70% of 1440 (1008).
+        assert_eq!(right_panel_max_width(1440.0, 287.0), 793.0);
+        // A wide window: the 70% cap binds.
+        assert_eq!(right_panel_max_width(1600.0, 100.0), 1120.0);
+        // No room: the panel keeps its minimum.
+        assert_eq!(right_panel_max_width(700.0, 287.0), RIGHT_PANEL_MIN_WIDTH);
+        assert!(right_panel_max_width(4000.0, 100.0) <= RIGHT_PANEL_MAX_WIDTH);
+    }
+
+    #[test]
+    fn dragging_the_right_panel_wider_never_snaps_it_narrower() {
+        let mut layout = LayoutState {
+            sidebar_width: 233.0,
+            right_panel_width: 600.0,
+            ..LayoutState::default()
+        };
+        layout.drag_right_panel_width(680.0, 1440.0, RAIL);
+        assert_eq!(layout.right_panel_width, 680.0);
+        layout.drag_right_panel_width(2000.0, 1440.0, RAIL);
+        assert_eq!(layout.right_panel_width, 793.0);
+        layout.drag_right_panel_width(100.0, 1440.0, RAIL);
+        assert_eq!(layout.right_panel_width, RIGHT_PANEL_MIN_WIDTH);
+    }
+
+    #[test]
+    fn a_closed_sidebar_leaves_the_panel_the_whole_window() {
+        let mut layout = LayoutState {
+            sidebar_open: false,
+            ..LayoutState::default()
+        };
+        layout.drag_right_panel_width(2000.0, 1440.0, RAIL);
+        assert_eq!(layout.right_panel_width, 1008.0);
     }
 }

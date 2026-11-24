@@ -34,6 +34,95 @@ retries (a planned follow-up).
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+**Undo of a settle and thread times (2026-11-23):** `thread.unsettle` reads
+`restoreUnsettledAt`, as T3's `Orchestrator.ts`: a time restores the Active anchor the settle
+cleared, `null` restores no anchor, a time that does not parse refuses the command, and a
+thread already active keeps its anchor and `updatedAt` but still records `thread.unsettled`.
+- Command times (`restoreUnsettledAt`, `snoozedUntil`, `visitedAt`) parse as T3's
+  `DateTime.make`: `conn-support/src/js_date.rs` ports V8's `Date.parse`, legacy forms
+  included, after Effect's zone rule; a time without a zone is local, in the server's zone
+  (`EngineConfig::zone`). Wire times outside years 0000 to 9999 get `toISOString`'s signed
+  six-digit year.
+- An archived thread refuses settle, auto-settle, unsettle, snooze, unsnooze, auto-settle set,
+  pin, unpin and both reorders before any other check, with T3's message.
+- The thread's `updatedAt` follows T3's `ProjectionStore.ts`: a thread event writes its
+  payload's, every other event its own time, in the row and the stored thread
+  (`PAYLOAD_UPDATED_AT_EVENTS`, generated). Pin and settle keep `updatedAt` where T3's deciders
+  do.
+- The event envelope names `providerInstanceId` where T3's does: a run's events the run's, a
+  provider event the session's, a thread event the thread's; none for a request answered by
+  message, closed link requests and remote delegation rows (`store::Instance`).
+
+- Command receipts are kept for good and record refusals, as T3's `CommandReceiptV2`: a retry
+  gets the recorded refusal again (`Command … was previously rejected: …`), and a receipt
+  answers only for its owner (`owner_kind` thread or project, `owner_id`; T3's
+  `commandThreadId`, so a fork's and a merge-back's is the target thread). Receipts from
+  before owners (main's schema 4) keep none, so a retry of a command from before the upgrade
+  is refused, never run twice. The upgrade runs in one transaction. A project command takes
+  its id inside its write (insert-if-absent; a receipt is never replaced), records its project
+  and T3's command type (`project.update` is `project.meta.update`), and records a refusal
+  from planning, which a retry gets again (T3's `commitRejectedProjectCommand`).
+  Refusals made before the decision (access, a disabled provider) stay open, as T3's
+  mode-limit refusals. A replayed `queue.resume` or `queued-run.start` checks the queue
+  again. The queue start resolves the run's effective selection (a message that follows the
+  conversation takes the thread's), and holds the queue when that provider is off by T3's queue
+  rule: only an explicit project override or a machine entry turns it off. A command that writes nothing answers its own thread's latest sequence.
+- Thread setters record their event even when nothing changes, as T3's deciders do.
+  `thread.auto-settle` refuses a thread set active or changed after its snapshot, then
+  settles. A settle whose `expectedLatestRunId` is not the latest run is refused. `thread.visit` keeps the later visit and records `thread.visit-recorded`.
+- The receipts' high-water mark reads an index. Opening the engine off the runtime thread
+  is #261's.
+
+Proof: `a_fork_receipt_belongs_to_its_target_thread`,
+`receipts_from_before_owners_name_them_or_refuse`,
+`a_repin_records_its_event_and_a_quiet_stop_answers_its_thread`,
+`a_replayed_queue_resume_starts_what_waits`, `auto_settle_rechecks_the_thread_against_its_snapshot`,
+`a_settle_for_a_stale_run_is_refused`,
+`a_delayed_visit_keeps_the_later_time`, `a_merge_back_first_message_names_its_instance`,
+`the_receipt_high_water_reads_an_index`, `the_receipt_upgrade_is_all_or_nothing`, `a_v4_store_upgrades_and_refuses_its_old_retries`,
+`a_command_id_keeps_its_outcome_across_a_reopen` (audit 1.6, 1.7),
+`a_planned_project_refusal_is_replayed`, `a_project_replay_without_its_row_is_a_read_error`,
+`a_receipt_is_never_replaced`, `the_queue_starts_on_the_effective_selection`,
+`a_project_write_checks_the_receipt_it_would_reuse`, `a_replayed_resume_holds_a_queue_whose_provider_is_off`,
+`a_stale_visit_loses_to_a_mark_in_mains_format`, `persists_rejected_command_receipts_across_retries` and the duplicate-create retry in
+`a_retried_command_returns_its_receipt` (T3's own tests, ported),
+`an_old_retry_after_an_undo_leaves_the_thread_as_it_is` (4,400 writes later),
+`date_input_matches_t3s` (T3's own answers for 1683 strings in five zones,
+`tools/gen-date-cases.mjs --check`), `each_event_type_sets_the_thread_updated_at_as_t3`,
+`thread_commands_move_updated_at_as_t3`, `an_archived_thread_refuses_lifecycle_commands_first`,
+`a_turns_events_name_the_provider_instance` and `thread_lifecycle_commands_reach_the_shell_row`
+in `conn-engine`; `client-check.mjs` (a year-10000 anchor decodes with T3's shell schema);
+`thread-cli-diff.mjs` compares every event type's `providerInstanceId` with the T3 server's.
+
+**Model catalog refresh (2026-11-23):** `server.refreshProviders` follows T3's `ws.ts`.
+- `modelCatalogOnly` answers no providers, refetches a manifest older than 5 minutes, and
+  joins the shared full probe pass until the providers were probed with the manifest now
+  known (`refreshModelCatalog`). One pass runs at a time on its own task; a cancelled caller
+  does not stop it, and it records its manifest only when every probe ended normally.
+- An accepted manifest (`conn_provider::LiveManifest`) reaches Codex, Claude and Antigravity,
+  as T3's drivers read `ModelCatalog.current`.
+- `refreshModels` fetches the manifest at once, probes, then runs each targeted, enabled and
+  installed provider's model refresh (Antigravity only, as in T3). A failure answers
+  `ProviderSetupError` (`refresh-models`) after the config streams heard the entry change.
+- Antigravity: per-model thinking levels, T3's stale-reply rule, slash commands, the drain
+  before close, and the sign-in signals (error replies, stdout and stderr URLs) that sign the
+  entry out and notify the config streams (`conn_provider::StatusNotifier`).
+- A refresh with `instanceId` and `cwd` does not scan the workspace: it probes the instance
+  and answers every entry, as before. Without a `cwd` the reply follows `omitProviders`,
+  `workspaceSnapshotsOnDemand` and `usageLimitsCommand`.
+- The manifest is refused, fetched or cached, unless its Claude adapters and compatibility
+  policies decode as T3's schema requires; the last valid one stays.
+
+Proof: tests in `methods::server`, `catalog` and `lib` (Claude), `antigravity`,
+`antigravity_provider`, `connection` and `process`, including ports of T3's
+`AntigravityProvider.test.ts` and `AntigravityDriver.test.ts` cases; each fails with its fix
+reverted. `check-copies.mjs` holds the T3 texts. Not ported: workspace-scoped refreshes
+(`snapshotForCwd`, the per-workspace snapshot cache, `workspaceScanDirectory`, the scoped
+reply with `providerCatalogsOnDemand` and `machineCatalog`) and advertising
+`providerWorkspaceSnapshotsOnDemand`; T3's rescans; Claude's capability-probe and latest-version caches (this server keeps neither).
+Claude selections compile against the catalog the picker shows (`compileClaudeModelSelection`
+over the accepted manifest, proven equal to T3's output on the bundled one).
+
 **Worktree delegates (2026-11-22):** `delegate_task` with `isolation: worktree` works, as in
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left
 out, the child bound to it; a refused or replayed command removes it. Proof: four `conn-mcp`
@@ -49,6 +138,16 @@ reply, then waits up to 10 s for the terminal; past that the Stop is marked unre
 the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff` lists the
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
+
+**WebSocket heartbeat as T3 (2026-11-23):** the server no longer closes a socket after 60 s
+without inbound frames. As in T3, the client pings every 5 s and decides when the server is
+gone (Effect `RpcClient` `makePinger`); the server only answers `Pong` (`RpcServer` `Ping`).
+A laptop that wakes sends its queued ping into a socket that is still open. A dead peer ends
+the session through the transport: a failed write, or a read error after TCP keepalive (10 min
+idle, 5 probes 60 s apart, about Linux's 15 min write give-up). T3 sets no keepalive; we do,
+because a silent dead socket would otherwise hold its session forever. Proof: session tests
+`a_suspended_client_stays_connected` (failed with 1001 before), `disconnect_stops_every_stream`,
+`a_dead_peer_is_cleaned_up_on_a_failed_write`, `accepted_sockets_get_keepalive`.
 
 ## Unserved methods: triage (2026-11-21)
 
@@ -1536,9 +1635,9 @@ for three picked at the quartiles, all anon, no swap.
   session works.
 - A client WebSocket on the host survives 30 s: the three pings it sent into the frozen server
   are answered at the thaw, and the next auth change reaches it. After 10 minutes the server
-  closes it at the thaw (1001, "idle"): the 60 s idle timer has expired and wins over the
-  buffered pings, as the timer table above says. The client reconnects and gets a new snapshot;
-  the T3 client ends such a socket itself by its ping timeout.
+  closed it at the thaw (1001, "idle"): the 60 s idle timer had expired and won over the
+  buffered pings. The client reconnected and got a new snapshot. Since 2026-11-23 the idle
+  timer is gone (see "WebSocket heartbeat as T3").
 - The provider status probe does not run: it runs only while a client holds an activity lease.
 - Orbit's idle verdict (its `fromShell` rule, window 1 h): a fresh server may sleep; after a
   turn it stays awake for 1 hour from the turn; a held turn keeps it awake; a turn that waits
@@ -1661,7 +1760,7 @@ pin; Effect's clock reads `Date.now()` and sleeps on `setTimeout` (monotonic).
 | Text generator model cache (`text_generation/mod.rs:228`) | none | never expires by time; `refresh` or a config change | the same (`textGeneration/TextGenerators.ts:146-153`) | none: no clock to move |
 | Login environment refresh, 10 s (`methods/source_control.rs:288`) | monotonic | monotonic still: one refresh within 10 s of the wake may be skipped | wall (`sourceControl/SourceControlDiscovery.ts:85`, Effect `cachedWithTTL`) | none: `std::time::Instant`, no seam; the difference lasts at most 10 s, and a wall TTL would block refreshes after a wall clock stepped back |
 | SDK host stop-when-idle (`conn-provider-support/src/sdk_host.rs:305`) | no timer: stops when the last query closes | follows the engine release above | T3 keeps the SDK in process | covered by the engine test and the existing host tests |
-| WebSocket idle close, 60 s (`session.rs:163`, `:188`) | monotonic | monotonic ran on: the idle timer and buffered client pings are ready together; `select!` may close a live socket; the client reconnects | the server has none; the client's ping timeout ends a frozen connection (Effect `RpcClient.ts:1231`) | none |
+| WebSocket liveness (`session.rs`, `keep_alive`) | **fixed** (2026-11-23): no idle timer; TCP keepalive after 10 min, 5 probes 60 s apart | a socket open across a freeze or a client's sleep stays open; the buffered pings are answered | the server has none; the client's ping timeout ends a frozen connection (Effect `RpcClient.ts` `makePinger`) | `a_suspended_client_stays_connected` |
 | Short monotonic waits: flushes, debounces, request and stop timeouts, VCS and terminal polls, the run follower (24 h), title retries | monotonic, one-shot | each fires once at the thaw; none catches up | the same, on `setTimeout` | none |
 
 Fixed: the lease, `/mcp` credential and interval rows (above). Not fixed, for Nick:

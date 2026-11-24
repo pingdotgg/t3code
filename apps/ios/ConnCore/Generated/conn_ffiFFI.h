@@ -306,6 +306,13 @@ typedef void (*UniffiCallbackInterfaceOrbitListenerMethod3)(uint64_t, void* _Non
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_FFI_TEXT_FITS_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_FFI_TEXT_FITS_METHOD0
+typedef void (*UniffiCallbackInterfaceFfiTextFitsMethod0)(uint64_t, RustBuffer, int8_t, int8_t* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_CORE_LISTENER
 #define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_CORE_LISTENER
 typedef struct UniffiVTableCallbackInterfaceCoreListener {
@@ -329,6 +336,15 @@ typedef struct UniffiVTableCallbackInterfaceOrbitListener {
     UniffiCallbackInterfaceOrbitListenerMethod2 _Nonnull onFleetChanged;
     UniffiCallbackInterfaceOrbitListenerMethod3 _Nonnull onProfileChanged;
 } UniffiVTableCallbackInterfaceOrbitListener;
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_FFI_TEXT_FITS
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_FFI_TEXT_FITS
+typedef struct UniffiVTableCallbackInterfaceFfiTextFits {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfaceFfiTextFitsMethod0 _Nonnull fits;
+} UniffiVTableCallbackInterfaceFfiTextFits;
 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_CONNCORE
@@ -641,6 +657,26 @@ void uniffi_conn_ffi_fn_method_orbitlistener_on_fleet_changed(uint64_t ptr, Rust
 void uniffi_conn_ffi_fn_method_orbitlistener_on_profile_changed(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_FFITEXTFITS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_FFITEXTFITS
+uint64_t uniffi_conn_ffi_fn_clone_ffitextfits(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FREE_FFITEXTFITS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FREE_FFITEXTFITS
+void uniffi_conn_ffi_fn_free_ffitextfits(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_INIT_CALLBACK_VTABLE_FFITEXTFITS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_INIT_CALLBACK_VTABLE_FFITEXTFITS
+void uniffi_conn_ffi_fn_init_callback_vtable_ffitextfits(const UniffiVTableCallbackInterfaceFfiTextFits* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_FFITEXTFITS_FITS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_FFITEXTFITS_FITS
+int8_t uniffi_conn_ffi_fn_method_ffitextfits_fits(uint64_t ptr, RustBuffer text, int8_t with_more, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_ORBIT_DERIVE_INSTANCE_NAME
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_ORBIT_DERIVE_INSTANCE_NAME
 RustBuffer uniffi_conn_ffi_fn_func_orbit_derive_instance_name(RustBuffer message, RustBuffer suffix, RustCallStatus *_Nonnull out_status
@@ -659,6 +695,31 @@ RustBuffer uniffi_conn_ffi_fn_func_phone_tasks_error_text(RustBuffer reason, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PHONE_TASKS_VIEW
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PHONE_TASKS_VIEW
 RustBuffer uniffi_conn_ffi_fn_func_phone_tasks_view(RustBuffer list, RustBuffer lane, RustBuffer query, int64_t now_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_ANSWERS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_ANSWERS
+RustBuffer uniffi_conn_ffi_fn_func_question_answers(RustBuffer pending, RustBuffer drafts, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_CONTEXT_CLAMP
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_CONTEXT_CLAMP
+RustBuffer uniffi_conn_ffi_fn_func_question_context_clamp(RustBuffer preview, uint64_t fits, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_PANEL
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_PANEL
+RustBuffer uniffi_conn_ffi_fn_func_question_panel(RustBuffer pending, uint32_t step, RustBuffer drafts, RustBuffer typed_answer, int8_t responding, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_SET_CUSTOM_ANSWER
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_SET_CUSTOM_ANSWER
+RustBuffer uniffi_conn_ffi_fn_func_question_set_custom_answer(RustBuffer pending, RustBuffer question_id, RustBuffer drafts, RustBuffer text, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_TOGGLE_OPTION
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_QUESTION_TOGGLE_OPTION
+RustBuffer uniffi_conn_ffi_fn_func_question_toggle_option(RustBuffer pending, RustBuffer question_id, RustBuffer drafts, RustBuffer value, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_BUILTIN_THEMES
@@ -958,6 +1019,36 @@ uint16_t uniffi_conn_ffi_checksum_func_phone_tasks_error_text(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PHONE_TASKS_VIEW
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PHONE_TASKS_VIEW
 uint16_t uniffi_conn_ffi_checksum_func_phone_tasks_view(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_ANSWERS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_ANSWERS
+uint16_t uniffi_conn_ffi_checksum_func_question_answers(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_CONTEXT_CLAMP
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_CONTEXT_CLAMP
+uint16_t uniffi_conn_ffi_checksum_func_question_context_clamp(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_PANEL
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_PANEL
+uint16_t uniffi_conn_ffi_checksum_func_question_panel(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_SET_CUSTOM_ANSWER
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_SET_CUSTOM_ANSWER
+uint16_t uniffi_conn_ffi_checksum_func_question_set_custom_answer(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_TOGGLE_OPTION
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_QUESTION_TOGGLE_OPTION
+uint16_t uniffi_conn_ffi_checksum_func_question_toggle_option(void
     
 );
 #endif
@@ -1276,6 +1367,12 @@ uint16_t uniffi_conn_ffi_checksum_method_orbitlistener_on_fleet_changed(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_ORBITLISTENER_ON_PROFILE_CHANGED
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_ORBITLISTENER_ON_PROFILE_CHANGED
 uint16_t uniffi_conn_ffi_checksum_method_orbitlistener_on_profile_changed(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_FFITEXTFITS_FITS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_FFITEXTFITS_FITS
+uint16_t uniffi_conn_ffi_checksum_method_ffitextfits_fits(void
     
 );
 #endif
