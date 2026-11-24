@@ -529,6 +529,40 @@ it.effect("adds unstarted same-repository workflow runs as pending, not as appro
   ),
 );
 
+it.effect("counts same-repository workflow runs awaiting approval", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(detail.workflowApprovalsRequired).toBe(1);
+    expect(detail.checks).toContainEqual({
+      name: "bot tests",
+      status: "action-required",
+      description: "A maintainer must approve this workflow before it can run.",
+      url: "https://github.com/acme/web/actions/runs/301",
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        revalidateChecks: (_input, read) => read,
+        // A bot opened this pull request from a branch in the base repository.
+        getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
+        listUnfinishedWorkflowRuns: () => Effect.succeed([]),
+        listWorkflowRunsRequiringApproval: () =>
+          Effect.succeed([
+            { id: 301, name: "bot tests", url: "https://github.com/acme/web/actions/runs/301" },
+          ]),
+        getViewerAccess: () => Effect.succeed(coreFields.viewerAccess),
+      }),
+    ),
+  ),
+);
+
 it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
   Effect.gen(function* () {
     const provider = yield* make;
