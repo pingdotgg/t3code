@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -609,14 +610,40 @@ export const makeProviderInstanceRegistry = Effect.fn(
   });
   const configMapRef = yield* Ref.make(input.configMap);
   const semaphore = yield* Semaphore.make(1);
+  // `configMapRef` is the map being built; `appliedRef` is set once that build finishes. Startup's
+  // deferred build counts as applied: instances parked on their secrets are its background read's job.
+  const appliedRef = yield* Ref.make(input.configMap);
+  const applyLocked = (configMap: ProviderInstanceConfigMap) =>
+    Ref.set(configMapRef, configMap).pipe(
+      Effect.andThen(reconcileWithR(configMap)),
+      Effect.andThen(Ref.set(appliedRef, configMap)),
+      Effect.provideContext(driverContext),
+    );
+  const isApplied = (configMap: ProviderInstanceConfigMap) =>
+    Effect.all([Ref.get(configMapRef), Ref.get(appliedRef)]).pipe(
+      Effect.map(
+        ([building, applied]) =>
+          Equal.equals(building, configMap) && Equal.equals(applied, configMap),
+      ),
+    );
   const reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"] =
-    (configMap) =>
-      semaphore.withPermits(1)(
-        Ref.set(configMapRef, configMap).pipe(
-          Effect.andThen(reconcileWithR(configMap)),
-          Effect.provideContext(driverContext),
-        ),
-      );
+    (configMap) => semaphore.withPermits(1)(applyLocked(configMap));
+  // Checked before the lock too, since a reconcile can hold it while a vault waits to unlock.
+  const reconcileIfChanged: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcileIfChanged"] =
+    Effect.fn("ProviderInstanceRegistry.reconcileIfChanged")(function* (configMap) {
+      if (yield* isApplied(configMap)) return;
+      yield* semaphore
+        .withPermits(1)(
+          isApplied(configMap).pipe(
+            Effect.flatMap((applied) => (applied ? Effect.void : applyLocked(configMap))),
+          ),
+        )
+        .pipe(
+          // A caller that goes away mid-build must not strand created instance scopes.
+          Effect.forkIn(parentScope),
+          Effect.flatMap(Fiber.join),
+        );
+    });
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
   // not restart providers whose credentials are the same. Without `checked` the cached values are
@@ -758,6 +785,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
   const mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape = {
     reconcile,
+    reconcileIfChanged,
     reloadSecrets,
     rebuild,
     applySecret,

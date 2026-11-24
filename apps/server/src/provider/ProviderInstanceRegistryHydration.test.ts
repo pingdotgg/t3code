@@ -171,6 +171,7 @@ describe("layerSettingsWatcher", () => {
       let reloads = 0;
       const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
         reconcile: () => Queue.offer(reconciled, undefined),
+        reconcileIfChanged: () => Effect.void,
         reloadSecrets: () => Effect.sync(() => void reloads++),
         rebuild: () => Effect.void,
         applySecret: () => Effect.succeed([]),

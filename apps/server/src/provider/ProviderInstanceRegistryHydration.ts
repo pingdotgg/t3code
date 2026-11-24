@@ -134,6 +134,26 @@ const vaultConfigs = (settings: ServerSettings) =>
 // A host built earlier (for the ACP registry) lacks PortDiscovery; build this one fresh.
 export const providerHostLayer = Layer.fresh(ProviderHostLive.layer);
 
+/**
+ * Reads the current settings rather than a caller's copy, so a stale save cannot roll the registry
+ * back. Settings are already saved, so a failed read is logged and the registry keeps its instances.
+ */
+export const applyCurrentSettings = Effect.fn(
+  "ProviderInstanceRegistryHydration.applyCurrentSettings",
+)(
+  function* (
+    serverSettings: Settings.ServerSettingsService["Service"],
+    reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"],
+  ) {
+    const current = yield* serverSettings.getSettings;
+    yield* reconcile(deriveProviderInstanceConfigMap(current));
+    return current;
+  },
+  Effect.catchCause((cause) =>
+    Effect.logError("ProviderInstanceRegistry reconcile failed", cause).pipe(Effect.as(undefined)),
+  ),
+);
+
 export const layerSettingsWatcher = (
   settingsChanges: Stream.Stream<ServerSettings>,
   // The settings the registry was built from: a change queued during startup differs from these.
@@ -145,26 +165,19 @@ export const layerSettingsWatcher = (
       const serverSettings = yield* Settings.ServerSettingsService;
       let secretProviders = initialSettings && vaultConfigs(initialSettings);
       yield* settingsChanges.pipe(
+        // The subscription predates the seed read, so a queued change can be older than the seed.
         Stream.runForEach(() =>
-          // The subscription predates the seed read, so a queued change can be
-          // older than the seed. A failed current read must leave the registry intact.
-          serverSettings.getSettings.pipe(
-            Effect.flatMap((current) =>
-              Effect.gen(function* () {
-                yield* mutator.reconcile(deriveProviderInstanceConfigMap(current));
-                // Reconcile leaves instances parked on an unreadable secret alone,
-                // and a corrected secret provider is what can make them readable.
-                const next = vaultConfigs(current);
-                if (!NodeUtil.isDeepStrictEqual(secretProviders, next)) {
-                  secretProviders = next;
-                  yield* mutator.reloadSecrets();
-                }
-              }),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-            ),
-          ),
+          Effect.gen(function* () {
+            const current = yield* applyCurrentSettings(serverSettings, mutator.reconcile);
+            if (current === undefined) return;
+            // Reconcile leaves instances parked on an unreadable secret alone,
+            // and a corrected secret provider is what can make them readable.
+            const next = vaultConfigs(current);
+            if (!NodeUtil.isDeepStrictEqual(secretProviders, next)) {
+              secretProviders = next;
+              yield* mutator.reloadSecrets();
+            }
+          }),
         ),
         Effect.forkScoped,
       );
