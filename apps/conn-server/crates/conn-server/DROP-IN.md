@@ -143,6 +143,14 @@ as a bare executable. `tools/macos-app.sh --from <folder with conn-server and sd
 <dir>` builds it: the binary in `Contents/MacOS`, `sdk-host/` and Conn's icon in
 `Contents/Resources`, signed with Developer ID and the hardened runtime.
 
+**Where it comes from.** Each `conn-server-v*` release ships it as
+`conn-server-<version>-macos-arm64.zip` (with a `.sha256`), beside the Linux tarball. The
+`macos` job of `.github/workflows/conn-server-release.yml` builds it on the self-hosted runner on
+mini (label `conn-mac-release`, whose login keychain holds the identity):
+`tools/release-tarball.mjs --platform macos-arm64` makes the folder, `macos-app.sh` signs it,
+and the job checks the team id before it zips the bundle with `ditto`. To build one by hand on
+an arm64 Mac, run the same two commands.
+
 **Why.** For a bare executable TCC keys a grant by its path (`client_type` 1 in `TCC.db`), so
 each new install path asked again and listed one more nameless entry without an icon. Screen
 capture comes from the server's children, not from the server: agents run `screencapture`, and

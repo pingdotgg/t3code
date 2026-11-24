@@ -1,13 +1,19 @@
 name: Conn Server Release
 
-# Builds the tarball that Orbit downloads into its agent folder
-# (apps/conn-server/tools/release-tarball.mjs; crates/conn-server/DROP-IN.md, "Release tarball
-# for Orbit"): conn-server-<version>-linux-x64.tar.gz with the musl binary and the SDK host.
+# Builds two release files (apps/conn-server/tools/release-tarball.mjs; crates/conn-server/DROP-IN.md):
+#
+# - `tarball`: conn-server-<version>-linux-x64.tar.gz with the musl binary and the SDK host,
+#   which Orbit downloads into its agent folder ("Release tarball for Orbit").
+# - `macos`: conn-server-<version>-macos-arm64.zip with `Conn Server.app`, signed with Developer
+#   ID by tools/macos-app.sh ("macOS app bundle"). It runs on the self-hosted runner on mini
+#   (label `conn-mac-release`), whose login keychain holds the identity. Not notarized: installs
+#   go over SSH, so nothing gets the quarantine flag. nckrtl/conn is public, so this workflow
+#   never runs on pull_request, and the job has a read-only token.
 #
 # - A pushed tag `conn-server-v<version>`: the version must equal the conn-server crate's; the
-#   run makes a GitHub Release with the tarball and its `.sha256` file. It is never marked
+#   run makes a GitHub Release with both files and their `.sha256` files. It is never marked
 #   Latest, so Conn's own releases stay the repository's latest.
-# - workflow_dispatch on a branch: builds and keeps the tarball as a workflow artifact only.
+# - workflow_dispatch on a branch: builds and keeps both files as workflow artifacts only.
 #   On a tag it makes the Release, as a push does.
 #
 # Conn's release.yml takes tags `v*.*.*`; this one only `conn-server-v*`. Neither matches the
@@ -111,10 +117,85 @@ jobs:
           path: apps/conn-server/dist/
           retention-days: 14
 
+  macos:
+    name: Signed app (macos-arm64)
+    runs-on: [conn-mac-release]
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /apps/conn-server/
+            /assets/conn/prod/conn-prod-macos-1024.png
+          sparse-checkout-cone-mode: false
+
+      # rustup on the runner installs the toolchain that rust-toolchain.toml pins; Node 24 from
+      # vite-plus runs the script and the SDK host smoke test.
+      - name: Tools
+        run: |
+          rustc --version
+          node --version
+          security find-identity -v -p codesigning | grep -F "(9SVJ4SYB9B)"
+
+      - name: Build the release folder
+        id: folder
+        run: |
+          # One target folder for every run, beside the checkout (checkout's clean keeps it), so
+          # a run rebuilds only what changed. Old toolchain and dependency builds pile up in it,
+          # so it starts over above 20 GiB.
+          export CARGO_TARGET_DIR="$RUNNER_WORKSPACE/conn-server-target"
+          if [ -d "$CARGO_TARGET_DIR" ] && [ "$(du -sk "$CARGO_TARGET_DIR" | cut -f 1)" -gt $((20 * 1024 * 1024)) ]; then
+            echo "Target folder over 20 GiB; starting it over."
+            rm -rf "$CARGO_TARGET_DIR"
+          fi
+          rm -rf dist
+          node tools/release-tarball.mjs --platform macos-arm64 --out dist
+          folder="$(echo dist/conn-server-*-macos-arm64)"
+          [ -d "$folder" ] || { echo "::error::No release folder in dist"; exit 1; }
+          name="$(basename "$folder")"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "folder=$folder" >> "$GITHUB_OUTPUT"
+
+      - name: Build and sign Conn Server.app
+        env:
+          FOLDER: ${{ steps.folder.outputs.folder }}
+          COMMIT: ${{ github.sha }}
+        run: tools/macos-app.sh --from "$FOLDER" --out dist/app --commit "$COMMIT"
+
+      - name: Verify the signature
+        run: |
+          app="dist/app/Conn Server.app"
+          codesign --verify --strict --deep --verbose=2 "$app"
+          details="$(codesign -dv "$app" 2>&1)"
+          echo "$details"
+          grep -qx "TeamIdentifier=9SVJ4SYB9B" <<<"$details" || { echo "::error::Not signed by team 9SVJ4SYB9B"; exit 1; }
+          grep -q "flags=.*runtime" <<<"$details" || { echo "::error::No hardened runtime"; exit 1; }
+
+      - name: Zip
+        env:
+          NAME: ${{ steps.folder.outputs.name }}
+        run: |
+          mkdir dist/release
+          zip="dist/release/$NAME.zip"
+          ditto -c -k --keepParent "dist/app/Conn Server.app" "$zip"
+          (cd dist/release && shasum -a 256 "$NAME.zip" > "$NAME.zip.sha256" && shasum -a 256 --check "$NAME.zip.sha256")
+          {
+            printf '**%s.zip**: %s bytes\n\n' "$NAME" "$(stat -f %z "$zip")"
+            printf 'sha256: %s\n' "$(cut -d ' ' -f 1 "$zip.sha256")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the zip
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.folder.outputs.name }}
+          path: apps/conn-server/dist/release/
+          retention-days: 14
+
   # Its own job, so the write token never meets the checkout or the build.
   release:
     name: GitHub Release
-    needs: tarball
+    needs: [tarball, macos]
     if: ${{ needs.tarball.outputs.release == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -127,6 +208,12 @@ jobs:
           name: conn-server-${{ needs.tarball.outputs.version }}-linux-x64
           path: dist
 
+      - name: Download the macOS app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: conn-server-${{ needs.tarball.outputs.version }}-macos-arm64
+          path: dist
+
       - name: Create the GitHub Release
         working-directory: .
         env:
@@ -134,10 +221,14 @@ jobs:
           VERSION: ${{ needs.tarball.outputs.version }}
         run: |
           name="conn-server-$VERSION-linux-x64.tar.gz"
+          app="conn-server-$VERSION-macos-arm64.zip"
+          notes="$(printf '%s\n\n%s\n' \
+            "- \`$name\`: the Conn Server $VERSION for Orbit's agent folder, the x86_64-unknown-linux-musl binary and the SDK host. sha256 $(cut -d ' ' -f 1 "dist/$name.sha256")." \
+            "- \`$app\`: \`Conn Server.app\` for Apple silicon Macs, signed with Developer ID (team 9SVJ4SYB9B) and the hardened runtime, not notarized. sha256 $(cut -d ' ' -f 1 "dist/$app.sha256").")"
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "conn-server $VERSION" \
-            --notes "The Conn Server $VERSION for Orbit's agent folder: the x86_64-unknown-linux-musl binary and the SDK host. sha256 $(cut -d ' ' -f 1 "dist/$name.sha256")." \
+            --notes "$notes" \
             --verify-tag \
             --latest=false \
-            "dist/$name" "dist/$name.sha256"
+            "dist/$name" "dist/$name.sha256" "dist/$app" "dist/$app.sha256"
