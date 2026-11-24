@@ -169,15 +169,14 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     }
     return undefined;
   });
+  // null: this launcher runs first; a path: another t3 does; undefined: no t3 on PATH.
   const found = yield* firstOther;
-  const onPath = found === null;
-  const shadowedBy = found ?? undefined;
   return {
     link,
-    onPath: onPath && shadowedBy === undefined,
-    shadowedBy,
+    onPath: found === null,
+    shadowedBy: found ?? undefined,
     pathCommand:
-      onPath || shadowedBy !== undefined
+      found !== undefined
         ? undefined
         : windows
           ? // PowerShell; it covers this window only, since changing the saved PATH would flatten

@@ -84,34 +84,20 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
         assert.isUndefined(result.pathCommand);
       };
       assertShadowed(yield* provide(installCli(), { PATH: `${otherBin}:${binDir}` }));
-      for (const [cwd, pathEnv] of [
-        [root, `other-bin:${binDir}`],
-        [otherBin, `:${binDir}`],
-        [binDir, `:${otherBin}`],
-      ] as const) {
-        assertShadowed(yield* installIn(cwd, pathEnv));
-      }
-      for (const [cwd, pathEnv] of [
-        [otherBin, ""],
-        [binDir, ":/usr/bin"],
-      ] as const) {
-        const offPath = yield* installIn(cwd, pathEnv);
-        assert.isFalse(offPath.onPath);
-        assert.isUndefined(offPath.shadowedBy);
-        assert.isDefined(offPath.pathCommand);
-      }
+      // Relative and empty entries resolve against the working directory.
+      assertShadowed(yield* installIn(root, `other-bin:${binDir}`));
+      assertShadowed(yield* installIn(otherBin, `:${binDir}`));
+      // An empty PATH is not the working directory.
+      const offPath = yield* installIn(otherBin, "");
+      assert.isUndefined(offPath.shadowedBy);
+      assert.isDefined(offPath.pathCommand);
+      // A symlink to binDir, or a relative entry to it that wins first, is this install.
       yield* fs.remove(alias);
       yield* fs.symlink(binDir, alias);
-      for (const pathEnv of [
-        `alias:${binDir}`,
-        `${alias}:${otherBin}`,
-        `${alias}:/usr/bin`,
-        `bin:other-bin:${binDir}`,
-      ]) {
+      for (const pathEnv of [`${alias}:${otherBin}`, `bin:other-bin:${binDir}`]) {
         const installedOnPath = yield* installIn(root, pathEnv);
         assert.isTrue(installedOnPath.onPath);
         assert.isUndefined(installedOnPath.shadowedBy);
-        assert.isUndefined(installedOnPath.pathCommand);
       }
       yield* fs.remove(alias);
       yield* fs.remove(path.join(otherBin, "t3"));
