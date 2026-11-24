@@ -1,9 +1,22 @@
+fragment PlanningStatusFields on PlanningStatus {
+  id
+  name
+  category {
+    key
+    state
+    stateReason
+  }
+}
+
 fragment IssueRow on Issue {
   number
   title
   url
   state
   stateReason
+  status @include(if: $statuses) {
+    ...PlanningStatusFields
+  }
   createdAt
   updatedAt
   closedAt
@@ -16,7 +29,7 @@ fragment IssueRow on Issue {
   }
 }
 
-query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
+query IssueSearch($q: String!, $cursor: String, $rows: Int!, $statuses: Boolean!) {
   search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
     pageInfo {
       hasNextPage
@@ -46,12 +59,17 @@ query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
   }
 }
 
-query IssueDetail($owner: String!, $name: String!, $number: Int!) {
+query IssueDetail($owner: String!, $name: String!, $number: Int!, $statuses: Boolean!) {
   viewer {
     login
   }
   repository(owner: $owner, name: $name) {
     viewerPermission
+    planningStatuses(first: 50) @include(if: $statuses) {
+      nodes {
+        ...PlanningStatusFields
+      }
+    }
     issue(number: $number) {
       ...IssueRow
       assignees(first: 100) {
@@ -79,6 +97,7 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
       viewerCanUpdate
       viewerCanClose
       viewerCanReopen
+      viewerCanSetStatus @include(if: $statuses)
       ...Reactions
       comments(last: 100) {
         totalCount
@@ -281,8 +300,13 @@ query IssueLinkMetadata($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
-query IssueNodeId($owner: String!, $name: String!, $number: Int!) {
+query IssueNodeId($owner: String!, $name: String!, $number: Int!, $statuses: Boolean!) {
   repository(owner: $owner, name: $name) {
+    planningStatuses(first: 50) @include(if: $statuses) {
+      nodes {
+        ...PlanningStatusFields
+      }
+    }
     issue(number: $number) {
       id
       state
@@ -427,5 +451,11 @@ query IssueCollections(
         }
       }
     }
+  }
+}
+
+mutation SetIssueStatus($issueId: ID!, $statusId: ID!) {
+  setIssueStatus(input: { issueId: $issueId, statusId: $statusId }) {
+    clientMutationId
   }
 }

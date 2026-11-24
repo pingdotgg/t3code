@@ -72,14 +72,42 @@ const NOT_PLANNED: IssueState = {
 
 const DUPLICATE: IssueState = { category: "closed", name: "Duplicate", closeReason: "duplicate" };
 
-/** What an issue can be moved to: open, or closed for one of the reasons GitHub records. */
+/**
+ * What an issue can be moved to in a repository without issue statuses: open, or closed for one
+ * of the reasons GitHub records.
+ */
 export const ISSUE_STATES: ReadonlyArray<IssueState> = [OPEN, COMPLETED, NOT_PLANNED, DUPLICATE];
+
+/** A status's category decides whether it opens or closes the issue, and why it closed. */
+export function toPlanningState(status: Issues.PlanningStatusFields): IssueState {
+  if (status.category.state !== "CLOSED") return { category: "open", name: status.name };
+  const reason = status.category.stateReason;
+  return {
+    category: "closed",
+    name: status.name,
+    ...(reason == null || reason === "REOPENED"
+      ? {}
+      : { closeReason: reason.toLowerCase().replace("_", "-") }),
+  };
+}
+
+/** The repository's issue statuses in display order, or none where it has none. */
+export function planningStatusesOf(
+  connection:
+    | { readonly nodes: ReadonlyArray<Issues.PlanningStatusFields | null> | null }
+    | null
+    | undefined,
+): ReadonlyArray<Issues.PlanningStatusFields> {
+  return (connection?.nodes ?? []).flatMap((node) => (node === null ? [] : [node]));
+}
 
 /** GitHub uses uppercase close reasons; an open issue has `""` or `REOPENED`. */
 function toIssueState(
   state: string | null | undefined,
   stateReason: string | null | undefined,
+  status: Issues.PlanningStatusFields | null | undefined,
 ): IssueState {
+  if (status != null) return toPlanningState(status);
   if (state?.trim().toUpperCase() !== "CLOSED") return OPEN;
   const reason = stateReason?.trim().toUpperCase();
   if (reason === "COMPLETED") return COMPLETED;
@@ -94,7 +122,7 @@ function toSummary(raw: Omit<Issues.NodesIssue, "__typename">): TrackerIssueSumm
     title: raw.title,
     url: raw.url,
     author: toActor(raw.author),
-    state: toIssueState(raw.state, raw.stateReason),
+    state: toIssueState(raw.state, raw.stateReason, raw.status),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
     closedAt: trimmed(raw.closedAt),
@@ -225,7 +253,9 @@ function toViewerPermissions(raw: {
     readonly viewerCanUpdate: boolean;
     readonly viewerCanClose: boolean;
     readonly viewerCanReopen: boolean;
+    readonly viewerCanSetStatus?: boolean | undefined;
   } | null;
+  readonly hasStatuses: boolean;
 }): IssueViewerPermissions {
   const canUpdate = raw.issue?.viewerCanUpdate !== false;
   const canTriage = ["ADMIN", "MAINTAIN", "WRITE", "TRIAGE"].includes(
@@ -235,7 +265,11 @@ function toViewerPermissions(raw: {
     // Triage may close and reopen an issue it may not edit, so this is not `viewerCanUpdate`.
     setState:
       raw.issue === null ||
-      (raw.issue.state === "CLOSED" ? raw.issue.viewerCanReopen : raw.issue.viewerCanClose),
+      (raw.hasStatuses && raw.issue.viewerCanSetStatus !== undefined
+        ? raw.issue.viewerCanSetStatus
+        : raw.issue.state === "CLOSED"
+          ? raw.issue.viewerCanReopen
+          : raw.issue.viewerCanClose),
     comment: true,
     edit: canUpdate,
     labels: canTriage,
@@ -263,6 +297,7 @@ export function toIssueDetail({
   const issue = repository?.issue;
   if (issue == null) return null;
   const viewer = trimmed(rawViewer?.login);
+  const statuses = planningStatusesOf(repository?.planningStatuses);
 
   // Closing references lead; a cross-reference seen twice is filed under the stronger relation.
   const links = new Map<string, IssueLinkedPullRequest>();
@@ -293,8 +328,9 @@ export function toIssueDetail({
     viewerPermissions: toViewerPermissions({
       viewerPermission: repository?.viewerPermission,
       issue,
+      hasStatuses: statuses.length > 0,
     }),
-    states: ISSUE_STATES,
+    states: statuses.length > 0 ? statuses.map(toPlanningState) : ISSUE_STATES,
     reactions: toReactions(issue.reactionGroups, viewer),
     comments: toComments(issue.comments, viewer),
     commentsCursor: previousCursorOf(issue.comments?.pageInfo),

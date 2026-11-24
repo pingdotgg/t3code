@@ -3,6 +3,39 @@ import { GraphQL, GraphQLGroup } from "effect/graphql"
 import * as Schema from "effect/Schema"
 import * as Shared from "../../schema/github.graphql.ts"
 
+/**
+ * The category of a planning status, which decides whether the issue is open or
+ * closed. Issue statuses are in preview and only available to accounts enrolled in the preview.
+ */
+export const PlanningStatusCategory = Schema.Struct({
+  /**
+   * A stable identifier for the category, such as `new`, `backlog`, `planned`,
+   * `started`, `completed`, `not_planned` or `duplicate`. Clients should expect
+   * new keys to be added.
+   */
+  key: Schema.String,
+  /** The state an issue in this category has. */
+  state: GraphQL.enumLiterals(Shared.IssueState.literals),
+  /** The reason a closed issue in this category was closed, or null when the category is open. */
+  stateReason: Schema.NullOr(GraphQL.enumLiterals(Shared.IssueStateReason.literals))
+})
+export interface PlanningStatusCategory extends Schema.Struct.Type<typeof PlanningStatusCategory.fields> {}
+
+/**
+ * `fragment PlanningStatusFields on PlanningStatus`
+ *
+ * A planning status an issue can be in. Issue statuses are in preview and only available to accounts enrolled in the preview.
+ */
+export const PlanningStatusFields = Schema.Struct({
+  /** The Node ID of the PlanningStatus object */
+  id: Shared.ID,
+  /** The display name of the planning status. */
+  name: Schema.String,
+  /** The category of the planning status, which decides whether the issue is open or closed. */
+  category: PlanningStatusCategory
+})
+export interface PlanningStatusFields extends Schema.Struct.Type<typeof PlanningStatusFields.fields> {}
+
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const AuthorUser = Schema.Struct({
   __typename: Schema.Literal("User"),
@@ -41,6 +74,12 @@ export const IssueRow = Schema.Struct({
   state: GraphQL.enumLiterals(Shared.IssueState.literals),
   /** Identifies the reason for the issue state. */
   stateReason: Schema.NullOr(GraphQL.enumLiterals(Shared.IssueStateReason.literals)),
+  /**
+   * The status of this issue, or null when it has none or issue statuses aren't
+   * available in the repository. Issue statuses are in preview and only available
+   * to accounts enrolled in the preview.
+   */
+  status: Schema.optionalKey(Schema.NullOr(PlanningStatusFields)),
   /** Identifies the date and time when the object was created. */
   createdAt: Shared.DateTime,
   /** Identifies the date and time when the object was last updated. */
@@ -146,19 +185,22 @@ export const IssueSearch = GraphQL.query("IssueSearch", {
     variables: [
       { name: "q", body: "String!" },
       { name: "cursor", body: "String" },
-      { name: "rows", body: "Int!" }
+      { name: "rows", body: "Int!" },
+      { name: "statuses", body: "Boolean!" }
     ],
     selections: [
-      { name: "search", body: ["(query:$", "q", " type:ISSUE first:$", "rows", " after:$", "cursor", "){pageInfo{hasNextPage endCursor}nodes{__typename...on Issue{...IssueRow assignees(first:20){nodes{login name avatarUrl}}labels(first:20){nodes{name color}}comments{totalCount}}}}"] }
+      { name: "search", body: ["(query:$", "q", " type:ISSUE first:$", "rows", " after:$", "cursor", "){pageInfo{hasNextPage endCursor}nodes{__typename...on Issue{...", "IssueRow", " assignees(first:20){nodes{login name avatarUrl}}labels(first:20){nodes{name color}}comments{totalCount}}}}"] }
     ],
     fragments: [
-      { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] }
+      { name: "IssueRow", body: ["on Issue{number title url state stateReason status@include(if:$", "statuses", "){...PlanningStatusFields}createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
+      { name: "PlanningStatusFields", body: ["on PlanningStatus{id name category{key state stateReason}}"] }
     ]
   },
   variables: {
     q: Schema.String,
     cursor: Schema.optional(Schema.NullOr(Schema.String)),
-    rows: Shared.Int
+    rows: Shared.Int,
+    statuses: Schema.Boolean
   },
   result: Schema.Struct({
     /** Perform a search across resources, returning a maximum of 1,000 results. */
@@ -176,6 +218,13 @@ export const ViewerUser = Schema.Struct({
   login: Schema.String
 })
 export interface ViewerUser extends Schema.Struct.Type<typeof ViewerUser.fields> {}
+
+/** The connection type for PlanningStatus. */
+export const PlanningStatusConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PlanningStatusFields)))
+})
+export interface PlanningStatusConnection extends Schema.Struct.Type<typeof PlanningStatusConnection.fields> {}
 
 /** A list of users. */
 export const IssueAssigneesUserConnection = Schema.Struct({
@@ -556,6 +605,11 @@ export const IssueDetailRepositoryIssueIssue = Schema.Struct({
   viewerCanClose: Schema.Boolean,
   /** Indicates if the object can be reopened by the viewer. */
   viewerCanReopen: Schema.Boolean,
+  /**
+   * Whether the viewer can set this issue's status. Issue statuses are in preview
+   * and only available to accounts enrolled in the preview.
+   */
+  viewerCanSetStatus: Schema.optionalKey(Schema.Boolean),
   /** A list of reactions grouped by content left on the subject. */
   reactionGroups: Schema.NullOr(Schema.Array(ReactionGroup)),
   /** A list of comments associated with the Issue. */
@@ -571,6 +625,13 @@ export interface IssueDetailRepositoryIssueIssue extends Schema.Struct.Type<type
 export const IssueDetailRepositoryRepository = Schema.Struct({
   /** The users permission level on the repository. Will return null if authenticated as an GitHub App. */
   viewerPermission: Schema.NullOr(GraphQL.enumLiterals(Shared.RepositoryPermission.literals)),
+  /**
+   * The planning statuses issues in this repository can be in, or null when issue
+   * statuses aren't available for this repository or viewer. Planning statuses are
+   * returned in display order. Issue statuses are in preview and only available to
+   * accounts enrolled in the preview.
+   */
+  planningStatuses: Schema.optionalKey(Schema.NullOr(PlanningStatusConnection)),
   /** Returns a single issue from the current repository by number. */
   issue: Schema.NullOr(IssueDetailRepositoryIssueIssue)
 })
@@ -582,21 +643,24 @@ export const IssueDetail = GraphQL.query("IssueDetail", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "statuses", body: "Boolean!" }
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){viewerPermission issue(number:$", "number", "){...IssueRow assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number url repository{nameWithOwner}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){viewerPermission planningStatuses(first:50)@include(if:$", "statuses", "){nodes{...PlanningStatusFields}}issue(number:$", "number", "){...", "IssueRow", " assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen viewerCanSetStatus@include(if:$", "statuses", ")...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number url repository{nameWithOwner}}}}}}}}"] }
     ],
     fragments: [
-      { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
+      { name: "PlanningStatusFields", body: ["on PlanningStatus{id name category{key state stateReason}}"] },
+      { name: "IssueRow", body: ["on Issue{number title url state stateReason status@include(if:$", "statuses", "){...PlanningStatusFields}createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
       { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
     ]
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    statuses: Schema.Boolean
   },
   result: Schema.Struct({
     /** The currently authenticated user. */
@@ -727,6 +791,13 @@ export interface IssueNodeIdRepositoryIssueIssue extends Schema.Struct.Type<type
 
 /** A repository contains the content for a project. */
 export const IssueNodeIdRepositoryRepository = Schema.Struct({
+  /**
+   * The planning statuses issues in this repository can be in, or null when issue
+   * statuses aren't available for this repository or viewer. Planning statuses are
+   * returned in display order. Issue statuses are in preview and only available to
+   * accounts enrolled in the preview.
+   */
+  planningStatuses: Schema.optionalKey(Schema.NullOr(PlanningStatusConnection)),
   /** Returns a single issue from the current repository by number. */
   issue: Schema.NullOr(IssueNodeIdRepositoryIssueIssue)
 })
@@ -738,17 +809,21 @@ export const IssueNodeId = GraphQL.query("IssueNodeId", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "statuses", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){id state stateReason}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){planningStatuses(first:50)@include(if:$", "statuses", "){nodes{...PlanningStatusFields}}issue(number:$", "number", "){id state stateReason}}"] }
     ],
-    fragments: []
+    fragments: [
+      { name: "PlanningStatusFields", body: ["on PlanningStatus{id name category{key state stateReason}}"] }
+    ]
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    statuses: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -1085,5 +1160,41 @@ export declare namespace IssueCollections {
   export type Result = typeof IssueCollections.result.Type
 }
 
+/** Autogenerated return type of SetIssueStatus. */
+export const SetIssueStatusPayload = Schema.Struct({
+  /** A unique identifier for the client performing the mutation. */
+  clientMutationId: Schema.NullOr(Schema.String)
+})
+export interface SetIssueStatusPayload extends Schema.Struct.Type<typeof SetIssueStatusPayload.fields> {}
+
+/** `mutation SetIssueStatus` */
+export const SetIssueStatus = GraphQL.mutation("SetIssueStatus", {
+  document: {
+    variables: [
+      { name: "issueId", body: "ID!" },
+      { name: "statusId", body: "ID!" }
+    ],
+    selections: [
+      { name: "setIssueStatus", body: ["(input:{issueId:$", "issueId", " statusId:$", "statusId", "}){clientMutationId}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    issueId: Shared.ID,
+    statusId: Shared.ID
+  },
+  result: Schema.Struct({
+    /**
+     * Sets the status of an issue, closing or reopening it when the status calls for
+     * it. Issue statuses are in preview and only available to accounts enrolled in the preview.
+     */
+    setIssueStatus: Schema.NullOr(SetIssueStatusPayload)
+  })
+})
+export declare namespace SetIssueStatus {
+  export type Variables = typeof SetIssueStatus.variables.Type
+  export type Result = typeof SetIssueStatus.result.Type
+}
+
 /** Every operation in issues.graphql. */
-export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueLinkMetadata, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections)
+export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueLinkMetadata, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections, SetIssueStatus)
