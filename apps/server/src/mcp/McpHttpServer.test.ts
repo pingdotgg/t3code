@@ -831,6 +831,12 @@ it.effect(
       expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
       expect(linkTool?.tool.description).toContain("Link a PR to this thread");
       expect(linkTool?.tool.description).toContain("settles the thread on merge");
+      for (const name of ["link_pull_request", "pull_request_read"]) {
+        const tool = server.tools.find(({ tool }) => tool.name === name)?.tool;
+        expect(tool?.inputSchema.properties?.repository, name).toMatchObject({
+          description: expect.stringContaining("without the host"),
+        });
+      }
 
       const denied = yield* server
         .callTool({ name: "list_thread_pull_requests", arguments: {} })

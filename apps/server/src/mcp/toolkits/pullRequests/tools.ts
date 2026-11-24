@@ -68,9 +68,11 @@ export const PullRequestTargetInput = Schema.Struct({
   ),
   url: Schema.optional(TrimmedNonEmptyString),
   repository: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description: "With `number`, when no `url`.",
-    }),
+    TrimmedNonEmptyString.pipe(
+      Schema.annotateEncoded({
+        description: "`owner/repo`, without the host.",
+      }),
+    ),
   ),
   number: Schema.optional(
     PositiveInt.annotate({
@@ -500,7 +502,13 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
 export const ThreadPullRequestInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   number: Schema.optional(PositiveInt.annotate({ description: "Default: the branch's PR." })),
-  repository: Schema.optional(TrimmedNonEmptyString),
+  repository: Schema.optional(
+    TrimmedNonEmptyString.pipe(
+      Schema.annotateEncoded({
+        description: "`owner/repo`, without the host.",
+      }),
+    ),
+  ),
 });
 export type ThreadPullRequestInput = typeof ThreadPullRequestInput.Type;
 
