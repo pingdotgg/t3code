@@ -155,6 +155,27 @@ describe("buildRuntimeInstructions", () => {
     assert.include(block, `\n- Not listed: ${128 - shown} more\n</workspace_folders>`);
     assert.isBelow(new TextEncoder().encode(block).length, 4000);
   });
+
+  // fork: roles
+  it("ends with the role block after the folder list, and is unchanged without one", () => {
+    const runtimePolicy = {
+      cwd: "/work/app",
+      workspace: {
+        folders: [{ name: "api", path: "/work/api", isGitRepository: true }],
+        extraRoots: [],
+      },
+    };
+    const role = '<role id="needs-you">\nTriage the queue.\n</role>';
+    const without = buildRuntimeInstructions({ harness: "Codex", runtimePolicy });
+    assert.equal(
+      buildRuntimeInstructions({ harness: "Codex", runtimePolicy, roleInstructions: "" }),
+      without,
+    );
+    assert.equal(
+      buildRuntimeInstructions({ harness: "Codex", runtimePolicy, roleInstructions: role }),
+      `${without}\n\n${role}`,
+    );
+  });
 });
 
 describe("withUserDevice", () => {

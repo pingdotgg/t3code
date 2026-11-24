@@ -117,6 +117,8 @@ import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { AGENT_FEEDBACK_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ServerSettings from "../../serverSettings.ts"; // fork: roles
+import * as ForkRoles from "../ForkRoles.ts"; // fork: roles
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   makeProviderFailure,
@@ -1488,7 +1490,11 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
-  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
+    launchArgs: string,
+    cwd: string,
+    turn: Partial<ProviderAdapter.ProviderAdapterV2TurnInput> = {}, // fork: roles
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
@@ -1549,8 +1555,8 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       runtimePolicy,
     });
     const exit = yield* runtime
-      .startTurn(
-        makeClaudeTestTurnInput({
+      .startTurn({
+        ...makeClaudeTestTurnInput({
           threadId,
           providerThread,
           now: yield* DateTime.now,
@@ -1559,7 +1565,8 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
           attachments: [],
           runtimePolicy,
         }),
-      )
+        ...turn, // fork: roles
+      })
       .pipe(Effect.exit);
     return { exit, opened };
   });
@@ -1595,6 +1602,53 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         ),
       ),
     ),
+  );
+
+  // fork: roles
+  it.effect(
+    "appends a role thread's brief from its role file and opens without one when it is missing",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-role-" });
+        yield* fileSystem.writeFileString(
+          NodePath.join(cwd, "needs-you.md"),
+          "---\nname: Needs you\n---\nTriage the needs-you queue.\n",
+        );
+        const roleTurn = (roleId: string) =>
+          Effect.flatMap(ForkRoles.ForkRoles, (roles) =>
+            ForkRoles.forkRoleInstructions(roles, roleId),
+          ).pipe(
+            Effect.map((roleInstructions) =>
+              roleInstructions === undefined ? {} : { roleInstructions },
+            ),
+            Effect.provide(
+              ForkRoles.layer.pipe(
+                Layer.provide(ServerSettings.layerTest({ forkRolesDirectory: cwd })),
+              ),
+            ),
+          );
+        const plain = yield* startTurnWithLaunchArgs("", cwd);
+        const role = yield* startTurnWithLaunchArgs("", cwd, yield* roleTurn("needs-you"));
+        assert.isTrue(Exit.isSuccess(role.exit));
+        assert.equal(
+          appendSystemPrompt(role.opened[0]),
+          `${appendSystemPrompt(plain.opened[0])}\n\n<role id="needs-you">\nThis thread holds a standing role. Its brief, from needs-you.md:\n\nTriage the needs-you queue.\n</role>`,
+        );
+        const missing = yield* startTurnWithLaunchArgs("", cwd, yield* roleTurn("gone"));
+        assert.isTrue(Exit.isSuccess(missing.exit));
+        assert.lengthOf(missing.opened, 1);
+        assert.equal(appendSystemPrompt(missing.opened[0]), appendSystemPrompt(plain.opened[0]));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   it.effect("sends append launch arguments to Claude after the T3 instructions", () =>

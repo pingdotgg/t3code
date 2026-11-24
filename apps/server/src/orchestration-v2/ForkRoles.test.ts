@@ -6,7 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 
+import { ProviderInstanceId } from "@t3tools/contracts";
+
 import * as ServerSettings from "../serverSettings.ts";
+import * as CodexAdapterV2 from "./Adapters/CodexAdapterV2.ts";
 import * as ForkRoles from "./ForkRoles.ts";
 
 const withRoles = (forkRolesDirectory: string, warnings: Array<string> = []) =>
@@ -137,6 +140,69 @@ it.layer(NodeServices.layer)("ForkRoles", (it) => {
           withRoles(""),
         ),
       );
+    }),
+  );
+});
+
+it.describe("Codex role context", () => {
+  const build = (roleInstructions: string | undefined, hasT3Mcp: boolean) =>
+    CodexAdapterV2.buildCodexTurnStartParams({
+      nativeThreadId: "native-role",
+      codexInput: [{ type: "text", text: "test" }],
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/work/app" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      hasT3Mcp,
+      roleInstructions,
+    });
+
+  it.effect("sends the role block as its own entry, with or without T3 Code's MCP tools", () =>
+    Effect.gen(function* () {
+      const role = '<role id="needs-you">\nTriage the queue.\n</role>';
+      const withoutMcp = yield* build(role, false);
+      assert.deepEqual(withoutMcp.additionalContext, {
+        t3_code_role_01: { kind: "application", value: role },
+      });
+      assert.deepEqual((yield* build(role, true)).additionalContext?.t3_code_role_01, {
+        kind: "application",
+        value: role,
+      });
+      assert.isUndefined((yield* build(undefined, false)).additionalContext);
+    }),
+  );
+
+  it.effect("splits a long brief at line breaks into numbered entries under the cap", () =>
+    Effect.gen(function* () {
+      const role = Array.from(
+        { length: 300 },
+        (_, index) => `line ${index} ${"é".repeat(20)}`,
+      ).join("\n");
+      const context = (yield* build(role, false)).additionalContext ?? {};
+      const keys = Object.keys(context);
+      assert.isAbove(keys.length, 1);
+      assert.deepEqual(
+        keys,
+        keys.map((_, index) => `t3_code_role_${String(index + 1).padStart(2, "0")}`),
+      );
+      const values = keys.map((key) => context[key]!.value);
+      for (const value of values) assert.isAtMost(Buffer.byteLength(value), 4_000);
+      assert.equal(values.join("\n"), role);
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("forkRoleInstructions", (it) => {
+  it.effect("wraps the brief in a role block, and gives none for a missing file", () =>
+    Effect.gen(function* () {
+      const { dir } = yield* rolesDirectory;
+      yield* Effect.gen(function* () {
+        const roles = yield* ForkRoles.ForkRoles;
+        assert.equal(
+          yield* ForkRoles.forkRoleInstructions(roles, "needs-you"),
+          '<role id="needs-you">\nThis thread holds a standing role. Its brief, from needs-you.md:\n\nTriage the needs-you queue.\n</role>',
+        );
+        assert.isUndefined(yield* ForkRoles.forkRoleInstructions(roles, "gone"));
+        assert.isUndefined(yield* ForkRoles.forkRoleInstructions(roles, null));
+      }).pipe(withRoles(dir));
     }),
   );
 });

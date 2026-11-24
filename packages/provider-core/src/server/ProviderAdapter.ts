@@ -603,6 +603,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /** fork: roles. The thread's role brief, read fresh for this turn. */
+  readonly roleInstructions?: string;
 }
 
 export type ProviderAdapterV2ResumeTurnInput = Omit<

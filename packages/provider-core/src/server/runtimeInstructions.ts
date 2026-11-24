@@ -26,6 +26,7 @@ export function buildRuntimeInstructions(runtime: {
   readonly pullRequestLinking?: boolean;
   /** Adds the folder list of a multi-folder thread. */
   readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
+  readonly roleInstructions?: string | undefined; // fork: roles
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -44,7 +45,11 @@ export function buildRuntimeInstructions(runtime: {
     runtime.pullRequestLinking === false
       ? runtimeInfo
       : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
-  return [linked + feedback, ...(workspace === "" ? [] : [workspace])].join("\n\n");
+  return [
+    linked + feedback,
+    ...(workspace === "" ? [] : [workspace]),
+    ...(runtime.roleInstructions ? [runtime.roleInstructions] : []), // fork: roles
+  ].join("\n\n");
 }
 
 function toSingleLine(value: string): string {

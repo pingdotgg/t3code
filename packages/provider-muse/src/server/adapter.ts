@@ -2198,6 +2198,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
                       runtimePolicy: turnInput.runtimePolicy,
+                      roleInstructions: turnInput.roleInstructions, // fork: roles
                     }),
                   },
                   ...parts,

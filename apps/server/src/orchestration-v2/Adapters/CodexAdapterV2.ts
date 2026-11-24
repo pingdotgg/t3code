@@ -118,6 +118,7 @@ import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
+import { forkRoleCodexContext } from "../ForkRoles.ts"; // fork: roles
 import {
   describeMcpElicitation,
   toMcpElicitationResponse,
@@ -874,6 +875,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    readonly roleInstructions?: string | undefined; // fork: roles
     /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
     /** The user's `model_reasoning_summary` from the Codex config, when set. */
@@ -942,12 +944,14 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       workspaceInstructions === ""
         ? undefined
         : { t3_code_workspace: { kind: "application" as const, value: workspaceInstructions } };
+    const roleContext = forkRoleCodexContext(input.roleInstructions); // fork: roles
     const additionalContext =
       t3Context === undefined &&
       workspaceContext === undefined &&
+      roleContext === undefined && // fork: roles
       Object.keys(appContext).length === 0
         ? undefined
-        : { ...t3Context, ...workspaceContext, ...appContext };
+        : { ...t3Context, ...workspaceContext, ...roleContext, ...appContext }; // fork: roles
     return yield* decodeCodexTurnStartParams({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -7803,6 +7807,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              roleInstructions: turnInput.roleInstructions, // fork: roles
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {

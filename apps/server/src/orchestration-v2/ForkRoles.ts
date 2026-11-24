@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../os-jank.ts";
+import { CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES } from "../provider/CodexDeveloperInstructions.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
@@ -160,3 +161,40 @@ export const forkRoleToSet = Effect.fn("ForkRoles.roleToSet")(function* (input: 
   }
   return input.roleId;
 });
+
+/** The `<role>` block a role thread's agent gets at session start, or undefined when it has no brief. */
+export const forkRoleInstructions = Effect.fn("ForkRoles.instructions")(function* (
+  roles: ForkRolesShape,
+  roleId: string | null | undefined,
+) {
+  if (!roleId) return undefined;
+  const brief = yield* roles.readBrief(roleId);
+  if (brief === undefined) return undefined;
+  return `<role id="${roleId}">\nThis thread holds a standing role. Its brief, from ${roleId}.md:\n\n${brief}\n</role>`;
+});
+
+/** Codex `turn/start` entries for the role block, split at line breaks to fit the per-entry cap. */
+export function forkRoleCodexContext(roleInstructions: string | undefined) {
+  if (!roleInstructions) return undefined;
+  const chunks: Array<string> = [];
+  let current = "";
+  let bytes = 0;
+  for (const char of roleInstructions) {
+    const size = Buffer.byteLength(char);
+    if (bytes + size > CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES) {
+      const cut = current.lastIndexOf("\n");
+      chunks.push(cut > 0 ? current.slice(0, cut) : current);
+      current = cut > 0 ? current.slice(cut + 1) : "";
+      bytes = Buffer.byteLength(current);
+    }
+    current += char;
+    bytes += size;
+  }
+  chunks.push(current);
+  return Object.fromEntries(
+    chunks.map((value, index) => [
+      `t3_code_role_${String(index + 1).padStart(2, "0")}`,
+      { kind: "application" as const, value },
+    ]),
+  );
+}
