@@ -17,6 +17,7 @@ import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thre
 import {
   delegatedChildStartupStatus,
   deriveThreadRelationshipGraph,
+  providerUpdateHoldsStartup,
   immediateThreadRelationships,
   isParentThreadRelationship,
   threadRelationshipRowStatus,
@@ -86,7 +87,11 @@ import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestr
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
-import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
+import {
+  delegatedStartupLabel,
+  ThreadRelationshipIcon,
+  threadRelationshipStatusLabel,
+} from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
@@ -863,6 +868,14 @@ export function ThreadRelationshipsPanel(props: {
         entry.instanceId === (agent?.providerInstanceId ?? node?.thread?.providerInstanceId),
     );
     const providerDriver = agent?.driver ?? provider?.driver;
+    const rowStatusLabel = delegatedStartupLabel(
+      rowStatus,
+      isSubagent &&
+        !isParent &&
+        delegatedChildStartupStatus(node?.thread) !== null &&
+        providerUpdateHoldsStartup(provider),
+      m,
+    );
     const canStopWorkflow =
       canOperateWorkflow &&
       workflowGroup?.workflow.status === "running" &&
@@ -932,7 +945,7 @@ export function ThreadRelationshipsPanel(props: {
                 : `shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"} ${trailingVisibilityClass}`
             }
           >
-            {threadRelationshipStatusLabel(rowStatus, m)}
+            {rowStatusLabel}
           </span>
         ) : null}
       </>
@@ -987,7 +1000,7 @@ export function ThreadRelationshipsPanel(props: {
                     size="sm"
                     variant="ghost"
                     part="primary"
-                    aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus, m)}`}
+                    aria-label={`${threadTitle} ${rowStatusLabel}`}
                     onClick={() => openThread(threadId)}
                   />
                 }
@@ -1029,7 +1042,7 @@ export function ThreadRelationshipsPanel(props: {
               </TooltipPopup>
             </Tooltip>
             <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
-              {threadRelationshipStatusLabel(rowStatus, m)}
+              {rowStatusLabel}
             </span>
           </div>
         ) : (

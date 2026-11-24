@@ -1153,6 +1153,51 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("publishes the running update while it holds new sessions, and clears it after", () => {
+    const updateStarted = Deferred.makeUnsafe<void>();
+    const log: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider, {
+        installedVersionAfterUpdate: "1.0.0",
+      });
+      const updater = yield* makeTestRunner(registry);
+      const gate = yield* ProviderInstallationGate.ProviderInstallationGate;
+
+      const update = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Deferred.await(updateStarted);
+      const session = yield* gate
+        .execute(
+          CODEX_INSTANCE_ID,
+          Effect.sync(() => log.push("session opened")),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      // Clients read this to say a delegated child waits on the update.
+      assert.strictEqual((yield* registry.getProviders)[0]?.updateState?.status, "running");
+      assert.deepStrictEqual(log, []);
+
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(update);
+      yield* Fiber.join(session);
+      assert.strictEqual((yield* registry.getProviders)[0]?.updateState?.status, "succeeded");
+      assert.deepStrictEqual(log, ["session opened"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProviderInstallationGate.layer,
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => ({
+            exitCode: Deferred.succeed(updateStarted, undefined).pipe(
+              Effect.andThen(Effect.sleep("1 minute")),
+              Effect.as(ChildProcessSpawner.ExitCode(0)),
+            ),
+          })),
+        ),
+      ),
+    );
+  });
+
   it.effect("finishes a queued update whose caller is interrupted", () =>
     Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider, {

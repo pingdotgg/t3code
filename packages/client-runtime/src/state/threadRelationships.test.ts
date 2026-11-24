@@ -3,9 +3,11 @@ import { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
+  delegatedChildStartupStatus,
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   orderWebThreadLineageRows,
+  providerUpdateHoldsStartup,
   resolveMergeBackTargetThreadId,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
@@ -437,5 +439,31 @@ describe("web thread lineage ordering", () => {
         },
       }),
     ).toEqual([dated, missingTransfer, undated]);
+  });
+});
+
+describe("delegated child startup", () => {
+  it.each([
+    [{ activityRunStatus: "starting", status: "starting" }, "starting"],
+    [{ activityRunStatus: "preparing", status: "preparing" }, "preparing"],
+    [{ activityRunStatus: null, status: "queued" }, "queued"],
+    [{ activityRunStatus: "running", status: "running" }, null],
+    [{ activityRunStatus: null, status: "completed" }, null],
+  ] as const)("reads %j as %s", (child, expected) => {
+    expect(delegatedChildStartupStatus(child)).toBe(expected);
+  });
+
+  it.each([
+    ["queued", true],
+    ["running", true],
+    ["succeeded", false],
+    ["failed", false],
+  ] as const)("a provider update %s holds startup: %s", (status, expected) => {
+    expect(
+      providerUpdateHoldsStartup({
+        updateState: { status, startedAt: null, finishedAt: null, message: null, output: null },
+      }),
+    ).toBe(expected);
+    expect(providerUpdateHoldsStartup(undefined)).toBe(false);
   });
 });

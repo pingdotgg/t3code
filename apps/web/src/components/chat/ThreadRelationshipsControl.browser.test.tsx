@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
+  providers: [] as unknown[],
 }));
 
 vi.mock(import("../../state/query"), async (original) => ({
@@ -46,7 +47,7 @@ vi.mock(import("../../state/environments"), () => ({
   useEnvironments: (() => []) as never,
   usePrimaryEnvironment: (() => null) as never,
   useEnvironment: (() => null) as never,
-  useEnvironmentProviders: (() => new Map()) as never,
+  useEnvironmentProviders: (() => new Map([["environment", state.providers]])) as never,
 }));
 vi.mock(import("../../state/peerLinks"), () => ({
   peerLinkEnvironment: { readThread: {} } as never,
@@ -83,6 +84,7 @@ function setup() {
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
   state.archivedThreads = [];
+  state.providers = [];
   state.projection = {
     thread: {
       id: threadId,
@@ -595,8 +597,26 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
 });
 
-it("does not show a delegated subagent still starting with the idle status dot", async () => {
+it.each([
+  ["Starting", null],
+  ["Waiting for update", "running"],
+])("shows a delegated subagent still starting as %s, not idle", async (label, updateStatus) => {
   setup();
+  if (updateStatus !== null) {
+    state.providers = [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        updateState: {
+          status: updateStatus,
+          startedAt: null,
+          finishedAt: null,
+          message: null,
+          output: null,
+        },
+      },
+    ];
+  }
   const projection = makeThreadProjectionFixture();
   const startedAt = DateTime.makeUnsafe("2026-11-24T07:44:39.792Z");
   const childThreadId = ThreadId.make("starting-child");
@@ -654,6 +674,6 @@ it("does not show a delegated subagent still starting with the idle status dot",
   // The parent's timeline card shows this same subagent as running with the bg-info dot.
   expect(dot!.className).not.toContain("bg-muted-foreground");
   // Its child has not started, so it shows Starting rather than time since delegation.
-  await expect.element(row).toHaveTextContent("Starting childStarting");
+  await expect.element(row).toHaveTextContent(`Starting child${label}`);
   await expect.element(screen.getByText("Lineage", { exact: true })).toBeVisible();
 });

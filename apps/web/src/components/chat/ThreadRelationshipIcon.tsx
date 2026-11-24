@@ -52,6 +52,17 @@ export function threadRelationshipStatusLabel(
   }
 }
 
+/** A delegated child's startup label, naming the provider update that holds it when one does. */
+export function delegatedStartupLabel(
+  status: string | null,
+  providerUpdating: boolean,
+  resolve: MessageResolver = m,
+): string {
+  return providerUpdating
+    ? resolve(msg("Waiting for update", { $context: "agent status, a provider update holds it" }))
+    : threadRelationshipStatusLabel(status, resolve);
+}
+
 export function ThreadRelationshipIcon({
   driver,
   provider,

@@ -4,8 +4,11 @@ import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { use, type ReactNode } from "react";
 import { useQuietThreadShell, useThreadShell, useProject } from "../../state/entities";
-import { delegatedChildStartupStatus } from "@t3tools/client-runtime/state/thread-relationships";
-import { threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
+import {
+  delegatedChildStartupStatus,
+  providerUpdateHoldsStartup,
+} from "@t3tools/client-runtime/state/thread-relationships";
+import { delegatedStartupLabel } from "./ThreadRelationshipIcon";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { SideThreadsOpenContext, useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
@@ -487,13 +490,20 @@ function SubagentTimelineLink(props: {
   const startupStatus = isOrchestrationV2WorkActive(recordStatus)
     ? delegatedChildStartupStatus(childShell)
     : null;
+  const providerUpdating = useAtomValue(
+    serverEnvironment.providersValueAtom(props.parentRef.environmentId),
+    (providers) =>
+      providerUpdateHoldsStartup(
+        providers?.find((provider) => provider.instanceId === props.providerInstanceId),
+      ),
+  );
   const liveStatus = startupStatus === null ? recordStatus : "pending";
   const status = props.event ? props.event.status : liveStatus;
   const statusLabel =
     props.event?.label ??
     (startupStatus === null
       ? m(subagentStatusVisual(liveStatus).label)
-      : threadRelationshipStatusLabel(startupStatus, m));
+      : delegatedStartupLabel(startupStatus, providerUpdating, m));
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);

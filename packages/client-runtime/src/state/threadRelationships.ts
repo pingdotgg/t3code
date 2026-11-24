@@ -1,6 +1,7 @@
 import {
   isOrchestrationV2WorkActive,
   type OrchestrationV2ThreadShell,
+  type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -139,6 +140,14 @@ export function delegatedChildStartupStatus(
 ): "preparing" | "starting" | "queued" | null {
   const status = child?.activityRunStatus ?? (child?.status === "queued" ? "queued" : null);
   return status === "preparing" || status === "starting" || status === "queued" ? status : null;
+}
+
+/** Whether an update of this provider instance holds its sessions from opening. */
+export function providerUpdateHoldsStartup(
+  provider: Pick<ServerProvider, "updateState"> | null | undefined,
+): boolean {
+  const status = provider?.updateState?.status;
+  return status === "queued" || status === "running";
 }
 
 export function immediateThreadRelationships(
