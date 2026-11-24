@@ -284,6 +284,61 @@ mod tests {
     #[tokio::test]
     #[expect(
         clippy::panic_in_result_fn,
+        reason = "check the committed history after each replacement"
+    )]
+    async fn backfill_replaces_only_the_prefix_and_pages_the_committed_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let db = MessageCache::open(&dir.path().join("messages.sqlite3")).await?;
+        let message = |n: usize, text: &str| Message::Assistant {
+            id: n.to_string(),
+            markdown: text.to_owned(),
+            created_at: None,
+            run_id: None,
+        };
+        let first = message(1000, "live");
+        let newest = message(1001, "live");
+        let obsolete = message(2000, "rolled back");
+        db.merge(
+            "e",
+            "t",
+            &[
+                (obsolete.id(), &obsolete),
+                (first.id(), &first),
+                (newest.id(), &newest),
+            ],
+        )
+        .await?;
+        let prefix: Vec<_> = (0..=1000).map(|i| message(i, "history")).collect();
+        assert!(!db.merge_prefix("e", "other", first.id(), &prefix).await?);
+        assert!(db.merge_prefix("e", "t", first.id(), &prefix).await?);
+        let page = db.before("e", "t", first.id()).await?;
+        let ids: Vec<_> = page
+            .iter()
+            .map(|row| serde_json::from_str::<Message>(row).map(|m| m.id().to_owned()))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(ids, (900..1000).map(|i| i.to_string()).collect::<Vec<_>>());
+        assert_eq!(db.before("e", "t", "3").await?.len(), 1);
+        assert!(db.around("e", "t", obsolete.id()).await?.is_empty());
+        let tail = db.recent("e", "t").await?;
+        assert_eq!(
+            &tail[98..],
+            [
+                serde_json::to_string(&first)?,
+                serde_json::to_string(&newest)?
+            ]
+        );
+        assert!(db.merge_prefix("e", "t", first.id(), &[]).await?);
+        assert!(db.before("e", "t", first.id()).await?.is_empty());
+        db.remove("e", "t").await?;
+        assert!(!db.merge_prefix("e", "t", first.id(), &prefix).await?);
+        assert!(db.recent("e", "t").await?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::panic_in_result_fn,
         reason = "assert the stored rows and propagate database setup failures"
     )]
     async fn merge_and_expiry_preserve_other_threads_and_environments()
