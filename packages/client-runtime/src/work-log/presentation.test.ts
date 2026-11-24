@@ -217,4 +217,11 @@ describe("resolveViewedImageAsset", () => {
       srcFragment: "",
     });
   });
+
+  it("still decodes a file URL", () => {
+    expect(
+      resolveViewedImageAsset("file:///repo/my%20shot.png", { threadId: ThreadId.make("thread") })
+        ?.resource.path,
+    ).toBe("/repo/my shot.png");
+  });
 });

@@ -500,6 +500,14 @@ export interface ViewedImageAsset {
   readonly srcFragment: string;
 }
 
+/**
+ * A tool reports the literal path it read, not a markdown destination. Escape what markdown
+ * resolution would decode or split off, so a name like Grok's `sessions/%2FUsers...` survives.
+ */
+export function viewedImageMarkdownSource(path: string): string {
+  return /^file:/i.test(path) ? path : path.replace(/[%#?]/g, encodeURIComponent);
+}
+
 export function resolveViewedImageAsset(
   path: string,
   input: {
@@ -507,10 +515,7 @@ export function resolveViewedImageAsset(
     readonly workspaceRoot?: string | null | undefined;
   },
 ): ViewedImageAsset | null {
-  // A tool reports the literal path it read, not a markdown destination: escape the characters
-  // markdown resolution would decode or split off, so a name like Grok's `sessions/%2FUsers...`
-  // reaches the server unchanged.
-  const source = path.replace(/[%#?]/g, encodeURIComponent);
+  const source = viewedImageMarkdownSource(path);
   const imageSource = classifyMarkdownImageSource(source, input.workspaceRoot ?? ".");
   if (imageSource._tag !== "WorkspaceFile") return null;
   const resolvedFilePath =
