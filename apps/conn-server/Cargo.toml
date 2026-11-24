@@ -61,6 +61,11 @@ unicode-normalization = "0.1.26"
 # Display and std::error::Error for the error types at crate boundaries. Already in the tree
 # through tungstenite; a proc macro, so no run-time code beyond the impls it writes.
 thiserror = "2"
+# conn-engine in-thread Find: the text a message's Markdown shows (CommonMark with GFM tables,
+# strikethrough, footnotes and task lists). No default features (no HTML writer or CLI); adds
+# only unicase, as bitflags and memchr are in the tree. Chosen over `markdown` (the parser
+# conn-gpui uses) because it parsed the same messages with about 1/24 of the CPU time.
+pulldown-cmark = { version = "0.13.6", default-features = false }
 # v4 ids: the version and variant bits and the text form, in place of four hand-written copies.
 # Without its `v4` feature, which would bring getrandom 0.4 next to the 0.3 already in the
 # tree; conn-support fills the bytes from getrandom 0.3.

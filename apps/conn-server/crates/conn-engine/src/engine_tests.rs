@@ -13758,3 +13758,135 @@ async fn a_worktree_launch_with_a_first_message_ends_setup_when_the_run_is_hande
         .unwrap();
     assert_eq!(*host.committed.lock().unwrap(), vec!["t1".to_owned()]);
 }
+
+/// T3's `ThreadFind` reads the visible timeline: a run fork finds the parent messages it
+/// shows, through the fork run only, and every message is searched as its Markdown renders
+/// (`searches inherited parent messages after a fork`, `searches visible rendered messages and
+/// plans in canonical item order`). Both Find RPCs answer the same.
+#[tokio::test(flavor = "current_thread")]
+async fn find_searches_the_visible_timeline_as_rendered_on_both_rpcs() {
+    let db = TempDb::new("find-fork");
+    let (engine, _) = open(&db);
+    let mut streams = vec![];
+    for thread in ["t1", "t2"] {
+        dispatch(&engine, create(thread, &format!("create-{thread}"))).await;
+        let mut stream = engine
+            .subscribe_thread(from_json(json!({"threadId": thread})).unwrap())
+            .await
+            .unwrap();
+        next(&mut stream).await;
+        streams.push(stream);
+    }
+    let markdown = "Check **the build**, then read [the handbook](https://example.test/internal-handle). Paste `https://example.test/literal` too.";
+    for (command, text) in [
+        ("c1", "Archive lantern"),
+        ("c2", markdown),
+        ("c3", "After the fork beacon"),
+    ] {
+        dispatch(&engine, message("t1", command, text)).await;
+        until_run_ends(&mut streams[0]).await;
+    }
+    dispatch(&engine, message("t2", "u1", "Unrelated note")).await;
+    until_run_ends(&mut streams[1]).await;
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.fork", "commandId": "f1", "sourceThreadId": "t1",
+            "targetThreadId": "t3", "sourcePoint": {"type": "run", "runId": "run:t1:2"},
+            "sideChat": false, "createdBy": "user", "creationSource": "web",
+        }),
+    )
+    .await;
+    let find = |thread: &str, query: &str| {
+        let input = json!({"threadId": thread, "query": query});
+        let engine = &engine;
+        async move {
+            let unary = call(engine, "orchestration.searchThread", input.clone())
+                .await
+                .unwrap();
+            let streamed = stream_items(engine, "orchestration.searchThreadStream", input, 1).await;
+            assert_eq!(
+                streamed,
+                std::slice::from_ref(&unary),
+                "the stream's result is the unary one"
+            );
+            unary
+        }
+    };
+    let entries = |result: &Value| -> Vec<(String, u64)> {
+        result["navigation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["entryId"].as_str().unwrap().to_owned(),
+                    entry["count"].as_u64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let total = |result: &Value| result["totalMatches"].as_u64().unwrap();
+
+    // The fork finds the parent's message it shows, under its source ids.
+    for thread in ["t1", "t3"] {
+        let found = find(thread, "archive LANTERN").await;
+        assert_eq!(
+            entries(&found),
+            [
+                ("message:c1".to_owned(), 1),
+                ("message:run:t1:1:a".to_owned(), 1)
+            ],
+            "{thread}"
+        );
+        assert_eq!(
+            found["match"],
+            json!({"entryId": "message:c1", "runId": "run:t1:1", "occurrence": 0})
+        );
+        let second = find(thread, "the handbook").await;
+        assert_eq!(total(&second), 2, "{thread}");
+        assert_eq!(second["match"]["entryId"], "message:c2");
+    }
+    // A parent message after the fork point stays out of the fork.
+    assert_eq!(total(&find("t1", "After the fork beacon").await), 2);
+    assert_eq!(total(&find("t3", "After the fork beacon").await), 0);
+    assert_eq!(total(&find("t2", "Archive lantern").await), 0);
+
+    // Rendered Markdown: a phrase across emphasis and a code span's URL show; a link target
+    // does not; a word nobody wrote finds nothing.
+    for (query, count) in [
+        ("check the build", 2),
+        ("internal-handle", 0),
+        ("example.test/literal", 2),
+        ("lantern beacon", 0),
+    ] {
+        let found = find("t1", query).await;
+        assert_eq!(total(&found), count, "{query}");
+        if count > 0 {
+            assert_eq!(found["match"]["entryId"], "message:c2", "{query}");
+        }
+    }
+
+    // The fork's own messages follow the inherited ones.
+    let mut fork = engine
+        .subscribe_thread(from_json(json!({"threadId": "t3"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut fork).await;
+    dispatch(&engine, message("t3", "c4", "Child lantern")).await;
+    until_run_ends(&mut fork).await;
+    let found = find("t3", "lantern").await;
+    let ids: Vec<String> = entries(&found).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids[..2], ["message:c1", "message:run:t1:1:a"]);
+    assert_eq!(ids[2], "message:c4");
+    assert_eq!(total(&found), 4);
+    let last = call(
+        &engine,
+        "orchestration.searchThread",
+        json!({"threadId": "t3", "query": "lantern", "index": 3}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(last["match"]["entryId"], ids[3]);
+    assert_eq!(last["match"]["occurrence"], 0);
+}
