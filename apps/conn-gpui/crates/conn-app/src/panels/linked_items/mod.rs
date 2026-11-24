@@ -7,10 +7,10 @@
 mod logic;
 mod render;
 
-/// What the chat's link menu needs to tell a pull request link from the thread's linked ones.
+/// What the chat's link menu and link preview card need from this panel's pull request logic.
 pub(crate) mod pr_link {
     pub(crate) use super::logic::{
-        now_epoch_ms, parse_change_request_url, visible_thread_pull_requests,
+        format_relative_time, now_epoch_ms, parse_change_request_url, visible_thread_pull_requests,
     };
 }
 

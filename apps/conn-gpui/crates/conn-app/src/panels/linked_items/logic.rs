@@ -638,7 +638,7 @@ pub(super) fn format_diff_count(count: i64) -> String {
 /// Formats an ISO-8601 timestamp relative to `now_ms` matching Conn's `RelativeTime`
 /// (`timestampFormat.ts`: `just now`, `{m}m ago`, `{h}h ago`, `{d}d ago`).
 #[must_use]
-pub(super) fn format_relative_time(iso: &str, now_ms: i64) -> Option<String> {
+pub(crate) fn format_relative_time(iso: &str, now_ms: i64) -> Option<String> {
     let at_ms = parse_date_ms(iso)?;
     let elapsed_ms = (now_ms - at_ms).max(0);
     let seconds = elapsed_ms / 1_000;

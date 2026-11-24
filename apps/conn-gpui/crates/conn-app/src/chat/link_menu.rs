@@ -341,6 +341,7 @@ impl ChatView {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.dismiss_link_preview(cx);
         let return_focus = window.focused(cx);
         self.link_menu = Some(LinkMenu {
             href,
