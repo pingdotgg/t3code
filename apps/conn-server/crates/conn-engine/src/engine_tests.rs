@@ -9431,3 +9431,798 @@ async fn attention_is_off_by_default() {
             .is_empty()
     );
 }
+
+/// Removing a queued run leaves the active run's approval answerable (T3's
+/// `queuedRunCancellationEvents` touches only the queued run, its attempt and its node).
+#[tokio::test(flavor = "current_thread")]
+async fn removing_a_queued_run_keeps_the_active_runs_approval() {
+    let db = TempDb::new("queued-cancel-approval");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "active", "ask")).await;
+    let request = loop {
+        let update = next(&mut stream).await;
+        if update["event"]["type"] == "runtime-request.updated" {
+            break update["event"]["payload"].clone();
+        }
+    };
+    let queued = message_with(
+        "t1",
+        "queued",
+        "Later",
+        json!({"type":"queue_after_active"}),
+        None,
+    );
+    dispatch(&engine, queued).await;
+    dispatch(
+        &engine,
+        json!({"type":"queued-run.cancel","threadId":"t1","runId":"run:t1:2","commandId":"cancel"}),
+    )
+    .await;
+    let after = projection(&engine, "t1").await;
+    assert_eq!(after["runs"][1]["status"], "cancelled");
+    assert_eq!(after["runtimeRequests"][0]["status"], "pending");
+    assert_eq!(
+        engine.shell_snapshot().await.unwrap()["threads"][0]["pendingRuntimeRequest"]["id"],
+        request["id"]
+    );
+    dispatch(
+        &engine,
+        json!({"type":"runtime-request.respond","commandId":"answer","threadId":"t1","requestId":request["id"],"decision":"accept"}),
+    )
+    .await;
+    // The stream still holds the queued run's cancellation; read on to the active run's end.
+    let mut events = vec![];
+    loop {
+        let batch = until_run_ends(&mut stream).await;
+        let done = batch.last().is_some_and(|(_, run)| run["id"] == "run:t1:1");
+        events.extend(batch);
+        if done {
+            break;
+        }
+    }
+    let answers = events
+        .iter()
+        .filter(|(ty, p)| ty == "message.updated" && p["text"] == "approval: accept")
+        .count();
+    assert_eq!(answers, 1);
+    assert_eq!(events.last().unwrap().1["status"], "completed");
+    let done = projection(&engine, "t1").await;
+    assert_eq!(done["runs"][0]["status"], "completed");
+    assert_eq!(done["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(done["runtimeRequests"][0]["status"], "resolved");
+}
+
+/// An async question (`responseCapability: message`), such as one imported from T3 after its
+/// provider exited: the answer resolves the card and becomes one user message and one run
+/// (T3's "answers an async question after its provider exits and commits the answer once").
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_question_is_answered_with_one_message_and_one_run() {
+    let db = TempDb::new("async-question");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    seed_async_question(&engine).await;
+    let before = projection(&engine, "t1").await;
+    let respond = |id: &str, answers: Value| {
+        from_json(
+            json!({"type":"runtime-request.respond","commandId":id,"threadId":"t1",
+            "requestId":"t1:request","answers":answers}),
+        )
+        .unwrap()
+    };
+    for (index, answers) in [
+        json!({"color":" ","sizes":["Small"]}),
+        json!({"color":"Blue","sizes":[]}),
+        json!({"color":"Blue","sizes":["Small"," "]}),
+        json!({"color":"Blue","sizes":["Small"],"extra":" "}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let refused = engine
+            .dispatch(respond(&format!("invalid:{index}"), answers.clone()))
+            .await;
+        assert!(
+            matches!(refused, Err(EngineError::Rejected(_))),
+            "{answers}"
+        );
+        assert_eq!(projection(&engine, "t1").await, before, "{answers}");
+    }
+
+    let answers = json!({"color":"  Blue  ","sizes":["Small","Large"],"note":""});
+    let accepted = engine
+        .dispatch(respond("answer", answers.clone()))
+        .await
+        .unwrap();
+    let repeated = engine
+        .dispatch(respond("answer", answers.clone()))
+        .await
+        .unwrap();
+    assert_eq!(to_json(&repeated), to_json(&accepted));
+    let duplicate = engine.dispatch(respond("duplicate", answers.clone())).await;
+    assert!(matches!(duplicate, Err(EngineError::Rejected(_))));
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    drop(engine);
+    let (engine, _) = open(&db);
+    let after = projection(&engine, "t1").await;
+    assert_eq!(after["runtimeRequests"][0]["status"], "resolved");
+    assert_eq!(after["runtimeRequests"][0]["answers"], answers);
+    let item = &after["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "t1:item")
+        .unwrap();
+    assert_eq!(item["status"], "completed");
+    assert_eq!(
+        item["questionAnswer"]["questionTextById"],
+        json!({"color":"Which color?","sizes":"Which sizes?","note":"Anything else?"})
+    );
+    let users: Vec<&Value> = after["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .collect();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0]["id"], "async-answer:t1:request");
+    assert_eq!(
+        users[0]["text"],
+        "Which color?\nBlue\n\nWhich sizes?\nSmall, Large"
+    );
+    assert_eq!(users[0]["creationSource"], "server");
+    assert_eq!(after["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(after["runs"][0]["status"], "completed");
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+/// A provider failure holds the queue, but a buffered provider notification still starts: it
+/// replays output the CLI already produced (T3's "starts a provider wake queued behind a run
+/// that fails").
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_failure_holds_messages_and_starts_a_buffered_wake() {
+    let db = TempDb::new("failure-buffered-wake");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    // Hold only effect execution so every message is queued before the fake provider fails.
+    let gate = engine
+        .inner()
+        .reserve_effect(crate::commands::Effect::CloseSession {
+            thread_id: "t1".into(),
+        });
+    dispatch(&engine, message("t1", "active", "fail")).await;
+    let queued =
+        |id, text| message_with("t1", id, text, json!({"type":"queue_after_active"}), None);
+    dispatch(&engine, queued("later", "Queued by the user")).await;
+    let notification = json!({"source":{"kind":"background_task"},"outcome":"updated",
+        "summary":"Background activity updated"});
+    let mut wake = queued("wake", "Background task completed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("provider");
+    wake["notification"] = notification.clone();
+    dispatch(&engine, wake).await;
+    // A wake the server queued is not provider output: it waits with the user's message.
+    let mut server = queued("server", "Monitor fired.");
+    server["createdBy"] = json!("agent");
+    server["creationSource"] = json!("server");
+    server["notification"] = notification;
+    dispatch(&engine, server).await;
+    drop(gate);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    run_to_end(&engine, "t1", "run:t1:3").await;
+    // The wake completed without a Stop: nobody reviews the server's wake, so it goes next
+    // (T3's `releaseUnattendedHolds`); the user's message stays held.
+    let p = run_to_end(&engine, "t1", "run:t1:4").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "failed".into()),
+            ("run:t1:2".into(), "queued".into()),
+            ("run:t1:3".into(), "completed".into()),
+            ("run:t1:4".into(), "completed".into()),
+        ]
+    );
+    assert_eq!(p["runs"][1]["queueHeld"], true);
+}
+
+/// A pending async question on t1 (`responseCapability: message`), as T3's
+/// `seedPendingQuestion` writes one: its node, request and `user_input_request` item.
+async fn seed_async_question(engine: &SqliteEngine) {
+    let now = "2026-01-01T00:00:00.000Z";
+    let seed = vec![
+        crate::store::Draft::new(
+            "t1",
+            "node.updated",
+            json!({"id":"t1:node","threadId":"t1","runId":null,"parentNodeId":null,
+                "rootNodeId":"t1:node","kind":"user_input_request","status":"waiting",
+                "countsForRun":false,"providerThreadId":null,"providerTurnId":null,
+                "nativeItemRef":null,"runtimeRequestId":"t1:request","checkpointScopeId":null,
+                "startedAt":now,"completedAt":null}),
+        )
+        .node(Some("t1:node")),
+        crate::store::Draft::new(
+            "t1",
+            "runtime-request.updated",
+            json!({"id":"t1:request","nodeId":"t1:node","providerTurnId":null,
+                "nativeRequestRef":null,"kind":"user_input","status":"pending",
+                "responseCapability":{"type":"message"},"createdAt":now,"resolvedAt":null}),
+        )
+        .node(Some("t1:node")),
+        crate::store::Draft::new(
+            "t1",
+            "turn-item.updated",
+            json!({"id":"t1:item","type":"user_input_request","threadId":"t1","runId":null,
+                "nodeId":"t1:node","providerThreadId":null,"providerTurnId":null,
+                "nativeItemRef":null,"parentItemId":null,"ordinal":0,"status":"waiting",
+                "title":null,"startedAt":now,"completedAt":null,"updatedAt":now,
+                "requestId":"t1:request","questions":[
+                    {"id":"color","header":"Color","question":"Which color?","options":[]},
+                    {"id":"sizes","header":"Sizes","question":"Which sizes?","options":[],"multiSelect":true},
+                    {"id":"note","header":"Note","question":"Anything else?","options":[],"required":false}]}),
+        )
+        .node(Some("t1:node")),
+    ];
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            for draft in seed {
+                tx.append(draft)?;
+            }
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+}
+
+fn async_answer(command: &str) -> Value {
+    json!({"type":"runtime-request.respond","commandId":command,"threadId":"t1",
+        "requestId":"t1:request","answers":{"color":"Blue","sizes":["Small"]}})
+}
+
+/// Holds effect execution, so the commands below land before t1's runs start.
+fn gate(engine: &SqliteEngine) -> crate::engine::ReservedEffect {
+    engine
+        .inner()
+        .reserve_effect(crate::commands::Effect::CloseSession {
+            thread_id: "t1".into(),
+        })
+}
+
+fn queued(id: &str, text: &str) -> Value {
+    message_with("t1", id, text, json!({"type":"queue_after_active"}), None)
+}
+
+fn provider_wake(id: &str, text: &str) -> Value {
+    let mut wake = queued(id, text);
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("provider");
+    wake["notification"] = json!({"source":{"kind":"background_task"},"outcome":"updated",
+        "summary":"Background activity updated"});
+    wake
+}
+
+fn run_for<'p>(p: &'p Value, message_id: &str) -> &'p Value {
+    p["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| {
+            r["userMessageId"] == message_id
+                || r["userMessageId"] == format!("message:{message_id}")
+        })
+        .unwrap_or_else(|| panic!("no run for {message_id}: {}", p["runs"]))
+}
+
+/// Gate finding 1: answering an async question is not a client send, so it leaves a queue
+/// the user's Stop or a failure held as it is (T3's `sentByUserFromClient`), also when the
+/// answer is replayed and the store reopened.
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_answer_leaves_a_held_queue_held() {
+    let db = TempDb::new("async-answer-held");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    dispatch(&engine, queued("b", "Queued by the user")).await;
+    drop(hold);
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_for(&p, "b")["queueHeld"], true);
+    seed_async_question(&engine).await;
+    dispatch(&engine, async_answer("answer")).await;
+    dispatch(&engine, async_answer("answer")).await;
+    let answer = run_for(&projection(&engine, "t1").await, "async-answer:t1:request")["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    run_to_end(&engine, "t1", &answer).await;
+    drop(engine);
+    let (engine, _) = open(&db);
+    let p = projection(&engine, "t1").await;
+    let answers = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["id"] == "async-answer:t1:request")
+        .count();
+    assert_eq!(answers, 1);
+    assert_eq!(run_for(&p, "b")["status"], "queued");
+    assert_eq!(run_for(&p, "b")["queueHeld"], true);
+}
+
+/// Gate finding 2: an answer while the active run is still starting queues its own run, as
+/// T3 steers only into a live provider turn; it is not promoted into the start.
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_answer_during_a_start_gets_its_own_run() {
+    let db = TempDb::new("async-answer-starting");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    seed_async_question(&engine).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "one")).await;
+    assert_eq!(
+        projection(&engine, "t1").await["runs"][0]["status"],
+        "starting"
+    );
+    dispatch(&engine, async_answer("answer")).await;
+    let p = projection(&engine, "t1").await;
+    assert!(run_for(&p, "async-answer:t1:request")["steerWhenReadyRunId"].is_null());
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    let answer = run_for(&p, "async-answer:t1:request");
+    assert_eq!(answer["id"], "run:t1:2");
+    assert_eq!(answer["status"], "completed");
+    assert_eq!(run_for(&p, "a")["status"], "completed");
+}
+
+/// Gate finding 3: a provider result that arrives while an earlier one replays does not take
+/// the user's hold, so both results reach the thread once and the user's message stays held
+/// (T3's `wakeSkipsHold`, runtimeLayer.test.ts "lets a provider wake skip a held queue").
+#[tokio::test(flavor = "current_thread")]
+async fn a_second_buffered_wake_drains_past_a_held_queue() {
+    let db = TempDb::new("second-buffered-wake");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let first = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    dispatch(&engine, queued("b", "Queued by the user")).await;
+    dispatch(
+        &engine,
+        provider_wake("wake1", "First background task completed."),
+    )
+    .await;
+    // Holds the first wake in its start, after the failure released it.
+    let second = gate(&engine);
+    drop(first);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(
+        &engine,
+        provider_wake("wake2", "Background task completed."),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_ne!(run_for(&p, "wake2")["queueHeld"], true, "{}", p["runs"]);
+    drop(second);
+    run_to_end(&engine, "t1", "run:t1:3").await;
+    let p = run_to_end(&engine, "t1", "run:t1:4").await;
+    assert_eq!(run_for(&p, "wake1")["status"], "completed");
+    assert_eq!(run_for(&p, "wake2")["status"], "completed");
+    assert_eq!(run_for(&p, "b")["status"], "queued");
+    assert_eq!(run_for(&p, "b")["queueHeld"], true);
+    for wake in ["wake1", "wake2"] {
+        let seen = p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["id"] == format!("message:{wake}"))
+            .count();
+        assert_eq!(seen, 1, "{wake}");
+    }
+}
+
+/// Round-2 gate finding 4: a usage limit blocks only its own provider's queued work, in queue
+/// order (T3's `usageLimitHoldsQueue` at automatic start and at `queue.resume`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_usage_limit_blocks_only_its_provider() {
+    let on = |instance: &str, id: &str, text: &str| {
+        let mut m = queued(id, text);
+        m["modelSelection"] = json!({"instanceId": instance, "model": "m"});
+        m
+    };
+    // Limited Claude, with Claude work queued first: nothing starts on its own, and resuming
+    // is refused while the limit stands.
+    let db = TempDb::new("usage-limit-same");
+    let (engine, _, _) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
+    dispatch(&engine, on("claudeAgent", "b", "Queued for Claude")).await;
+    dispatch(&engine, provider_wake("wake", "Background task completed.")).await;
+    drop(hold);
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(p["runs"][0]["status"], "failed");
+    for id in ["b", "wake"] {
+        assert_eq!(run_for(&p, id)["status"], "queued", "{id}");
+    }
+    let resume = json!({"type":"queue.resume","commandId":"resume","threadId":"t1"});
+    assert!(matches!(
+        engine.dispatch(from_json(resume).unwrap()).await,
+        Err(EngineError::Rejected(_))
+    ));
+    drop(engine);
+
+    // Limited Claude, with Codex work queued first: the Codex run starts.
+    let db = TempDb::new("usage-limit-other");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
+    dispatch(&engine, on("codex", "b", "Queued for Codex")).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_for(&p, "b")["status"], "completed");
+    assert_eq!(count(&codex.sessions), 1);
+}
+
+/// Round-2 gate finding 1: after a failed worktree setup the thread has no checkout of its
+/// own, so an async answer and a provider wake wait held instead of starting in the project
+/// root (T3's `worktreeMissingRun` and `worktreeSetupPending`).
+#[tokio::test(flavor = "current_thread")]
+async fn work_after_a_failed_worktree_setup_waits() {
+    let db = TempDb::new("worktree-setup-failed");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    let mut failed = run_to_end(&engine, "t1", "run:t1:1").await["runs"][0].clone();
+    // As T3 records it, and as `t3_import` copies it.
+    failed["workspacePreparation"] = json!({"type": "worktree"});
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            tx.append(crate::store::Draft::new("t1", "run.updated", failed))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    seed_async_question(&engine).await;
+    dispatch(&engine, async_answer("answer")).await;
+    dispatch(&engine, provider_wake("wake", "Background task completed.")).await;
+    let p = projection(&engine, "t1").await;
+    for id in ["async-answer:t1:request", "wake"] {
+        assert_eq!(run_for(&p, id)["status"], "queued", "{id}: {}", p["runs"]);
+        assert_eq!(run_for(&p, id)["queueHeld"], true, "{id}");
+    }
+}
+
+/// Round-2 gate finding 2: on a session without live steering the answer queues behind work
+/// already waiting, instead of a declined steer putting it first.
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_answer_queues_in_order_on_a_session_without_steering() {
+    let db = TempDb::new("async-answer-no-steering");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent").without_steering());
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "a", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    dispatch(&engine, queued("b", "Queued by the user")).await;
+    seed_async_question(&engine).await;
+    dispatch(&engine, async_answer("answer")).await;
+    // A declined steer would queue the answer only after its delivery effect ran.
+    let answer = loop {
+        let item = next(&mut stream).await;
+        let payload = &item["event"]["payload"];
+        if item["event"]["type"] == "run.created"
+            && payload["userMessageId"] == "async-answer:t1:request"
+        {
+            break payload.clone();
+        }
+        if item["event"]["type"] == "run.updated"
+            && payload["userMessageId"] == "async-answer:t1:request"
+            && payload["status"] == "queued"
+        {
+            break payload.clone();
+        }
+    };
+    let p = projection(&engine, "t1").await;
+    let b = run_for(&p, "b");
+    assert_eq!(answer["status"], "queued");
+    assert!(
+        answer["queuePosition"].as_u64() > b["queuePosition"].as_u64(),
+        "answer {answer} b {b}"
+    );
+}
+
+/// Round-3 gate finding 1: "Send now" on a queued run keeps the worktree hold: refused, and
+/// the queue stays as it was (T3's `queue.resume` checks on the selected run).
+#[tokio::test(flavor = "current_thread")]
+async fn send_now_keeps_the_worktree_hold() {
+    let db = TempDb::new("send-now-worktree");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    let mut failed = run_to_end(&engine, "t1", "run:t1:1").await["runs"][0].clone();
+    failed["workspacePreparation"] = json!({"type": "worktree"});
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            tx.append(crate::store::Draft::new("t1", "run.updated", failed))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    seed_async_question(&engine).await;
+    dispatch(&engine, async_answer("answer")).await;
+    let before = projection(&engine, "t1").await;
+    let run = run_for(&before, "async-answer:t1:request")["id"].clone();
+    let start =
+        json!({"type":"queued-run.start","commandId":"send-now","threadId":"t1","runId":run});
+    assert!(matches!(
+        engine.dispatch(from_json(start).unwrap()).await,
+        Err(EngineError::Rejected(_))
+    ));
+    assert_eq!(projection(&engine, "t1").await["runs"], before["runs"]);
+}
+
+/// Round-3 gate finding 2: an answer is not steered into a run the user stopped; it is
+/// refused and stays answerable (T3's `stopReachedRun` on a steer).
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_answer_is_not_steered_into_a_stopped_run() {
+    let db = TempDb::new("async-answer-stopped");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "a", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    // Stop reached the run; the provider has not ended it yet.
+    engine
+        .inner()
+        .db(|s| {
+            let mut tx = s.tx()?;
+            tx.append(
+                crate::store::Draft::new(
+                    "t1",
+                    "turn-item.updated",
+                    json!({"id": "turn-item:run:t1:1:interrupt-request", "threadId": "t1",
+                        "runId": "run:t1:1", "nodeId": "node:run:t1:1:root",
+                        "type": "run_interrupt_request", "status": "completed", "ordinal": 9}),
+                )
+                .run(Some("run:t1:1")),
+            )?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    seed_async_question(&engine).await;
+    assert!(matches!(
+        engine
+            .dispatch(from_json(async_answer("answer")).unwrap())
+            .await,
+        Err(EngineError::Rejected(_))
+    ));
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runtimeRequests"][0]["status"], "pending");
+}
+
+/// Round-3 gate finding 3, T3's "holds a limited provider's queue through another provider's
+/// turn until the user resumes": the limited queue waits through a Codex turn, and the
+/// user's resume starts it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_limited_queue_waits_until_the_user_resumes() {
+    let db = TempDb::new("limited-queue-resume");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let on = |instance: &str, id: &str, text: &str, mode: &str| {
+        let mut m = message_with("t1", id, text, json!({"type": mode}), None);
+        m["modelSelection"] = json!({"instanceId": instance, "model": "m"});
+        m
+    };
+    let hold = gate(&engine);
+    dispatch(
+        &engine,
+        on(
+            "claudeAgent",
+            "limited",
+            "fail-usage-limit",
+            "start_immediately",
+        ),
+    )
+    .await;
+    dispatch(
+        &engine,
+        on("claudeAgent", "queued", "Later", "queue_after_active"),
+    )
+    .await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(
+        &engine,
+        on("codex", "switch", "On Codex", "start_immediately"),
+    )
+    .await;
+    let switched = run_for(&projection(&engine, "t1").await, "switch")["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let p = run_to_end(&engine, "t1", &switched).await;
+    assert_eq!(count(&codex.sessions), 1);
+    assert_eq!(
+        run_for(&p, "queued")["status"],
+        "queued",
+        "held through the Codex turn"
+    );
+    dispatch(
+        &engine,
+        json!({"type":"queue.resume","commandId":"resume","threadId":"t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_ne!(run_for(&p, "queued")["status"], "queued", "{}", p["runs"]);
+}
+
+/// Round-3 gate finding 4: a queued monitor wake follows the thread's current selection, so
+/// the provider it was queued on, now limited, does not block it (T3's
+/// `queuedRunModelSelection`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_monitor_wake_follows_the_current_selection() {
+    let db = TempDb::new("monitor-wake-selection");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "limited", "fail-usage-limit")).await;
+    let mut wake = queued("wake", "A watched pull request changed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("server");
+    wake["notification"] = json!({"source": {"kind": "monitor"}, "outcome": "updated",
+        "summary": "#7: checks failed"});
+    dispatch(&engine, wake).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, model_selection_set("select", "codex")).await;
+    dispatch(
+        &engine,
+        json!({"type":"queue.resume","commandId":"resume","threadId":"t1"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_for(&p, "wake")["status"], "completed");
+    assert_eq!(run_for(&p, "wake")["providerInstanceId"], "codex");
+    assert_eq!(count(&codex.sessions), 1);
+}
+
+/// Round-3 gate finding 5: a provider failure on Claude holds only work that would run on
+/// Claude next; queued Codex work starts (T3's `providerFailed` compares instances).
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_failure_holds_only_its_provider() {
+    let db = TempDb::new("failure-other-provider");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    let mut b = queued("b", "On Codex");
+    b["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, b).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_for(&p, "b")["status"], "completed");
+    assert_eq!(count(&codex.sessions), 1);
+}
+
+/// Pass-4 gate finding 1: a monitor wake queued on model A starts on model B after the user
+/// picks B on the same instance (T3's `startNextQueuedRun` copies the whole selection).
+#[tokio::test(flavor = "current_thread")]
+async fn a_monitor_wake_takes_a_new_model_on_the_same_instance() {
+    let db = TempDb::new("monitor-wake-same-instance");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "active", "Hello")).await;
+    let mut wake = queued("wake", "A watched pull request changed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("server");
+    wake["modelSelection"] = json!({"instanceId": "claudeAgent", "model": "model-a"});
+    wake["notification"] = json!({"source": {"kind": "monitor"}, "outcome": "updated",
+        "summary": "#7: checks failed"});
+    dispatch(&engine, wake).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.model-selection.set", "commandId": "select", "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "model-b"}}),
+    )
+    .await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_for(&p, "wake")["status"], "completed");
+    assert_eq!(run_for(&p, "wake")["modelSelection"]["model"], "model-b");
+}
+
+/// Pass-4 gate finding 2: a stale pull request wake at the head of the queue is dropped
+/// before a Claude failure decides what to hold, so queued Codex work still starts (T3 drops
+/// stale wakes, then compares `providerFailed` on the runnable run).
+#[tokio::test(flavor = "current_thread")]
+async fn a_stale_wake_does_not_hold_other_provider_work_after_a_failure() {
+    let db = TempDb::new("stale-wake-failure");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    let mut wake = queued("wake", "A watched pull request changed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("server");
+    wake["notification"] = json!({"source": {"kind": "monitor", "pullRequest": {
+            "host": "github.com", "repository": "o/r", "number": 7,
+            "watchStartedAt": "2026-01-01T00:00:00.000Z", "headSha": null}},
+        "outcome": "updated", "summary": "#7: checks failed"});
+    dispatch(&engine, wake).await;
+    let mut b = queued("b", "On Codex");
+    b["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, b).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_for(&p, "wake")["status"], "cancelled", "{}", p["runs"]);
+    let b_run = run_for(&p, "b")["id"].as_str().unwrap().to_owned();
+    let p = run_to_end(&engine, "t1", &b_run).await;
+    assert_eq!(run_for(&p, "b")["status"], "completed");
+    assert_eq!(count(&codex.sessions), 1);
+}
+
+/// Pass-4 gate finding 3: an old `usage_limit` item no longer holds the queue once the latest
+/// session reports another error (T3's `usageLimitHoldsQueue` reads the session's `lastError`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_newer_session_error_lifts_an_old_usage_limit() {
+    let db = TempDb::new("usage-limit-session-error");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
+    dispatch(&engine, queued("b", "Later")).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    engine
+        .inner()
+        .db(|s| {
+            let mut tx = s.tx()?;
+            let mut session = tx
+                .entities("t1", "providerSessions")?
+                .into_iter()
+                .next()
+                .expect("a session");
+            session["lastError"] = json!("The provider process exited.");
+            session["updatedAt"] = json!(tx.now());
+            tx.append(crate::store::Draft::new(
+                "t1",
+                "provider-session.updated",
+                session,
+            ))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type":"queue.resume","commandId":"resume","threadId":"t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_ne!(run_for(&p, "b")["status"], "queued", "{}", p["runs"]);
+}

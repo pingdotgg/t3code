@@ -334,11 +334,15 @@ impl Provider for FakeProvider {
                     }
                 });
             }
+            let mut capabilities = conn_provider::testing::session_capabilities();
+            if !self.steering {
+                capabilities["turns"]["supportsActiveSteering"] = json!(false);
+            }
             Ok(OpenedSession {
                 provider_session: from_json(json!({
                     "id": input.provider_session_id, "driver": "claudeAgent",
                     "providerInstanceId": self.id, "status": "ready",
-                    "cwd": input.runtime_policy.cwd, "model": null, "capabilities": conn_provider::testing::session_capabilities(),
+                    "cwd": input.runtime_policy.cwd, "model": null, "capabilities": capabilities,
                     "createdAt": now_iso(), "updatedAt": now_iso(), "lastError": null,
                 }))
                 .map_err(|e| ProviderError::Protocol {
@@ -907,6 +911,12 @@ impl Session for FakeSession {
                     &turn,
                     TurnStatus::Failed,
                     Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
+                )),
+                "fail-usage-limit" => started.push(terminal(
+                    &turn,
+                    TurnStatus::Failed,
+                    Some(json!({"class": "usage_limit", "message": "The fake provider hit its usage limit.", "code": null, "retryable": false,
+                        "resetAt": conn_support::time::iso_from_ms(conn_support::time::now_ms() + 3_600_000)})),
                 )),
                 _ => {
                     let reply = format!("echo: {text}");

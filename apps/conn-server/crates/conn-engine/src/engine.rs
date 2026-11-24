@@ -2004,7 +2004,14 @@ fn dispatch_target(
     let thread_id = match command["type"].as_str().unwrap_or("") {
         "delegated_task.request" => &command["parentThreadId"],
         "thread.metadata.update" if command.get("continuation").is_none() => return Ok(None),
+        "runtime-request.respond"
+            if !answers_with_message(tx, command)?
+                || matches!(command["decision"].as_str(), Some("decline" | "cancel")) =>
+        {
+            return Ok(None);
+        }
         "message.dispatch"
+        | "runtime-request.respond"
         | "thread.metadata.update"
         | "prepared-run.release"
         | "prepared-run.retry" => &command["threadId"],
@@ -2021,7 +2028,9 @@ fn dispatch_target(
         "message.dispatch" => text(&command["modelSelection"]["instanceId"])
             .or_else(|| text(&thread["modelSelection"]["instanceId"])),
         "delegated_task.request" => text(&command["modelSelection"]["instanceId"]),
-        "thread.metadata.update" => text(&thread["modelSelection"]["instanceId"]),
+        "thread.metadata.update" | "runtime-request.respond" => {
+            text(&thread["modelSelection"]["instanceId"])
+        }
         _ => match command["runId"].as_str() {
             Some(run_id) => tx
                 .entity(thread_id, "runs", run_id)?
@@ -2030,6 +2039,21 @@ fn dispatch_target(
         },
     };
     Ok(instance.map(|instance| (project, instance)))
+}
+
+/// Whether a `runtime-request.respond` answers with a user message, which starts a turn.
+fn answers_with_message(
+    tx: &crate::store::Tx<'_>,
+    command: &Value,
+) -> crate::store::StoreResult<bool> {
+    let (Some(thread_id), Some(request_id)) =
+        (command["threadId"].as_str(), command["requestId"].as_str())
+    else {
+        return Ok(false);
+    };
+    Ok(tx
+        .entity(thread_id, "runtimeRequests", request_id)?
+        .is_some_and(|request| request["responseCapability"]["type"] == "message"))
 }
 
 #[cfg(test)]

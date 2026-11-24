@@ -22,7 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
+use crate::commands::{Held, failure, finish_run_as, hold_queued, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
 use crate::store::{Draft, Instance};
@@ -344,9 +344,14 @@ impl Inner {
     ) {
         let (thread, run) = (thread_id.to_owned(), run_id.to_owned());
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
-        let held_on_failure = failure
-            .as_ref()
-            .is_some_and(|f| f["class"] != "validation_error");
+        // A usage limit writes no hold: starting checks the limited provider instead
+        // (`usageLimitHoldsQueue`), so work on another provider can still start.
+        let held_on_failure = failure.as_ref().is_some_and(|f| {
+            !matches!(
+                f["class"].as_str(),
+                Some("validation_error" | "usage_limit")
+            )
+        });
         let checkpointing = self.checkpoints.is_some();
         let next = self
             .write(move |tx| {
@@ -385,8 +390,13 @@ impl Inner {
                 // A failure holds the queue, so queued messages do not hit the same wall. A
                 // late end of a run that already ended (a start failing after Force stop)
                 // holds nothing.
-                if held_on_failure && ended {
-                    hold_queue(tx, &thread_id)?;
+                // Only work that would run on the failed provider is held (`providerFailed`
+                // compares the failed run's instance with the next run's).
+                if held_on_failure
+                    && ended
+                    && crate::commands::next_runs_on_failed_provider(tx, &thread_id, &run_id)?
+                {
+                    hold_queued(tx, &thread_id, Held::ExceptBufferedWakes)?;
                 }
                 // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback
                 // admitted meanwhile runs after it and sees the run completed. The capture ends
@@ -398,6 +408,9 @@ impl Inner {
                     }]
                 } else {
                     let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
+                    if status == "completed" {
+                        crate::commands::release_unattended_holds(tx, &thread_id, &run_id)?;
+                    }
                     effects.extend(start_next_queued(tx, &thread_id, None)?);
                     effects
                 };

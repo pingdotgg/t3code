@@ -525,6 +525,14 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.dispatch_mode.kind
         ));
     }
+    // After a failed or stopped worktree setup, work waits for a worktree rather than start
+    // in the project checkout (`worktreeMissingRun`).
+    let worktree_missing = matches!(
+        c.dispatch_mode.kind.as_str(),
+        "queue_after_active" | "start_immediately"
+    ) && active_run(tx, &c.thread_id)?.is_none()
+        && is_null(&thread, "worktreePath")
+        && latest_executed_run(tx, &c.thread_id)?.is_some_and(|run| failed_worktree_setup(&run));
     let instance = normalize_model_selection(
         c.model_selection
             .as_ref()
@@ -538,8 +546,19 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Delivery::Steer(target) = delivery {
         return steer_into(tx, &c, &target);
     }
-    // A user send releases a queue that Stop or a failure held.
-    if c.created_by == "user" {
+    let delivery = match delivery {
+        Delivery::Start if worktree_missing => Delivery::Queue { first: false },
+        other => other,
+    };
+    let setup_pending = worktree_setup_pending(tx, &c.thread_id)?;
+    // A client send releases a queue that Stop or a failure held; server messages, such as
+    // an async answer, scheduled tasks and steer follow-ups do not (`sentByUserFromClient`).
+    if c.created_by == "user"
+        && matches!(c.creation_source.as_str(), "web" | "mobile")
+        && c.steer_follow_up_of_run_id.is_none()
+        && c.scheduled_task_id.is_none()
+        && !setup_pending
+    {
         release_held(tx, &c.thread_id)?;
     }
     let queued = matches!(delivery, Delivery::Queue { .. });
@@ -604,10 +623,24 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         _ => Value::Null,
     };
-    let held = queued
-        && queued_runs(tx, &c.thread_id)?
-            .iter()
-            .any(|r| r["queueHeld"] == true);
+    // A provider result arriving while a held queue waits still drains, unless Stop reached
+    // the active run (`wakeSkipsHold`): it replays output the CLI already produced.
+    let wake_skips_hold = c.created_by == "agent"
+        && c.creation_source == "provider"
+        && !setup_pending
+        && match active_run(tx, &c.thread_id)? {
+            Some(active) => {
+                interrupt_request(tx, &c.thread_id, active["id"].as_str().unwrap_or_default())?
+                    .is_none()
+            }
+            None => false,
+        };
+    let held = worktree_missing
+        || (queued
+            && !wake_skips_hold
+            && queued_runs(tx, &c.thread_id)?
+                .iter()
+                .any(|r| r["queueHeld"] == true));
     let mut run = json!({
         "id": run_id,
         "threadId": c.thread_id,
@@ -956,6 +989,41 @@ fn steer_into(tx: &mut Tx<'_>, c: &MessageDispatch, target: &Value) -> Outcome {
     }])
 }
 
+/// `releaseUnattendedHolds`: a hold waits for a person to review what they queued. Nobody
+/// reviews what agents, the server or scheduled tasks queued, so the thread's newest run
+/// completing without a Stop releases those, before the next run is picked.
+pub(crate) fn release_unattended_holds(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    completed_run_id: &str,
+) -> StoreResult<()> {
+    let held: Vec<Value> = queued_runs(tx, thread_id)?
+        .into_iter()
+        .filter(|run| run["queueHeld"] == true)
+        .collect();
+    if held.is_empty()
+        || latest_executed_run(tx, thread_id)?.is_none_or(|run| run["id"] != completed_run_id)
+        || interrupt_request(tx, thread_id, completed_run_id)?.is_some()
+        || worktree_setup_pending(tx, thread_id)?
+    {
+        return Ok(());
+    }
+    for mut run in held {
+        let message = match run["userMessageId"].as_str() {
+            Some(id) => tx.entity(thread_id, "messages", id)?,
+            None => None,
+        };
+        let unattended =
+            message.is_some_and(|m| m["createdBy"] != "user" || !is_null(&m, "scheduledTaskId"));
+        if unattended {
+            run["queueHeld"] = json!(false);
+            let id = run["id"].as_str().unwrap_or_default().to_owned();
+            tx.append(Draft::new(thread_id, "run.updated", run).run(Some(&id)))?;
+        }
+    }
+    Ok(())
+}
+
 /// Clears `queueHeld` on every queued run.
 fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
     let mut released = false;
@@ -972,7 +1040,37 @@ fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
 
 /// Sets `queueHeld` on every queued run, so they wait for the user.
 pub(crate) fn hold_queue(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    hold_queued(tx, thread_id, Held::All)
+}
+
+/// Which queued runs a hold leaves free.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Held {
+    All,
+    /// A provider failure leaves buffered provider notifications free: they replay output the
+    /// CLI already produced and prompt nothing (T3's `startNextQueuedRun`).
+    ExceptBufferedWakes,
+}
+
+/// T3's `isBufferedProviderNotification`: a wake the provider buffered, not a delegated result.
+fn is_buffered_provider_notification(message: &Value) -> bool {
+    message["createdBy"] == "agent"
+        && message["creationSource"] == "provider"
+        && message["notification"].is_object()
+        && is_null(message, "delegatedCompletion")
+}
+
+pub(crate) fn hold_queued(tx: &mut Tx<'_>, thread_id: &str, held: Held) -> StoreResult<()> {
     for mut run in queued_runs(tx, thread_id)? {
+        if held == Held::ExceptBufferedWakes && run["queueHeld"] != true {
+            let message = match run["userMessageId"].as_str() {
+                Some(id) => tx.entity(thread_id, "messages", id)?,
+                None => None,
+            };
+            if message.is_some_and(|m| is_buffered_provider_notification(&m)) {
+                continue;
+            }
+        }
         if run["queueHeld"] != true {
             run["queueHeld"] = json!(true);
             let id = run["id"].as_str().unwrap_or_default().to_owned();
@@ -984,10 +1082,213 @@ pub(crate) fn hold_queue(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
 
 /// Starts the next queued run when nothing is active (`startNextQueuedRun`). `only` picks one
 /// queued run, as `queued-run.start` does. Returns the effect that starts it.
+/// Whether the next queued run the queue would start runs on the failed run's provider.
+/// Stale pull request wakes at the head of the queue are dropped first, as T3's
+/// `startNextQueuedRun` drops them before it compares providers.
+pub(crate) fn next_runs_on_failed_provider(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    failed_run_id: &str,
+) -> StoreResult<bool> {
+    let (Some(thread), Some(failed)) = (
+        tx.thread(thread_id)?,
+        tx.entity(thread_id, "runs", failed_run_id)?,
+    ) else {
+        return Ok(false);
+    };
+    let next = loop {
+        let Some(next) = queued_runs(tx, thread_id)?
+            .into_iter()
+            .find(|run| run["queueHeld"] != true)
+        else {
+            return Ok(false);
+        };
+        let message = match next["userMessageId"].as_str() {
+            Some(id) => tx.entity(thread_id, "messages", id)?,
+            None => None,
+        };
+        // Only a pull request wake needs the thread's history.
+        let stale = match message.filter(crate::pull_requests::is_watch_wake) {
+            Some(message) => crate::pull_requests::stale_wake(
+                &thread,
+                &tx.entities(thread_id, "messages")?,
+                &message,
+            ),
+            None => false,
+        };
+        if !stale {
+            break next;
+        }
+        let id = next["id"].as_str().unwrap_or_default().to_owned();
+        finish_run(tx, thread_id, &id, "cancelled", None)?;
+    };
+    Ok(
+        effective_selection(tx, thread_id, &thread, &next)?["instanceId"]
+            == failed["providerInstanceId"],
+    )
+}
+
+/// `latestExecutedRun`: the run that ran last. Unfinished runs count as latest, then by end
+/// time, then by ordinal; queued runs and runs cancelled before they started do not count.
+pub(crate) fn latest_executed_run(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<Value>> {
+    let key = |run: &Value| {
+        (
+            run["completedAt"]
+                .as_str()
+                .map_or("\u{10FFFF}".to_owned(), str::to_owned),
+            run["ordinal"].as_u64().unwrap_or(0),
+        )
+    };
+    Ok(tx
+        .entities(thread_id, "runs")?
+        .into_iter()
+        .filter(|run| {
+            run["status"] != "queued"
+                && !(run["status"] == "cancelled" && is_null(run, "startedAt"))
+        })
+        .max_by_key(key))
+}
+
+/// A run whose worktree setup failed or was stopped, on a thread with no checkout of its own:
+/// work started now would run in the project checkout (`worktreeSetupPending`). Runs imported
+/// from T3 carry `workspacePreparation`.
+fn failed_worktree_setup(run: &Value) -> bool {
+    matches!(run["status"].as_str(), Some("failed" | "interrupted"))
+        && run["workspacePreparation"]["type"] == "worktree"
+}
+
+/// `worktreeSetupPending`.
+pub(crate) fn worktree_setup_pending(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool> {
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(false);
+    };
+    Ok(is_null(&thread, "worktreePath")
+        && tx
+            .entities(thread_id, "runs")?
+            .iter()
+            .any(failed_worktree_setup))
+}
+
+/// `usageLimitHoldsQueue`: the provider instance's last run failed on its usage limit, and
+/// that is still the thread's last run, or (with `now`) its reset is still ahead.
+pub(crate) fn usage_limit_holds(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    instance: &str,
+    now: Option<&str>,
+) -> StoreResult<bool> {
+    let runs = tx.entities(thread_id, "runs")?;
+    let key = |run: &&Value| {
+        (
+            run["completedAt"]
+                .as_str()
+                .map_or("\u{10FFFF}".to_owned(), str::to_owned),
+            run["ordinal"].as_u64().unwrap_or(0),
+        )
+    };
+    let Some(limited) = runs
+        .iter()
+        .filter(|run| {
+            run["providerInstanceId"] == instance
+                && run["status"] != "queued"
+                && !(run["status"] == "cancelled" && is_null(run, "startedAt"))
+        })
+        .max_by_key(key)
+        .filter(|run| run["status"] == "failed")
+    else {
+        return Ok(false);
+    };
+    let run_id = limited["id"].as_str().unwrap_or_default();
+    let failure = tx
+        .entities_where(thread_id, "turnItems", "runId", run_id)?
+        .into_iter()
+        .filter(|item| {
+            item["type"] == "error"
+                && item["status"] == "failed"
+                && item["nodeId"] == limited["rootNodeId"]
+        })
+        .max_by(|a, b| {
+            let at = |i: &Value| i["updatedAt"].as_str().unwrap_or_default().to_owned();
+            at(a).cmp(&at(b))
+        })
+        .map(|item| item["failure"].clone());
+    let Some(failure) = failure.filter(|f| f["class"] == "usage_limit") else {
+        return Ok(false);
+    };
+    // A newer session error replaces the limit (`threadErrorSummary`).
+    let session_error = tx
+        .entities_where(
+            thread_id,
+            "providerSessions",
+            "providerInstanceId",
+            instance,
+        )?
+        .into_iter()
+        .max_by_key(|s| s["updatedAt"].as_str().unwrap_or_default().to_owned())
+        .map(|s| s["lastError"].clone())
+        .filter(|e| !e.is_null());
+    if session_error.is_some_and(|e| e != failure["message"]) {
+        return Ok(false);
+    }
+    if latest_executed_run(tx, thread_id)?.is_some_and(|latest| latest["id"] == run_id) {
+        return Ok(true);
+    }
+    Ok(match (now, failure["resetAt"].as_str()) {
+        (Some(now), Some(reset)) => {
+            match (
+                crate::time::millis_from_iso(reset),
+                crate::time::millis_from_iso(now),
+            ) {
+                (Some(reset), Some(now)) => reset > now,
+                _ => false,
+            }
+        }
+        _ => false,
+    })
+}
+
+/// `queuedRunModelSelection`: a queued run whose message follows the thread's conversation
+/// (a delegated result, a message that follows the selection, a monitor wake that is not
+/// buffered provider output) runs on the thread's current selection; others on their own.
+pub(crate) fn effective_selection(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    thread: &Value,
+    run: &Value,
+) -> StoreResult<Value> {
+    let message = match run["userMessageId"].as_str() {
+        Some(id) => tx.entity(thread_id, "messages", id)?,
+        None => None,
+    };
+    let follows = message.is_some_and(|m| {
+        is_delegated_completion(&m)
+            || m["followsThreadSelection"] == true
+            || (m["notification"]["source"]["kind"] == "monitor"
+                && !is_buffered_provider_notification(&m))
+    });
+    Ok(if follows && thread["modelSelection"].is_object() {
+        thread["modelSelection"].clone()
+    } else {
+        run["modelSelection"].clone()
+    })
+}
+
+/// Starts the next queued run on its own, as after a run ends.
 pub(crate) fn start_next_queued(
     tx: &mut Tx<'_>,
     thread_id: &str,
     only: Option<&str>,
+) -> StoreResult<Option<Effect>> {
+    start_next_queued_as(tx, thread_id, only, false)
+}
+
+/// `user_started`: the user asked for it (Send now, resume), so a usage limit's reset time
+/// does not hold it, only a limit that is still the thread's last run.
+fn start_next_queued_as(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    only: Option<&str>,
+    user_started: bool,
 ) -> StoreResult<Option<Effect>> {
     if active_run(tx, thread_id)?.is_some() {
         return Ok(None);
@@ -1036,23 +1337,22 @@ pub(crate) fn start_next_queued(
         }
         break run;
     };
-    // T3's `startNextQueuedRun`: the run starts on its effective selection (a message that
-    // follows the conversation takes the thread's current one), and a provider turned off for
-    // the project holds the queue for the user instead of starting it.
-    let queued_message = run["userMessageId"]
+    // A limited provider would fail and use up every waiting message; the queue keeps its
+    // order and waits (`usageLimitHoldsQueue`).
+    let now = (!user_started).then(|| tx.now().to_owned());
+    let selection = effective_selection(tx, thread_id, &thread, &run)?;
+    let instance = selection["instanceId"]
         .as_str()
-        .map(|id| tx.entity(thread_id, "messages", id))
-        .transpose()?
-        .flatten();
-    if queued_message
-        .as_ref()
-        .is_some_and(follows_current_conversation)
-    {
-        run["modelSelection"] = thread["modelSelection"].clone();
-        run["providerInstanceId"] = thread["modelSelection"]["instanceId"].clone();
+        .unwrap_or_default()
+        .to_owned();
+    if usage_limit_holds(tx, thread_id, &instance, now.as_deref())? {
+        return Ok(None);
     }
-    let instance = run["providerInstanceId"].as_str().unwrap_or_default();
-    if !tx.queue_enabled(thread["projectId"].as_str(), instance) {
+    run["modelSelection"] = selection;
+    run["providerInstanceId"] = json!(instance);
+    // A provider turned off for the project holds the queue for the user instead of starting
+    // it (`startNextQueuedRun`).
+    if !tx.queue_enabled(thread["projectId"].as_str(), &instance) {
         hold_queue(tx, thread_id)?;
         return Ok(None);
     }
@@ -1155,17 +1455,42 @@ fn queued_run_start(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if active_run(tx, &c.thread_id)?.is_some() {
         return reject("A queued user message can only be sent now while the thread is stopped.");
     }
+    resumable(tx, &c.thread_id, Some(&c.run_id))?;
     release_held(tx, &c.thread_id)?;
-    Ok(start_next_queued(tx, &c.thread_id, Some(&c.run_id))?
+    Ok(
+        start_next_queued_as(tx, &c.thread_id, Some(&c.run_id), true)?
+            .into_iter()
+            .collect(),
+    )
+}
+
+/// `queue.resume`'s checks on the run it would start (the selected one, else the next): its
+/// effective provider must not be limited, and no worktree setup may be pending. A refusal
+/// leaves every hold as it was.
+fn resumable(tx: &Tx<'_>, thread_id: &str, selected: Option<&str>) -> Result<(), CommandError> {
+    let thread = live_thread(tx, thread_id)?;
+    let next = queued_runs(tx, thread_id)?
         .into_iter()
-        .collect())
+        .find(|run| selected.is_none_or(|id| run["id"] == id));
+    let instance = match &next {
+        Some(run) => effective_selection(tx, thread_id, &thread, run)?["instanceId"].clone(),
+        None => thread["modelSelection"]["instanceId"].clone(),
+    };
+    if usage_limit_holds(tx, thread_id, instance.as_str().unwrap_or_default(), None)? {
+        return reject("Continue the limited thread before resuming its queue.");
+    }
+    if worktree_setup_pending(tx, thread_id)? {
+        return reject("Retry worktree setup or choose a workspace before resuming the queue.");
+    }
+    Ok(())
 }
 
 fn queue_resume(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
     live_thread(tx, &c.thread_id)?;
+    resumable(tx, &c.thread_id, None)?;
     release_held(tx, &c.thread_id)?;
-    Ok(start_next_queued(tx, &c.thread_id, None)?
+    Ok(start_next_queued_as(tx, &c.thread_id, None, true)?
         .into_iter()
         .collect())
 }
@@ -1776,6 +2101,7 @@ pub(crate) fn write_interrupt_result(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeRequestRespond {
+    command_id: String,
     thread_id: String,
     request_id: String,
     decision: Option<Value>,
@@ -1793,6 +2119,30 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if request["status"] != "pending" {
         return reject("This request was already answered or has expired.");
     }
+    let declined = matches!(
+        c.decision.as_ref().and_then(Value::as_str),
+        Some("decline" | "cancel")
+    );
+    let node = request["nodeId"].as_str().map(str::to_owned);
+    // A question the provider can no longer take live (an imported or async one) is answered
+    // with a user message that starts a turn (T3's `responseCapability.type: message`).
+    let is_message = request["responseCapability"]["type"] == "message";
+    let message_reply = match is_message {
+        true if !declined => {
+            let item = node
+                .as_deref()
+                .map(|node| request_item(tx, &c, node))
+                .transpose()?
+                .flatten()
+                .filter(|item| item["type"] == "user_input_request");
+            let Some(item) = item else {
+                return reject("The question for this request was not found.");
+            };
+            let answers = c.answers.as_ref().and_then(Value::as_object);
+            Some(async_reply(&item, answers).map_err(|e| CommandError::Rejected(e.into()))?)
+        }
+        _ => None,
+    };
     request["status"] = json!("resolved");
     request["resolvedAt"] = json!(tx.now());
     if let Some(decision) = &c.decision {
@@ -1804,7 +2154,6 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(answers) = &c.answers {
         request["answers"] = answers.clone();
     }
-    let node = request["nodeId"].as_str().map(str::to_owned);
     let instance = respond_instance(tx, &c.thread_id, &request)?;
     tx.append(
         Draft::new(&c.thread_id, "runtime-request.updated", request)
@@ -1812,6 +2161,12 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
             .provider_instance(instance.as_deref()),
     )?;
     settle_request_rows(tx, &c, node.as_deref(), instance.as_deref())?;
+    if is_message {
+        return match message_reply {
+            Some(text) => async_answer(tx, &c, text),
+            None => Ok(vec![]),
+        };
+    }
     Ok(vec![Effect::Respond {
         thread_id: c.thread_id,
         request: json!({
@@ -1821,6 +2176,152 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "answers": c.answers,
         }),
     }])
+}
+
+/// The request's approval or question item on its node.
+fn request_item(
+    tx: &Tx<'_>,
+    c: &RuntimeRequestRespond,
+    node_id: &str,
+) -> StoreResult<Option<Value>> {
+    Ok(tx
+        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("approval_request" | "user_input_request")
+            ) && item["requestId"] == c.request_id.as_str()
+        })
+        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX)))
+}
+
+/// A non-blank string, or a non-empty list of non-blank strings (T3's
+/// `isMessageQuestionAnswer`). A `{answers: [...]}` object counts as its list.
+fn message_answer(answer: &Value) -> Option<String> {
+    let answer = answer.get("answers").unwrap_or(answer);
+    let blank = |text: &str| text.trim().is_empty();
+    match answer {
+        Value::String(text) if !blank(text) => Some(text.trim().to_owned()),
+        Value::Array(list) if !list.is_empty() => {
+            let parts: Option<Vec<&str>> = list
+                .iter()
+                .map(|v| v.as_str().filter(|text| !blank(text)))
+                .collect();
+            Some(parts?.join(", ").trim().to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// The user's reply to an async question: each answered question and its answer, in the
+/// question's order (`runtime-request.respond` in T3's `Orchestrator`). A skipped optional
+/// question is left out; a skipped required one, or an extra blank answer, is refused.
+fn async_reply(
+    item: &Value,
+    answers: Option<&serde_json::Map<String, Value>>,
+) -> Result<String, &'static str> {
+    const UNANSWERED: &str = "Answer each question before sending.";
+    let questions = item["questions"].as_array().map_or(&[][..], Vec::as_slice);
+    let empty = serde_json::Map::new();
+    let answers = answers.unwrap_or(&empty);
+    let known = |id: &str| questions.iter().any(|q| q["id"] == id);
+    if !answers
+        .iter()
+        .all(|(id, answer)| known(id) || message_answer(answer).is_some())
+    {
+        return Err(UNANSWERED);
+    }
+    let mut replies = vec![];
+    for question in questions {
+        let answer = question["id"]
+            .as_str()
+            .and_then(|id| answers.get(id))
+            .and_then(message_answer);
+        match answer {
+            Some(text) => replies.push(format!(
+                "{}\n{text}",
+                question["question"].as_str().unwrap_or_default()
+            )),
+            // Clients send "" for a skipped optional question.
+            None if question["required"] == false => {}
+            None => return Err(UNANSWERED),
+        }
+    }
+    if replies.is_empty() {
+        return Err("Enter an answer before sending.");
+    }
+    Ok(replies.join("\n\n"))
+}
+
+/// Whether the provider session the run's provider thread is on steers a running turn.
+fn session_steers(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+    let Some(provider_thread) = run["providerThreadId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "providerThreads", id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    let Some(session) = provider_thread["providerSessionId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "providerSessions", id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    Ok(session["capabilities"]["turns"]["supportsActiveSteering"] == true)
+}
+
+/// Sends the async answer as the user's message: it steers the active run, or queues or
+/// starts a turn, with a stable id so a second answer cannot add another.
+fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Outcome {
+    // It steers only into a provider turn that runs; a run still starting gets the answer
+    // as its own later run (T3's `getRunningTurnContext` admission). A session that cannot
+    // steer declines it at delivery, and the answer then queues.
+    let running = match active_run(tx, &c.thread_id)? {
+        Some(run) if run["status"] == "running" => tx
+            .entities_where(&c.thread_id, "providerTurns", "status", "running")?
+            .iter()
+            .any(|turn| turn["nodeId"] == run["rootNodeId"])
+            .then_some(run),
+        _ => None,
+    };
+    // Only a session that steers live takes it into the turn (`supportsActiveSteering`).
+    let running = match running {
+        Some(run) if session_steers(tx, &c.thread_id, &run)? => Some(run),
+        _ => None,
+    };
+    // A steer accepted after Stop never reaches the agent: refused, so the answer can be sent
+    // again (T3's `stopReachedRun`).
+    if let Some(run) = &running {
+        let id = run["id"].as_str().unwrap_or_default();
+        if interrupt_request(tx, &c.thread_id, id)?.is_some() {
+            return reject(format!(
+                "Target run {id} is stopping and cannot be steered."
+            ));
+        }
+    }
+    let dispatch_mode = match running {
+        Some(run) => json!({"type": "steer_active", "targetRunId": run["id"]}),
+        None => json!({"type": "queue_after_active"}),
+    };
+    message_dispatch(
+        tx,
+        json!({
+            "type": "message.dispatch",
+            "commandId": c.command_id,
+            "threadId": c.thread_id,
+            "messageId": format!("async-answer:{}", c.request_id),
+            "text": text,
+            "attachments": [],
+            "createdBy": "user",
+            "creationSource": "server",
+            "dispatchMode": dispatch_mode,
+        }),
+    )
 }
 
 /// The instance T3 names on a response's events: the live session's when the request is
@@ -1866,17 +2367,7 @@ fn settle_request_rows(
                 .provider_instance(instance),
         )?;
     }
-    let item = tx
-        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
-        .into_iter()
-        .filter(|item| {
-            matches!(
-                item["type"].as_str(),
-                Some("approval_request" | "user_input_request")
-            ) && item["requestId"] == c.request_id.as_str()
-        })
-        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX));
-    if let Some(mut item) = item {
+    if let Some(mut item) = request_item(tx, c, node_id)? {
         if item["type"] == "user_input_request"
             && let Some(answers) = &c.answers
         {
@@ -2407,7 +2898,17 @@ pub(crate) fn finish_run_as(
             tx.append(draft("turn-item.updated", item))?;
         }
     }
+    // Only this run's requests end with it: a queued run removed while another run waits on
+    // an approval must leave that approval answerable. A request names its node; the node
+    // names its run.
     for mut request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+        let owner = match request["nodeId"].as_str() {
+            Some(node) => tx.entity(thread_id, "nodes", node)?,
+            None => None,
+        };
+        if owner.is_none_or(|node| node["runId"] != run_id) {
+            continue;
+        }
         request["status"] = json!("cancelled");
         request["resolvedAt"] = json!(now);
         tx.append(draft("runtime-request.updated", request))?;
@@ -2727,18 +3228,6 @@ fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
         t["updatedAt"] = json!(now);
         Ok(())
     })
-}
-
-/// T3's `followsCurrentConversation`: a queued message that runs on the thread's current
-/// selection, not the one it was queued with.
-fn follows_current_conversation(message: &Value) -> bool {
-    let buffered = message["createdBy"] == "agent"
-        && message["creationSource"] == "provider"
-        && !is_null(message, "notification")
-        && !is_delegated_completion(message);
-    is_delegated_completion(message)
-        || message["followsThreadSelection"] == true
-        || (message["notification"]["source"]["kind"] == "monitor" && !buffered)
 }
 
 /// A delegated-task completion. This engine marks its completion wakes by their id

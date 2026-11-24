@@ -32,6 +32,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       break;
     case "input":
       log("input");
+      fs.appendFileSync(LOG + ".inputs", `${JSON.stringify(cmd.message)}\n`);
       reply(cmd.id, null);
       if (["workflow", "workflow-background"].includes(cmd.message.message.content)) {
         write({ch:"sdk", t:"msg", ...sessions.get(cmd.sessionId), m:{type:"system",subtype:"task_started",task_id:"wf1",tool_use_id:"run1",task_type:"local_workflow",workflow_name:"Review",description:"Review",prompt:"workflow()"}});
@@ -846,6 +847,94 @@ async fn mcp_apps_require_each_streamed_capability_and_skip_subagent_sources() {
         session.close().await;
         helper.stop().await;
     }
+}
+
+/// MCP app notes reach Claude's prompt as quoted app data, as T3's `withClaudeAppContext`
+/// sends them: again after an interrupted turn, not again once a completed turn took them in,
+/// and again after compaction.
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("app-context");
+    let (helper, log) = fake_host(&scratch.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let note = "<external_mcp_app_item-1>Created Jira issue PROJ-42</external_mcp_app_item-1>";
+    let inputs = log.with_extension("log.inputs");
+    let last_input = || -> serde_json::Value {
+        let text = std::fs::read_to_string(&inputs).unwrap();
+        serde_json::from_str(text.lines().last().unwrap()).unwrap()
+    };
+    let with_note = |n: u32, text: &str| {
+        let mut input = turn(n, &thread, text, "full-access", &cwd);
+        input.app_context.push(conn_provider::AppContextEntry {
+            key: "mcp_app_item-1".into(),
+            text: "Created Jira issue PROJ-42".into(),
+        });
+        input
+    };
+    let result = serde_json::json!({"type":"result","subtype":"success","is_error":false,
+        "result":"done","duration_ms":1,"duration_api_ms":1,"num_turns":1,"total_cost_usd":0,
+        "usage":{},"modelUsage":{}});
+    let set_frames = |frames: serde_json::Value| {
+        std::fs::write(log.with_extension("log.frames"), frames.to_string()).unwrap();
+    };
+
+    // The first turn carries the note before the prompt, and is interrupted.
+    session
+        .start_turn(with_note(1, "What did the app report?"))
+        .await
+        .unwrap();
+    let turn_id = running_turn_id(&mut events).await;
+    assert_eq!(
+        last_input()["message"]["content"],
+        serde_json::json!([{"type":"text","text":note},
+            {"type":"text","text":"What did the app report?"}])
+    );
+    session
+        .interrupt_turn(InterruptInput {
+            provider_thread: thread.clone(),
+            provider_turn_id: turn_id.as_str().into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        until(&mut events, is_terminal).await.last().unwrap()["status"],
+        "interrupted"
+    );
+
+    // The interrupted turn never took the note in, so the next turn offers it again.
+    set_frames(serde_json::json!([result]));
+    session.start_turn(with_note(2, "Again?")).await.unwrap();
+    assert!(last_input().to_string().contains("PROJ-42"));
+    assert_eq!(
+        until(&mut events, is_terminal).await.last().unwrap()["status"],
+        "completed"
+    );
+
+    // A completed turn put it in the history: an unchanged note is not sent again.
+    set_frames(serde_json::json!([
+        {"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":10}},
+        result
+    ]));
+    session.start_turn(with_note(3, "And now?")).await.unwrap();
+    assert_eq!(last_input()["message"]["content"], "And now?");
+    assert_eq!(
+        until(&mut events, is_terminal).await.last().unwrap()["status"],
+        "completed"
+    );
+
+    // Compaction dropped it from the history, so it goes again.
+    session
+        .start_turn(with_note(4, "After compaction?"))
+        .await
+        .unwrap();
+    assert!(last_input().to_string().contains("PROJ-42"));
+    session.close().await;
 }
 
 fn api_error() -> serde_json::Value {

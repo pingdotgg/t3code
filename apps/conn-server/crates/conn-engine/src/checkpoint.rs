@@ -328,6 +328,12 @@ impl Inner {
                 }
                 complete_waiting(tx, &tid, &rid)?;
                 let mut effects = crate::families::on_run_end(tx, &tid, &rid)?;
+                if tx
+                    .entity(&tid, "runs", &rid)?
+                    .is_some_and(|run| run["status"] == "completed")
+                {
+                    commands::release_unattended_holds(tx, &tid, &rid)?;
+                }
                 effects.extend(commands::start_next_queued(tx, &tid, None)?);
                 tx.enqueue(None, &effects)
             })
