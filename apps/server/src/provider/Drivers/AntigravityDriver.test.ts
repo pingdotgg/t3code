@@ -322,7 +322,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         const level = (slug: string) =>
-          snapshot.models.find((model) => model.slug === slug)?.capabilities?.optionDescriptors?.[0];
+          snapshot.models.find((model) => model.slug === slug)?.capabilities
+            ?.optionDescriptors?.[0];
         expect(level("gemini-test-low")).toMatchObject({ currentValue: "high" });
         expect(level("gemini-test-high")).toMatchObject({ currentValue: "medium" });
       }),
