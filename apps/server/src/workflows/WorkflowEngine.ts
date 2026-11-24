@@ -44,6 +44,7 @@ import {
 import { issueReference, noteFor, stepReferences } from "./runReferences.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
+import { settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
 import {
   type Issue,
   isSettled,
@@ -57,6 +58,7 @@ import {
 } from "./WorkflowForge.ts";
 import {
   hookId as hookIdOf,
+  WorkflowHookBusyError,
   WorkflowInputError,
   WorkflowNotRegisteredError,
   WorkflowRunNotFoundError,
@@ -86,7 +88,11 @@ const DELIVERY_HEADERS = [
   "webhook-id",
   "idempotency-key",
 ];
+// The relay's limit for one hook, kept here too: a hook's URL can be called without the relay.
+const HOOK_RUNS_PER_MINUTE = 60;
 const CANCEL_WAITS = Duration.seconds(30);
+const decodeTurnWatch = Schema.decodeUnknownEffect(Schema.toCodecJson(TurnWatch));
+const encodeTurnEnd = Schema.encodeEffect(Schema.toCodecJson(TurnEnd));
 // Times of day are the server's own, as they are for scheduled tasks.
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
@@ -191,6 +197,49 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const wake = Effect.fnUntraced(function* (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) {
     if (resuming.has(wait.run_id) || (yield* store.run(wait.run_id))?.status === "paused") return;
     yield* send(wait, value);
+  });
+
+  // Agent turns being watched now, by run and wait. The fibers live in the engine's scope, so a
+  // reload stops them at once and the next engine picks the turns up from their open waits.
+  const watchingTurns = new Set<string>();
+  const seeTurn = Effect.fn("WorkflowEngine.seeTurn")(function* (wait: WorkflowStore.WaitRow) {
+    const id = `${wait.run_id}/${wait.name}`;
+    // Taken before the first yield: the wait's own step and the sweep can both ask at once.
+    if (watchingTurns.has(id)) return;
+    watchingTurns.add(id);
+    const watch = yield* decodeTurnWatch(WorkflowStore.jsonValue(wait.watch_json ?? "null")).pipe(
+      Effect.option,
+    );
+    if (Option.isNone(watch)) {
+      watchingTurns.delete(id);
+      return;
+    }
+    yield* settleTurn(watch.value).pipe(
+      Effect.flatMap(encodeTurnEnd),
+      Effect.catch((error) => encodeTurnEnd({ lost: text(error) })),
+      Effect.flatMap(
+        Effect.fnUntraced(function* (end) {
+          const woke = { expired: false, value: end as Schema.Json };
+          if (yield* store.waitSignalled(wait.run_id, wait.name, woke)) yield* wake(wait, woke);
+        }),
+      ),
+      Effect.provideService(WorkflowAgents, agents),
+      Effect.provideContext(stepReferences(store, wait.run_id, watch.value.agent.step)),
+      Effect.provideService(SqlClient.SafeIntegers, false),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("A workflow could not see an agent's turn through", cause).pipe(
+              Effect.annotateLogs({ wait: id }),
+            ),
+      ),
+      Effect.ensuring(Effect.sync(() => watchingTurns.delete(id))),
+      Effect.forkIn(scope),
+    );
+  });
+  const watchTurn = Effect.fn("WorkflowEngine.watchTurn")(function* (runId: string, name: string) {
+    const wait = yield* store.waitAt({ runId, wait: name });
+    if (wait !== undefined) yield* seeTurn(wait);
   });
 
   const start: Workflows["Service"]["start"] = Effect.fn("Workflows.start")(
@@ -450,13 +499,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const fireWatches = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     for (const wait of yield* store.watches) {
+      const watched = WorkflowStore.jsonValue(wait.watch_json ?? "null");
+      // An agent's turn is watched by a fiber of its own, started again here after a reload.
+      if (typeof watched === "object" && watched !== null && "agent" in watched) {
+        yield* seeTurn(wait);
+        continue;
+      }
       const id = `watch:${wait.run_id}/${wait.name}`;
       const last = lookedAt.get(id);
       if (last !== undefined && now - last < Duration.toMillis(LOOK_EVERY)) continue;
       lookedAt.set(id, now);
-      const watch = WorkflowStore.jsonValue(
-        wait.watch_json ?? "null",
-      ) as unknown as PullRequestWatch;
+      const watch = watched as unknown as PullRequestWatch;
       yield* forge.pullRequests.read(watch.pullRequest as PullRequestAddress).pipe(
         // Each look keeps where the pull request stands on the wait's own step.
         Effect.provideContext(stepReferences(store, wait.run_id, wait.name)),
@@ -503,6 +556,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
   );
+  const hookStarts = new Map<string, ReadonlyArray<number>>();
   const deliver: Workflows["Service"]["deliver"] = Effect.fn("Workflows.deliver")(
     function* (delivery) {
       const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
@@ -528,11 +582,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
         delivery.deliveryId ??
         (yield* random.uuidV4());
-      return Option.some(
-        yield* start(hook.workflow, delivery.request, {
-          idempotencyKey: `hook:${hook.hookId}:${key}`,
-        }),
-      );
+      const idempotencyKey = `hook:${hook.hookId}:${key}`;
+      // A retry of a run that exists starts nothing, so it takes none of the minute.
+      if ((yield* store.runByKey(hook.workflow, idempotencyKey)) === undefined) {
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const recent = (hookStarts.get(hook.hookId) ?? []).filter((at) => now - at < 60_000);
+        if (recent.length >= HOOK_RUNS_PER_MINUTE) {
+          return yield* new WorkflowHookBusyError({ hook: hook.name });
+        }
+        hookStarts.set(hook.hookId, [...recent, now]);
+      }
+      return Option.some(yield* start(hook.workflow, delivery.request, { idempotencyKey }));
     },
   );
 
@@ -939,6 +999,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     signalAll,
     start,
     ended,
+    watchTurn,
     cancel: (runId, reason) => cancel(runId, reason),
     list: Effect.fn("WorkflowEngine.list")(function* (filter) {
       return (yield* store.runsWhere(filter)).map((row) => ({

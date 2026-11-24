@@ -34,3 +34,12 @@ describe("KeepAwake.holdWhileWanted", () => {
     }),
   );
 });
+
+describe("KeepAwake.inhibitorCommand", () => {
+  it("runs PowerShell by its System32 path on Windows", () => {
+    expect(
+      KeepAwake.inhibitorCommand("win32", 1, false, { SYSTEMROOT: String.raw`D:\Windows` })
+        ?.command,
+    ).toBe(String.raw`D:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`);
+  });
+});

@@ -6,12 +6,14 @@ an authenticated connection does not count as product use.
 
 ## Identity
 
-- **Never change `distinct_id`.** It preserves historical continuity in PostHog charts; add fields
-  instead of changing how it is computed.
-- **Count installs with `installId`, resolve owners at query time.** `installId` is a stable hash
-  persisted in the state directory; `install.owner_observed` links installs to owners (Connect
-  account, OpenAI `user_id`—not the shared Codex Team `account_id` or per-login `sub`—Claude id,
-  client device). Two Connect accounts are never merged as one person.
+- **`distinct_id` is the install id.** Both are the hash of a random id persisted in the state
+  directory. Events carry it under both names because older builds derived `distinct_id` from the
+  Codex or Claude sign-in files, so the ingest side counts installs by `installId`.
+- **Identity never comes from a provider.** Do not read a provider's sign-in files or derive an id
+  or owner from a user's OpenAI, Claude, or other provider account, even hashed: users did not sign
+  in to those to be identified by T3 Code.
+- **Resolve owners at query time.** `install.owner_observed` links installs to owners (Connect
+  account, client device). Two Connect accounts are never merged as one person.
 - **Hash everywhere with [one helper](../../packages/shared/src/telemetryId.ts).** Clients and
   servers hash with the same SHA-256 helper so IDs correlate; the server accepts only hashes from
   clients.

@@ -111,6 +111,14 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./appImageRuntimeEnv": {
+      "types": "./src/appImageRuntimeEnv.ts",
+      "import": "./src/appImageRuntimeEnv.ts"
+    },
+    "./windowsSystem": {
+      "types": "./src/windowsSystem.ts",
+      "import": "./src/windowsSystem.ts"
+    },
     "./envTrampoline": {
       "types": "./src/envTrampoline.ts",
       "import": "./src/envTrampoline.ts"
@@ -214,6 +222,10 @@
     "./desktopBootstrapToken": {
       "types": "./src/desktopBootstrapToken.ts",
       "import": "./src/desktopBootstrapToken.ts"
+    },
+    "./desktopReadinessProof": {
+      "types": "./src/desktopReadinessProof.ts",
+      "import": "./src/desktopReadinessProof.ts"
     },
     "./dpopCommon": {
       "types": "./src/dpopCommon.ts",
