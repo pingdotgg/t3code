@@ -120,6 +120,43 @@ it.effect("a key is taken by the first run started under it, whatever its versio
   ),
 );
 
+it.effect("lists of runs leave out what each run was started with", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const input = { payload: "x".repeat(20_000) };
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: "intake",
+        version: 1,
+        engineTag: "intake@1",
+        idempotencyKey: "k",
+        input,
+      });
+      const listed = [
+        ...(yield* store.runs(undefined)),
+        ...(yield* store.runs("running")),
+        ...(yield* store.runsWhere({ workflow: "intake" })),
+      ];
+      assert.deepStrictEqual(
+        listed.map((row) => [row.run_id, "input_json" in row]),
+        [
+          ["r1", false],
+          ["r1", false],
+          ["r1", false],
+        ],
+      );
+      const one = yield* store.run("r1");
+      assert.deepStrictEqual(
+        one?.input_json === null || one?.input_json === undefined
+          ? undefined
+          : WorkflowStore.jsonValue(one.input_json),
+        input,
+      );
+    }),
+  ),
+);
+
 it.effect("keeps each thing a run touched once, with what the latest touch knew", () =>
   withStore(
     Effect.gen(function* () {
