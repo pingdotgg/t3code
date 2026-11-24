@@ -16,6 +16,11 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCdpReply = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
 );
+const decodeCdpError = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({ error: Schema.optional(Schema.Struct({ message: Schema.String })) }),
+  ),
+);
 const decodeCdpMessage = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -55,6 +60,8 @@ const makeDebuggee = (
     /** Electron's capture of this guest never settles. */
     readonly capturesStall?: () => boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
+    /** Answers a command at once with this value, unless it returns undefined. */
+    readonly answer?: (method: string, sessionId: string | undefined) => unknown;
   } = {},
 ) => {
   const emitter = new NodeEvents.EventEmitter();
@@ -62,6 +69,7 @@ const makeDebuggee = (
   const focusChanges: Array<() => void> = [];
   const sent: Array<unknown> = [];
   const methods: Array<string> = [];
+  const sessionIds: Array<string | undefined> = [];
   const rejects: Array<() => void> = [];
   const sendWaiters: Array<() => void> = [];
   const focusEmulation: Array<boolean> = [];
@@ -86,8 +94,14 @@ const makeDebuggee = (
           else resolve({});
           return;
         }
+        const answer = options.answer?.(method, sessionId);
+        if (answer !== undefined) {
+          resolve(answer);
+          return;
+        }
         sent.push(params?.id);
         methods.push(method);
+        sessionIds.push(sessionId);
         rejects.push(() => reject(new Error("Refused")));
         pending.push(() => resolve({ method }));
         sendWaiters.shift()?.();
@@ -125,6 +139,8 @@ const makeDebuggee = (
     sent,
     /** Methods of the same commands, in order. */
     methods,
+    /** Sessions of the same commands, in order; undefined for the page. */
+    sessionIds,
     /** Refuses the pending command the debugger received with this id. */
     refuse: (id: number) => rejects[sent.indexOf(id)]?.(),
     focusEmulation,
@@ -1091,6 +1107,118 @@ describe("DesktopBrowserHost", () => {
       });
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
+    }),
+  );
+
+  it.effect("finds the frame under the mouse only on a guest the window does not show", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const move = (id: number) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id,
+              method: "Input.dispatchMouseEvent",
+              params: { id, type: "mouseMoved", x: 5, y: 5 },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+
+      // No cross-site frame is attached yet.
+      yield* move(1);
+      yield* settle;
+      expect(debuggee.methods).toEqual(["Input.dispatchMouseEvent"]);
+      debuggee.release();
+
+      debuggee.emit("Target.attachedToTarget", {
+        sessionId: "FRAME-SESSION",
+        targetInfo: { targetId: "FRAME", type: "iframe" },
+      });
+      yield* move(2);
+      yield* settle;
+      expect(debuggee.methods.at(-1)).toBe("Page.getLayoutMetrics");
+      // A lookup that fails leaves the event on the page.
+      debuggee.releaseFirst();
+      yield* settle;
+      expect(debuggee.methods.at(-1)).toBe("Input.dispatchMouseEvent");
+      debuggee.release();
+
+      host.setShown(key, true);
+      yield* move(3);
+      yield* settle;
+      debuggee.release();
+      host.setShown(key, false);
+      debuggee.emit("Target.detachedFromTarget", { sessionId: "FRAME-SESSION" });
+      yield* move(4);
+      yield* settle;
+      expect(debuggee.methods.slice(-2)).toEqual([
+        "Input.dispatchMouseEvent",
+        "Input.dispatchMouseEvent",
+      ]);
+      expect(debuggee.methods.filter((method) => method === "Page.getLayoutMetrics")).toHaveLength(
+        1,
+      );
+    }),
+  );
+
+  it.effect("fails mouse input whose frame detaches before taking it, then moves on", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      const lookup: Record<string, unknown> = {
+        "Page.getLayoutMetrics": { cssLayoutViewport: { pageX: 0, pageY: 0 } },
+        "DOM.getNodeForLocation": { backendNodeId: 1 },
+        "DOM.describeNode": { node: { frameId: "FRAME" } },
+        "DOM.getBoxModel": { model: { content: [0, 0, 100, 0, 100, 100, 0, 100] } },
+      };
+      const debuggee = makeDebuggee({ answer: (method) => lookup[method] });
+      host.attach(key, debuggee.tab);
+      const errors: Array<string> = [];
+      yield* host.events.pipe(
+        Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type !== "cdp") return;
+            const { error } = decodeCdpError(event.message);
+            if (error) errors.push(error.message);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      const mouse = (id: number, type: string) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id,
+              method: "Input.dispatchMouseEvent",
+              params: { id, type, x: 5, y: 5 },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+
+      debuggee.emit("Target.attachedToTarget", {
+        sessionId: "FRAME-SESSION",
+        targetInfo: { targetId: "FRAME", type: "iframe" },
+      });
+      yield* mouse(1, "mousePressed");
+      yield* settle;
+      expect(debuggee.sessionIds).toEqual(["FRAME-SESSION"]);
+
+      // Chromium never acknowledges input on a frame that detaches first.
+      debuggee.emit("Target.detachedFromTarget", { sessionId: "FRAME-SESSION" });
+      yield* settle;
+      expect(errors).toEqual([expect.stringContaining("went away before it took this input")]);
+      yield* mouse(2, "mouseReleased");
+      yield* settle;
+      expect(debuggee.sessionIds).toEqual(["FRAME-SESSION", undefined]);
     }),
   );
 
