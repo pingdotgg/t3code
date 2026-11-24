@@ -613,7 +613,7 @@ const parseDurationInput = (value: string): Duration.Duration | null => {
   if (normalizedInput === null) return null;
 
   const decoded = Duration.fromInput(normalizedInput as Duration.Input);
-  return Option.isSome(decoded) ? decoded.value : null;
+  return Option.isSome(decoded) && Duration.isPositive(decoded.value) ? decoded.value : null;
 };
 
 export const DurationFromString = Schema.String.pipe(
