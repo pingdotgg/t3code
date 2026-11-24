@@ -17,3 +17,10 @@ it("matches straight and curly apostrophes without changing source offsets", () 
   expect(findThreadSearchOccurrences("don't don’t", "don’t")).toEqual([0, 6]);
   expect(findThreadSearchOccurrences("İ don‘t", "don't")).toEqual([2]);
 });
+
+it("matches dotted capital I without changing source offsets", () => {
+  expect(findThreadSearchOccurrences("📍 İstanbul ıstanbul i\u0307stanbul", "istanbul")).toEqual([
+    3,
+  ]);
+  expect(findThreadSearchOccurrences("Istanbul istanbul", "İSTANBUL")).toEqual([0, 9]);
+});

@@ -2,6 +2,7 @@ import { ServerSettings, SourceControlProviderKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -29,6 +30,7 @@ const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
         Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
         TestSourceControlHost.layer(),
+        FileSystem.layerNoop({}),
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),
@@ -155,6 +157,7 @@ it.effect.each([
             },
           }),
           Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
+          FileSystem.layerNoop({}),
           Layer.effect(
             SourceControlHost.SourceControlHost,
             Effect.gen(function* () {

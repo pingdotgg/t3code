@@ -2,17 +2,20 @@
 // session that answers the shell, thread and config subscriptions from fixtures. Other RPCs
 // stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
+  type AssetCreateUrlResult,
   AuthStandardClientScopes,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
   MessageId,
+  NodeId,
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ServerConfig,
   ThreadId,
   TurnItemId,
@@ -31,6 +34,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -63,7 +67,12 @@ const descriptor = {
   // A matching version, since a mismatch adds an update banner a typical user never sees.
   serverVersion: APP_VERSION,
   orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-  capabilities: { repositoryIdentity: true },
+  capabilities: {
+    repositoryIdentity: true,
+    sideChats: true,
+    freshContext: true,
+    fileAttachments: { maxUploadBytes: 10_000_000 },
+  },
 };
 const auth = {
   policy: "loopback-browser",
@@ -99,9 +108,15 @@ export const CLAUDE_PROVIDER = {
 };
 
 const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
-const makeServerConfig = (providers: ReadonlyArray<unknown>): ServerConfig => ({
+const makeServerConfig = (
+  providers: ReadonlyArray<unknown>,
+  supportsIssues = false,
+): ServerConfig => ({
   ...decodeServerConfig({
-    environment: descriptor,
+    environment: {
+      ...descriptor,
+      capabilities: { ...descriptor.capabilities, issues: supportsIssues },
+    },
     auth,
     cwd: "/workspace/render",
     keybindingsConfigPath: "/workspace/.t3/keybindings.json",
@@ -217,6 +232,8 @@ function run(
 export interface FakeThread {
   /** Makes this a side chat of that thread. */
   readonly sideChatOf?: ThreadId;
+  /** Makes this a subagent the provider started under that thread, which takes no messages. */
+  readonly providerSubagentOf?: ThreadId;
   /** Makes this an older settled thread the shell leaves out; only its family read returns it. */
   readonly olderSettled?: true;
   readonly id: ThreadId;
@@ -225,8 +242,11 @@ export interface FakeThread {
   readonly modelSelection?: ModelSelection;
   /** The first is the thread's active provider thread. */
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly issues?: OrchestrationV2ThreadShell["issues"];
+  readonly pullRequests?: OrchestrationV2ThreadShell["pullRequests"];
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -256,6 +276,49 @@ export function threadWithHistory(
   return { id, title: `Thread ${name}`, modelSelection, runs, items };
 }
 
+/** A one-turn thread whose agent waits on an answer to one question. */
+export function threadWithQuestion(name: string, question: string): FakeThread {
+  const thread = threadWithHistory(name, 1);
+  const requestId = RuntimeRequestId.make(`${name}-request`);
+  return {
+    ...thread,
+    items: [
+      ...thread.items,
+      {
+        ...base(thread.id, RunId.make(`${name}-run-0`), `${name}-question`, 2),
+        type: "user_input_request",
+        requestId,
+        responseMode: "message",
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question,
+            required: true,
+            allowCustomAnswer: false,
+            options: [{ label: "Continue", value: "continue", description: "Resume work" }],
+          },
+        ],
+      },
+    ],
+    runtimeRequests: [
+      {
+        id: requestId,
+        nodeId: NodeId.make(`${name}-node`),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: AT,
+        resolvedAt: null,
+      },
+    ],
+  };
+}
+
+const parentOf = (thread: FakeThread) => thread.sideChatOf ?? thread.providerSubagentOf;
+
 function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
   const latest = thread.runs.at(-1);
   const modelSelection = thread.modelSelection ?? MODEL;
@@ -270,15 +333,17 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     branch: "main",
     worktreePath: null,
     activeProviderThreadId: thread.providerThreads?.[0]?.id ?? null,
+    ...(thread.issues === undefined ? {} : { issues: thread.issues }),
+    ...(thread.pullRequests === undefined ? {} : { pullRequests: thread.pullRequests }),
     lineage: {
-      rootThreadId: thread.sideChatOf ?? thread.id,
-      parentThreadId: thread.sideChatOf ?? null,
-      relationshipToParent: null,
+      rootThreadId: parentOf(thread) ?? thread.id,
+      parentThreadId: parentOf(thread) ?? null,
+      relationshipToParent: thread.providerSubagentOf ? "subagent" : null,
       ...(thread.sideChatOf ? { sideChat: true } : {}),
     },
     forkedFrom: null,
-    createdBy: "user",
-    creationSource: "web",
+    createdBy: thread.providerSubagentOf ? "agent" : "user",
+    creationSource: thread.providerSubagentOf ? "provider" : "web",
     latestRunId: latest?.id ?? null,
     activeRunId: null,
     // Idle reads as waiting on the user, which shows a per-second duration in the sidebar.
@@ -324,8 +389,8 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       activeProviderThreadId: shell.activeProviderThreadId,
       lineage: shell.lineage,
       forkedFrom: null,
-      createdBy: "user",
-      creationSource: "web",
+      createdBy: shell.createdBy,
+      creationSource: shell.creationSource,
       createdAt: AT,
       updatedAt: AT,
       archivedAt: null,
@@ -341,7 +406,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     providerSessions: [],
     providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
-    runtimeRequests: [],
+    runtimeRequests: [...(thread.runtimeRequests ?? [])],
     messages: [],
     plans: [],
     turnItems: [...thread.items],
@@ -360,14 +425,17 @@ const json = (body: unknown, status = 200) =>
 // Keyed by thread id: a live thread subscription's queue, for pushing events to it.
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
+let shellSubscriber: Queue.Queue<OrchestrationV2ShellStreamItem> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
+let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
 let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
 let pendingDispatches: Array<{
   readonly command: OrchestrationV2Command;
   readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
 }> = [];
+let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -390,10 +458,34 @@ const handlers: Record<string, (input: never) => unknown> = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
     Effect.suspend(() => {
       dispatched.push(command);
-      if (acceptCommands && !holdCommand(command))
-        return Effect.succeed({ sequence: sequence + 1 });
+      if (acceptCommands && !holdCommand(command)) {
+        if (command.type !== "thread.fork" || !command.sideChat || shellSubscriber === null)
+          return Effect.succeed({ sequence: sequence + 1 });
+        const fork: FakeThread = {
+          id: command.targetThreadId,
+          title: command.title ?? "Side chat",
+          sideChatOf: command.sourceThreadId,
+          runs: [],
+          items: [],
+        };
+        threads = [...threads, fork];
+        sequence += 1;
+        return Queue.offer(shellSubscriber, {
+          kind: "thread.updated",
+          sequence,
+          location: "active",
+          thread: shellOf(fork),
+        }).pipe(Effect.as({ sequence }));
+      }
       const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
       pendingDispatches.push({ command, reply });
+      return Deferred.await(reply);
+    }),
+  // Held like any other unanswered call, until `answerAssetUrls`.
+  [WS_METHODS.assetsCreateUrl]: () =>
+    Effect.suspend(() => {
+      const reply = Deferred.makeUnsafe<AssetCreateUrlResult>();
+      pendingAssetUrls.push(reply);
       return Deferred.await(reply);
     }),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
@@ -404,19 +496,27 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects,
+            threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscriber = queue;
+        return () => {
+          if (shellSubscriber === queue) shellSubscriber = null;
+        };
       },
-      { kind: "synchronized" },
-    ]),
+    ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
@@ -436,7 +536,7 @@ const handlers: Record<string, (input: never) => unknown> = {
     );
   },
   [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input: { readonly threadId: ThreadId }) => {
-    const rootOf = (thread: FakeThread) => thread.sideChatOf ?? thread.id;
+    const rootOf = (thread: FakeThread) => parentOf(thread) ?? thread.id;
     const requested = threads.find((candidate) => candidate.id === input.threadId);
     return Effect.succeed({
       snapshotSequence: sequence,
@@ -492,6 +592,7 @@ export const fakeDriver = {
         target: entry.target,
       },
       session,
+      refusedRouteIds: [],
     }),
   preflight: () => Effect.succeed(true),
   checkHost: () => Effect.succeed<RouteCheck>("unchecked"),
@@ -508,15 +609,31 @@ export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
   options?: {
     readonly acceptCommands?: boolean;
+    readonly keybindings?: ResolvedKeybindingsConfig;
+    readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
   },
 ): Disposable {
   threads = fixtures;
-  baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
+  baseServerConfig = {
+    ...makeServerConfig(
+      options?.providers ?? [CODEX_PROVIDER],
+      fixtures.some((thread) => (thread.issues?.length ?? 0) > 0),
+    ),
+    keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+  };
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
+  projects = [
+    project,
+    ...(options?.extraProjects ?? []).map((extra) => ({
+      ...project,
+      ...extra,
+      workspaceRoot: `/workspace/${extra.title}`,
+    })),
+  ];
   holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
@@ -542,8 +659,10 @@ export function installFakeEnvironment(
       baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
       acceptCommands = false;
+      projects = [project];
       holdCommand = () => false;
       pendingDispatches = [];
+      pendingAssetUrls = [];
     },
   };
 }
@@ -564,12 +683,39 @@ export async function rejectPendingCommand(message: string): Promise<void> {
   );
 }
 
+export function hasPendingAssetUrl(): boolean {
+  return pendingAssetUrls.length > 0;
+}
+
+/** Answers every held asset URL request, as a server that still has the file. */
+export async function answerAssetUrls(): Promise<void> {
+  const replies = pendingAssetUrls;
+  pendingAssetUrls = [];
+  for (const reply of replies) {
+    await Effect.runPromise(
+      Deferred.succeed(reply, { relativeUrl: "/api/assets/fake", expiresAt: 4_102_444_800_000 }),
+    );
+  }
+}
+
 /** Commands the app dispatched to the environment, oldest first. */
 export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
   return dispatched;
 }
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];
+
+/** Answers one RPC method with `handler` until disposed. */
+export function answerRpc(method: string, handler: (input: never) => unknown): Disposable {
+  const previous = handlers[method];
+  handlers[method] = handler;
+  return {
+    [Symbol.dispose]: () => {
+      if (previous) handlers[method] = previous;
+      else delete handlers[method];
+    },
+  };
+}
 
 export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
   if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");

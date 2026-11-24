@@ -25,7 +25,7 @@ import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
-import { primaryEnvironmentIdAtom, themeEnvironmentIdAtom } from "./primaryEnvironment";
+import { primaryEnvironmentIdAtom, localEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
 
@@ -82,6 +82,14 @@ const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
 export const primaryServerConfigAtom = Atom.make(
   (get): ServerConfig | null => get(primaryServerStateAtom).config,
 ).pipe(Atom.withLabel("web-primary-server-config"));
+
+// The config cache can outlive the session and predate an opt-out.
+export const primaryRelayTracingAllowedAtom = Atom.make((get): boolean | null => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  const config =
+    environmentId === null ? null : get(environmentSession.initialConfigValueAtom(environmentId));
+  return config === null ? null : config.observability.relayTracingAllowed !== false;
+}).pipe(Atom.withLabel("web-primary-relay-tracing-allowed"));
 
 export const primaryServerConfigEventAtom = Atom.make(
   (get): ServerConfigStreamEvent | null => get(primaryServerStateAtom).latestEvent,
@@ -167,13 +175,24 @@ export const primaryServerKeybindingsAtom = createShortcutKeybindingsAtom({
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
 const themeServerConfigAtom = Atom.make((get): ServerConfig | null => {
-  const environmentId = get(themeEnvironmentIdAtom);
+  const environmentId = get(localEnvironmentIdAtom);
   return environmentId === null ? null : get(serverEnvironment.configValueAtom(environmentId));
 }).pipe(Atom.withLabel("web-theme-server-config"));
 
+/**
+ * Null until the theme environment says what it publishes. Cached configs and
+ * snapshots never carry themes, so a capable server has none until its theme
+ * event lands.
+ */
 export const themeServerEnvironmentThemesAtom = Atom.make(
-  (get): ReadonlyArray<EnvironmentTheme> =>
-    get(themeServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+  (get): ReadonlyArray<EnvironmentTheme> | null => {
+    const config = get(themeServerConfigAtom);
+    if (config === null) return null;
+    if (config.environmentThemes !== undefined) return config.environmentThemes;
+    return config.environment.capabilities.environmentThemes === true
+      ? null
+      : EMPTY_ENVIRONMENT_THEMES;
+  },
 ).pipe(Atom.withLabel("web-theme-server-environment-themes"));
 
 export const themeServerSettingsAtom = Atom.make(

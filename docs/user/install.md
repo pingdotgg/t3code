@@ -20,7 +20,7 @@ On Windows, in PowerShell:
 irm https://t3.codes/install.ps1 | iex
 ```
 
-This installs the `t3` binary to `~/.local/bin`. If that folder is not on your
+This installs the `t3` command to `~/.local/bin`. If that folder is not on your
 `PATH` yet, the installer says so and, for zsh, bash on Linux, and fish, prints
 a command to add it. On Windows, `t3` works in the same PowerShell window right
 away; add the folder to your `PATH` for new windows. If a `t3` that the
@@ -42,9 +42,10 @@ Run `t3 help` or `t3 --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `t3` or `t3 start` reports an already running server, connect to that server
-instead. Stop it before starting a replacement, or use a different `--base-dir`
-for an independent server.
+If `t3` or `t3 start` reports an already running server, run the `t3 pair`
+command it names and open the pairing URL to connect to that server. Stop it
+before starting a replacement, or use a different `--base-dir` for an
+independent server.
 
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`). It offers to install the `t3` command first. If you say no,
@@ -57,7 +58,7 @@ the nightly train, run your installed `t3` (for example `t3 connect`), not
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](../operations/development.md#first-checkout)):
+([Install vp](../operations/00_development.md#first-checkout)):
 
 ```bash
 git clone https://github.com/pingdotgg/t3code
@@ -102,7 +103,7 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
-The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
+The AUR packages support x86_64 and ARM64.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 
@@ -194,18 +195,19 @@ and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
 computer.
 
-| Provider    | Install and authenticate                                                                                                                                  |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
-| Kiro        | Install [Kiro CLI](https://kiro.dev/docs/cli/), then run `kiro-cli login`.                                                                                |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
-| Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
-| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
-| fx          | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
+| Provider            | Install and authenticate                                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex               | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
+| Claude              | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
+| Cursor              | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
+| Grok Build          | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
+| Kiro                | Install [Kiro CLI](https://kiro.dev/docs/cli/), then run `kiro-cli login`.                                                                                |
+| OpenCode            | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
+| Antigravity         | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
+| Pi                  | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
+| Muse Code           | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
+| fx                  | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
+| ACP Registry agents | Add GitHub Copilot and other [ACP agents](./providers-acp.md#add-an-agent) from **Settings → Providers → Add provider → Show more**.                      |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -245,7 +247,49 @@ their original values.
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),
-[Pi](./providers-pi.md), [Muse Code](./providers-muse.md), and [fx](./providers-fx.md).
+[Pi](./providers-pi.md), [Muse Code](./providers-muse.md), [fx](./providers-fx.md), and
+[ACP Registry agents](./providers-acp.md).
+
+### Provider check timeouts
+
+If a provider works in its CLI but T3 Code reports a timeout while checking it,
+allow more time in the T3 server's environment. For example, give Codex and
+Claude readiness checks 60 seconds:
+
+```bash
+T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 t3 serve
+```
+
+For a remote environment, set these on the machine running the T3 server.
+Keep them in your launcher or service configuration to retain them across
+updates, then restart the server. For systemd, add
+`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
+override, reload systemd, and restart the service. Provider instances can also
+set their own overrides in Settings → Providers.
+
+Each variable extends that provider's readiness-probe deadlines; a phase whose
+default is already longer keeps its default. Providers with several phases can
+take longer than one deadline in total. Values must be whole milliseconds no
+greater than 2147483647; unset or invalid values keep the defaults.
+
+| Provider            | Environment variable                   |
+| ------------------- | -------------------------------------- |
+| Codex               | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
+| Claude              | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
+| Cursor              | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
+| Antigravity         | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
+| Grok                | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
+| Kiro                | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
+| fx                  | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
+| Pi                  | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
+| Muse Code           | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
+| OpenCode            | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
+| ACP Registry agents | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
+
+Longer deadlines also take longer to report a stalled check. These overrides
+cover readiness and discovery, including OpenCode server startup. Usage and
+config enrichment retain their own shorter limits. Turn execution, package
+installation, update checks, and shutdown limits keep their existing behavior.
 
 ## Next steps
 

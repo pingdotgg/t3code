@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isServerNetworkAccessible,
+  parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
+  resolveCurrentOriginPairingUrl,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
@@ -41,6 +43,26 @@ describe("togglePairingScopeSelection", () => {
     },
   ] as const)("$label", ({ current, scope, checked, expected }) => {
     expect(togglePairingScopeSelection(current, scope, checked)).toEqual(expected);
+  });
+});
+
+describe("parseManualDesktopSshTarget", () => {
+  it.each(["22.5", "1e3", "2222garbage"])("rejects explicit port %j", (port) => {
+    expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
+      "SSH port must be between 1 and 65535.",
+    );
+  });
+});
+
+describe("resolveCurrentOriginPairingUrl", () => {
+  it.each([
+    ["t3code://app/settings/connections", null],
+    ["http://127.0.0.1:3774/settings", null],
+    ["http://localhost:5173/", null],
+    ["https://host.example.ts.net/settings", "https://host.example.ts.net/pair#token=abc"],
+    ["http://192.168.1.20:3773/", "http://192.168.1.20:3773/pair#token=abc"],
+  ])("from %s", (href, expected) => {
+    expect(resolveCurrentOriginPairingUrl("abc", href)).toBe(expected);
   });
 });
 

@@ -244,7 +244,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       : DesktopAppSettings.layer;
 
   const updateRestartMarkers = new Set<string>();
+  const updateMarkerContents = new Map<string, string>();
   const installRecords = new Map<string, string>();
+  const deletedFiles = new Set<string>();
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
@@ -265,15 +267,26 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
             }),
           );
     },
+    exists: (path) => Effect.succeed(!deletedFiles.has(path)),
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
       Effect.sync(() => {
         if (isInstallRecord(path)) installRecords.set(path, data);
-        else updateRestartMarkers.add(path);
+        else {
+          if (path.endsWith("/desktop-update-restart")) updateRestartMarkers.add(path);
+          updateMarkerContents.set(path, data);
+        }
+      }),
+    rename: (from, to) =>
+      Effect.sync(() => {
+        const contents = updateMarkerContents.get(from);
+        if (contents !== undefined) updateMarkerContents.set(to, contents);
+        updateMarkerContents.delete(from);
       }),
     remove: (path) =>
       Effect.sync(() => {
         updateRestartMarkers.delete(path);
+        updateMarkerContents.delete(path);
         installRecords.delete(path);
         if (isInstallRecord(path)) previousInstallRecord = undefined;
       }),
@@ -306,7 +319,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
     updateRestartMarkers,
+    updateInProgressMarker: () =>
+      [...updateMarkerContents].find(([path]) => path.endsWith("/desktop-update-in-progress"))?.[1],
     installRecords,
+    /** Paths removed behind the app's back, as by a cache cleaner. */
+    deletedFiles,
     previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,

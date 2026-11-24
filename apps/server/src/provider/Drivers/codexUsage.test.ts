@@ -98,7 +98,7 @@ describe("parseCodexLine", () => {
       parseCodexLine(line.replace("2026-08-01T05:17:49.919Z", "invalid"), cumulativeState),
     ).toBeNull();
     expect(parseCodexLine(line, cumulativeState)?.totals.outputTokens).toBe(20);
-    expect(codexUsageFormat.readMalformedRecords?.(cumulativeState)).toBe(0);
+    expect(codexUsageFormat.readMalformedRecords?.(cumulativeState).length).toBe(0);
   });
 
   it("ignores stale changed requests but counts equal requests when totals advance across contexts", () => {
@@ -141,7 +141,7 @@ describe("parseCodexLine", () => {
         totals: { uncachedInputTokens: 100, outputTokens: 20 },
       });
     }
-    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
   });
 
   it.each([false, true])(
@@ -160,7 +160,7 @@ describe("parseCodexLine", () => {
       expect(
         parseCodexLine(counted(counters(10, 2), counters(130, 27)), state)?.totals.outputTokens,
       ).toBe(2);
-      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+      expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
     },
   );
 
@@ -187,10 +187,10 @@ describe("parseCodexLine", () => {
       total[field] += 1;
       if (field === "input_tokens" || field === "output_tokens") total.total_tokens += 1;
       expect(parseCodexLine(counted(request, total), state), field).toBeNull();
-      expect(codexUsageFormat.readMalformedRecords?.(state), field).toBe(1);
+      expect(codexUsageFormat.readMalformedRecords?.(state).length, field).toBe(1);
       for (const key of fields) total[key] += request[key];
       expect(parseCodexLine(counted(request, total), state)?.totals.outputTokens, field).toBe(20);
-      expect(codexUsageFormat.readMalformedRecords?.(state), field).toBe(1);
+      expect(codexUsageFormat.readMalformedRecords?.(state).length, field).toBe(1);
     }
   });
 
@@ -250,7 +250,7 @@ describe("parseCodexLine", () => {
           state,
         )?.totals.outputTokens,
       ).toBe(2);
-      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+      expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
     },
   );
 
@@ -307,7 +307,7 @@ describe("parseCodexLine", () => {
       reasoning_output_tokens: 5,
     };
     expect(parseCodexLine(counted(request, cumulative), state)).toBeNull();
-    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(1);
     expect(state.lastCumulativeUsage).toEqual(cumulative);
   });
 
@@ -327,14 +327,14 @@ describe("parseCodexLine", () => {
         state,
       ),
     ).toBeNull();
-    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(1);
     expect(
       parseCodexLine(
         counted(request, malformed === "request" ? counters(300, 60) : counters(200, 40)),
         state,
       )?.totals.outputTokens,
     ).toBe(20);
-    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(1);
   });
 
   it("bills only the reported request when usage records sit between reconciling snapshots", () => {
@@ -520,7 +520,7 @@ describe("parseCodexLine", () => {
       parseCodexLine(counted(counters(10, 2), { ...counters(10, 2), total_tokens: 1012 }), state)
         ?.totals.outputTokens,
     ).toBe(2);
-    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
   });
 
   it.each([false, true])(
@@ -536,7 +536,7 @@ describe("parseCodexLine", () => {
       expect(
         parseCodexLine(counted(counters(30, 5), counters(30, 5)), state)?.totals.outputTokens,
       ).toBe(5);
-      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+      expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
     },
   );
 
@@ -550,7 +550,141 @@ describe("parseCodexLine", () => {
     expect(
       parseCodexLine(counted(counters(10, 2), counters(40, 7)), state)?.totals.outputTokens,
     ).toBe(2);
-    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
+  });
+
+  const later = (line: string) => line.replace("05:17:49.919Z", "07:17:49.919Z");
+  it.each([
+    {
+      name: "bills a later request that continues from an earlier snapshot",
+      tail: [
+        later(counted(counters(20, 4), counters(130, 26))),
+        later(counted(counters(5, 1), counters(135, 27))),
+      ],
+      processed: [120, 12, 35, 24, 6],
+      skipped: 0,
+    },
+    {
+      name: "does not bill a re-emitted earlier snapshot again",
+      tail: [counted(counters(10, 2), counters(110, 22))],
+      processed: [120, 12, 35, 0],
+      skipped: 1,
+    },
+  ])("$name when cumulative counters rewind", ({ tail, processed, skipped }) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const billed = [
+      counted(counters(100, 20), counters(100, 20)),
+      counted(counters(10, 2), counters(110, 22)),
+      counted(counters(30, 5), counters(140, 27)),
+      ...tail,
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed: billed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state).length,
+    }).toEqual({
+      processed,
+      skipped,
+    });
+  });
+
+  const at = (time: string, line: string) => line.replace("05:17:49.919Z", `${time}.000Z`);
+  const anonymousRequest = (time: string, usage: unknown) =>
+    JSON.stringify({
+      type: "token_usage_record",
+      timestamp: `2026-08-01T${time}.000Z`,
+      payload: { usage },
+    });
+  it.each([
+    {
+      name: "does not bill an older snapshot re-emitted after requests without cumulative counters",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4))),
+        at("10:00:10", counted(counters(30, 6))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+      ],
+      processed: [120, 24, 36, 0],
+      skipped: 1,
+    },
+    {
+      name: "bills a rewind that follows a request without cumulative counters",
+      lines: [
+        at("10:00:00", counted(counters(100, 20))),
+        at("10:00:10", counted(counters(20, 4), counters(60, 12))),
+      ],
+      processed: [120, 24],
+      skipped: 0,
+    },
+    {
+      name: "keeps the baseline when it rejects an older snapshot, so the replay that follows is not billed",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+      ],
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
+      name: "keeps the baseline when it rejects a lower snapshot from the baseline's own time",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:00", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:00", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:00", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:00", counted(counters(30, 6), counters(150, 30))),
+      ],
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
+      name: "does not bill replayed snapshots against a cached baseline of unknown age",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+      ],
+      undatedAfter: 3,
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
+      name: "warns about the anonymous request a rewound snapshot does not report",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        anonymousRequest("10:00:05", counters(40, 8)),
+        anonymousRequest("10:00:06", counters(20, 4)),
+        at("10:00:07", counted(counters(20, 4), counters(60, 12))),
+        at("10:00:08", counted(counters(10, 2), counters(70, 14))),
+      ],
+      processed: [120, 0, 0, 24, 12],
+      skipped: 1,
+    },
+  ])("$name", ({ lines, undatedAfter, processed, skipped }) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const billed = lines.map((line, index) => {
+      if (index === undatedAfter) delete state.latestCumulativeAtMs;
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed: billed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state).length,
+    }).toEqual({
+      processed,
+      skipped,
+    });
   });
 
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
@@ -569,7 +703,7 @@ describe("parseCodexLine", () => {
 
     expect({
       processed,
-      skipped: codexUsageFormat.readMalformedRecords?.(state),
+      skipped: codexUsageFormat.readMalformedRecords?.(state).length,
     }).toEqual({ processed: [120, 120, 0, 120], skipped: 0 });
   });
 
@@ -587,7 +721,7 @@ describe("parseCodexLine", () => {
       const record = parseCodexLine(line, state);
       return record === null ? 0 : totalTokens(record.totals);
     });
-    expect({ processed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+    expect({ processed, skipped: codexUsageFormat.readMalformedRecords?.(state).length }).toEqual({
       processed: [120, 120, 120, 35],
       skipped: 0,
     });
@@ -628,7 +762,7 @@ describe("parseCodexLine", () => {
 
       expect({
         processed: billed,
-        skipped: codexUsageFormat.readMalformedRecords?.(state),
+        skipped: codexUsageFormat.readMalformedRecords?.(state).length,
       }).toEqual({ processed, skipped: 0 });
     },
   );
@@ -649,7 +783,7 @@ describe("parseCodexLine", () => {
 
     expect({
       processed,
-      skipped: codexUsageFormat.readMalformedRecords?.(state),
+      skipped: codexUsageFormat.readMalformedRecords?.(state).length,
     }).toEqual({ processed: [120, 0, 120, 35], skipped: 1 });
   });
 
@@ -789,7 +923,7 @@ describe("parseCodexLine", () => {
         state,
       );
       expect(next).not.toBeNull();
-      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+      expect(codexUsageFormat.readMalformedRecords?.(state).length).toBe(0);
     });
 
     it("recognizes subagent spawns without forked_from_id", () => {
@@ -840,7 +974,7 @@ describe("parseCodexLine", () => {
 
       expect({
         processed: [first, copied, afterBurst, next],
-        skipped: codexUsageFormat.readMalformedRecords?.(state),
+        skipped: codexUsageFormat.readMalformedRecords?.(state).length,
       }).toEqual({ processed: [120, 0, 120, 35], skipped: 0 });
     });
 
@@ -861,7 +995,7 @@ describe("parseCodexLine", () => {
 
       expect({
         processed: billed.map((record) => totalTokens(record.totals)),
-        skipped: codexUsageFormat.readMalformedRecords?.(state),
+        skipped: codexUsageFormat.readMalformedRecords?.(state).length,
       }).toEqual({ processed: [160, 230], skipped: 0 });
     });
   });
