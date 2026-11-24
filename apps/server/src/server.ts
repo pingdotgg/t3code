@@ -39,6 +39,7 @@ import { withRootRequestSpans, withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import {
   guardHttpResponseWriteErrors,
+  holdLoopbackOnWildcard,
   keepIdleConnections,
   rejectRequestsUntilServing,
 } from "./httpResponseErrorGuard.ts";
@@ -389,7 +390,9 @@ const layerHttpServer = Layer.unwrap(
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
-          keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
+          holdLoopbackOnWildcard(
+            keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
+          ),
         );
         if (config.privateNetworkOnly) {
           runSync(closeNonPrivateNetworkConnections(server));

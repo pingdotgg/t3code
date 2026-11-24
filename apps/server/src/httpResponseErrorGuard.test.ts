@@ -205,6 +205,26 @@ describe("keepIdleConnections", () => {
   });
 });
 
+describe("holdLoopbackOnWildcard", () => {
+  it("keeps another listener from taking loopback on a wildcard-bound port", async () => {
+    const server = HttpResponseErrorGuard.holdLoopbackOnWildcard(NodeHttp.createServer());
+    servers.push(server);
+    server.on("request", (_request, response) => response.end());
+    await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
+    const { port } = server.address() as NodeNet.AddressInfo;
+
+    const forward = NodeNet.createServer();
+    const bind = await new Promise<string>((resolve) => {
+      forward.once("error", (error: NodeJS.ErrnoException) => resolve(error.code ?? ""));
+      forward.listen(port, "127.0.0.1", () => resolve("listening"));
+    });
+    forward.close();
+
+    expect(bind).toBe("EADDRINUSE");
+    await expect(fetchStatus(port, "/")).resolves.toBe(200);
+  });
+});
+
 describe("rejectRequestsUntilServing", () => {
   it("rejects early HTTP and upgrades, then hands each off to its serving handler", async () => {
     const writeErrors: unknown[] = [];
