@@ -6,6 +6,8 @@ import {
   CommandId,
   ContextTransferId,
   EnvironmentId,
+  isListedThreadLineage,
+  MessageId,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -98,6 +100,7 @@ const layerLaunches = Layer.effect(
             worktreePath: null,
             ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
             ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+            ...(input.workflowRun === undefined ? {} : { workflowRun: input.workflowRun }),
             createdBy: input.createdBy,
             creationSource: input.creationSource,
           })
@@ -349,6 +352,64 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
       const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
       assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
+    }),
+  );
+
+  it.effect("names a workflow run only from the link's own session", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const workflowRun = {
+        environmentId: "environment-laptop",
+        runId: "run:laptop-workflow",
+        workflow: "review",
+        step: "lint",
+      };
+      // The link's workflow engine launches a step: it is the run's, and not listed.
+      const step = yield* launch(laptop, "A workflow step", { workflowRun });
+      const stepShell = yield* projections.getThreadShell(step);
+      assert.deepEqual(stepShell?.workflowRun, workflowRun);
+      assert.equal(stepShell?.lineage.workflowStep, true);
+
+      // An agent in a thread the link started has the link's origin, but no run.
+      const started = yield* launch(laptop, "Started from the laptop for an agent");
+      yield* Orchestrator.OrchestratorV2.pipe(
+        Effect.flatMap((orchestrator) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("send:linked-agent"),
+            threadId: started,
+            messageId: MessageId.make("message:linked-agent"),
+            text: "Run a workflow step.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          }),
+        ),
+      );
+      assert.deepEqual((yield* projections.getThreadShell(started))?.linkOrigin, {
+        sessionId: "laptop",
+        label: "T3 Code · laptop",
+        access: "auto",
+      });
+      const agentInLinkedThread: McpInvocationContext.McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:box"),
+        requestNamespace: "provider-session:linked-agent",
+        thread: {
+          threadId: started,
+          providerSessionId: "provider-session:linked-agent",
+          providerInstanceId: instanceId,
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+        issuedAt: 0,
+      };
+      const claimed = yield* launch(agentInLinkedThread, "Claims a workflow run", {
+        workflowRun,
+      });
+      const claimedShell = yield* projections.getThreadShell(claimed);
+      assert.equal(claimedShell?.workflowRun, undefined);
+      assert.isTrue(isListedThreadLineage(claimedShell!.lineage));
     }),
   );
 
