@@ -335,6 +335,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "features.codex_hooks=false",
           "--config",
           "features.hooks=false",
+          "--config",
+          "notify=[]",
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,

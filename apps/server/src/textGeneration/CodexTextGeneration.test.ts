@@ -61,6 +61,7 @@ interface FakeCodexInput {
   requireInstructions?: string;
   requireMcpServersOff?: ReadonlyArray<string>;
   requireOriginator?: string;
+  requireNotify?: string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -78,6 +79,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     requireInstructions: input.requireInstructions ?? null,
     requireMcpServersOff: input.requireMcpServersOff ?? [],
     requireOriginator: input.requireOriginator ?? null,
+    requireNotify: input.requireNotify ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -111,17 +113,22 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "let seenImage = false;",
         'let seenServiceTier = "";',
         'let seenReasoningEffort = "";',
+        'let seenNotify = "";',
         'let instructions = "";',
         "for (let index = 0; index < args.length; index += 1) {",
         '  if (args[index] === "--image") {',
         "    index += 1;",
         "    if (args[index]) seenImage = true;",
-        '  } else if (args[index] === "--config") {',
+        '  } else if (args[index] === "--config" || args[index] === "-c") {',
         "    index += 1;",
         '    const value = args[index] ?? "";',
         '    if (value.startsWith("developer_instructions=")) instructions = JSON.parse(value.slice("developer_instructions=".length));',
         '    if (value.startsWith("service_tier=")) seenServiceTier = value;',
         '    if (value.startsWith("model_reasoning_effort=")) seenReasoningEffort = value;',
+        '    if (value.startsWith("notify=")) seenNotify = value;',
+        '  } else if (args[index]?.startsWith("--config=") || args[index]?.startsWith("-c=")) {',
+        '    const value = args[index].slice(args[index].indexOf("=") + 1);',
+        '    if (value.startsWith("notify=")) seenNotify = value;',
         '  } else if (args[index] === "--output-last-message") {',
         "    index += 1;",
         "    outputPath = args[index] ?? null;",
@@ -163,6 +170,9 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         "if (check.requireOriginator !== null && process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE !== check.requireOriginator) {",
         '  fail("unexpected originator: " + process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE, 14);',
+        "}",
+        "if (check.requireNotify !== null && seenNotify !== `notify=${check.requireNotify}`) {",
+        '  fail("unexpected notify config: " + seenNotify, 15);',
         "}",
         'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
         'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
@@ -506,12 +516,15 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps user hooks off over launch args that turn them on", () =>
+  it.effect("keeps user hooks and notify off over launch args that turn them on", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Hookless title" }),
-        launchArgs: "--config features.hooks=true --enable hooks",
-        requireArg: "--config features.codex_hooks=false --config features.hooks=false",
+        launchArgs:
+          '--config features.hooks=true --enable hooks -c \'notify=["say","done"]\' --config=\'notify=["echo","done"]\'',
+        requireArg:
+          "--config features.codex_hooks=false --config features.hooks=false --config notify=[]",
+        requireNotify: "[]",
         forbidArg: "--enable",
       },
       (textGeneration) =>
