@@ -908,6 +908,7 @@ function SortableTabList(props: {
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
+  const sortableIds = isUiRtl() ? surfaceIds.toReversed() : surfaceIds;
   const { onMove, surfaces } = props;
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
@@ -921,7 +922,7 @@ function SortableTabList(props: {
       modifiers={TAB_DRAG_MODIFIERS}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
+      <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
         {props.children}
       </SortableContext>
     </DndContext>

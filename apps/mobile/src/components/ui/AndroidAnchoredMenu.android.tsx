@@ -8,7 +8,7 @@ import type {
   ViewInstance,
   ViewStyle,
 } from "react-native";
-import { Pressable, ScrollView, View } from "react-native";
+import { I18nManager, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 
 import { useHardwareBack } from "../../lib/backHandler";
@@ -318,7 +318,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                 // No entering animation: it freezes this frame before the Compose host reports its size.
                 className="absolute overflow-hidden bg-card-alt shadow-md"
                 style={{
-                  left,
+                  ...(I18nManager.isRTL ? { end: left } : { start: left }),
                   width: menuWidth,
                   borderRadius: 4 * scale,
                   ...verticalPlacement,

@@ -129,6 +129,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-page-header-end-inset: var(--workspace-gutter-end);
   --workspace-right-panel-tabs-end-inset: 7rem;
   --workspace-right-panel-tabs-controls-end-inset: 0.75rem;
+  --workspace-workflow-pane-end-inset: 0.5rem;
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
@@ -207,6 +208,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     0.75rem,
     var(--desktop-window-controls-inset, 90px)
   );
+  --workspace-workflow-pane-end-inset: max(0.5rem, var(--desktop-window-controls-inset, 90px));
 }
 
 /* The font tokens are declared outside the inline theme so utilities reference
@@ -1868,7 +1870,7 @@ code {
   font-family: var(--font-mono);
 }
 
-pre,
+pre:not([dir]),
 code,
 diffs-container,
 .xterm {
