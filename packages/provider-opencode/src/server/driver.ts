@@ -401,15 +401,26 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });
-    const catalogWatch = yield* makeOpenCode2CatalogWatch();
+    const catalogWatch = yield* makeOpenCode2CatalogWatch(processEnv);
+    // An external server may not have the host's cwd; without a location it uses its own default.
+    const machineDirectory = (connection: OpenCode2Server.OpenCode2Connection) =>
+      connection.external ? undefined : host.paths.cwd;
+    const followMachineCatalog = (connection: OpenCode2Server.OpenCode2Connection) =>
+      catalogWatch.follow(
+        connection.url,
+        connection.events,
+        loadOpenCode2DirectoryCatalog(connection.client, machineDirectory(connection)),
+      );
+    // A session or text generation can start the server too, and reads no catalog when it does.
+    yield* Stream.runForEach(openCode2Server.connections, followMachineCatalog).pipe(
+      Effect.forkScoped,
+    );
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      // An external server may not have the host's cwd; without a location it uses its own default.
-      openCode2Server.withConnection(({ client, events, external, url }) => {
-        const directory = external ? undefined : host.paths.cwd;
-        return catalogWatch
-          .follow(url, events, loadOpenCode2DirectoryCatalog(client, directory))
-          .pipe(Effect.andThen(loadOpenCode2Catalog(client, directory)));
-      }),
+      openCode2Server.withConnection((connection) =>
+        followMachineCatalog(connection).pipe(
+          Effect.andThen(loadOpenCode2Catalog(connection.client, machineDirectory(connection))),
+        ),
+      ),
       processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>

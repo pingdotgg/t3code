@@ -1,4 +1,9 @@
-import { ThreadId, type ProjectId, type TerminalCwdNotFoundError } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type Project,
+  type ProjectId,
+  type TerminalCwdNotFoundError,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,6 +46,11 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
 
 // `git worktree remove` skips pnpm junctions on Windows, leaving these behind without a checkout.
 const LEFTOVER_WORKTREE_ENTRIES = new Set(["node_modules", ".next"]);
+
+export interface RecreatedWorktree {
+  readonly project: Project;
+  readonly worktreePath: string;
+}
 
 interface WorktreeThread {
   readonly id: ThreadId;
@@ -240,6 +250,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
           : new WorktreeRecreateError({ worktreePath, branch, cause }),
       ),
     );
+    return { project, worktreePath };
   });
 });
 
@@ -249,6 +260,8 @@ export class ThreadWorktreeRestore extends Context.Service<
     readonly restore: (
       thread: WorktreeThread,
     ) => Effect.Effect<void, WorktreeRecreateError | WorktreeRecreateNoBaseError>;
+    /** A checkout this service recreated for the thread whose setup has not run yet. */
+    readonly takeRecreated: (threadId: ThreadId) => Effect.Effect<RecreatedWorktree | undefined>;
   }
 >()("t3/workspace/restoreMissingWorktree/ThreadWorktreeRestore") {}
 
@@ -258,11 +271,21 @@ export const layerThreadWorktreeRestore = Layer.effect(
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const restore = yield* makeRestoreMissingWorktree;
+    // Sends restore before dispatch, so turn start finds the checkout present and runs setup from here.
+    const recreated = new Map<ThreadId, RecreatedWorktree>();
     return {
       restore: Effect.fn("ThreadWorktreeRestore.restore")(function* (thread: WorktreeThread) {
-        return yield* thread.worktreePath === null
+        const result = yield* thread.worktreePath === null
           ? restore(thread)
           : withWorkspaceLease(path.resolve(thread.worktreePath), restore(thread));
+        if (result !== undefined) recreated.set(thread.id, result);
+      }),
+      takeRecreated: Effect.fn("ThreadWorktreeRestore.takeRecreated")(function* (
+        threadId: ThreadId,
+      ) {
+        const result = recreated.get(threadId);
+        recreated.delete(threadId);
+        return result;
       }),
     };
   }),
@@ -296,6 +319,7 @@ export const makePrepareTerminalLaunch = Effect.fn(
     }
     const recover = (error: TerminalCwdNotFoundError) =>
       restoreMissingWorktree(thread).pipe(
+        Effect.asVoid,
         Effect.catch((cause) =>
           Effect.logWarning("failed to recreate missing worktree", {
             threadId: thread.id,
