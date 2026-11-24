@@ -1,0 +1,28 @@
+[package]
+name = "gpui"
+version = "0.2.2"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+implementation = { package = "gpui-pre", version = "=0.3.11", default-features = false }
+
+[features]
+bench = ["implementation/bench"]
+bench-support = ["implementation/bench-support"]
+default = ["implementation/default"]
+font-kit = ["implementation/font-kit"]
+hot-reload = ["implementation/hot-reload"]
+inspector = ["implementation/inspector"]
+leak-detection = ["implementation/leak-detection"]
+profiler = ["implementation/profiler"]
+screen-capture = ["implementation/screen-capture"]
+stacker = ["implementation/stacker"]
+test-support = ["implementation/test-support"]
+wayland = ["implementation/wayland"]
+windows-manifest = ["implementation/windows-manifest"]
+x11 = ["implementation/x11"]

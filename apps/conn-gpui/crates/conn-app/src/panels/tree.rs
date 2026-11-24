@@ -149,6 +149,11 @@ impl FileTreeState {
         }
     }
 
+    pub(crate) fn expand(&mut self, directory: &str) -> bool {
+        self.expanded.insert(directory.to_owned());
+        !self.has_loaded(directory) && !self.loading.contains(directory)
+    }
+
     /// Returns whether any directory entry is currently known in the tree.
     #[must_use]
     pub(crate) fn has_directories(&self) -> bool {

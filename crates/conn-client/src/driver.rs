@@ -3,10 +3,10 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use conn_contract::{
-    AgentPanelRequest, AgentPanelSubscribeInput, AnnotationList, AnnotationProjectInput,
-    OrchestrationV2ShellStreamItem, OrchestrationV2SubscribeShellInput,
-    OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadStreamItem, ServerConfigStreamEvent,
-    SubscribeServerConfigPayload,
+    AnnotationList, AnnotationProjectInput, OrchestrationV2ShellStreamItem,
+    OrchestrationV2SubscribeShellInput, OrchestrationV2SubscribeThreadInput,
+    OrchestrationV2ThreadStreamItem, ServerConfigStreamEvent, SubscribeServerConfigPayload,
+    source::DesktopPanelSubscription,
 };
 use conn_wire::{Exit, FromClient, FromServer, Request, RequestId, frame_parts};
 use futures::{SinkExt, StreamExt};
@@ -44,7 +44,7 @@ pub(crate) enum Command {
     SubscribeThread(String),
     RefreshThread(String),
     UnsubscribeThread(String),
-    SubscribePanelRequests(Option<String>),
+    SubscribePanelRequests(DesktopPanelSubscription),
     UnsubscribePanelRequests,
     SubscribeAnnotations(String),
     UnsubscribeAnnotations(String),
@@ -112,7 +112,7 @@ struct DriverState {
     /// Last observed stream sequence per thread, preserved across `UnsubscribeThread` ->
     /// `SubscribeThread` so switching back replays deltas instead of re-downloading a snapshot.
     thread_last_sequences: HashMap<String, i64>,
-    panel_requests_device: Option<Option<String>>,
+    panel_subscription: Option<DesktopPanelSubscription>,
     panel_request_id: Option<RequestId>,
     annotation_subs: HashMap<String, Option<RequestId>>,
     pending_calls: Vec<PendingCall>,
@@ -143,7 +143,7 @@ impl DriverState {
             server_config_request_id: None,
             thread_subs: HashMap::new(),
             thread_last_sequences: HashMap::new(),
-            panel_requests_device: None,
+            panel_subscription: None,
             panel_request_id: None,
             annotation_subs: HashMap::new(),
             pending_calls: Vec::new(),
@@ -233,11 +233,11 @@ impl DriverState {
                     self.thread_last_sequences.insert(thread_id, seq);
                 }
             }
-            Command::SubscribePanelRequests(device_name) => {
-                self.panel_requests_device = Some(device_name);
+            Command::SubscribePanelRequests(subscription) => {
+                self.panel_subscription = Some(subscription);
             }
             Command::UnsubscribePanelRequests => {
-                self.panel_requests_device = None;
+                self.panel_subscription = None;
             }
             Command::SubscribeAnnotations(project_id) => {
                 self.annotation_subs.entry(project_id).or_insert(None);
@@ -638,7 +638,7 @@ where
         send_thread_subscribe(state, &thread_id, ws_write).await?;
     }
 
-    if state.panel_requests_device.is_some() && state.panel_request_id.is_none() {
+    if state.panel_subscription.is_some() && state.panel_request_id.is_none() {
         send_panel_requests_subscribe(state, ws_write).await?;
     }
 
@@ -730,14 +730,21 @@ where
                 }
             }
         }
-        Command::SubscribePanelRequests(device_name) => {
-            state.panel_requests_device = Some(device_name);
+        Command::SubscribePanelRequests(subscription) => {
+            let next = Some(subscription);
+            if state.panel_subscription != next {
+                if let Some(request_id) = state.panel_request_id.take() {
+                    state.in_flight_streams.remove(&request_id);
+                    send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
+                }
+                state.panel_subscription = next;
+            }
             if state.panel_request_id.is_none() {
                 send_panel_requests_subscribe(state, ws_write).await?;
             }
         }
         Command::UnsubscribePanelRequests => {
-            state.panel_requests_device = None;
+            state.panel_subscription = None;
             if let Some(request_id) = state.panel_request_id.take() {
                 state.in_flight_streams.remove(&request_id);
                 send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
@@ -893,9 +900,10 @@ async fn send_panel_requests_subscribe<S>(
 where
     S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
-    let device_name = state.panel_requests_device.clone().flatten();
-    let input = AgentPanelSubscribeInput { device_name };
-    let payload = serde_json::to_value(&input)
+    let Some(input) = &state.panel_subscription else {
+        return Ok(());
+    };
+    let payload = serde_json::to_value(input)
         .map_err(|err| format!("failed to encode panels.requests payload: {err}"))?;
     let request_id = state.alloc_request_id();
     state.panel_request_id = Some(request_id.clone());
@@ -1164,7 +1172,8 @@ where
         }
         Some(ActiveStream::PanelRequests) => {
             for raw in values {
-                match serde_json::from_str::<AgentPanelRequest>(raw.get()) {
+                match serde_json::from_str::<conn_contract::source::DesktopPanelRequest>(raw.get())
+                {
                     Ok(request) => {
                         if events_tx
                             .send(ClientEvent::PanelRequest(request))

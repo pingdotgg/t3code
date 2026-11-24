@@ -450,6 +450,19 @@ fn stepper(
     cx: &mut Context<'_, SettingsModal>,
     change: fn(&mut TerminalSettings, f32),
 ) -> AnyElement {
+    dimension_stepper(id, label, value, modal, cx, move |_, delta, cx| {
+        terminal_settings::update(cx, |s| change(s, delta));
+    })
+}
+
+pub(super) fn dimension_stepper(
+    id: &'static str,
+    label: &'static str,
+    value: String,
+    modal: &SettingsModal,
+    cx: &mut Context<'_, SettingsModal>,
+    change: impl Fn(&SettingsModal, f32, &mut Context<'_, SettingsModal>) + Copy + 'static,
+) -> AnyElement {
     let tokens = &modal.tokens;
     let hover = hsla(tokens.shell_highlight);
     let fg = hsla(tokens.foreground);
@@ -471,9 +484,7 @@ fn stepper(
             .cursor_pointer()
             .text_color(fg)
             .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(move |_, _, _, cx| {
-                terminal_settings::update(cx, |s| change(s, delta));
-            }))
+            .on_click(cx.listener(move |modal, _, _, cx| change(modal, delta, cx)))
             .child(glyph)
     };
     control_box(tokens)

@@ -1,0 +1,15 @@
+[package]
+name = "http_client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+implementation = { package = "gpui-pre-http-client", version = "=0.3.11", default-features = false }
+
+[features]
+test-support = ["implementation/test-support"]

@@ -2925,6 +2925,39 @@ async fn panel_open_delivers_each_panel_to_the_callers_desktop_and_stays_hidden(
             "{field}"
         );
     }
+    not_offered(&mut swamp, "files_selection", json!({})).await;
+    let mut files = broker
+        .subscribe_for(0, Some(thread.clone()), false)
+        .unwrap();
+    let (result, ()) = tokio::join!(agent.ok("files_selection", json!({})), async {
+        let request = files.recv().await.unwrap();
+        assert_eq!(
+            request.files_action,
+            Some(conn_contract::source::FilesAction::Selection)
+        );
+        broker.respond_from(0,from_json(json!({"requestId":request.request_id,"ok":true,"selection":{"path":"example.php","startLine":3,"endLine":3,"text":"sample"}})).unwrap());
+    });
+    assert_eq!(result["selection"]["text"], "sample");
+    let (result, ()) = tokio::join!(
+        agent.ok(
+            "files_reveal",
+            json!({"path":"example.php","startLine":3,"endLine":3,"excerpt":"sample"})
+        ),
+        async {
+            let request = files.recv().await.unwrap();
+            assert!(matches!(
+                request.files_action,
+                Some(conn_contract::source::FilesAction::Reveal { .. })
+            ));
+            broker.respond_from(
+                0,
+                from_json(json!({"requestId":request.request_id,"ok":true,"deviceName":"GPUI"}))
+                    .unwrap(),
+            );
+        }
+    );
+    assert_eq!(result["shownOn"], "GPUI");
+    drop(files);
     for panel in ["database", "mcp", "diff", "files", "browser"] {
         let mut args = json!({"panel":panel,"focusWindow":false});
         if panel == "database" {

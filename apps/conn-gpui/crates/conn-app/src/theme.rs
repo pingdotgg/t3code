@@ -81,4 +81,5 @@ pub(crate) fn apply_kit_theme(tokens: &Tokens, cx: &mut App) {
         c.input = hsla(tokens.shell_divider_header);
         c.caret = hsla(tokens.foreground);
     });
+    crate::editor_settings::apply(tokens, cx);
 }

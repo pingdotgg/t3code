@@ -95,6 +95,12 @@ fn resolve(path: &str) -> Option<String> {
         return Some(path.to_owned());
     }
     let name = path.strip_prefix("icons/")?.strip_suffix(".svg")?;
+    #[cfg(feature = "zed-files")]
+    let name = match name {
+        "chevron_down" => "chevron-down",
+        "chevron_right" => "chevron-right",
+        other => other,
+    };
     let concept = LUCIDE_TO_CONCEPT.get(name)?;
     Some(format!("superhero/{concept}.svg"))
 }
@@ -148,6 +154,10 @@ mod tests {
             "folder",
             "search",
             "chevron-right",
+            #[cfg(feature = "zed-files")]
+            "chevron_right",
+            #[cfg(feature = "zed-files")]
+            "chevron_down",
             "terminal",
             "smartphone",
             "settings",

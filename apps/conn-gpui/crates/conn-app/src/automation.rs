@@ -116,6 +116,44 @@ async fn run(
 ) -> Result<Value, String> {
     let err = |e: anyhow_like::AnyError| e.0;
     match text(cmd, "cmd") {
+        "spike-files-open" => {
+            let path = text(cmd, "path").to_owned();
+            if !conn_contract::source::workspace_relative(&path) {
+                return Err("Expected workspace-relative file".into());
+            }
+            app.update(cx, |app, cx| {
+                app.show_source_location(
+                    &conn_contract::source::SourceLocation { path, lines: None },
+                    cx,
+                )
+            })
+            .map_err(|e| e.to_string())?;
+            Ok(json!("ok"))
+        }
+        "spike-files-state" => window
+            .update(cx, |_, window, cx| {
+                app.read_with(cx, |app, cx| app.spike_files_state(window, cx))
+            })
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string()),
+        "spike-drag" => {
+            let pt = |a: &str, b: &str| {
+                point(
+                    px(cmd[a].as_f64().unwrap_or_default() as f32),
+                    px(cmd[b].as_f64().unwrap_or_default() as f32),
+                )
+            };
+            let (start, end) = (pt("x", "y"), pt("toX", "toY"));
+            window
+                .update(cx, |_, window, cx| {
+                    window.pointer_move(start, None, cx);
+                    window.pointer_down(start, MouseButton::Left, cx);
+                    window.pointer_move(end, Some(MouseButton::Left), cx);
+                    window.pointer_up(end, MouseButton::Left, cx);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!("ok"))
+        }
         "dump" => app
             .read_with(cx, |app, cx| app.automation_dump(cx))
             .map_err(|e| err(e.into())),
@@ -202,10 +240,18 @@ async fn run(
             let (pt, matched) = resolve_target_point(window, cmd, cx)?;
             window
                 .update(cx, |_, window, cx| {
+                    let original = window.modifiers();
+                    let command = cmd.get("command").and_then(Value::as_bool) == Some(true);
+                    if command {
+                        window.change_modifiers(gpui_kit::Modifiers::command(), cx);
+                    }
                     window.pointer_move(pt, None, cx);
                     for _ in 0..clicks {
                         window.pointer_down(pt, button, cx);
                         window.pointer_up(pt, button, cx);
+                    }
+                    if command {
+                        window.change_modifiers(original, cx);
                     }
                 })
                 .map_err(|e| e.to_string())?;
@@ -214,6 +260,18 @@ async fn run(
                 "y": f32::from(pt.y),
                 "target": matched,
             }))
+        }
+        #[cfg(target_os = "macos")]
+        "modifiers" => {
+            let modifiers = if cmd.get("command").and_then(Value::as_bool) == Some(true) {
+                gpui_kit::Modifiers::command()
+            } else {
+                gpui_kit::Modifiers::none()
+            };
+            window
+                .update(cx, |_, window, cx| window.change_modifiers(modifiers, cx))
+                .map_err(|e| e.to_string())?;
+            Ok(Value::Null)
         }
         #[cfg(target_os = "macos")]
         "hover" => {

@@ -37,7 +37,10 @@ fn keeps_null(tool: &str, argument: &str) -> bool {
 const DECODED_BY_TOOL: [(&str, &str); 1] = [("schedule_task", "schedule")];
 
 pub(crate) fn lines() -> impl Iterator<Item = &'static str> {
-    CATALOG.lines().filter(|line| !line.is_empty())
+    CATALOG
+        .lines()
+        .chain(include_str!("source-tools.jsonl").lines())
+        .filter(|line| !line.is_empty())
 }
 
 /// Every tool's name, in catalog order.
@@ -53,7 +56,11 @@ const OUTSIDE_HIDDEN: &str = include_str!("outside-hidden.txt");
 /// Whether a client with no calling thread is offered `tool`. As in `apps/server`, a hidden
 /// tool is missing from its `tools/list` and a call to it is "not found".
 pub(crate) fn offered(tool: &str, outside: bool) -> bool {
-    !outside || !OUTSIDE_HIDDEN.lines().any(|name| name == tool)
+    !outside
+        || (!matches!(
+            tool,
+            "files_selection" | "files_reveal" | "files_definition"
+        ) && !OUTSIDE_HIDDEN.lines().any(|name| name == tool))
 }
 
 /// [`offered`], and tools that only serve links are hidden while links are off here

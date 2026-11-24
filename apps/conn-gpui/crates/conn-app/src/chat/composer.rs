@@ -641,6 +641,12 @@ impl Composer {
         cx.notify();
     }
 
+    #[cfg(feature = "automation")]
+    pub(super) fn spike_input_focused(&self, window: &Window, cx: &App) -> bool {
+        use gpui_kit::Focusable as _;
+        self.textarea.read(cx).focus_handle(cx).is_focused(window)
+    }
+
     /// Moves keyboard focus into the composer textarea.
     pub(crate) fn focus_input(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.textarea.update(cx, |input, cx| {
@@ -1148,7 +1154,7 @@ impl Composer {
 
     /// Stages in-memory bytes (such as a pasted clipboard image) and uploads via
     /// `attachments.createUploadUrl`.
-    fn stage_and_upload_bytes(
+    pub(super) fn stage_and_upload_bytes(
         &mut self,
         name: String,
         mime_type: String,

@@ -1,0 +1,12 @@
+[package]
+name = "gpui_shared_string"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+implementation = { package = "gpui-pre-shared-string", version = "=0.3.11", default-features = false }

@@ -2,7 +2,10 @@
 
 use super::Deps;
 use crate::table::{Failure, MethodTable};
-use conn_contract::{AgentPanelResponse, AgentPanelSubscribeInput, to_json};
+use conn_contract::{
+    source::{DesktopPanelResponse, DesktopPanelSubscription},
+    to_json,
+};
 use tokio::sync::mpsc;
 
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
@@ -10,10 +13,10 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         return;
     };
     let broker = panels.clone();
-    table.stream("panels.requests", move |_, _: AgentPanelSubscribeInput| {
+    table.stream("panels.requests", move |ctx, input: DesktopPanelSubscription| {
         let broker = broker.clone();
         async move {
-            let mut requests = broker.subscribe().map_err(|e| Failure::die(e.message))?;
+            let mut requests = broker.subscribe_for(ctx.connection_id, input.files_thread, input.files_only).map_err(|e| Failure::die(e.message))?;
             let (tx, rx) = mpsc::channel(1);
             tokio::spawn(async move {
                 loop { tokio::select! {
@@ -27,8 +30,8 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
             Ok(rx)
         }
     });
-    table.unary("panels.respond", move |_, input: AgentPanelResponse| {
-        panels.respond(input);
+    table.unary("panels.respond", move |ctx, input: DesktopPanelResponse| {
+        panels.respond_from(ctx.connection_id, input);
         std::future::ready(Ok(()))
     });
 }
@@ -39,6 +42,84 @@ mod tests {
     use crate::table::{CallContext, Handler};
     use serde_json::{Value, json};
     use std::time::Duration;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn files_actions_target_one_window_and_only_accept_its_reply() {
+        use conn_contract::source::{DesktopPanelResponse, FilesAction};
+        let broker = conn_features::panels::PanelBroker::default();
+        let mut table = MethodTable::new();
+        register(
+            &mut table,
+            &Deps {
+                panels: Some(broker.clone()),
+                ..Deps::default()
+            },
+        );
+        let Some(Handler::Stream(subscribe)) = table.get("panels.requests") else {
+            panic!("missing stream")
+        };
+        let Some(Handler::Unary(respond)) = table.get("panels.respond") else {
+            panic!("missing respond")
+        };
+        let session = |id| CallContext {
+            connection_id: id,
+            ..Default::default()
+        };
+        let mut legacy = subscribe(session(1), json!({})).await.unwrap();
+        let mut mac = subscribe(session(2), json!({"filesThread":"t","filesOnly":true}))
+            .await
+            .unwrap();
+        let request = || {
+            conn_contract::from_json(
+                json!({"requestId":"pending","threadId":"t","panel":"files","focusWindow":false}),
+            )
+            .unwrap()
+        };
+        let (answer, ()) = tokio::join!(
+            broker.show_action(
+                request(),
+                Some(FilesAction::Selection),
+                Duration::from_secs(2)
+            ),
+            async {
+                let shown = mac.recv().await.unwrap().unwrap();
+                assert_eq!(shown["filesAction"]["kind"], "selection");
+                let reply = |text: &str| json!({"ok":true,"requestId":shown["requestId"],"selection":{"path":"routes/web.php","startLine":2,"endLine":2,"text":text}});
+                respond(session(1), reply("wrong")).await.unwrap();
+                respond(session(2), reply("right")).await.unwrap();
+            }
+        );
+        let DesktopPanelResponse { selection, .. } = answer.unwrap();
+        assert_eq!(selection.unwrap().text, "right");
+        assert!(legacy.try_recv().is_err());
+        let (ordinary, ()) = tokio::join!(broker.show(request(), Duration::from_secs(2)), async {
+            let shown = legacy.recv().await.unwrap().unwrap();
+            respond(
+                session(1),
+                json!({"ok":true,"requestId":shown["requestId"]}),
+            )
+            .await
+            .unwrap();
+        });
+        assert!(ordinary.unwrap().ok);
+        assert!(
+            mac.try_recv().is_err(),
+            "linked Files subscription received a general panel request"
+        );
+        let _duplicate = subscribe(session(3), json!({"filesThread":"t"}))
+            .await
+            .unwrap();
+        let err = broker
+            .show_action(
+                request(),
+                Some(FilesAction::Selection),
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("multiple windows"));
+        assert!(mac.try_recv().is_err());
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn responses_enforce_trimmed_ids_and_utf16_input_bounds() {

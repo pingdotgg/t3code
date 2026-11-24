@@ -29,7 +29,7 @@ conn-gateway-api = { path = "../conn-server/crates/conn-gateway-api" }
 # Note: if macOS polish patches are needed, vendor into vendor/ and add [patch.crates-io]
 # following .refs/threadbear/desktop/Cargo.toml.
 gpui-kit = { version = "=0.9.0", features = ["syntect"] }
-rust-embed = { version = "=8.13.0", features = ["debug-embed"] }
+rust-embed = { version = "=8.11.0", features = ["debug-embed"] }
 markdown = "=1.0.0"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "ico"] }
 alacritty_terminal = { version = "=0.26.0", default-features = false }
@@ -126,3 +126,34 @@ gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 # was asked. A face with a `wght` axis now gets one CoreText variation per requested weight; static
 # faces are untouched.
 gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+
+# Unify `tree_sitter_language::LanguageFn` between crates.io grammar crates and
+# the git tree-sitter above; two instances of the crate would make grammar
+# constants type-incompatible with `tree_sitter::Language`.
+tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "803c6ebaac27d69e1808b45058482e868d073ceb" }
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
+notify-types = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
+# Avoid panicking when a failed EGL call reports EGL_SUCCESS.
+# https://github.com/timothee-haudebourg/khronos-egl/pull/37
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+
+# Zed and GPUI Kit must use the same Window, App and shared-string types.
+[patch."https://github.com/zed-industries/zed"]
+gpui = { path = "vendor/zed-compat/gpui" }
+gpui_shared_string = { path = "vendor/zed-compat/gpui_shared_string" }
+refineable = { path = "vendor/zed-compat/refineable" }
+http_client = { path = "vendor/zed-compat/http_client" }
+path = { path = "vendor/zed-compat/path" }
+
+# macOS rustc needs the unstripped sqlez procedural macro when loading the editor dependency.
+[profile.release.package.sqlez_macros]
+strip = "none"
+debug = 1
+
+[profile.dev.package.sqlez_macros]
+strip = "none"
+debug = 1

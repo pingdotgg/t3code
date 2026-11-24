@@ -51,12 +51,12 @@ fn check_length(value: &str, trimmed: bool, max: usize, field: &str) -> Result<(
 
 /// Where the engine says projects and threads live. Empty without an engine.
 #[derive(Default)]
-struct Layout {
+pub(crate) struct Layout {
     shell: Value,
 }
 
 impl Layout {
-    async fn load(engine: Option<&Arc<dyn Engine>>) -> Self {
+    pub(crate) async fn load(engine: Option<&Arc<dyn Engine>>) -> Self {
         let shell = match engine {
             Some(engine) => engine.shell_snapshot().await.unwrap_or(Value::Null),
             None => Value::Null,
@@ -80,7 +80,7 @@ impl Layout {
     }
 
     /// The thread's worktree, else its project's root.
-    fn thread_root(&self, thread_id: &str) -> Option<String> {
+    pub(crate) fn thread_root(&self, thread_id: &str) -> Option<String> {
         let thread = self.shell["threads"]
             .as_array()?
             .iter()

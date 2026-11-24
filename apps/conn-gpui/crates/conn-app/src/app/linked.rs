@@ -1389,8 +1389,15 @@ impl ConnApp {
                 cx.notify();
                 false
             }
-            // A linked environment's panel requests and annotations are not shown here.
-            ClientEvent::PanelRequest(_) | ClientEvent::Annotations { .. } => false,
+            ClientEvent::PanelRequest(request) => {
+                if request.files_action.is_some()
+                    && let Some(origin) = self.linked_connection(&environment_id)
+                {
+                    self.dispatch_agent_panel_request(request, origin, cx);
+                }
+                false
+            }
+            ClientEvent::Annotations { .. } => false,
         }
     }
 }

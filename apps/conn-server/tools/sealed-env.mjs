@@ -197,6 +197,7 @@ const CARGO_RUN_VARIABLE =
  */
 export const RUN_KNOBS = [
   "CONN_NETWORK_LOG", "ACP_FIXTURE", "ACP_DUMP", "CONN_CONTRACT_REAL_PAYLOADS",
+  "CONN_LARAVEL_FIXTURE",
   "REPLAY_MCP_CAPTURE", "RSS_TURNS", "RSS_SETTINGS", "STREAM", "REOPEN", "IDLE_MS", "CHECKPOINTS",
   // T3's `handoffTokenCapConfig`: the history a context handoff may carry.
   "T3CODE_CONTEXT_HANDOFF_TOKEN_CAP",

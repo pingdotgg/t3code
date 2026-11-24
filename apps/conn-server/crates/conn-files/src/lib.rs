@@ -1,8 +1,7 @@
 //! Project files, search, signed asset URLs and the attachment store for `conn-server`.
 //!
-//! The reference is `apps/server/src/workspace/*`, `assets/*` and `attachmentStore.ts`. This
-//! crate holds no per-workspace state: no search index, no caches. Every function blocks on
-//! the file system or a short `git` call; the server runs them on `spawn_blocking`.
+//! The reference is `apps/server/src/workspace/*`, `assets/*` and `attachmentStore.ts`. File reads and search run on blocking workers. Laravel navigation owns its workspace's
+//! language server while a client is making requests.
 
 use std::{
     io,
@@ -17,6 +16,7 @@ pub mod html;
 mod mcp_app_bootstrap;
 pub mod mcp_apps;
 pub mod mime;
+pub mod navigation;
 pub mod paths;
 pub mod search;
 pub mod signer;
@@ -32,6 +32,7 @@ use signer::Signer;
 /// The files service: one per server, shared by the methods and the asset routes.
 #[derive(Debug)]
 pub struct Files {
+    pub navigation: navigation::LaravelNavigation,
     pub attachments: AttachmentStore,
     pub signer: Signer,
     pub internal: InternalPaths,
@@ -47,6 +48,7 @@ impl Files {
         let attachments_dir = state_dir.join("attachments");
         std::fs::create_dir_all(&attachments_dir)?;
         Ok(Self {
+            navigation: navigation::LaravelNavigation::default(),
             signer: Signer::open(&state_dir.join(paths::SECRETS_DIR))?,
             internal: InternalPaths::new(state_dir),
             attachments: AttachmentStore::new(attachments_dir),

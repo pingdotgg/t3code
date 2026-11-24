@@ -19,22 +19,24 @@ struct Store {
 
 impl Global for Store {}
 
-/// Where the settings are kept: `terminal-settings.json` under `CONN_GPUI_CONFIG_DIR` or the
-/// app's Application Support folder. Unit tests keep nothing on disk.
-fn settings_path() -> Option<PathBuf> {
+/// Native appearance preferences live under `CONN_GPUI_CONFIG_DIR` or Application Support.
+pub(crate) fn settings_path(filename: &str) -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
     if let Some(dir) = std::env::var_os("CONN_GPUI_CONFIG_DIR") {
-        return Some(PathBuf::from(dir).join("terminal-settings.json"));
+        return Some(PathBuf::from(dir).join(filename));
     }
     let home = PathBuf::from(std::env::var_os("HOME")?);
-    Some(home.join("Library/Application Support/conn-gpui/terminal-settings.json"))
+    Some(
+        home.join("Library/Application Support/conn-gpui")
+            .join(filename),
+    )
 }
 
 /// Loads the saved settings (the defaults when there is no file) into the app.
 pub(crate) fn init(cx: &mut App) {
-    let path = settings_path();
+    let path = settings_path("terminal-settings.json");
     let settings = path
         .as_deref()
         .and_then(|p| std::fs::read_to_string(p).ok())

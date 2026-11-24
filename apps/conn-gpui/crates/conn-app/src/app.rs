@@ -177,6 +177,12 @@ fn draft_workspace_strategy(draft: &DraftThreadState) -> serde_json::Value {
     }
 }
 
+struct FilesSubscription {
+    thread: String,
+    connection: Connection,
+    linked: bool,
+}
+
 /// Root view of the Conn native desktop shell.
 pub(crate) struct ConnApp {
     tokens: Tokens,
@@ -327,6 +333,7 @@ pub(crate) struct ConnApp {
     perf_open_pending_chat: bool,
     /// Project id currently subscribed to `annotations.subscribe` on `self.connection`.
     subscribed_annotation_project: Option<String>,
+    files_subscription: Option<FilesSubscription>,
     /// Live annotations queue for `subscribed_annotation_project`.
     annotations: Vec<conn_state::AnnotationRecord>,
     /// Threads with automatic annotation Watch enabled.
@@ -481,14 +488,8 @@ impl ConnApp {
                 crate::chat::ChatEvent::ForkFromRun { run_id } => {
                     app.fork_selected_from_run(run_id, cx);
                 }
-                crate::chat::ChatEvent::OpenFile(path) => {
-                    // A chat link may end in `:line`; the file opens at that line.
-                    let (file, line) = crate::panels::file_path::split_line_suffix(path);
-                    app.select_right_panel_surface(PanelSurface::File(file.to_owned()), cx);
-                    if let Some(line) = line {
-                        app.right_panel
-                            .update(cx, |panel, cx| panel.reveal_line(line, cx));
-                    }
+                crate::chat::ChatEvent::OpenFile(location) => {
+                    app.show_source_location(location, cx)
                 }
                 crate::chat::ChatEvent::OpenInBrowser(url) => {
                     app.right_panel
@@ -562,6 +563,14 @@ impl ConnApp {
             &right_panel,
             window,
             |app, _, event: &crate::panels::RightPanelEvent, window, cx| match event {
+                crate::panels::RightPanelEvent::DisplayedFileChanged => cx.notify(),
+                crate::panels::RightPanelEvent::Definition(location) => {
+                    app.show_source_location(location, cx)
+                }
+                crate::panels::RightPanelEvent::AttachSource(source) => {
+                    app.chat
+                        .update(cx, |chat, cx| chat.attach_source(source, window, cx));
+                }
                 crate::panels::RightPanelEvent::OpenFile(path) => {
                     app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
                 }
@@ -711,6 +720,7 @@ impl ConnApp {
             perf_open: None,
             perf_open_pending_chat: false,
             subscribed_annotation_project: None,
+            files_subscription: None,
             annotations: Vec::new(),
             annotation_watching_threads: HashSet::new(),
             annotation_last_sent: HashMap::new(),
@@ -1081,11 +1091,53 @@ impl ConnApp {
             .update(cx, |panel, cx| panel.set_surface_visible(visible, cx));
     }
 
+    fn sync_files_subscription(&mut self) {
+        let next = self
+            .layout
+            .selected_thread_id
+            .as_ref()
+            .filter(|_| self.draft.is_none())
+            .and_then(|thread| {
+                Some(FilesSubscription {
+                    connection: self.connection_for_thread(thread)?,
+                    linked: self.linked_environment_of_thread(thread).is_some(),
+                    thread: thread.clone(),
+                })
+            });
+        if let (Some(old), Some(next)) = (&self.files_subscription, &next)
+            && next.connection.same_connection(&old.connection)
+            && next.thread == old.thread
+        {
+            return;
+        }
+        if let Some(old) = self.files_subscription.take()
+            && !next
+                .as_ref()
+                .is_some_and(|new| new.connection.same_connection(&old.connection))
+        {
+            if old.linked {
+                old.connection.unsubscribe_panel_requests();
+            } else {
+                old.connection
+                    .subscribe_panel_requests(Some(self.device_name()));
+            }
+        }
+        if let Some(next) = &next {
+            next.connection.subscribe_files_thread(
+                Some(self.device_name()),
+                Some(next.thread.clone()),
+                next.linked,
+            );
+        }
+        self.files_subscription = next;
+    }
+
     /// Pushes the selected thread's timeline (or active draft state) into the chat view and right panel.
     fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
         self.refresh_selected_outline(cx);
         self.sync_chat_environment(cx);
         let child_approvals = self.sync_child_approvals();
+        self.sync_files_subscription();
         let selected = self.layout.selected_thread_id.as_deref();
         let shell_thread = selected.and_then(|id| self.shell.find_thread(id));
         let draft_view = self.draft.as_ref().map(|draft| {
@@ -1422,7 +1474,9 @@ impl ConnApp {
             }
             ClientEvent::ServerConfig(event) => self.apply_server_config_event(*event, cx),
             ClientEvent::PanelRequest(request) => {
-                self.dispatch_agent_panel_request(request, cx);
+                if let Some(connection) = self.connection.clone() {
+                    self.dispatch_agent_panel_request(request, connection, cx);
+                }
             }
             ClientEvent::Annotations {
                 project_id,
@@ -3752,6 +3806,33 @@ impl ConnApp {
         }
     }
 
+    #[cfg(feature = "automation")]
+    pub(crate) fn spike_files_state(&self, window: &Window, cx: &App) -> serde_json::Value {
+        let mut state = self.right_panel.read(cx).spike_files_state(window, cx);
+        if let PanelSurface::File(path) = self.right_panel.read(cx).displayed_surface(
+            self.right_panel_surface(),
+            &self.right_panel_open_tabs,
+            cx,
+        ) {
+            state["displayedTab"] = path.into();
+        }
+        state["composerFocused"] = self.chat.read(cx).spike_input_focused(window, cx).into();
+        state
+    }
+
+    pub(crate) fn show_source_location(
+        &mut self,
+        location: &conn_contract::source::SourceLocation,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.select_right_panel_surface(PanelSurface::File(location.path.clone()), cx);
+        if let Some(lines) = location.lines {
+            self.right_panel.update(cx, |panel, cx| {
+                panel.reveal_lines(location.path.clone(), lines, None, cx)
+            });
+        }
+    }
+
     /// Selects a right-panel tab and opens the right panel if it was closed.
     pub(crate) fn select_right_panel_tab(
         &mut self,
@@ -3795,6 +3876,8 @@ impl ConnApp {
             return;
         };
         self.right_panel_open_tabs.remove(pos);
+        self.right_panel
+            .update(cx, |panel, cx| panel.release_closed_file(surface, cx));
         if &self.right_panel_surface() == surface {
             let next = self.right_panel_open_tabs[pos.saturating_sub(1)].clone();
             self.select_right_panel_surface(next, cx);
@@ -5443,7 +5526,11 @@ impl ConnApp {
         use std::rc::Rc;
         let app = cx.entity();
         let available_tabs = self.available_right_panel_tabs();
-        let active_surface = self.right_panel_surface();
+        let active_surface = self.right_panel.read(cx).displayed_surface(
+            self.right_panel_surface(),
+            &self.right_panel_open_tabs,
+            cx,
+        );
         let header = render_panel_header(
             PanelHeaderProps {
                 open_tabs: &self.right_panel_open_tabs,
@@ -5828,28 +5915,128 @@ impl ConnApp {
     /// replies via `panels.respond`.
     fn dispatch_agent_panel_request(
         &self,
-        request: conn_contract::AgentPanelRequest,
+        request: conn_contract::source::DesktopPanelRequest,
+        conn_reply: Connection,
         cx: &mut Context<'_, Self>,
     ) {
         const NOT_ON_THREAD: &str = "The user is looking at another thread, so Conn did not run this. Ask them to open your thread, then try again.";
 
-        let Some(conn_reply) = self.connection.clone() else {
-            return;
-        };
         let device_name = self.device_name();
         cx.spawn(async move |this, cx| {
-            let response =
-                Self::handle_agent_panel_request(this, request, device_name, NOT_ON_THREAD, cx)
-                    .await;
+            let response = if let Some(action) = request.files_action {
+                Self::handle_files_action(this, request.panel, action, device_name, &conn_reply, cx)
+                    .await
+            } else {
+                let panel = Self::handle_agent_panel_request(
+                    this,
+                    request.panel,
+                    device_name,
+                    NOT_ON_THREAD,
+                    cx,
+                )
+                .await;
+                conn_contract::source::DesktopPanelResponse {
+                    panel,
+                    selection: None,
+                }
+            };
             let _ = crate::live::RT
                 .spawn(async move {
                     let _ = conn_reply
-                        .call::<conn_contract::AgentPanelResponse, ()>("panels.respond", &response)
+                        .call::<conn_contract::source::DesktopPanelResponse, ()>(
+                            "panels.respond",
+                            &response,
+                        )
                         .await;
                 })
                 .await;
         })
         .detach();
+    }
+
+    async fn handle_files_action(
+        this: gpui_kit::WeakEntity<Self>,
+        request: conn_contract::AgentPanelRequest,
+        action: conn_contract::source::FilesAction,
+        device: String,
+        origin: &Connection,
+        cx: &mut gpui_kit::AsyncApp,
+    ) -> conn_contract::source::DesktopPanelResponse {
+        use conn_contract::source::FilesAction;
+        let mut selection = None;
+        let result = async {
+            let valid = |app: &Self| {
+                app.draft.is_none()
+                    && app
+                        .context_connection()
+                        .is_some_and(|c| c.same_connection(origin))
+                    && app.layout.selected_thread_id.as_deref() == Some(request.thread_id.as_str())
+            };
+            match action {
+                FilesAction::Selection => {
+                    selection = this
+                        .read_with(cx, |app, cx| {
+                            if !valid(app) {
+                                return Err("The active thread changed.".to_owned());
+                            }
+                            let selected = app
+                                .right_panel_surface_visible()
+                                .then(|| app.right_panel.read(cx).selected_source(cx))
+                                .flatten();
+                            if selected
+                                .as_ref()
+                                .is_some_and(|source| source.text.len() > 64 * 1024)
+                            {
+                                return Err("Select a passage smaller than 64 KiB.".to_owned());
+                            }
+                            Ok(selected)
+                        })
+                        .map_err(|e| e.to_string())??;
+                }
+                FilesAction::Reveal {
+                    path,
+                    lines,
+                    excerpt,
+                } => {
+                    let result = this
+                        .update(cx, |app, cx| {
+                            if !valid(app) {
+                                return Err("The active thread changed.".to_owned());
+                            }
+                            if !conn_contract::source::workspace_relative(&path) {
+                                return Err("Expected a workspace-relative path.".to_owned());
+                            }
+                            app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
+                            if !app.right_panel_surface_visible() {
+                                return Err(
+                                    "Close the overlay to reveal source in Files.".to_owned()
+                                );
+                            }
+                            Ok(app.right_panel.update(cx, |panel, cx| {
+                                panel.reveal_lines(path, lines, Some(excerpt), cx)
+                            }))
+                        })
+                        .map_err(|e| e.to_string())??;
+                    result.await.map_err(|_| {
+                        "The file or window changed before Conn could reveal the range.".to_string()
+                    })??;
+                }
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        conn_contract::source::DesktopPanelResponse {
+            panel: conn_contract::AgentPanelResponse {
+                request_id: request.request_id,
+                ok: result.is_ok(),
+                device_name: Some(device),
+                error: result.err(),
+                database: None,
+                mcp: None,
+                mcp_call: None,
+            },
+            selection,
+        }
     }
 
     async fn handle_agent_panel_request(
@@ -6285,6 +6472,7 @@ impl ConnApp {
         self.subscribed_thread_id = None;
         self.reset_child_approvals();
         self.subscribed_annotation_project = None;
+        self.files_subscription = None;
         self.annotations.clear();
         self.annotation_last_sent.clear();
         self.layout.selected_thread_id = None;
@@ -6883,6 +7071,13 @@ impl Render for ConnApp {
         RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.sync_thread_menu_focus(window, cx);
         self.sync_undo_notice_focus(window, cx);
+        #[cfg(feature = "zed-files")]
+        if self.layout.right_panel_open
+            && self.layout.right_panel_tab == RightPanelTab::File
+            && window.focused(cx).is_none()
+        {
+            self.focus_handle.focus(window, cx);
+        }
         let viewport = window.viewport_size();
         let viewport_w = f32::from(viewport.width);
         let viewport_h = f32::from(viewport.height);
@@ -6923,6 +7118,10 @@ impl Render for ConnApp {
             )
             .on_modifiers_changed(cx.listener(
                 |app, event: &gpui_kit::ModifiersChangedEvent, window, cx| {
+                    #[cfg(feature = "zed-files")]
+                    app.right_panel.update(cx, |panel, cx| {
+                        panel.file_modifiers_changed(event.modifiers, window, cx)
+                    });
                     app.modifiers_changed(&event.modifiers, window, cx);
                 },
             ))

@@ -7,6 +7,7 @@ mod automation;
 mod colour_space;
 pub(crate) use conn_client::commands;
 mod drafts;
+mod editor_settings;
 mod file_icons;
 mod fixture;
 mod fonts;
@@ -211,7 +212,10 @@ fn main() {
     }
     application.run(|cx| {
         gpui_kit::init(cx);
+        #[cfg(feature = "zed-files")]
+        panels::zed_preview::init(cx);
         fonts::register(cx);
+        editor_settings::init(cx);
         colour_space::install(cx);
         vibrancy::install(cx);
         let theme = live::initial_theme();

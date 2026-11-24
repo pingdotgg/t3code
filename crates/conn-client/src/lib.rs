@@ -125,7 +125,7 @@ pub enum ClientEvent {
     },
     /// Server→desktop agent panel request (`panels.requests`: `panel_open`, `database_query`,
     /// `mcp_connect`, `mcp_call`). Auto-resubscribed on WebSocket reconnect.
-    PanelRequest(conn_contract::AgentPanelRequest),
+    PanelRequest(conn_contract::source::DesktopPanelRequest),
     /// Live project annotation queue snapshot (`annotations.subscribe`). Auto-resubscribed on
     /// WebSocket reconnect.
     Annotations {
@@ -258,6 +258,75 @@ impl Connection {
                 .await
             },
             "device hub access",
+        )
+        .await
+    }
+
+    /// Looks up a Laravel definition on the server that owns this thread.
+    pub async fn source_definition(
+        &self,
+        query: conn_contract::source::DefinitionRequest,
+    ) -> Result<Vec<conn_contract::source::DefinitionTarget>, ClientError> {
+        self.navigation_request("api/files/definition", query).await
+    }
+
+    pub async fn first_source_definition(
+        &self,
+        query: conn_contract::source::DefinitionRequest,
+        hover: bool,
+    ) -> Result<Vec<conn_contract::source::DefinitionTarget>, ClientError> {
+        let endpoint = if hover {
+            "api/files/definition?mode=hover"
+        } else {
+            "api/files/definition?mode=first"
+        };
+        self.navigation_request(endpoint, query).await
+    }
+
+    pub async fn prepare_php_navigation(
+        &self,
+        doc: conn_contract::source::PreparePhpNavigation,
+    ) -> Result<(), ClientError> {
+        self.navigation_request("api/files/prepare-php", doc).await
+    }
+
+    async fn navigation_request<
+        Q: Serialize + Send + Sync + 'static,
+        R: DeserializeOwned + Send + 'static,
+    >(
+        &self,
+        endpoint: &str,
+        query: Q,
+    ) -> Result<R, ClientError> {
+        let url = self.http_base_url.join(endpoint)?;
+        let token = self
+            .bearer
+            .read()
+            .ok()
+            .and_then(|t| t.clone())
+            .ok_or_else(|| ClientError::Auth("No active connection.".into()))?;
+        let http = self.http.clone();
+        self.run_on_tokio(
+            async move {
+                let res = http
+                    .post(url)
+                    .bearer_auth(token)
+                    .json(&query)
+                    .send()
+                    .await
+                    .map_err(|e| ClientError::Connection(e.to_string()))?;
+                if !res.status().is_success() {
+                    let status = res.status();
+                    let message = res.text().await.unwrap_or_default();
+                    return Err(ClientError::Connection(format!(
+                        "Definition lookup ({status}): {message}"
+                    )));
+                }
+                res.json()
+                    .await
+                    .map_err(|e| ClientError::Connection(e.to_string()))
+            },
+            "source definition",
         )
         .await
     }
@@ -547,9 +616,25 @@ impl Connection {
     /// calls (`panel_open`, `database_query`, `mcp_connect`, `mcp_call`) resume immediately on
     /// WebSocket reconnect with zero retry gap.
     pub fn subscribe_panel_requests(&self, device_name: Option<String>) {
-        let _ = self
-            .cmd_tx
-            .send(Command::SubscribePanelRequests(device_name));
+        self.subscribe_files_thread(device_name, None, false);
+    }
+
+    pub fn subscribe_files_thread(
+        &self,
+        device_name: Option<String>,
+        files_thread: Option<String>,
+        files_only: bool,
+    ) {
+        let input = conn_contract::source::DesktopPanelSubscription {
+            panel: conn_contract::AgentPanelSubscribeInput { device_name },
+            files_thread,
+            files_only,
+        };
+        let _ = self.cmd_tx.send(Command::SubscribePanelRequests(input));
+    }
+
+    pub fn same_connection(&self, other: &Self) -> bool {
+        self.cmd_tx.same_channel(&other.cmd_tx)
     }
 
     /// Stops listening to `panels.requests`.

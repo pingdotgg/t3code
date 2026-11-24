@@ -418,7 +418,12 @@ impl ChatView {
             LinkMenuAction::UnlinkFromThread => {
                 self.update_thread_pull_request_link(&href, false, cx);
             }
-            LinkMenuAction::PreviewMedia => cx.emit(ChatEvent::OpenFile(href)),
+            LinkMenuAction::PreviewMedia => {
+                cx.emit(ChatEvent::OpenFile(conn_contract::source::SourceLocation {
+                    path: file_path::split_line_suffix(&href).0.to_owned(),
+                    lines: None,
+                }))
+            }
             LinkMenuAction::OpenInEditor(editor) => {
                 run_open(&open_args(editor, &self.absolute_file_path(&href, false)));
             }

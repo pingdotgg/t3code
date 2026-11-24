@@ -8,6 +8,8 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+url = "2"
+notify = "8.2"
 conn-support.workspace = true
 conn-contract.workspace = true
 serde.workspace = true

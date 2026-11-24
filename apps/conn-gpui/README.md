@@ -39,6 +39,10 @@ scripts/check.sh
 cargo run -p conn-app
 ```
 
+## Native Files editor
+
+From this directory, run `cargo run --locked -p conn-app --features zed-files` to use the read-only Zed editor for PHP files. Set `CONN_FILES_EDITOR=kit` to compare the same file with the GPUI Kit viewer. Settings → Editor controls the font, line height and syntax colors. The optional feature links Zed’s [GPL-3.0-or-later editor](https://github.com/zed-industries/zed/blob/f816e1f9263e3a8ef63c4baaa02e1441ce1c6038/crates/editor/Cargo.toml).
+
 ## Docs
 
 - [`AGENTS.md`](AGENTS.md) — Agent rules, VM workflow, crate boundaries, visual parity checklist.

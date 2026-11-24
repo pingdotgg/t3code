@@ -12,6 +12,7 @@
 //!   `shell_divider_raised` between square rows, no trailing divider).
 
 pub(crate) mod controls;
+mod editor;
 pub(crate) mod projects;
 pub(crate) mod providers;
 pub(crate) mod scheduled_tasks;
@@ -58,6 +59,7 @@ pub(crate) enum SettingsPage {
     General,
     Appearance,
     Terminal,
+    Editor,
     Connections,
     Providers,
     Projects,
@@ -65,10 +67,11 @@ pub(crate) enum SettingsPage {
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 8] = [
+const ALL_PAGES: [SettingsPage; 9] = [
     SettingsPage::General,
     SettingsPage::Appearance,
     SettingsPage::Terminal,
+    SettingsPage::Editor,
     SettingsPage::Connections,
     SettingsPage::Providers,
     SettingsPage::Projects,
@@ -82,6 +85,7 @@ impl SettingsPage {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Terminal => "Terminal",
+            Self::Editor => "Editor",
             Self::Connections => "Connections",
             Self::Providers => "Providers",
             Self::Projects => "Projects",
@@ -95,6 +99,7 @@ impl SettingsPage {
             Self::General => IconName::SlidersHorizontal,
             Self::Appearance => IconName::Palette,
             Self::Terminal => IconName::SquareTerminal,
+            Self::Editor => IconName::File,
             Self::Connections => IconName::Plug,
             Self::Providers => IconName::Bot,
             Self::Projects => IconName::Folder,
@@ -210,6 +215,8 @@ pub(crate) struct SettingsModal {
     new_profile_input: Entity<InputState>,
     /// Settings → Terminal: the font family text field.
     terminal_family_input: Entity<InputState>,
+    editor_family_input: Entity<InputState>,
+    _editor_family_sub: Subscription,
     _terminal_family_sub: Subscription,
     /// Settings → Terminal: the font weight slider and dropdown (`terminal.rs`).
     terminal_weight: terminal::TerminalWeightUi,
@@ -276,6 +283,21 @@ impl SettingsModal {
                 cx.notify();
             }
         });
+
+        let editor_family_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(crate::theme::MONO_FONT)
+                .default_value(crate::editor_settings::current(cx).font_family)
+        });
+        let editor_family_sub = cx.subscribe(
+            &editor_family_input,
+            |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let family = input.read(cx).value().to_string();
+                    crate::editor_settings::update(cx, &this.tokens, |s| s.font_family = family);
+                }
+            },
+        );
 
         let terminal_family = crate::terminal_settings::current(cx).font_family;
         let terminal_family_input = cx.new(|cx| {
@@ -365,6 +387,8 @@ impl SettingsModal {
             search_input,
             _search_sub: search_sub,
             new_profile_input,
+            editor_family_input,
+            _editor_family_sub: editor_family_sub,
             terminal_family_input,
             _terminal_family_sub: terminal_family_sub,
             terminal_weight: terminal::TerminalWeightUi::new(cx),
@@ -725,6 +749,7 @@ impl SettingsModal {
                 SettingsPage::General => self.render_general_page(),
                 SettingsPage::Appearance => self.render_appearance_page(cx),
                 SettingsPage::Terminal => self.render_terminal_page(cx),
+                SettingsPage::Editor => self.render_editor_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
                 SettingsPage::Providers => self.providers.clone().into_any_element(),
                 SettingsPage::Projects => self.projects.clone().into_any_element(),
@@ -985,6 +1010,14 @@ impl SettingsModal {
             .contains(needle)
         {
             sections.push(self.scheduled_tasks.clone().into_any_element());
+        }
+
+        if "editor font family font size line height syntax theme jetbrains mono".contains(needle)
+            || crate::editor_settings::Palette::ALL
+                .iter()
+                .any(|palette| palette.label().to_lowercase().contains(needle))
+        {
+            sections.push(self.render_editor_page(cx));
         }
 
         if sections.is_empty() {

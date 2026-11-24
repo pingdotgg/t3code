@@ -25,6 +25,7 @@ pub mod attention;
 mod generated;
 pub mod ids;
 pub mod outline;
+pub mod source;
 pub mod support;
 mod upstream;
 

@@ -161,3 +161,82 @@ pub(super) async fn invoke(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
         .unwrap_or_else(|| json!("Conn desktop"));
     Ok(result)
 }
+
+pub(super) async fn files(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
+    use conn_contract::source::{FilesAction, SourceLines, workspace_relative};
+    let caller = cx.require_thread(name)?;
+    cx.writing_caller().await?;
+    let broker = cx
+        .config()
+        .panels
+        .as_ref()
+        .ok_or_else(|| fail("capability_denied", "No desktop panel service."))?;
+    let action = if name == "files_selection" {
+        FilesAction::Selection
+    } else {
+        let path = str_arg(args, "path")
+            .filter(|p| workspace_relative(p))
+            .ok_or_else(|| fail("invalid_path", "Use a workspace-relative file path."))?;
+        let number = |key: &str| {
+            args.get(key)
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|&n| n > 0)
+                .ok_or_else(|| fail("invalid_range", "Use positive, one-based line numbers."))
+        };
+        let lines = SourceLines {
+            start_line: number("startLine")?,
+            end_line: number("endLine")?,
+        };
+        if lines.end_line < lines.start_line {
+            return Err(fail("invalid_range", "endLine precedes startLine."));
+        }
+        let excerpt = str_arg(args, "excerpt")
+            .ok_or_else(|| fail("invalid_range", "Supply the exact lines to reveal."))?;
+        FilesAction::Reveal {
+            path: path.to_owned(),
+            lines,
+            excerpt: excerpt.to_owned(),
+        }
+    };
+    let request = from_json(json!({"requestId":"pending","threadId":caller.thread_id,"panel":"files","focusWindow":false})).map_err(super::internal)?;
+    let result = broker
+        .show_action(request, Some(action), Duration::from_secs(15))
+        .await
+        .map_err(|e| fail(e.reason, e.message))?;
+    if name == "files_selection" {
+        Ok(json!({"selection":result.selection}))
+    } else {
+        Ok(json!({"shownOn":result.panel.device_name}))
+    }
+}
+
+pub(super) async fn definition(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let caller = cx.require_thread("files_definition")?;
+    let limits = cx.writing_caller().await?;
+    if limits.runtime_mode != "full-access" || limits.interaction_mode != "default" {
+        return Err(fail(
+            "capability_denied",
+            "Laravel runs the workspace's PHP and needs a full-access thread.",
+        ));
+    }
+    let files = cx
+        .config()
+        .files
+        .as_ref()
+        .ok_or_else(|| fail("unavailable", "Workspace files are unavailable."))?;
+    let projection = cx.projection(&caller.thread_id).await?;
+    let thread = &projection["thread"];
+    let project = super::worktree::project(cx, thread).await?;
+    let root = thread["worktreePath"]
+        .as_str()
+        .or_else(|| project["workspaceRoot"].as_str())
+        .ok_or_else(|| fail("unavailable", "Thread has no workspace."))?;
+    let query = from_json(json!(args)).map_err(super::internal)?;
+    let targets = files
+        .navigation
+        .definition(root, query, &files.internal)
+        .await
+        .map_err(|e| fail("definition_unavailable", e))?;
+    Ok(json!({"targets":targets}))
+}

@@ -10,7 +10,7 @@ use crate::table::MethodTable;
 
 mod annotations;
 pub(crate) mod devices;
-mod files;
+pub(crate) mod files;
 mod git;
 mod git_message;
 mod local_servers;
