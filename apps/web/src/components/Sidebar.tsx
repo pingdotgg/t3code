@@ -2387,6 +2387,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
+  const stableSidebarDragStart = useStableCallback(handleSidebarDragStart);
+  const stableThreadDragOver = useStableCallback(handleThreadDragOver);
+  const stableSidebarDragEnd = useStableCallback(handleSidebarDragEnd);
   const performSnooze = async (
     threadRef: ScopedThreadRef,
     preset: Pick<SnoozePreset, "snoozedUntil">,
@@ -3573,9 +3576,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 }
                 collisionDetection={dndCollisionDetection}
                 modifiers={dndModifiers}
-                onDragStart={handleSidebarDragStart}
-                onDragOver={handleThreadDragOver}
-                onDragEnd={handleSidebarDragEnd}
+                onDragStart={stableSidebarDragStart}
+                onDragOver={stableThreadDragOver}
+                onDragEnd={stableSidebarDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
