@@ -1613,7 +1613,7 @@ struct FixedPolicy(std::sync::Mutex<hub::RemotePolicy>);
 impl hub::RemotePolicySource for FixedPolicy {
     fn policy<'a>(
         &'a self,
-        _cwd: &'a std::path::Path,
+        _cwds: &'a [String],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = hub::RemotePolicy> + Send + 'a>> {
         let policy = *self.0.lock().unwrap();
         Box::pin(async move { policy })
@@ -1643,6 +1643,7 @@ async fn refresh_follows_the_fetch_interval_and_auto_pull() {
     let policy = std::sync::Arc::new(FixedPolicy(std::sync::Mutex::new(hub::RemotePolicy {
         fetch_interval: std::time::Duration::ZERO,
         auto_pull: true,
+        background: true,
     })));
     let vcs = VcsHub::new();
     vcs.set_policy(policy.clone());
@@ -1658,6 +1659,7 @@ async fn refresh_follows_the_fetch_interval_and_auto_pull() {
     *policy.0.lock().unwrap() = hub::RemotePolicy {
         fetch_interval: std::time::Duration::from_secs(30),
         auto_pull: true,
+        background: true,
     };
     write(&fx.work, "README.md", "# edited\n");
     let dirty = refresh().await.unwrap();
@@ -1687,6 +1689,7 @@ async fn refresh_follows_the_fetch_interval_and_auto_pull() {
     *policy.0.lock().unwrap() = hub::RemotePolicy {
         fetch_interval: std::time::Duration::from_secs(30),
         auto_pull: false,
+        background: true,
     };
     git(&fx.work, &["reset", "-q", "--hard", &before]);
     refresh().await.unwrap();
@@ -1699,11 +1702,97 @@ async fn refresh_follows_the_fetch_interval_and_auto_pull() {
     *policy.0.lock().unwrap() = hub::RemotePolicy {
         fetch_interval: std::time::Duration::ZERO,
         auto_pull: true,
+        background: true,
     };
     refresh().await.unwrap();
     assert_eq!(tracking(), upstream);
     refs::pull(&fx.work).await.unwrap();
     assert_eq!((tracking(), head()), (later.clone(), later));
+}
+
+/// A policy the test answers per poll, with the raw folders the poll asked for.
+type PolicyAsk = (Vec<String>, tokio::sync::oneshot::Sender<hub::RemotePolicy>);
+struct AskedPolicy(tokio::sync::mpsc::UnboundedSender<PolicyAsk>);
+
+impl hub::RemotePolicySource for AskedPolicy {
+    fn policy<'a>(
+        &'a self,
+        cwds: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = hub::RemotePolicy> + Send + 'a>> {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let _ = self.0.send((cwds.to_vec(), reply));
+        Box::pin(async move { answer.await.unwrap_or_default() })
+    }
+}
+
+/// `makeRemoteRefreshLoop`: after the first read, a poll reads nothing while fetching is off
+/// or no client lease lets `vcs-status` work run (`shouldRunScopeWork`); the policy sees
+/// the folder as the subscriber gave it.
+#[tokio::test]
+async fn the_remote_poll_waits_for_fetching_and_client_activity() {
+    let fx = Fixture::new("poll-gate");
+    let other = fx.other_clone();
+    git(&other, &["config", "user.name", "test"]);
+    git(&other, &["config", "user.email", "test@example.com"]);
+    let before = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    let tracking = || {
+        git(&fx.work, &["rev-parse", "refs/remotes/origin/main"])
+            .trim()
+            .to_owned()
+    };
+    let head = || git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    let (asks, mut asked) = tokio::sync::mpsc::unbounded_channel();
+    let vcs = VcsHub::new();
+    vcs.set_policy(std::sync::Arc::new(AskedPolicy(asks)));
+    let cwd = format!("{}/./", fx.cwd());
+    let (sink, mut events) = tokio::sync::mpsc::channel(64);
+    vcs.subscribe_status(&cwd, hub::Remote::Read, Box::new(sink))
+        .await
+        .unwrap();
+    let policy = |fetch_ms: u64, auto_pull: bool, background: bool| hub::RemotePolicy {
+        fetch_interval: std::time::Duration::from_millis(fetch_ms),
+        auto_pull,
+        background,
+    };
+    // Each ask starts a poll, so it also means the poll before it has ended.
+    let mut ask = async || {
+        let (cwds, reply) = asked.recv().await.unwrap();
+        assert_eq!(cwds, std::slice::from_ref(&cwd));
+        reply
+    };
+    let remote_events = |events: &mut tokio::sync::mpsc::Receiver<_>| {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .filter(|e| matches!(e, conn_contract::VcsStatusStreamEvent::RemoteUpdated(_)))
+            .count()
+    };
+
+    // The first read runs paused: it has nothing yet.
+    ask().await.send(policy(10, false, false)).unwrap();
+    let reply = ask().await;
+    write(&other, "upstream.txt", "from upstream\n");
+    let upstream = commit_all(&other, "upstream");
+    git(&other, &["push", "-q", "origin", "main"]);
+    // Behind already, so only a pull or a read could change anything.
+    git(&fx.work, &["fetch", "-q", "origin"]);
+    assert_eq!(tracking(), upstream);
+    let _ = remote_events(&mut events);
+
+    // Paused: no pull, no read.
+    reply.send(policy(10, true, false)).unwrap();
+    let reply = ask().await;
+    assert_eq!(head(), before, "no pull while paused");
+    assert_eq!(remote_events(&mut events), 0, "no read while paused");
+
+    // Fetching off: not even the cached refs are read.
+    reply.send(policy(0, true, true)).unwrap();
+    let reply = ask().await;
+    assert_eq!(remote_events(&mut events), 0, "no read with fetching off");
+    assert_eq!(head(), before);
+
+    // Active and fetching: the poll pulls.
+    reply.send(policy(10, true, true)).unwrap();
+    let _reply = ask().await;
+    assert_eq!(head(), upstream);
 }
 
 /// The Git settings a project can carry that change what a plain `git diff` reports.

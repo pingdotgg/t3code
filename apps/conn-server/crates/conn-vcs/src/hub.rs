@@ -7,7 +7,8 @@
 //!
 //! Here: one ticker task for all subscribed folders. Every [`TICK`] it stats `HEAD` and the
 //! index of each folder; a change in either (checkout, commit, stage) refreshes that folder.
-//! Remote status is read every [`REMOTE_INTERVAL`] with a fetch, backing off on failure. No
+//! Remote status is read once, then every fetch interval with a fetch while a client lease
+//! lets the work run ([`RemotePolicy`]), backing off on failure. No
 //! watcher threads, no per-folder tasks; the ticker ends when the last subscriber leaves.
 //! State is one entry per subscribed folder, removed with its last subscriber.
 //!
@@ -65,6 +66,8 @@ impl<T: Send> Sink<T> for tokio::sync::mpsc::Sender<T> {
 struct StatusSub {
     sink: Box<dyn Sink<VcsStatusStreamEvent>>,
     remote: bool,
+    /// The folder as the subscriber gave it, which settings and leases name.
+    cwd: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -86,6 +89,9 @@ struct Entry {
     next_remote: Option<Instant>,
     remote_failures: u32,
     remote_busy: bool,
+    /// The next poll reads remote status even when fetching is off or work is paused
+    /// (`needsInitialRefresh`).
+    remote_initial: bool,
 }
 
 impl Entry {
@@ -100,6 +106,22 @@ impl Entry {
 
     fn wants_remote(&self) -> bool {
         self.status_subs.iter().any(|s| s.remote)
+    }
+
+    /// The folders, as given, of the subscribers that want remote status (`demandCwds`).
+    fn demand_cwds(&self) -> Vec<String> {
+        let mut cwds: Vec<String> = Vec::new();
+        for sub in self.status_subs.iter().filter(|s| s.remote) {
+            if !cwds.contains(&sub.cwd) {
+                cwds.push(sub.cwd.clone());
+            }
+        }
+        cwds
+    }
+
+    fn remote_now(&mut self) {
+        self.next_remote = Some(Instant::now());
+        self.remote_initial = true;
     }
 
     fn publish_status(&mut self, event: &VcsStatusStreamEvent) {
@@ -139,6 +161,9 @@ pub enum Remote {
 pub struct RemotePolicy {
     pub fetch_interval: Duration,
     pub auto_pull: bool,
+    /// `shouldRunScopeWork` for `vcs-status`: a client lease lets periodic work run now.
+    /// Explicit refreshes ignore it.
+    pub background: bool,
 }
 
 impl Default for RemotePolicy {
@@ -147,6 +172,7 @@ impl Default for RemotePolicy {
         Self {
             fetch_interval: REMOTE_INTERVAL,
             auto_pull: false,
+            background: true,
         }
     }
 }
@@ -166,11 +192,12 @@ impl RemotePolicy {
     }
 }
 
-/// Reads [`RemotePolicy`] for a folder; the server answers from its settings and projects.
+/// Reads [`RemotePolicy`] for folders as callers gave them (`policyCwds`); the server answers
+/// from its settings, projects and client leases. Any one folder may enable a pull or work.
 pub trait RemotePolicySource: Send + Sync {
     fn policy<'a>(
         &'a self,
-        cwd: &'a Path,
+        cwds: &'a [String],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RemotePolicy> + Send + 'a>>;
 }
 
@@ -225,9 +252,9 @@ impl VcsHub {
         let _ = self.policy.set(source);
     }
 
-    async fn policy(&self, cwd: &Path) -> RemotePolicy {
+    async fn policy(&self, cwds: &[String]) -> RemotePolicy {
         match self.policy.get() {
-            Some(source) => source.policy(cwd).await,
+            Some(source) => source.policy(cwds).await,
             None => RemotePolicy::default(),
         }
     }
@@ -249,6 +276,7 @@ impl VcsHub {
         wanted: Remote,
         sink: Box<dyn Sink<VcsStatusStreamEvent>>,
     ) -> VcsResult<()> {
+        let raw = cwd.to_owned();
         let cwd = normalize(cwd);
         let watched = watched_paths(&cwd).await;
         let before = stamp(&watched);
@@ -278,7 +306,7 @@ impl VcsHub {
             });
             let remote = entry.remote.as_ref().and_then(|r| r.value.clone());
             if wanted == Remote::Read && entry.remote.is_none() {
-                entry.next_remote = Some(Instant::now());
+                entry.remote_now();
             }
             let event = VcsStatusStreamEvent::Snapshot(VcsStatusStreamEventSnapshot {
                 tag: lit::Snapshot,
@@ -289,6 +317,7 @@ impl VcsHub {
                 entry.status_subs.push(StatusSub {
                     sink,
                     remote: wanted == Remote::Read,
+                    cwd: raw,
                 });
             }
             remote
@@ -364,7 +393,7 @@ impl VcsHub {
                     },
                 ));
                 if entry.wants_remote() {
-                    entry.next_remote = Some(Instant::now());
+                    entry.remote_now();
                 }
             }
             if entry.local.as_ref() != Some(local) {
@@ -410,6 +439,7 @@ impl VcsHub {
     /// `vcs.refreshStatus`: local status, and with [`Remote::Read`] a fetch (waited on for at
     /// most 5 s) and remote status. Publishes both.
     pub async fn refresh_status(&self, cwd: &str, remote: Remote) -> VcsResult<VcsStatusResult> {
+        let raw = [cwd.to_owned()];
         let cwd = normalize(cwd);
         let local = self.refresh_local_at(&cwd).await?;
         if remote == Remote::Cached || !local.is_repo {
@@ -420,7 +450,7 @@ impl VcsHub {
             });
             return Ok(status::merge(local, remote));
         }
-        let policy = self.policy(&cwd).await;
+        let policy = self.policy(&raw).await;
         if policy.fetches()
             && let Some(done) = self.start_fetch(&cwd)
         {
@@ -557,15 +587,16 @@ impl VcsHub {
                             let remote_due = e.wants_remote()
                                 && !e.remote_busy
                                 && e.next_remote.is_none_or(|t| t <= now);
-                            if remote_due {
+                            let remote = remote_due.then(|| {
                                 e.remote_busy = true;
-                            }
+                                (e.demand_cwds(), e.remote_initial)
+                            });
                             (
                                 cwd.clone(),
                                 e.watched.clone(),
                                 e.stamp.clone(),
                                 !e.status_subs.is_empty(),
-                                remote_due,
+                                remote,
                             )
                         })
                         .collect::<Vec<_>>(),
@@ -574,7 +605,7 @@ impl VcsHub {
             let Some(work) = work else {
                 return;
             };
-            for (cwd, watched, old, detailed, remote_due) in work {
+            for (cwd, watched, old, detailed, remote) in work {
                 let now = stamp(&watched);
                 if now != old {
                     if detailed {
@@ -593,16 +624,27 @@ impl VcsHub {
                         });
                     }
                 }
-                if remote_due {
+                if let Some((demand, initial)) = remote {
                     let hub = self.clone();
-                    tokio::spawn(async move { hub.poll_remote(cwd).await });
+                    tokio::spawn(async move { hub.poll_remote(cwd, demand, initial).await });
                 }
             }
         }
     }
 
-    async fn poll_remote(&self, cwd: PathBuf) {
-        let policy = self.policy(&cwd).await;
+    async fn poll_remote(&self, cwd: PathBuf, demand: Vec<String>, initial: bool) {
+        let policy = self.policy(&demand).await;
+        // `refreshRemoteStatusIfEnabled`: after the first read, nothing while fetching is off
+        // or no client lets the work run.
+        if !initial && !(policy.fetches() && policy.background) {
+            self.with(|s| {
+                if let Some(entry) = s.entries.get_mut(&cwd) {
+                    entry.remote_busy = false;
+                    entry.next_remote = Some(Instant::now() + policy.poll_interval());
+                }
+            });
+            return;
+        }
         if policy.fetches()
             && let Some(done) = self.start_fetch(&cwd)
         {
@@ -636,6 +678,7 @@ impl VcsHub {
                 entry.remote_busy = false;
                 if ok {
                     entry.remote_failures = 0;
+                    entry.remote_initial = false;
                     entry.next_remote = Some(Instant::now() + interval);
                 } else {
                     entry.remote_failures += 1;
