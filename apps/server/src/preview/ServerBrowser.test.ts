@@ -1440,6 +1440,40 @@ it.effect.each([
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("the same thread's next turn can keep using and close the tab it opened", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      // A finished delegate's session is released, so its follow-up turn gets a new MCP credential.
+      const nextTurn = asSession("agent-a-next-turn");
+      const evaluated = yield* broker.invoke({
+        scope: nextTurn,
+        tabId,
+        operation: "evaluate",
+        input: { expression: "location.href" },
+      });
+      expect(evaluated).toBe("evaluated");
+      yield* broker.invoke({
+        scope: nextTurn,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/next-turn" },
+      });
+      expect(contexts[0]!.page.goto).toHaveBeenCalledWith(
+        "http://localhost:5173/next-turn",
+        expect.anything(),
+      );
+      yield* broker.invoke({ scope: nextTurn, tabId, operation: "close", input: {} });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: nextTurn,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).not.toEqual(expect.arrayContaining([expect.objectContaining({ tabId })]));
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
   Effect.scoped(
     Effect.gen(function* () {
