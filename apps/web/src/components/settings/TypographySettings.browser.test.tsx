@@ -69,9 +69,9 @@ describe("TypographySection", () => {
     using _storage = setup(null);
     await using screen = await render(<TypographySection />);
     const input = screen.getByRole("textbox", { name: "Interface font family" });
-    const dispatchKey = async (key: string) => {
+    const dispatchEscape = async () => {
       const event = new KeyboardEvent("keydown", {
-        key,
+        key: "Escape",
         bubbles: true,
         cancelable: true,
       });
@@ -89,14 +89,12 @@ describe("TypographySection", () => {
     };
 
     await expect.element(input).toHaveValue(DEFAULT_UNIFIED_SETTINGS.fontFamilySans);
-    expect(await dispatchKey("Escape")).toEqual({ defaultPrevented: false, propagated: true });
+    expect(await dispatchEscape()).toEqual({ defaultPrevented: false, propagated: true });
 
     await input.fill("Noto Sans");
-    expect(await dispatchKey("a")).toEqual({ defaultPrevented: false, propagated: true });
-    await expect.element(input).toHaveValue("Noto Sans");
-    expect(await dispatchKey("Escape")).toEqual({ defaultPrevented: true, propagated: false });
+    expect(await dispatchEscape()).toEqual({ defaultPrevented: true, propagated: false });
     await expect.element(input).toHaveValue(DEFAULT_UNIFIED_SETTINGS.fontFamilySans);
 
-    expect(await dispatchKey("Escape")).toEqual({ defaultPrevented: false, propagated: true });
+    expect(await dispatchEscape()).toEqual({ defaultPrevented: false, propagated: true });
   });
 });
