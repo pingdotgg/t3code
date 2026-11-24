@@ -3,6 +3,8 @@ import type {
   PullRequestCapabilities,
   PullRequestCommit,
   PullRequestAction,
+  PullRequestCheck,
+  PullRequestCheckStatus,
   PullRequestMergeability,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -13,10 +15,12 @@ import {
   type ProviderChangeRequestDetail,
   type ProviderRepositoryRef,
   type PullRequestProviderApi,
+  tailLogLines,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 import { definition, KIND } from "../shared/definition.ts";
 import * as RadicleCli from "./RadicleCli.ts";
+import type { RadicleJob } from "./radicleJobJson.ts";
 import { latestBody, latestRevision, type RadiclePatch } from "./radiclePatchJson.ts";
 import {
   headBranch,
@@ -95,6 +99,45 @@ function parseCommitLog(stdout: string): ReadonlyArray<PullRequestCommit> {
   });
 }
 
+const CHECK_STATUS: Record<string, PullRequestCheckStatus> = {
+  Succeeded: "success",
+  Failed: "failure",
+};
+
+/**
+ * One check per CI node, read from its latest run of the commit: a rerun may add a run to the
+ * job or open a new job for the same commit.
+ */
+function jobChecks(
+  jobs: ReadonlyArray<RadicleJob>,
+  aliases: ReadonlyMap<string, string>,
+): ReadonlyArray<PullRequestCheck> {
+  const latest = new Map<string, RadicleJob["runs"][number] | undefined>();
+  for (const job of jobs) {
+    const run = job.runs.at(-1);
+    const current = latest.get(job.author);
+    if (!latest.has(job.author) || (run && (!current || run.startedAt >= current.startedAt)))
+      latest.set(job.author, run);
+  }
+  return [...latest].map(([author, run]) => jobCheck(author, run, aliases));
+}
+
+function jobCheck(
+  author: string,
+  run: RadicleJob["runs"][number] | undefined,
+  aliases: ReadonlyMap<string, string>,
+): PullRequestCheck {
+  return {
+    name: `CI (${radicleLogin(author, aliases)})`,
+    status:
+      run === undefined || run.result === null
+        ? "pending"
+        : (CHECK_STATUS[run.result] ?? "neutral"),
+    description: run?.result ?? "Running",
+    url: run?.log ?? null,
+  };
+}
+
 const unsupported = (operation: string, detail: string) =>
   Effect.fail(
     new PullRequestProviderError({ provider: KIND, operation, reason: "failed", detail }),
@@ -157,6 +200,18 @@ export const make = Effect.gen(function* () {
       ...options,
     });
 
+  // CI is optional: a repository without a broker, or a failed read, shows no checks.
+  const patchChecks = (
+    input: ProviderRepositoryRef,
+    repository: RadicleCli.RadicleRepository,
+    patch: RadiclePatch,
+    aliases: ReadonlyMap<string, string>,
+  ) =>
+    cli.listJobs({ cwd: input.cwd, repository, commits: [latestRevision(patch).oid] }).pipe(
+      Effect.map((jobs) => jobChecks(jobs, aliases)),
+      Effect.orElseSucceed((): ReadonlyArray<PullRequestCheck> => []),
+    );
+
   const mergeability = (
     repository: RadicleCli.RadicleRepository,
     defaultBranch: string,
@@ -186,15 +241,16 @@ export const make = Effect.gen(function* () {
     function* (input) {
       const { repository, project, context, patch } = yield* loadPatch(input);
       const latest = latestRevision(patch);
-      const [stat, mergeable, viewer] = yield* Effect.all(
+      const [stat, mergeable, viewer, checks] = yield* Effect.all(
         [
           storageGit(repository, "diffStat", ["diff", "--shortstat", latest.base, latest.oid]).pipe(
             Effect.map((output) => parseShortStat(output.stdout)),
           ),
           mergeability(repository, project.defaultBranch, patch),
           cli.self(input.cwd),
+          patchChecks(input, repository, patch, context.aliases),
         ],
-        { concurrency: 3 },
+        { concurrency: 4 },
       );
       const root = patch.revisions[0] ?? latest;
       const merge = patch.merges[0];
@@ -211,7 +267,7 @@ export const make = Effect.gen(function* () {
         reviewers: Object.values(latest.reviews).flatMap((review) =>
           review ? [radicleActor(review.author.id, context.aliases)] : [],
         ),
-        checks: [],
+        checks,
         mergeCapabilities: { merge: true, squash: false, rebase: false, "fast-forward": true },
         viewerPermissions: viewerPermissions({
           patch,
@@ -365,6 +421,65 @@ export const make = Effect.gen(function* () {
         Effect.map(({ patch, context }) => toSummary(patch, context)),
         Effect.mapError(fail("getChangeRequestSummary")),
       ),
+
+    getChangeRequestChecks: Effect.fn("RadiclePullRequestProvider.getChangeRequestChecks")(
+      function* (input) {
+        const { repository, context, patch } = yield* loadPatch(input);
+        const checks = yield* patchChecks(input, repository, patch, context.aliases);
+        return { state: pullRequestState(patch), checks };
+      },
+      Effect.mapError(fail("getChangeRequestChecks")),
+    ),
+
+    getCheckLogs: Effect.fn("RadiclePullRequestProvider.getCheckLogs")(function* (input) {
+      return yield* Effect.forEach(input.checks, (check) =>
+        check.url === null
+          ? Effect.succeed({
+              name: check.name,
+              url: null,
+              log: null,
+              truncated: false,
+              detail: "This check has no log yet.",
+            })
+          : cli.readJobLog({ cwd: input.cwd, url: check.url }).pipe(
+              Effect.map((text) => ({
+                name: check.name,
+                url: check.url,
+                ...tailLogLines(text, input.tailLines),
+                detail: null,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  name: check.name,
+                  url: check.url,
+                  log: null,
+                  truncated: false,
+                  detail: error.detail,
+                }),
+              ),
+            ),
+      );
+    }),
+
+    // A check names its run's log, which finds the job, and so the commit to run again.
+    rerunChecks: Effect.fn("RadiclePullRequestProvider.rerunChecks")(
+      function* (input) {
+        const repository = yield* target(input);
+        const jobs = yield* cli.listJobs({ cwd: input.cwd, repository });
+        return yield* Effect.forEach(input.checks, (check) => {
+          const job = jobs.find((candidate) => candidate.runs.some((run) => run.log === check.url));
+          return job === undefined
+            ? Effect.succeed({ name: check.name, rerun: false, detail: "No CI job has that log." })
+            : cli.rerunJob({ cwd: input.cwd, repository, commit: job.commit }).pipe(
+                Effect.as({ name: check.name, rerun: true, detail: null }),
+                Effect.catch((error) =>
+                  Effect.succeed({ name: check.name, rerun: false, detail: error.detail }),
+                ),
+              );
+        });
+      },
+      Effect.mapError(fail("rerunChecks")),
+    ),
 
     getChangeRequestActivity: Effect.fn("RadiclePullRequestProvider.getChangeRequestActivity")(
       function* (input) {

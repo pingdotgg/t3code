@@ -7,8 +7,17 @@ import * as Schema from "effect/Schema";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
-import { parseRid, patchNumberFromId, patchPrefixFromNumber } from "../shared/definition.ts";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+
+import {
+  KIND,
+  parseRid,
+  patchNumberFromId,
+  patchPrefixFromNumber,
+  settings,
+} from "../shared/definition.ts";
 import { RadicleIssueCob, type RadicleIssue, toRadicleIssue } from "./radicleIssueJson.ts";
+import { parseJobLog, type RadicleJob } from "./radicleJobJson.ts";
 import { RadiclePatchCob, type RadiclePatch, toRadiclePatch } from "./radiclePatchJson.ts";
 
 export class RadicleCliError extends Schema.TaggedError<RadicleCliError>()("RadicleCliError", {
@@ -56,9 +65,17 @@ const decodeIssueCob = decodeJsonResult(RadicleIssueCob);
 
 const PATCH_TYPE = "xyz.radicle.patch";
 const ISSUE_TYPE = "xyz.radicle.issue";
-type CobType = typeof PATCH_TYPE | typeof ISSUE_TYPE;
+const JOB_TYPE = "xyz.radworks.job";
+type CobType = typeof PATCH_TYPE | typeof ISSUE_TYPE | typeof JOB_TYPE;
+
+const LOG_TAIL_BYTES = 4 * 1024 * 1024;
+
+/** A path from a job record, safe to hand to a remote shell as one word. */
+const LOG_PATH = /^\/[A-Za-z0-9._/-]+$/u;
 
 const DELEGATE_LINE = /^(did:key:\S+)(?:\s+\((.+)\))?$/u;
+// A row of `rad follow`'s table: DID, alias, policy.
+const FOLLOW_ROW = /(did:key:z[1-9A-HJ-NP-Za-km-z]+)\s+(\S+)\s+(?:allow|block)\b/u;
 
 /** `rad clone` names a remote `alias@NID` for every delegate it knows. */
 function aliasesFromRemoteNames(names: ReadonlyArray<string>): ReadonlyMap<string, string> {
@@ -124,6 +141,19 @@ export class RadicleCli extends Context.Service<
     readonly getIssue: (
       input: RepositoryInput & { readonly key: string },
     ) => Effect.Effect<RadicleIssue, RadicleCliError>;
+    /** radicle-ci-broker's jobs for any of `commits`, or every job when absent. */
+    readonly listJobs: (
+      input: RepositoryInput & { readonly commits?: ReadonlyArray<string> },
+    ) => Effect.Effect<ReadonlyArray<RadicleJob>, RadicleCliError>;
+    /** A run's log from its job record's `file://` URL, on the configured CI host. */
+    readonly readJobLog: (input: {
+      readonly cwd: string;
+      readonly url: string;
+    }) => Effect.Effect<string, RadicleCliError>;
+    /** Queues a rerun of `commit` with the configured rerun command. */
+    readonly rerunJob: (
+      input: RepositoryInput & { readonly commit: string },
+    ) => Effect.Effect<void, RadicleCliError>;
     /** The patch whose ID starts with `number`'s hex digits. */
     readonly getPatch: (
       input: RepositoryInput & { readonly number: number },
@@ -134,7 +164,7 @@ export class RadicleCli extends Context.Service<
 const SHOW_BATCH = 100;
 
 const make = Effect.gen(function* () {
-  const { process } = yield* SourceControlHost.SourceControlHost;
+  const { process, settings: hostSettings } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   let cachedSelf: RadicleSelf | null = null;
   let cachedHome: string | null = null;
@@ -260,7 +290,7 @@ const make = Effect.gen(function* () {
   });
 
   const aliases = Effect.fn("RadicleCli.aliases")(function* (input: RepositoryInput) {
-    const [delegates, remotes, me] = yield* Effect.all(
+    const [delegates, remotes, follows, me] = yield* Effect.all(
       [
         rad({
           operation: "aliases",
@@ -268,13 +298,21 @@ const make = Effect.gen(function* () {
           args: ["inspect", `rad:${input.repository.rid}`, "--delegates"],
         }),
         git({ operation: "aliases", cwd: input.cwd, args: ["remote"], allowNonZeroExit: true }),
+        // Followed nodes, such as a CI node, are named nowhere else.
+        rad({ operation: "aliases", cwd: input.cwd, args: ["follow"] }).pipe(
+          Effect.orElseSucceed(() => ""),
+        ),
         self(input.cwd),
       ],
-      { concurrency: 3 },
+      { concurrency: 4 },
     );
     const map = new Map(
       aliasesFromRemoteNames(remotes.stdout.split("\n").map((name) => name.trim())),
     );
+    for (const line of follows.split("\n")) {
+      const row = FOLLOW_ROW.exec(line);
+      if (row?.[1] && row[2]) map.set(row[1], row[2]);
+    }
     for (const delegate of parseDelegates(delegates)) {
       if (delegate.alias !== null) map.set(delegate.did, delegate.alias);
     }
@@ -326,7 +364,7 @@ const make = Effect.gen(function* () {
           return yield* new RadicleCliError({
             operation: "showCobs",
             reason: "failed",
-            detail: `Could not read a Radicle ${type === PATCH_TYPE ? "patch" : "issue"}. Check that \`rad\` is version 1.10 or later.`,
+            detail: `Could not read a Radicle ${type === PATCH_TYPE ? "patch" : type === ISSUE_TYPE ? "issue" : "CI job"}. Check that \`rad\` is version 1.10 or later.`,
             cause: decoded.failure,
           });
         }
@@ -395,6 +433,119 @@ const make = Effect.gen(function* () {
     return issue;
   });
 
+  // A job's commit never changes, so each record is read in full once to learn it.
+  const jobCommits = new Map<string, string>();
+
+  const readJob = (input: RepositoryInput, id: string) =>
+    rad({
+      operation: "readJob",
+      cwd: input.cwd,
+      args: [
+        "cob",
+        "log",
+        "--repo",
+        `rad:${input.repository.rid}`,
+        "--type",
+        JOB_TYPE,
+        "--object",
+        id,
+        "--format",
+        "json",
+      ],
+    }).pipe(Effect.map((stdout) => parseJobLog(id, stdout)));
+
+  const listJobs = Effect.fn("RadicleCli.listJobs")(function* (
+    input: RepositoryInput & { readonly commits?: ReadonlyArray<string> },
+  ) {
+    const wanted = input.commits === undefined ? null : new Set(input.commits);
+    const ids = yield* listCobIds(input, JOB_TYPE);
+    const jobs: Array<RadicleJob> = [];
+    for (const id of ids) {
+      const known = jobCommits.get(id);
+      if (known !== undefined && wanted !== null && !wanted.has(known)) continue;
+      const job = yield* readJob(input, id);
+      if (job === null) continue;
+      jobCommits.set(id, job.commit);
+      if (wanted === null || wanted.has(job.commit)) jobs.push(job);
+    }
+    return jobs;
+  });
+
+  const ciSettings = hostSettings.get.pipe(
+    Effect.map((saved) => readSourceControlHostSettings(settings, saved.sourceControlHosts[KIND])),
+    Effect.orElseSucceed(() => readSourceControlHostSettings(settings, {})),
+  );
+
+  const readJobLog = Effect.fn("RadicleCli.readJobLog")(function* (input: {
+    readonly cwd: string;
+    readonly url: string;
+  }) {
+    // Not decoded: the path's character class has no `%`, so an escaped path is refused.
+    const path = input.url.startsWith("file://") ? input.url.slice("file://".length) : null;
+    if (path === null || !LOG_PATH.test(path) || path.includes("..")) {
+      return yield* new RadicleCliError({
+        operation: "readJobLog",
+        reason: "not-found",
+        detail: "Only a file:// log path from a CI job record can be read.",
+      });
+    }
+    const { ciHost } = yield* ciSettings;
+    const host = ciHost.trim();
+    if (host.length === 0) {
+      return yield* fileSystem.readFileString(path).pipe(
+        Effect.map((text) => text.slice(-LOG_TAIL_BYTES)),
+        Effect.mapError(
+          (cause) =>
+            new RadicleCliError({
+              operation: "readJobLog",
+              reason: "not-found",
+              detail: "The log is not on this machine. Set the CI host in Radicle's settings.",
+              cause,
+            }),
+        ),
+      );
+    }
+    const output = yield* process
+      .run({
+        operation: "RadicleCli.readJobLog",
+        command: "ssh",
+        // The end of a log is where a failure is, so only the tail crosses the network.
+        args: ["-o", "BatchMode=yes", "--", host, "tail", "-c", String(LOG_TAIL_BYTES), "--", path],
+        cwd: input.cwd,
+        timeoutMs: 30_000,
+        maxOutputBytes: LOG_TAIL_BYTES + 1024,
+        outputMode: "truncate",
+      })
+      .pipe(Effect.mapError(toError("readJobLog", "ssh")));
+    return output.stdout;
+  });
+
+  const rerunJob = Effect.fn("RadicleCli.rerunJob")(function* (
+    input: RepositoryInput & { readonly commit: string },
+  ) {
+    const { ciHost, ciRerunCommand } = yield* ciSettings;
+    const command = ciRerunCommand.trim();
+    if (command.length === 0 || !/^[0-9a-f]{40}$/u.test(input.commit)) {
+      return yield* new RadicleCliError({
+        operation: "rerunJob",
+        reason: "failed",
+        detail: "Set the CI rerun command in Radicle's settings to rerun CI from T3 Code.",
+      });
+    }
+    const target = [`rad:${input.repository.rid}`, input.commit];
+    const host = ciHost.trim();
+    yield* process
+      .run({
+        operation: "RadicleCli.rerunJob",
+        ...(host.length === 0
+          ? { command, args: target }
+          : { command: "ssh", args: ["-o", "BatchMode=yes", "--", host, command, ...target] }),
+        cwd: input.cwd,
+        timeoutMs: 60_000,
+      })
+      .pipe(Effect.mapError(toError("rerunJob", host.length === 0 ? command : "ssh")));
+  });
+
   return RadicleCli.of({
     rad,
     git,
@@ -406,6 +557,9 @@ const make = Effect.gen(function* () {
     getPatch,
     listIssues,
     getIssue,
+    listJobs,
+    readJobLog,
+    rerunJob,
   });
 });
 

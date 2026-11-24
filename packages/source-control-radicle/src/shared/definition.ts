@@ -1,4 +1,6 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { makeProviderSettingsSchema, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   type ChangeRequestLink,
   type ChangeRequestProjectIdentity,
@@ -8,6 +10,27 @@ import {
 } from "@t3tools/source-control-core/shared/definition";
 
 export const KIND = SourceControlProviderKind.make("radicle");
+
+const Text = Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed("")));
+
+/** Where radicle-ci-broker runs, which job records name logs on and reruns are queued on. */
+export const settings = makeProviderSettingsSchema({
+  ciHost: Text.pipe(
+    Schema.annotateKey({
+      title: "CI host",
+      description:
+        "The ssh host that runs radicle-ci-broker. Its file:// run logs are read there with `ssh <host> cat`. Leave empty when the broker runs on this machine.",
+    }),
+  ),
+  ciRerunCommand: Text.pipe(
+    Schema.annotateKey({
+      title: "CI rerun command",
+      description:
+        "A command on the CI host that queues a rerun, given the repository ID and the commit, such as patchbay-ci-rerun.",
+    }),
+  ),
+});
+export type RadicleSettings = typeof settings.Type;
 
 /** Change requests are keyed under this host, since a Radicle repository lives on no server. */
 const RADICLE_HOST = "radicle";
@@ -157,6 +180,7 @@ export const definition = defineSourceControl({
       : { kind: KIND, name: "Radicle", baseUrl: `${RADICLE_EXPLORER}/rad:${remote.rid}` };
   },
   changeRequestHost: () => RADICLE_HOST,
+  settings,
   // `rad` takes the repository ID; the identity keeps its case in `name`.
   repositorySelector: (identity: RepositorySelectorIdentity) => {
     const rid = identity.name ? parseRid(identity.name) : null;

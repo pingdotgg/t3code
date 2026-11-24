@@ -194,6 +194,12 @@ number. Line comments and reactions are not available yet.
 Radicle issues can be listed, filed, edited, labelled, assigned, commented on, solved, closed, and
 reopened. An issue is named by its ID, or the first seven characters of it.
 
+A patch shows the results that [radicle-ci-broker](https://radicle.dev) records for its latest
+revision, one check per CI node. When the broker runs on another machine, set **CI host** in
+**Settings → Source control & issues → Radicle** to that machine's ssh host, so T3 Code can read
+run logs there. Set **CI rerun command** to a command on that host that queues a run for a
+repository ID and commit, and **Rerun** works too.
+
 ## Start, clone, or publish a project
 
 To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or

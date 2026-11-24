@@ -126,6 +126,29 @@ function patchCob(options?: { readonly status?: string }) {
 
 export type Run = SourceControlHost.SourceControlProcessInput;
 
+export const CI_NODE = "z6MkCiNode4444444444444444444444444444444444444";
+/** The latest revision of the fixture patch, which CI jobs run for. */
+export const PATCH_HEAD = "bbbb000000000000000000000000000000000002";
+
+/** A job as radicle-ci-broker 0.32.1 wrote it: requested, run, then finished. */
+export function jobOps(
+  commit: string,
+  runs: ReadonlyArray<{ readonly uuid: string; readonly at: number; readonly result?: string }>,
+) {
+  const op = (timestamp: number, action: unknown) => ({
+    author: CI_NODE,
+    timestamp,
+    actions: [action],
+  });
+  return [
+    op(runs[0]?.at ?? 0, { Request: { oid: commit } }),
+    ...runs.flatMap((run) => [
+      op(run.at, { Run: { log: `file:///var/lib/ci/reports/${run.uuid}.log`, uuid: run.uuid } }),
+      ...(run.result ? [op(run.at, { Finished: { reason: run.result, uuid: run.uuid } })] : []),
+    ]),
+  ].toReversed();
+}
+
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
@@ -142,6 +165,9 @@ export function radicleLayer(options: {
   readonly viewerAlias?: string | null;
   /** Repository IDs the node's storage holds. */
   readonly storage?: ReadonlyArray<string>;
+  /** `rad cob log --format json` of each CI job, newest operation first. */
+  readonly jobs?: Readonly<Record<string, ReadonlyArray<unknown>>>;
+  readonly settings?: TestSourceControlHost.TestSourceControlHostOptions["settings"];
 }) {
   const out = (stdout: string, exitCode = 0) =>
     Effect.succeed(
@@ -150,6 +176,7 @@ export function radicleLayer(options: {
       }),
     );
   const host = TestSourceControlHost.layer({
+    ...(options.settings ? { settings: options.settings } : {}),
     ...(options.git ? { git: options.git } : {}),
     process: {
       run: Effect.fn("RadicleTestFixture.run")(function* (input) {
@@ -178,6 +205,13 @@ export function radicleLayer(options: {
                 .join("\n"),
             );
           if (input.args[0] === "patch") return yield* out("");
+          if (args === "follow") return yield* out("");
+          if (args.startsWith("cob list") && args.includes("xyz.radworks.job"))
+            return yield* out(Object.keys(options.jobs ?? {}).join("\n"));
+          if (args.startsWith("cob log") && args.includes("xyz.radworks.job")) {
+            const ops = options.jobs?.[input.args[input.args.indexOf("--object") + 1] ?? ""] ?? [];
+            return yield* out(ops.map((op) => encodeJson(op)).join("\n"));
+          }
           if (args.startsWith("cob") && args.includes("xyz.radicle.issue"))
             return yield* out(
               args.startsWith("cob list") ? `${ISSUE}\n` : `${encodeJson(issueCob())}\n`,
@@ -187,6 +221,7 @@ export function radicleLayer(options: {
           if (args.startsWith("cob show"))
             return yield* out(`${encodeJson(patchCob({ status: options.status ?? "open" }))}\n`);
         }
+        if (input.command === "ssh") return yield* out("line 1\nline 2\njob exit status 1\n");
         if (input.command === "git") {
           if (args === "remote") return yield* out("rad\n");
           if (args.startsWith("diff --shortstat"))
