@@ -1,3 +1,4 @@
+import type { AssetResource } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import { T, useGT } from "gt-react";
@@ -5,6 +6,7 @@ import { Spinner } from "~/components/ui/spinner";
 import { Button } from "~/components/ui/button";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { isElectron } from "~/env";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 
@@ -151,4 +153,49 @@ export function FileSurfaceFailure(props: {
       ) : null}
     </div>
   );
+}
+
+export function attachmentDownloadResource(resource: AssetResource): AssetResource {
+  switch (resource._tag) {
+    case "attachment":
+    case "media-file":
+    case "draft-workspace-file":
+      return { ...resource, disposition: "attachment" };
+    default:
+      return resource;
+  }
+}
+
+function triggerAnchorDownload(href: string, fileName: string): void {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = fileName.split(/[\\/]/).at(-1) || fileName;
+  anchor.click();
+}
+
+export function saveBlobDownload(blob: Blob, fileName: string): void {
+  const downloadUrl = URL.createObjectURL(blob);
+  // Scheduled before the click so the URL is revoked even if the click throws.
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+  triggerAnchorDownload(downloadUrl, fileName);
+}
+
+export async function saveAssetDownload(input: {
+  readonly prepareUrl: () => Promise<string | null>;
+  readonly fileName: string;
+  readonly unavailableMessage: string;
+  readonly loadFailedMessage: string;
+  readonly useBlobDownload?: boolean;
+}): Promise<void> {
+  const target = await input.prepareUrl();
+  if (!target) throw new Error(input.unavailableMessage);
+  // Plain browsers stream attachment-disposition URLs straight into the native download manager.
+  // Desktop's custom app scheme needs a blob URL so it does not open an external browser.
+  if (!(input.useBlobDownload ?? isElectron)) {
+    triggerAnchorDownload(target, input.fileName);
+    return;
+  }
+  const response = await fetch(target);
+  if (!response.ok) throw new Error(input.loadFailedMessage);
+  saveBlobDownload(await response.blob(), input.fileName);
 }
