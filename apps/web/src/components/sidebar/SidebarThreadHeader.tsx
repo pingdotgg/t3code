@@ -57,71 +57,79 @@ export function SidebarThreadHeader({
     : gt("New thread");
 
   return (
-    <div className="flex items-center gap-1">
-      <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring/70">
-        <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
-        <SidebarInput
-          ref={searchInputRef}
-          nativeInput
-          type="search"
-          value={searchQuery}
-          onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
-          onKeyDown={onSearchKeyDown}
-          placeholder={gt("Search", { $context: "search field placeholder" })}
-          aria-label={gt("Search threads")}
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={resultsVisible}
-          aria-controls={resultsVisible ? "sidebar-thread-search-results" : undefined}
-          aria-activedescendant={
-            activeResultExists
-              ? `sidebar-thread-search-result-${activeSearchResultIndex}`
-              : undefined
-          }
-          className="min-w-0 flex-1"
-        />
-        {isSearching ? (
-          <Button
-            type="button"
-            size="icon-micro"
-            variant="ghost-muted"
-            className="shrink-0"
-            aria-label={gt("Clear thread search")}
-            onClick={() => {
-              onClearSearch();
-              searchInputRef.current?.focus();
-            }}
-          >
-            <XIcon className="size-3" />
-          </Button>
-        ) : null}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1">
+        <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-within:bg-sidebar-row-hover focus-within:text-sidebar-foreground focus-within:ring-1 focus-within:ring-inset focus-within:ring-ring/70">
+          <SearchIcon className="size-3.5 shrink-0 text-(--sidebar-icon-color)" />
+          <SidebarInput
+            ref={searchInputRef}
+            nativeInput
+            type="search"
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
+            onKeyDown={onSearchKeyDown}
+            placeholder={gt("Search", { $context: "search field placeholder" })}
+            aria-label={gt("Search threads")}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={resultsVisible}
+            aria-controls={resultsVisible ? "sidebar-thread-search-results" : undefined}
+            aria-activedescendant={
+              activeResultExists
+                ? `sidebar-thread-search-result-${activeSearchResultIndex}`
+                : undefined
+            }
+            className="min-w-0 flex-1"
+          />
+          {isSearching ? (
+            <Button
+              type="button"
+              size="icon-micro"
+              variant="ghost-muted"
+              className="shrink-0"
+              aria-label={gt("Clear thread search")}
+              onClick={() => {
+                onClearSearch();
+                searchInputRef.current?.focus();
+              }}
+            >
+              <XIcon className="size-3" />
+            </Button>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center">{hasProjects ? projectScope : null}</div>
       </div>
-      <div className="flex shrink-0 items-center">
-        {hasProjects ? projectScope : null}
-        <SidebarHeaderIconButton
-          label={gt("New thread")}
-          tooltip={
-            showNewThreadInProjectHint ? (
-              <span className="flex flex-col gap-0.5">
-                <span>{newThreadLabel}</span>
-                <span className="text-muted-foreground">
-                  {newThreadInProjectShortcutLabel
-                    ? gt("New thread in current project: Shift+click ({shortcut})", {
-                        shortcut: newThreadInProjectShortcutLabel,
-                      })
-                    : gt("New thread in current project: Shift+click")}
-                </span>
-              </span>
-            ) : (
-              newThreadLabel
-            )
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuButton
+              type="button"
+              aria-label={gt("New thread")}
+              disabled={newThreadDisabled}
+              onClick={onNewThread}
+            />
           }
-          disabled={newThreadDisabled}
-          onClick={onNewThread}
         >
-          <SquarePenIcon />
-        </SidebarHeaderIconButton>
-      </div>
+          <SquarePenIcon className="size-4 shrink-0 text-sidebar-muted-foreground" />
+          <span className="truncate text-sidebar-foreground/90">{gt("New thread")}</span>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          {showNewThreadInProjectHint ? (
+            <span className="flex flex-col gap-0.5">
+              <span>{newThreadLabel}</span>
+              <span className="text-muted-foreground">
+                {newThreadInProjectShortcutLabel
+                  ? gt("New thread in current project: Shift+click ({shortcut})", {
+                      shortcut: newThreadInProjectShortcutLabel,
+                    })
+                  : gt("New thread in current project: Shift+click")}
+              </span>
+            </span>
+          ) : (
+            newThreadLabel
+          )}
+        </TooltipPopup>
+      </Tooltip>
     </div>
   );
 }

@@ -120,7 +120,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
   --desktop-window-right-resize-inset: 0px;
-  --workspace-topbar-height: 52px;
+  --workspace-topbar-height: 44px;
   --workspace-controls-top: 0px;
   --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
@@ -155,7 +155,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 .wco {
   --native-titlebar-height: env(titlebar-area-height, 0px);
-  --workspace-topbar-height: max(40px, env(titlebar-area-height, 52px));
+  --workspace-topbar-height: max(40px, env(titlebar-area-height, 44px));
   --workspace-controls-top: env(titlebar-area-y, 0px);
   --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
   --workspace-controls-right: calc(
@@ -396,6 +396,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     background: var(--background) !important;
   }
+}
+
+@utility sidebar-title-fade {
+  mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
 }
 
 @utility alert-glass {
@@ -1146,44 +1150,44 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root {
   color-scheme: light;
   --radius: 0.5rem;
-  --background: var(--color-zinc-25);
-  --app-chrome-background: var(--background);
-  --toolbar-background: var(--app-chrome-background);
-  --toolbar-foreground: var(--foreground);
-  --toolbar-border: var(--border);
-  --toolbar-control: var(--popover);
-  --toolbar-control-foreground: var(--foreground);
-  --toolbar-control-hover: var(--accent);
-  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
-  --foreground: var(--color-zinc-900);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-900);
-  --popover: var(--color-white);
-  --popover-foreground: var(--color-zinc-900);
-  --primary: oklch(0.488 0.217 264);
-  --primary-foreground: var(--color-white);
-  --secondary: var(--color-zinc-50);
-  --secondary-foreground: var(--color-zinc-800);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --placeholder: var(--muted-foreground);
-  --secondary-label: var(--muted-foreground);
-  --icon-muted: var(--muted-foreground);
-  /* One step past the accent, so a user turn stands off the near-white canvas. */
-  --message-surface: color-mix(in srgb, var(--color-zinc-200) 55%, var(--color-zinc-100));
+  --background: #ffffff;
+  --app-chrome-background: #f5f8f2;
+  --toolbar-background: #ffffff;
+  --toolbar-foreground: #1c1d1f;
+  --toolbar-border: #e4e7e2;
+  --toolbar-control: #ffffff;
+  --toolbar-control-foreground: #1c1d1f;
+  --toolbar-control-hover: #f2f2f3;
+  --surface-raised: #f2f2f3;
+  --foreground: #1c1d1f;
+  --card: #ffffff;
+  --card-foreground: #1c1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1c1d1f;
+  --primary: #1a6df2;
+  --primary-foreground: #ffffff;
+  --secondary: #f2f2f3;
+  --secondary-foreground: #1c1d1f;
+  --muted: #f2f2f3;
+  --muted-foreground: #5a5f58;
+  --placeholder: #5a5f58;
+  --secondary-label: #5a5f58;
+  --icon-muted: #5a5f58;
+  /* One step past the accent, so a user turn stands off the white canvas. */
+  --message-surface: #f2f2f3;
   --message-foreground: var(--foreground);
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);
-  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
+  --message-action-hover: #155ed6;
+  --accent: #edf2e8;
+  --accent-foreground: #1c1d1f;
   --error: var(--color-red-500);
   --error-foreground: var(--color-red-700);
   --tool-error-icon: var(--error);
   --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
   --destructive: var(--error);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
+  --border: #e4e7e2;
+  --input: #d6d9d4;
   --ring: var(--primary);
   --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
@@ -1199,18 +1203,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
   --update: var(--primary);
   --update-foreground: var(--primary);
-  /* Keep every sidebar primitive on the same light surface hierarchy, including
-     portaled mobile sheets and settings navigation outside the app sidebar. */
-  --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-muted-foreground: var(--muted-foreground);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
-  --sidebar-border: var(--border);
+  /* Codex sage-tinted light chrome shared by the rail, thread drawer, and mobile sheets. */
+  --sidebar: #f5f8f2;
+  --sidebar-foreground: #1c1d1f;
+  --sidebar-muted-foreground: #5a5f58;
+  --sidebar-control-surface: #ebefe7;
+  --sidebar-row-hover: #e8eee3;
+  --sidebar-row-active: #d9e2d3;
+  --sidebar-row-selected: #d9e2d3;
+  --sidebar-border: #e4e7e2;
   --sidebar-stage-fade: var(--sidebar);
-  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-background: #f7f8f6;
   --code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
@@ -1219,94 +1222,103 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     color-scheme: dark;
-    /* The canvas is true black, matching the sidebar. Raised surfaces keep the tone they had
-       over neutral-950, so cards, popovers, and the composer still lift. Borders and hover
-       states provide separation without milky gray fills. */
-    --background: #000;
-    --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
-    --secondary: --alpha(var(--color-white) / 3%);
-    --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 3%);
-    --muted-foreground: var(--color-neutral-400);
-    --accent: --alpha(var(--color-white) / 4%);
-    --accent-foreground: var(--color-neutral-100);
-    /* A user turn sits above the composer tone, level with the selected sidebar row. */
-    --message-surface: color-mix(in srgb, var(--color-neutral-950) 92%, var(--color-white));
+    /* Codex dark neutral-charcoal main sheet inset inside the deeper #111211 outer chrome. */
+    --background: #19191b;
+    --app-chrome-background: #111211;
+    --toolbar-background: #19191b;
+    --toolbar-border: #27272a;
+    --toolbar-control: #222225;
+    --toolbar-control-hover: #2a2a2e;
+    --surface-raised: #2a2a2e;
+    --foreground: #f3f4f6;
+    --card: #222225;
+    --card-foreground: #f3f4f6;
+    --popover: #222225;
+    --popover-foreground: #f3f4f6;
+    --primary: #1e68eb;
+    --message-action-hover: #2f75f0;
+    --secondary: #222225;
+    --secondary-foreground: #f3f4f6;
+    --muted: #222225;
+    --muted-foreground: #989a9e;
+    --placeholder: #94969c;
+    --secondary-label: #989a9e;
+    --icon-muted: #989a9e;
+    --accent: #262729;
+    --accent-foreground: #f3f4f6;
+    --message-surface: #222225;
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --error-foreground: var(--color-red-400);
     --tool-error-icon: #fca5a5;
     --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
-    --border: --alpha(var(--color-white) / 8%);
-    --input: --alpha(var(--color-white) / 11%);
+    --border: #27272a;
+    --input: #303034;
     --info-foreground: var(--color-blue-400);
     --guest-foreground: var(--color-fuchsia-300);
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
     --update-foreground: var(--color-blue-400);
-    --sidebar: var(--card);
-    --sidebar-control-surface: var(--muted);
-    --sidebar-row-hover: var(--accent);
-    --sidebar-row-active: var(--accent);
-    --sidebar-row-selected: var(--muted);
-    --sidebar-stage-fade: var(--card);
+    --sidebar: #111211;
+    --sidebar-foreground: #f1f3f5;
+    --sidebar-muted-foreground: #9ca3af;
+    --sidebar-control-surface: #1b1c1b;
+    --sidebar-row-hover: #1c1d1c;
+    --sidebar-row-active: #262726;
+    --sidebar-row-selected: #262726;
+    --sidebar-border: #232423;
+    --sidebar-stage-fade: #111211;
+    --code-background: #1b1b1e;
     --terminal-cursor: rgb(180 203 255);
     --terminal-selection-background: rgb(180 203 255 / 25%);
   }
 }
 
-/* Keep both sidebar implementations (default and legacy) on the same quiet
-   zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
-   surfaces. */
+/* Keep both sidebar implementations (default and legacy) on the same Codex
+   chrome hierarchy so outer rail and drawer match seamlessly. */
 [data-app-sidebar] {
-  --background: var(--color-zinc-25);
-  --foreground: var(--color-zinc-900);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-900);
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
-  --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--color-zinc-900);
-  --sidebar-muted-foreground: var(--color-zinc-500);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
-  --sidebar-border: var(--color-zinc-200);
+  --background: #ffffff;
+  --foreground: #1c1d1f;
+  --card: #ffffff;
+  --card-foreground: #1c1d1f;
+  --accent: #edf2e8;
+  --accent-foreground: #1c1d1f;
+  --muted: #f2f2f3;
+  --muted-foreground: #5a5f58;
+  --border: #e4e7e2;
+  --input: #d6d9d4;
+  --sidebar: #f5f8f2;
+  --sidebar-foreground: #1c1d1f;
+  --sidebar-muted-foreground: #5a5f58;
+  --sidebar-control-surface: #ebefe7;
+  --sidebar-row-hover: #e8eee3;
+  --sidebar-row-active: #d9e2d3;
+  --sidebar-row-selected: #d9e2d3;
+  --sidebar-border: #e4e7e2;
   --sidebar-stage-fade: var(--sidebar);
 
   @variant dark {
-    --background: #000;
-    --foreground: #f1f3f7;
-    --card: #000;
+    --background: #19191b;
+    --foreground: #f1f3f5;
+    --card: #111211;
     --card-foreground: var(--foreground);
-    --accent: #191a1d;
-    --accent-foreground: #f7f9ff;
-    --muted: #0a0a0a;
-    --muted-foreground: #a3a3a3;
-    --border: rgb(255 255 255 / 8%);
+    --accent: #1c1d1c;
+    --accent-foreground: #f3f4f6;
+    --muted: #1b1c1b;
+    --muted-foreground: #9ca3af;
+    --border: #232423;
     --input: rgb(255 255 255 / 18%);
-    --sidebar: var(--card);
+    --sidebar: #111211;
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
-    --sidebar-control-surface: var(--muted);
-    --sidebar-row-hover: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
-    --sidebar-row-active: color-mix(in srgb, var(--contrast-foreground) 11%, transparent);
-    --sidebar-row-selected: color-mix(in srgb, var(--contrast-foreground) 7%, transparent);
-    --sidebar-border: var(--border);
-    --sidebar-stage-fade: var(--card);
-    /* Row metadata sits a step below read titles (75% white). */
-    --secondary-label: #8f8f8f;
+    --sidebar-control-surface: #1b1c1b;
+    --sidebar-row-hover: #1c1d1c;
+    --sidebar-row-active: #262726;
+    --sidebar-row-selected: #262726;
+    --sidebar-border: #232423;
+    --sidebar-stage-fade: #111211;
+    /* Row metadata sits a step below read titles. */
+    --secondary-label: #8e9299;
   }
 }
 

@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -51,10 +57,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const gt = useGT();
-  const backdropVariant = resolveSidebarStageBackdropVariant(
-    stageLabel,
-    environmentIdentificationMode,
-  );
+  const backdropVariant =
+    environmentIdentificationMode === "dev-artwork" ||
+    environmentIdentificationMode === "nightly-artwork"
+      ? resolveSidebarStageBackdropVariant(stageLabel, environmentIdentificationMode)
+      : null;
   const pillLabel =
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
@@ -75,15 +82,13 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           aria-label={gt("Toggle main sidebar")}
         />
       </div>
-      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
-        <div className="flex shrink-0 items-center gap-1">
+      <div className="relative z-10 flex h-8 min-w-0 flex-1 items-center gap-x-2 overflow-hidden py-0.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
           <SidebarBrand onBackdrop={backdropVariant !== null} />
-          {isElectron ? (
-            <div className="hidden items-center md:flex">
-              <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
-              <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
-            </div>
-          ) : null}
+          <div className="ml-auto hidden items-center md:flex">
+            <HistoryNavigationButton direction="back" onBackdrop={backdropVariant !== null} />
+            <HistoryNavigationButton direction="forward" onBackdrop={backdropVariant !== null} />
+          </div>
         </div>
         {pillLabel ? (
           <div className="ml-1 flex h-7 items-center">
@@ -116,7 +121,7 @@ export function SidebarBrandWidthProbe({
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
+      <div className="ml-[max(0px,calc(var(--workspace-titlebar-content-left)-var(--sidebar-rail-offset,0px)))] flex gap-1">
         <SidebarBrandMark onBackdrop={false} />
         {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
       </div>
@@ -139,7 +144,7 @@ function HistoryNavigationButton({
     keybindings,
     direction === "back" ? "navigation.back" : "navigation.forward",
   );
-  const Icon = direction === "back" ? ArrowLeftIcon : ArrowRightIcon;
+  const Icon = direction === "back" ? ChevronLeftIcon : ChevronRightIcon;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -173,7 +178,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label={gt("T3 Code home")}
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        "relative z-10 ml-[max(0px,calc(var(--workspace-titlebar-content-left)-var(--sidebar-rail-offset,0px)))] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md pl-1 outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -270,43 +275,45 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   return (
     <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick}>
-            <ArrowLeftIcon />
-            <span>
-              <T>Back</T>
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ) : (
-        <>
-          <SidebarUtilityItem
-            icon={<SettingsIcon />}
-            label={gt("Settings")}
-            onClick={handleSettingsClick}
-          />
-          {pullRequestsSupported ? (
+      <div className="flex min-w-0 flex-1 items-center md:hidden">
+        {isOnUtilityPage ? (
+          <SidebarMenuItem className="min-w-0 flex-1">
+            <SidebarMenuButton onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>
+                <T>Back</T>
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : (
+          <>
             <SidebarUtilityItem
-              icon={<PullRequestGlyph.pullRequest />}
-              label={gt("Pull requests")}
-              onClick={handlePullRequestsClick}
+              icon={<SettingsIcon />}
+              label={gt("Settings")}
+              onClick={handleSettingsClick}
             />
-          ) : null}
-          {issuesSupported ? (
+            {pullRequestsSupported ? (
+              <SidebarUtilityItem
+                icon={<PullRequestGlyph.pullRequest />}
+                label={gt("Pull requests")}
+                onClick={handlePullRequestsClick}
+              />
+            ) : null}
+            {issuesSupported ? (
+              <SidebarUtilityItem
+                icon={<IssueGlyph.issue />}
+                label={gt("Issues", { $context: "sidebar link to the list of issues" })}
+                onClick={handleIssuesClick}
+              />
+            ) : null}
             <SidebarUtilityItem
-              icon={<IssueGlyph.issue />}
-              label={gt("Issues", { $context: "sidebar link to the list of issues" })}
-              onClick={handleIssuesClick}
+              icon={<ChartNoAxesColumnIcon />}
+              label={gt("Usage")}
+              onClick={handleUsageClick}
             />
-          ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label={gt("Usage")}
-            onClick={handleUsageClick}
-          />
-        </>
-      )}
+          </>
+        )}
+      </div>
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
     </SidebarMenu>

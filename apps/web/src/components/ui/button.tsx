@@ -63,6 +63,9 @@ const buttonVariants = cva(
         outline:
           "[--control-icon-color:var(--contrast-muted-foreground)] border-input bg-popover not-dark:bg-clip-padding text-foreground shadow-xs/5 not-disabled:not-active:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:bg-input/32 dark:not-disabled:before:shadow-[0_-1px_--theme(--color-white/2%)] dark:not-disabled:not-active:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:bg-accent/50 dark:[:hover,[data-pressed]]:bg-input/64",
         overlay: "border-transparent bg-black/70 text-white/65 [:hover,[data-pressed]]:bg-black/90",
+        rail: "[--control-icon-color:currentColor] rounded-lg border-transparent text-sidebar-muted-foreground data-pressed:bg-sidebar-row-active [:hover,[data-pressed]]:bg-sidebar-row-hover [:hover,[data-pressed]]:text-sidebar-foreground",
+        "rail-active":
+          "[--control-icon-color:currentColor] rounded-lg border-transparent bg-sidebar-row-active text-sidebar-foreground [:hover,[data-pressed]]:bg-sidebar-row-active",
         secondary:
           "border-transparent bg-secondary text-secondary-foreground [:active,[data-pressed]]:bg-secondary/80 [:hover,[data-pressed]]:bg-secondary/90",
         "warning-outline":

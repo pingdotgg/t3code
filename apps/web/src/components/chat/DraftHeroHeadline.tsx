@@ -359,6 +359,24 @@ export function DraftHeroHeadline({
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
+      <div
+        aria-hidden="true"
+        className="mb-3 flex size-12 items-center justify-center text-muted-foreground/55"
+      >
+        <svg
+          viewBox="0 0 48 48"
+          fill="none"
+          className="size-11"
+          stroke="currentColor"
+          strokeWidth="1.9"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M18 11.2a6.4 6.4 0 0 1 11.9-.3 6.2 6.2 0 0 1 8.4 6.6 6.2 6.2 0 0 1 1.3 10.6 6.3 6.3 0 0 1-7.4 8.5 6.4 6.4 0 0 1-11.2 1.6 6.3 6.3 0 0 1-9.9-4.1 6.2 6.2 0 0 1-2.2-10.3 6.2 6.2 0 0 1 3.6-10.3A6.2 6.2 0 0 1 18 11.2Z" />
+          <path d="m17.5 20 4.3 3.7-4.3 3.7" />
+          <path d="M24.2 27.6h5.5" />
+        </svg>
+      </div>
       {hasResolvedProject && !isScratchDraft ? (
         <DraftHeroProjectHeading projectName={activeProjectTitle ?? gt("Choose a project")}>
           {projectSelector}
