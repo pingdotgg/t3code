@@ -158,6 +158,9 @@ pub(crate) struct Inner {
     pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
+    /// Sessions a fresh run moved aside while they still ran background work; the idle
+    /// reaper closes each once its work ends or its hold runs out.
+    pub(crate) detached: Mutex<Vec<(String, Arc<LiveThread>)>>,
     /// Agent tools of closed sessions whose shared process still runs, by thread, for the
     /// thread's next session on that instance (T3 reuses the credential). Bounded by
     /// [`crate::runner::MAX_KEPT_TOOLS`].
@@ -298,6 +301,7 @@ impl SqliteEngine {
                     .provider_set
                     .unwrap_or_else(|| config.providers.into()),
                 live: Mutex::new(HashMap::new()),
+                detached: Mutex::new(Vec::new()),
                 kept_tools: Mutex::new(HashMap::new()),
                 thread_gates: Default::default(),
                 command_output: crate::output::CommandOutputHub::default(),
@@ -1070,6 +1074,9 @@ impl Inner {
             }
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::CloseThreadSessions { thread_id } => {
+                self.close_thread_sessions(&thread_id).await;
+            }
             Effect::ApplyModelSelection {
                 thread_id,
                 selection,

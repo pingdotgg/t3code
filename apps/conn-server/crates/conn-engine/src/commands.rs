@@ -55,6 +55,10 @@ pub(crate) enum Effect {
     CloseSession {
         thread_id: String,
     },
+    /// Ends every provider session of a deleted thread, the ones a fresh run moved aside too.
+    CloseThreadSessions {
+        thread_id: String,
+    },
     /// Sends a model selection to the thread's running provider turn
     /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
     /// rest waits for the next turn.
@@ -98,6 +102,7 @@ impl Effect {
             | Self::StopBackgroundWork { thread_id, .. }
             | Self::Respond { thread_id, .. }
             | Self::CloseSession { thread_id }
+            | Self::CloseThreadSessions { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
             | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
@@ -435,6 +440,17 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             };
         }
     }
+    // A user's fresh send supersedes a pending fork, or the next send would bring the
+    // parent's context back; a schedule's is a side conversation and was refused above.
+    if fresh && let Some(mut transfer) = crate::fork::pending_fork(tx, &c.thread_id)? {
+        transfer["status"] = json!("superseded");
+        transfer["error"] = json!("Superseded by a fresh session.");
+        transfer["updatedAt"] = json!(tx.now());
+        tx.append(
+            Draft::new(&c.thread_id, "context-transfer.updated", transfer)
+                .command(Some(&c.command_id)),
+        )?;
+    }
     crate::fork::ensure_native_fork(
         tx,
         &c.thread_id,
@@ -768,8 +784,8 @@ fn queued_provider_thread(run: &Value, thread: &Value) -> Value {
     }
 }
 
-/// T3's refusals of a fresh start (`dispatchMessage`): not while a fork is still being
-/// applied, and not while the current session runs background work that a new session would
+/// T3's refusals of a fresh start (`dispatchMessage`): not a schedule's while a fork is still
+/// being applied (a user's supersedes the fork), and not while the current session runs background work that a new session would
 /// end, unless a schedule sent it (nobody is there to wait or press Stop).
 fn fresh_context_allowed(
     tx: &Tx<'_>,
@@ -779,7 +795,7 @@ fn fresh_context_allowed(
     if !crate::merge_back::pending(tx, &c.thread_id)?.is_empty() {
         return reject("Send a message without /clear to apply the merged context first.");
     }
-    if crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
+    if c.scheduled_task_id.is_some() && crate::fork::pending_fork(tx, &c.thread_id)?.is_some() {
         return reject("A fresh session can't start while a fork or merge is still being applied.");
     }
     if c.scheduled_task_id.is_some() {
@@ -1778,7 +1794,7 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
         let run_id = run["id"].as_str().unwrap_or_default();
         finish_run(tx, &c.thread_id, run_id, "cancelled", None)?;
     }
-    effects.push(Effect::CloseSession {
+    effects.push(Effect::CloseThreadSessions {
         thread_id: c.thread_id.clone(),
     });
     patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {

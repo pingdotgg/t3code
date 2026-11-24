@@ -4123,6 +4123,59 @@ async fn live_command_output_reaches_subscribers() {
     );
 }
 
+/// `CommandOutputHub.test.ts` "an interrupted command ends the stream with the output it
+/// printed": the live tail goes before the settled item, which has no `output`.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_command_ends_on_the_output_it_printed() {
+    let db = TempDb::new("output-interrupted");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let item = |status: &str| {
+        json!({"id": "turn-item:cmd", "threadId": "t1", "runId": "run:t1:1", "nodeId": "node:run:t1:1:root",
+            "providerThreadId": null, "providerTurnId": null, "nativeItemRef": null, "parentItemId": null,
+            "ordinal": 0, "status": status, "title": null, "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": null, "updatedAt": "2026-01-01T00:00:00.000Z", "type": "command_execution",
+            "input": "serve"})
+    };
+    let write = |value: Value| {
+        let inner = engine.inner().clone();
+        async move {
+            inner
+                .write(move |tx| {
+                    tx.append(crate::store::Draft::new("t1", "turn-item.updated", value))
+                        .map(|_| ())
+                })
+                .await
+                .unwrap()
+        }
+    };
+    write(item("running")).await;
+    let hub = &engine.inner().command_output;
+    hub.append("t1", "turn-item:cmd", "waiting for server\n");
+    let mut output = engine
+        .open_stream(
+            "orchestration.subscribeCommandOutput",
+            json!({"threadId": "t1", "itemId": "turn-item:cmd"}),
+        )
+        .await
+        .unwrap();
+    frame(&mut output).await;
+    hub.finish("t1", "turn-item:cmd");
+    write(item("interrupted")).await;
+    assert_eq!(
+        frame(&mut output).await,
+        json!({"kind": "replace", "text": "waiting for server\n", "truncated": false, "running": false})
+    );
+    assert!(output.recv().await.is_none());
+}
+
 fn snooze(command: &str, thread: &str, until: &str) -> Value {
     json!({"type": "thread.snooze", "commandId": command, "threadId": thread, "snoozedUntil": until})
 }
@@ -4376,6 +4429,133 @@ async fn a_scheduled_fresh_run_is_a_side_conversation() {
     assert_eq!(
         provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
         3
+    );
+}
+
+/// `ProviderSwitch.integration.test.ts` "starts a scheduled fresh run while the previous run's
+/// session still has background work": the busy session stays open and the second fire
+/// starts its own native thread in a new session.
+#[tokio::test(flavor = "current_thread")]
+async fn a_scheduled_fresh_run_keeps_a_busy_session_open() {
+    let db = TempDb::new("fresh-scheduled-busy");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, fire("c3", "second")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    let native = |run: usize| {
+        let id = &p["runs"][run]["providerThreadId"];
+        p["providerThreads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| &t["id"] == id)
+            .map(|t| t["nativeThreadRef"].clone())
+            .unwrap()
+    };
+    assert!(!native(1).is_null());
+    assert_ne!(native(1), native(0));
+    assert_eq!(
+        count(&provider.closed),
+        0,
+        "closing the busy session would end its work"
+    );
+    assert_eq!(count(&provider.sessions), 2);
+}
+
+/// Force stop ends every session of the thread: the current one and one a fresh schedule
+/// moved aside while it still ran background work.
+#[tokio::test(flavor = "current_thread")]
+async fn force_stop_closes_a_detached_busy_session() {
+    let db = TempDb::new("fresh-scheduled-force-stop");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, fire("c3", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    assert_eq!(count(&provider.sessions), 2);
+    assert_eq!(count(&provider.closed), 0);
+    let stopped = call(
+        &engine,
+        "orchestration.forceStopThread",
+        json!({"threadId": "t1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stopped["outcome"], "killed");
+    assert_eq!(
+        count(&provider.closed),
+        2,
+        "the detached session closes too"
+    );
+}
+
+/// `ThreadFork.execution.test.ts` "a fresh send in a fork that has not run yet starts without
+/// the fork's context": a schedule's fresh send is refused, the user's supersedes the fork.
+#[tokio::test(flavor = "current_thread")]
+async fn a_user_fresh_send_in_a_fork_supersedes_the_fork() {
+    let db = TempDb::new("fresh-fork");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "work")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.fork", "commandId": "f1", "sourceThreadId": "t1",
+            "targetThreadId": "t2", "sourcePoint": {"type": "run", "runId": "run:t1:1"},
+            "createdBy": "user", "creationSource": "web",
+        }),
+    )
+    .await;
+    let scheduled = refused(
+        &engine,
+        fresh_message(
+            "t2",
+            "c3",
+            "scheduled",
+            json!({"scheduledTaskId": "task:fork"}),
+        ),
+    )
+    .await;
+    assert!(scheduled.contains("still being applied"), "{scheduled}");
+    dispatch(&engine, fresh_message("t2", "c4", "start over", json!({}))).await;
+    let p = run_to_end(&engine, "t2", "run:t2:1").await;
+    assert_eq!(p["runs"][0]["freshContext"], true);
+    let forks: Vec<_> = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["type"] == "fork")
+        .map(|t| t["status"].clone())
+        .collect();
+    assert_eq!(forks, [json!("superseded")]);
+    assert!(
+        provider.forks.lock().unwrap().is_empty(),
+        "nothing forks natively"
     );
 }
 
