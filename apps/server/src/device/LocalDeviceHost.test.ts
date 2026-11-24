@@ -162,6 +162,8 @@ const agentFixture = Effect.fn("agentFixture")(function* (
 });
 
 describe("AgentDevice startup", () => {
+  const differentAgentDeviceVersion = `${AGENT_DEVICE_VERSION}-test`;
+
   it.effect("restarts a cached daemon that no longer answers its health check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -198,7 +200,11 @@ describe("AgentDevice startup", () => {
   it.effect("hands a daemon recorded at another agent-device version to the pinned client", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const previous = { httpPort: 12345, token: "previous-token", version: "0.21.36" };
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        version: differentAgentDeviceVersion,
+      };
       const { host, runs } = yield* agentFixture(
         (stateDir) =>
           fs
@@ -225,7 +231,11 @@ describe("AgentDevice startup", () => {
 
   it.effect("keeps a busy daemon from another version that the pinned client leaves running", () =>
     Effect.gen(function* () {
-      const previous = { httpPort: 12345, token: "previous-token", version: "0.21.36" };
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        version: differentAgentDeviceVersion,
+      };
       const { host, runs } = yield* agentFixture(
         () => Effect.succeed(processOutput(1)),
         processOutput(0),
@@ -249,7 +259,7 @@ describe("AgentDevice startup", () => {
         httpPort: 12345,
         token: "previous-token",
         pid: process.pid,
-        version: "0.21.36",
+        version: differentAgentDeviceVersion,
       };
       const { host, stateDir, runs, daemonHealthy } = yield* agentFixture(
         () => (health ? Ref.set(health, false) : Effect.void).pipe(Effect.as(processOutput(1))),
