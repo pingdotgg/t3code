@@ -2268,8 +2268,7 @@ code {
   [data-language="plain" i],
   [data-language="plaintext" i]
 ) {
-  .chat-markdown & pre,
-  .composer-tiptap & code {
+  .chat-markdown & pre {
     unicode-bidi: plaintext;
     font-variant-ligatures: none;
   }
