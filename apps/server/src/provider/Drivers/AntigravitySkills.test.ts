@@ -121,6 +121,21 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("labels plugin skills with their plugin name and keeps the name agy resolves", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      yield* writeSkill(
+        path.join(workspace.profileDirectory, "config", "plugins", "t3-pstack", "skills", "bro"),
+        "---\nname: bro\ndescription: Say hi.\n---\n",
+      );
+
+      const [skill] = yield* discoverAntigravitySkills(workspace);
+      assert.strictEqual(skill?.name, "bro");
+      assert.strictEqual(skill?.displayName, "t3-pstack:bro");
+    }),
+  );
+
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
