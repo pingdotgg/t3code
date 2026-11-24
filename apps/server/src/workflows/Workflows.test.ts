@@ -2502,3 +2502,52 @@ it("error text cuts at 2,000 units without leaving half an emoji", () => {
     `outer: ${"a".repeat(1_992)}`,
   );
 });
+
+it.effect("one run moving sends a watcher an update about that run, not the whole list", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const park = (from: number, to: number) =>
+          Effect.forEach(
+            Array.from({ length: to - from }, (_, i) => from + i),
+            (i) => workflows.start("gate", { gate: "south" }, { idempotencyKey: `visit/${i}` }),
+            { discard: true },
+          );
+        // The size of the first update a watcher gets after `mover` ends.
+        const updateWhen = Effect.fnUntraced(function* (mover: string) {
+          const { runId } = yield* workflows.start(
+            "gate",
+            { gate: mover },
+            { idempotencyKey: mover },
+          );
+          yield* workflows.waitFor(runId, status("waiting"));
+          const subscribed = yield* Deferred.make<void>();
+          const update = yield* workflows.watch.pipe(
+            Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+            Stream.drop(1),
+            Stream.map((sent) => JSON.stringify(sent)),
+            Stream.filter((text) => text.includes(runId) && text.includes('"completed"')),
+            Stream.map((text) => text.length),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(subscribed);
+          yield* workflows.signal({ runId, wait: "through" }, "go on", { id: mover });
+          return Option.getOrThrow(yield* Fiber.join(update));
+        });
+
+        yield* park(0, 10);
+        const fewOthers = yield* updateWhen("north-1");
+        yield* park(10, 300);
+        const manyOthers = yield* updateWhen("north-2");
+        assert.isBelow(
+          manyOthers,
+          fewOthers * 2,
+          `${fewOthers} bytes beside 10 runs, ${manyOthers} beside 300`,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
