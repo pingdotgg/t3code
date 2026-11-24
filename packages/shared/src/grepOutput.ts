@@ -68,16 +68,15 @@ export function parseGrepOutput(
     }
     return undefined;
   }
-  if (matches.length === 0) return undefined;
+  if (matches.length === 0 || matches.some((match) => match.line < 1 || !match.fileName.trim())) {
+    return undefined;
+  }
   const note = notes.join("\n").slice(0, NOTE_MAX_CHARS);
   let budget = PREVIEW_BUDGET_CHARS - note.length;
-  const results: GrepOutputResult[] = matches.flatMap((match) => {
-    if (match.line < 1 || !match.fileName.trim()) return [];
+  const results: GrepOutputResult[] = matches.map((match) => {
     const fits = match.text.length <= budget;
     if (fits) budget -= match.text.length;
-    return [
-      { fileName: match.fileName, line: match.line, ...(fits ? { preview: match.text } : {}) },
-    ];
+    return { fileName: match.fileName, line: match.line, ...(fits ? { preview: match.text } : {}) };
   });
   return note ? [...results, { fileName: root, preview: note }] : results;
 }

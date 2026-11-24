@@ -51,6 +51,11 @@ describe("FileSearchResults", () => {
           workspaceRoot={undefined}
           results={[{ fileName: "c.ts", line: 3, preview: `${"a".repeat(100)}!needle` }]}
         />
+        <FileSearchResults
+          pattern="a+a+a+a+a+a+$|needle"
+          workspaceRoot={undefined}
+          results={[{ fileName: "d.ts", line: 4, preview: `${"a".repeat(1000)}!needle` }]}
+        />
       </div>,
       { router: false },
     );

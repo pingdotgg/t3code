@@ -62,6 +62,7 @@ describe("parseGrepOutput", () => {
     ["a file list", "/repo/a.ts\n/repo/b.ts"],
     ["no matches", "No files found"],
     ["ripgrep context lines", "a.ts\n1-before\n2:needle"],
+    ["a line zero", "a.ts:0:needle"],
   ])("leaves %s raw", (_name, output) => {
     expect(parseGrepOutput(output, "/repo")).toBeUndefined();
   });

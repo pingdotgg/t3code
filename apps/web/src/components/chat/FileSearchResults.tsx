@@ -6,16 +6,21 @@ import { useGT } from "gt-react";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 const MAX_HIGHLIGHTS_PER_LINE = 20;
+const MAX_HIGHLIGHTED_LINE_CHARS = 2_000;
 
-// JavaScript backtracks where ripgrep runs in linear time, so a quantified group like `(a+)+`
-// could hang rendering on a long line; those patterns go unhighlighted.
-const QUANTIFIED_GROUP = /\)[*+{]/;
+// JavaScript backtracks where ripgrep runs in linear time. With at most one quantifier, and not
+// on a group, a match costs at most quadratic time in the line length; other patterns could hang
+// rendering, so they go unhighlighted.
+function backtracksSafely(pattern: string) {
+  const unescaped = pattern.replace(/\\./g, "");
+  return (unescaped.match(/[*+?{]/g) ?? []).length <= 1 && !/\)[*+{]/.test(unescaped);
+}
 
 // Provider patterns are ripgrep regexes; JavaScript reads most of them the same way. Every
 // matched line is known to match, so when the case-sensitive form misses one the search
 // was case-insensitive. A pattern JavaScript can't parse just goes unhighlighted.
 function patternMatchers(pattern: string | undefined): ReadonlyArray<RegExp> {
-  if (!pattern?.trim() || QUANTIFIED_GROUP.test(pattern)) return [];
+  if (!pattern?.trim() || !backtracksSafely(pattern)) return [];
   try {
     return [new RegExp(pattern, "g"), new RegExp(pattern, "gi")];
   } catch {
@@ -24,6 +29,7 @@ function patternMatchers(pattern: string | undefined): ReadonlyArray<RegExp> {
 }
 
 function matchRanges(text: string, matchers: ReadonlyArray<RegExp>): ReadonlyArray<SearchRange> {
+  if (text.length > MAX_HIGHLIGHTED_LINE_CHARS) return [];
   for (const matcher of matchers) {
     const ranges: SearchRange[] = [];
     for (const match of text.matchAll(matcher)) {
