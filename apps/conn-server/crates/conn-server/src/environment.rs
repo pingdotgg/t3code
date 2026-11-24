@@ -364,6 +364,8 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
     capabilities.pull_request_checks = Some(true);
     capabilities.linked_thread_refreshes = Some(true);
     capabilities.thread_force_stop = Some(true);
+    // `server.refreshProviders` honours `modelCatalogOnly` (`crate::model_manifest`).
+    capabilities.model_catalog_refresh = Some(true);
     capabilities.shell_thread_families = Some(true);
     capabilities.shell_older_settled = Some(true);
     // projects.listIgnoredFiles, with `query` (conn-files entries::list_ignored).
@@ -460,6 +462,7 @@ mod tests {
                 "linkedThreadRefreshes",
                 "localServerStop",
                 "mcpModeLimitHeader",
+                "modelCatalogRefresh",
                 "peerLinkPairingCodes",
                 "peerLinks",
                 "pullRequestChecks",

@@ -51,6 +51,10 @@ pub struct ServeOptions {
     /// `--managed-provision`: serve managed callers on a second ingress
     /// (`crate::managed`).
     pub managed_provision: Option<PathBuf>,
+    /// Receives each model manifest the server accepts; `main` gives it to the providers.
+    pub model_manifest: conn_provider::LiveManifest,
+    /// Providers report entry changes here; the config streams listen.
+    pub status_notifier: conn_provider::StatusNotifier,
 }
 
 impl ServeOptions {
@@ -109,6 +113,8 @@ impl ServeOptions {
             session_idle: args.session_idle,
             sdk_host: args.sdk_host,
             managed_provision: args.managed_provision,
+            model_manifest: conn_provider::LiveManifest::default(),
+            status_notifier: conn_provider::StatusNotifier::default(),
         }
     }
 }
@@ -155,6 +161,8 @@ pub async fn serve_with_instances(
         session_idle,
         sdk_host: _,
         managed_provision,
+        model_manifest,
+        status_notifier,
     } = options;
     // SIGHUP asks for a reload (`reload.rs`). Its default action stops the process, so the
     // handler goes in before any startup work an Orbit finalize could overlap.
@@ -405,6 +413,12 @@ pub async fn serve_with_instances(
         // An inert copy holds the original's peer links: it must not use them.
         peers: (!inert).then(|| crate::peers::PeerLinks::new(environment.clone(), engine.clone())),
         devices: Some(crate::methods::devices::start(environment.clone())),
+        provider_status: crate::methods::provider::ProviderStatus::with_notifier(status_notifier),
+        model_manifest: Some(crate::model_manifest::ModelManifest::new(
+            state_dir.clone(),
+            environment.clone(),
+            model_manifest,
+        )),
         ..Deps::default()
     };
     if let Some(devices) = &deps.devices {
@@ -464,7 +478,9 @@ pub async fn serve_with_instances(
         crate::methods::pull_requests::start_watches(&state.deps);
     }
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
-    crate::model_manifest::start(state_dir.clone(), environment.clone());
+    if let Some(manifest) = &state.deps.model_manifest {
+        manifest.start();
+    }
     // `spawn` starts nothing when the engine has attention events off.
     let managed_server = match provision {
         Some(provision) => {
