@@ -427,7 +427,7 @@ describe("EnvironmentThreads", () => {
     "shows a delivered queued message that an older %s cache hid",
     (cacheKind) =>
       Effect.gen(function* () {
-        // Before #41307, a restart that cancelled a started run hid its queued message.
+        // The former rule hid the queued message of a started run that a restart cancelled.
         const runId = RunId.make("run-cancelled-after-start");
         const later = v2MessageRow("Later input", 2);
         const delivered = {
