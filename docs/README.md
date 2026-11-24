@@ -1,5 +1,15 @@
 # T3 Code docs
 
+## Teams Fork
+
+- [Teams overview & motivation](./teams/README.md)
+- [Teams architecture & technical spec](./teams/architecture.md)
+- [Teams roadmap](./teams/roadmap.md)
+- [Multi-member E2E testing](./teams/testing-e2e.md)
+- [Fork CI & release process](./teams/ci-and-releases.md)
+
+---
+
 ## Using T3 Code
 
 - [Install T3 Code](./user/install.md)

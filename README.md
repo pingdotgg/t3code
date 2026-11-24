@@ -4,7 +4,30 @@
   </a>
 </p>
 
-<h1 align="center">T3 Code</h1>
+<h1 align="center">T3 Code — Teams Fork</h1>
+
+<p align="center">An open-source fork of <a href="https://github.com/pingdotgg/t3code">T3 Code</a> adding native multi-user team workspaces, permissions, and per-user GitHub identity forwarding.</p>
+
+> [!NOTE]
+> **About this fork**
+>
+> Upstream [T3 Code](https://github.com/pingdotgg/t3code) is an outstanding Agentic Development Environment (ADE) for a single user, but it has no built-in support for teams sharing an agentic workspace.
+>
+> This fork extends T3 Code with first-class **Team** capabilities:
+> - **Team servers & shared environments** — link a team to an owning `t3server`, attach additional remote environments, and configure per-environment access control.
+> - **Team projects & providers** — assign projects to a team and share team-configured model providers across both local and remote environments.
+> - **Member identity & uncluttered UI** — join via deep link or settings with a chosen pseudo, auto-attribute threads (`pseudo: <title>`), filter to your own threads by default with a one-click toggle to view colleagues' threads, and receive notifications only for your threads (or colleagues' threads you explicitly follow).
+> - **Roles, Views, and thread locking** — `owner > admin > modo > regular` hierarchy, server-enforced Views controlling who can read and post, and locked threads restricted to `owner`/`admin`.
+> - **Per-turn GitHub identity forwarding** — run agents on shared servers using the GitHub credentials and commit identity of the user who initiated each turn (never a shared bot account, and never leaking the thread creator's credentials to another user's turn), with strict turn-steering isolation.
+>
+> Read the fork specifications and plan:
+> - **[Teams Overview & Motivation](./docs/teams/README.md)**
+> - **[Teams Architecture & Technical Spec](./docs/teams/architecture.md)**
+> - **[Teams Roadmap](./docs/teams/roadmap.md)**
+
+---
+
+## Upstream T3 Code
 
 <p align="center">The open-source control plane for coding agents.</p>
 
