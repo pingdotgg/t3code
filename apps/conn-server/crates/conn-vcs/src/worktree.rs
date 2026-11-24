@@ -410,38 +410,48 @@ async fn supports_lock_reason(cwd: &Path) -> bool {
     }
 }
 
-/// Unlocks the worktree whose lock carries `reason` and returns its path, if one does.
-async fn unlock_registration(cwd: &Path, reason: &str) -> VcsResult<Option<PathBuf>> {
-    let out = git(
-        "GitVcsDriver.listWorktrees",
-        cwd,
-        ["worktree", "list", "--porcelain", "-z"],
-    )
-    .text()
-    .await?;
-    let mut current = None;
-    for field in out.split('\0') {
-        if let Some(path) = field.strip_prefix("worktree ") {
-            current = Some(PathBuf::from(path));
-        } else if field.strip_prefix("locked ") == Some(reason)
-            && let Some(path) = current.take()
-        {
-            git(
-                "GitVcsDriver.createWorktree.unlock",
-                cwd,
-                [
-                    "worktree".to_owned(),
-                    "unlock".into(),
-                    "--".into(),
-                    path.to_string_lossy().into_owned(),
-                ],
-            )
-            .run()
-            .await?;
-            return Ok(Some(path));
-        }
+/// Unlocks the worktree whose lock carries exactly `reason`, if one does. Reads Git's
+/// registration files, as the TypeScript server does: Git before 2.36 has no `list -z`.
+async fn unlock_registration(cwd: &Path, reason: &str) -> VcsResult<()> {
+    let registrations = common_dir(cwd).await?.join("worktrees");
+    let reason = reason.to_owned();
+    let found = tokio::task::spawn_blocking(move || {
+        let line = |text: String| {
+            let text = text.strip_suffix('\n').unwrap_or(&text);
+            text.strip_suffix('\r').unwrap_or(text).to_owned()
+        };
+        std::fs::read_dir(registrations)
+            .ok()?
+            .flatten()
+            .find_map(|entry| {
+                let admin = entry.path();
+                let locked = std::fs::read_to_string(admin.join("locked")).ok()?;
+                if line(locked) != reason {
+                    return None;
+                }
+                // Relative to the registration under `worktree.useRelativePaths`.
+                let gitdir = admin.join(line(std::fs::read_to_string(admin.join("gitdir")).ok()?));
+                let path = gitdir.parent()?.to_owned();
+                Some(std::fs::canonicalize(&path).unwrap_or(path))
+            })
+    })
+    .await
+    .map_err(|e| invalid(cwd, e.to_string()))?;
+    if let Some(path) = found {
+        git(
+            "GitVcsDriver.createWorktree.unlock",
+            cwd,
+            [
+                "worktree".to_owned(),
+                "unlock".into(),
+                "--".into(),
+                path.to_string_lossy().into_owned(),
+            ],
+        )
+        .run()
+        .await?;
     }
-    Ok(None)
+    Ok(())
 }
 
 /// [`discard`] for a checkout a cancel cut short: first unlocks it when Git still holds the
