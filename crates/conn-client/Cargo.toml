@@ -21,6 +21,8 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+# Paused test clock for the attachment download deadlines.
+tokio = { workspace = true, features = ["test-util"] }
 conn-state = { workspace = true, features = ["testkit"] }
 tempfile.workspace = true
 

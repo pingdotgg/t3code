@@ -2,20 +2,23 @@
 //!
 //! Web Conn shows the image itself (`ComposerAttachmentStrip.tsx`, `TimelineUserMessageRow.tsx`:
 //! `object-cover` in a rounded, bordered cell). A staged file already has its bytes; a sent
-//! message holds only the attachment id, so [`AttachmentImageState`] downloads it through
-//! `assets.createUrl` and a signed `GET` (`Connection::fetch_attachment_bytes`).
+//! message holds only the attachment id, so the chat downloads it through `assets.createUrl`
+//! and a signed `GET` (`Connection::fetch_attachment_bytes_within`) and keeps a thumbnail decoded at
+//! tile size ([`super::thumb_cache`]).
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use conn_client::Connection;
 use conn_theme::Tokens;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, Image, ImageFormat, ImageSource, InteractiveElement as _,
-    IntoElement as _, ObjectFit, ParentElement as _, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledImage as _, Window, div, img, px,
+    AnyElement, App, ClickEvent, Image, ImageFormat, ImageSource, InteractiveElement as _,
+    IntoElement as _, ObjectFit, ParentElement as _, RenderImage, SharedString,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, SvgRenderer, Window, div, img,
+    px,
 };
 
 use super::icons;
+use super::thumb_cache::{TargetPx, grid_tile_px, thumbnail_for};
 use crate::a11y::ConnA11yExt as _;
 use crate::theme::{hsla, hsla_alpha};
 
@@ -41,6 +44,7 @@ pub(super) fn preview_image(mime_type: &str, bytes: Vec<u8>) -> Option<Arc<Image
 
 /// Width over height of an image, from the header of `bytes` (no pixel decode). `None` when
 /// the format is not one the `image` crate reads (SVG, BMP, TIFF) or the header is bad.
+#[cfg(test)]
 pub(super) fn image_aspect_ratio(bytes: &[u8]) -> Option<f32> {
     let (width, height) = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -51,6 +55,7 @@ pub(super) fn image_aspect_ratio(bytes: &[u8]) -> Option<f32> {
 }
 
 /// Width over height, or `None` for a zero side.
+#[cfg(test)]
 fn aspect_ratio(width: u32, height: u32) -> Option<f32> {
     (width > 0 && height > 0).then(|| width as f32 / height as f32)
 }
@@ -65,47 +70,94 @@ fn box_height(width: f32, aspect: Option<f32>) -> f32 {
 /// The box of a single image until its own ratio is known.
 const LOADING_ASPECT: f32 = 4.0 / 3.0;
 
-/// Where one downloaded attachment image stands.
-#[derive(Clone)]
-pub(super) enum AttachmentImageLoad {
-    Loading,
-    /// The picture and its width over height, when the header told.
-    Ready(Arc<Image>, Option<f32>),
+/// A sent image in the chat's thumbnail cache.
+pub(super) enum SentImage {
+    /// The download or decode with this request number is waiting or running.
+    Loading(u64),
+    /// Pixels decoded at tile size, and the picture's width over height.
+    Ready(Arc<RenderImage>, Option<f32>),
     Failed,
 }
 
-/// Holds the download of one attachment image. The chat observes it and repaints when it ends.
-pub(super) struct AttachmentImageState {
-    pub(super) load: AttachmentImageLoad,
+impl SentImage {
+    /// What to paint, once there is something.
+    pub(super) fn source(&self) -> Option<(ImageSource, Option<f32>)> {
+        match self {
+            Self::Ready(image, aspect) => Some((ImageSource::Render(image.clone()), *aspect)),
+            Self::Loading(_) | Self::Failed => None,
+        }
+    }
+
+    /// Frees the window textures once the cache let this go. Deferred, so a window that is
+    /// painting right now is back in the app and loses its texture too.
+    pub(super) fn release(self, cx: &mut App) {
+        if let Self::Ready(image, _) = self {
+            cx.defer(move |cx| cx.drop_image(image, None));
+        }
+    }
 }
 
-impl AttachmentImageState {
-    pub(super) fn fetch(
-        connection: Connection,
-        attachment_id: String,
-        mime_type: String,
-        cx: &mut Context<'_, Self>,
-    ) -> Self {
-        cx.spawn(async move |this, cx| {
-            let result = connection.fetch_attachment_bytes(&attachment_id).await;
-            let load = match result {
-                Ok(bytes) => {
-                    let aspect = image_aspect_ratio(&bytes);
-                    preview_image(&mime_type, bytes).map_or(AttachmentImageLoad::Failed, |image| {
-                        AttachmentImageLoad::Ready(image, aspect)
-                    })
-                }
-                Err(_) => AttachmentImageLoad::Failed,
-            };
-            let _ = this.update(cx, |state, cx| {
-                state.load = load;
-                cx.notify();
-            });
-        })
-        .detach();
-        Self {
-            load: AttachmentImageLoad::Loading,
+/// One thumbnail load: what to download.
+pub(super) struct ThumbJob {
+    pub(super) attachment_id: String,
+    pub(super) mime_type: String,
+}
+
+/// Turns downloaded `bytes` into a still thumbnail entry and its cost in decoded bytes
+/// ([`thumbnail_for`]): only SVG, BMP and TIFF go through GPUI's own decoder, then the same
+/// crop and scale, so every entry is a texture the chat owns and frees.
+/// Stops early once `cancel` is set. Slow: run it off the UI thread.
+pub(super) fn load_sent_image(
+    mime_type: &str,
+    bytes: Vec<u8>,
+    target: TargetPx,
+    svg_renderer: SvgRenderer,
+    cancel: &AtomicBool,
+) -> (SentImage, usize) {
+    let thumb = thumbnail_for(mime_type, bytes, target, cancel, |bytes| {
+        let format = image_format_for_mime(mime_type)?;
+        let decoded = Image::from_bytes(format, bytes)
+            .to_image_data(svg_renderer)
+            .ok()?;
+        let size = decoded.size(0);
+        image::RgbaImage::from_raw(
+            u32::try_from(size.width.0).ok()?,
+            u32::try_from(size.height.0).ok()?,
+            decoded.as_bytes(0)?.to_vec(),
+        )
+    });
+    match thumb {
+        Some(thumb) => {
+            let cost = thumb.byte_len();
+            let image = RenderImage::new(vec![image::Frame::new(thumb.pixels)]);
+            (SentImage::Ready(Arc::new(image), thumb.aspect), cost)
         }
+        None => (SentImage::Failed, 0),
+    }
+}
+
+/// The widest a sent bubble gets: 80% of the capped chat column. Thumbnails decode for this
+/// width, so resizing the window never decodes again.
+const BUBBLE_MAX_PX: f32 = super::CHAT_CONTENT_MAX_WIDTH_PX * 0.8;
+
+/// The pixel size to decode a gallery tile at, in a gallery of `columns` at `scale`.
+pub(super) fn gallery_tile_target(columns: usize, scale: f32) -> TargetPx {
+    let (width, height) = grid_tile_px(
+        BUBBLE_MAX_PX,
+        GALLERY_INSET_PX,
+        columns,
+        GALLERY_TILE_ASPECT,
+    );
+    TargetPx::from_logical(width, height, scale)
+}
+
+/// The pixel size to decode a queued or file bubble's image at: one image takes the bubble's
+/// width, several take `cell` logical px each.
+pub(super) fn chip_target(single: bool, cell: (f32, f32), scale: f32) -> TargetPx {
+    if single {
+        TargetPx::from_logical(BUBBLE_MAX_PX, 0.0, scale)
+    } else {
+        TargetPx::from_logical(cell.0, cell.1, scale)
     }
 }
 
@@ -123,7 +175,7 @@ pub(super) enum ThumbFit {
 /// own `radius`: GPUI's `overflow_hidden` clips to the rectangle, not to rounded corners (#342).
 /// The parent sets border and `overflow_hidden`, and the size for [`ThumbFit::Cover`].
 pub(super) fn thumbnail(
-    image: Option<Arc<Image>>,
+    image: Option<ImageSource>,
     tokens: &Tokens,
     radius: f32,
     fit: ThumbFit,
@@ -139,7 +191,7 @@ pub(super) fn thumbnail(
             .into_any_element()
     };
     match (image, fit) {
-        (Some(image), ThumbFit::Cover) => img(ImageSource::Image(image))
+        (Some(image), ThumbFit::Cover) => img(image)
             .size_full()
             .rounded(px(radius))
             .object_fit(ObjectFit::Cover)
@@ -152,7 +204,7 @@ pub(super) fn thumbnail(
             .w_full()
             .aspect_ratio(aspect)
             .child(
-                img(ImageSource::Image(image))
+                img(image)
                     .size_full()
                     .rounded(px(radius))
                     .object_fit(ObjectFit::Contain)
@@ -160,7 +212,7 @@ pub(super) fn thumbnail(
             )
             .into_any_element(),
         // A format whose size we cannot read: the picture's own layout.
-        (Some(image), ThumbFit::FullWidth(None)) => img(ImageSource::Image(image))
+        (Some(image), ThumbFit::FullWidth(None)) => img(image)
             .w_full()
             .rounded(px(radius))
             .object_fit(ObjectFit::Contain)
@@ -181,6 +233,132 @@ pub(super) fn thumbnail(
             .child(placeholder())
             .into_any_element(),
     }
+}
+
+/// Gap between gallery tiles and the inset of the gallery inside a sent image bubble.
+pub(super) const GALLERY_INSET_PX: f32 = 3.0;
+/// Corner radius where two tiles meet or a tile meets an open cell.
+const GALLERY_TILE_RADIUS_PX: f32 = 3.0;
+/// Width over height of every gallery tile.
+const GALLERY_TILE_ASPECT: f32 = 4.0 / 3.0;
+const GALLERY_MAX_COLUMNS: usize = 4;
+
+/// Columns of a sent image gallery: one per image, at most four.
+pub(super) fn gallery_columns(image_count: usize) -> usize {
+    image_count.clamp(1, GALLERY_MAX_COLUMNS)
+}
+
+/// The outside corner of the gallery: the bubble radius less the inset around the gallery.
+fn gallery_outer_radius_px() -> f32 {
+    super::BUBBLE_RADIUS_PX - GALLERY_INSET_PX
+}
+
+/// Corner radii of one gallery tile, in px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct TileRadii {
+    pub(super) top_left: f32,
+    pub(super) top_right: f32,
+    pub(super) bottom_right: f32,
+    pub(super) bottom_left: f32,
+}
+
+/// Radii of tile `index` of `count` in a grid of `columns`. A tile on a corner of the gallery
+/// takes the outer radius (web masks the grid with `overflow: hidden`); every other corner is
+/// the small tile radius. A ragged last row leaves its right end open, so the tile above that
+/// gap keeps the small radius at its bottom right.
+pub(super) fn tile_radii(index: usize, count: usize, columns: usize) -> TileRadii {
+    let outer = gallery_outer_radius_px();
+    let row = index / columns;
+    let column = index % columns;
+    let last_row = count.div_ceil(columns).saturating_sub(1);
+    let pick = |on_corner: bool| {
+        if on_corner {
+            outer
+        } else {
+            GALLERY_TILE_RADIUS_PX
+        }
+    };
+    let (top, bottom) = (row == 0, row == last_row);
+    let (left, right) = (column == 0, column == columns - 1);
+    TileRadii {
+        top_left: pick(top && left),
+        top_right: pick(top && right),
+        bottom_right: pick(bottom && right),
+        bottom_left: pick(bottom && left),
+    }
+}
+
+/// Splits `items` into runs of equal `kind`, keeping their order: `(kind, start..end)`.
+pub(super) fn runs_by<T>(
+    items: &[T],
+    kind: impl Fn(&T) -> bool,
+) -> Vec<(bool, std::ops::Range<usize>)> {
+    let mut runs: Vec<(bool, std::ops::Range<usize>)> = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let kind = kind(item);
+        match runs.last_mut() {
+            Some((last, range)) if *last == kind => range.end = index + 1,
+            _ => runs.push((kind, index..index + 1)),
+        }
+    }
+    runs
+}
+
+/// A 4:3 gallery tile that fills its grid cell: the picture centered and cropped to cover, with
+/// `radii` on its visible corners. GPUI's `img` clips a cover-scaled picture to the element
+/// bounds first and rounds that visible quad, so a portrait or landscape picture keeps its
+/// round corners. The tile paints no border, and the picture is absolutely placed so its
+/// natural size never feeds the grid row height.
+pub(super) fn gallery_tile(
+    image: Option<ImageSource>,
+    tokens: &Tokens,
+    radii: TileRadii,
+) -> AnyElement {
+    let muted = hsla(tokens.muted_foreground);
+    let fill = hsla_alpha(tokens.muted, 0.60);
+    let placeholder = move || {
+        div()
+            .size_full()
+            .rounded_tl(px(radii.top_left))
+            .rounded_tr(px(radii.top_right))
+            .rounded_br(px(radii.bottom_right))
+            .rounded_bl(px(radii.bottom_left))
+            .bg(fill)
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(icons::icon(icons::IMAGE, 16.0, muted))
+            .into_any_element()
+    };
+    match image {
+        Some(image) => img(image)
+            .absolute()
+            .inset_0()
+            .size_full()
+            .rounded_tl(px(radii.top_left))
+            .rounded_tr(px(radii.top_right))
+            .rounded_br(px(radii.bottom_right))
+            .rounded_bl(px(radii.bottom_left))
+            .object_fit(ObjectFit::Cover)
+            .with_fallback(placeholder)
+            .into_any_element(),
+        None => div()
+            .absolute()
+            .inset_0()
+            .child(placeholder())
+            .into_any_element(),
+    }
+}
+
+/// The 4:3 cell of a gallery tile; [`gallery_tile`] fills it.
+pub(super) fn gallery_cell(
+    id: impl Into<gpui_kit::ElementId>,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div()
+        .id(id)
+        .relative()
+        .min_w_0()
+        .aspect_ratio(GALLERY_TILE_ASPECT)
 }
 
 /// A staged image in the composer strip (`ComposerAttachmentStrip.tsx`): a `64px` square,
@@ -214,7 +392,12 @@ pub(super) fn staged_image_chip(
             hsla_alpha(tokens.border, 0.80)
         })
         // 8px outer radius, so the picture inside the 1px border takes 7px.
-        .child(thumbnail(Some(image), tokens, 7.0, ThumbFit::Cover));
+        .child(thumbnail(
+            Some(ImageSource::Image(image)),
+            tokens,
+            7.0,
+            ThumbFit::Cover,
+        ));
     if uploading || failed {
         chip = chip.child(
             div()
@@ -293,6 +476,70 @@ mod tests {
     fn portrait_box_is_tall() {
         let aspect = image_aspect_ratio(&png(300, 600));
         assert!((box_height(400.0, aspect) - 800.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn gallery_has_one_column_per_image_up_to_four() {
+        let columns: Vec<usize> = [0, 1, 2, 3, 4, 5, 9].map(gallery_columns).into();
+        assert_eq!(columns, [1, 1, 2, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn only_gallery_corners_take_the_outer_radius() {
+        let (outer, inner) = (11.0, 3.0);
+        let radii = |top_left, top_right, bottom_right, bottom_left| TileRadii {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        };
+        // (index, count): one tile, a full row, the middle of a row.
+        assert_eq!(
+            tile_radii(0, 1, gallery_columns(1)),
+            radii(outer, outer, outer, outer)
+        );
+        assert_eq!(tile_radii(0, 2, 2), radii(outer, inner, inner, outer));
+        assert_eq!(tile_radii(1, 3, 3), radii(inner, inner, inner, inner));
+        assert_eq!(tile_radii(2, 3, 3), radii(inner, outer, outer, inner));
+        // Five images: a full row of four, then one tile at the left. The open cells at the
+        // bottom right leave the fourth tile's bottom right square.
+        assert_eq!(tile_radii(0, 5, 4), radii(outer, inner, inner, inner));
+        assert_eq!(tile_radii(3, 5, 4), radii(inner, outer, inner, inner));
+        assert_eq!(tile_radii(4, 5, 4), radii(inner, inner, inner, outer));
+        // Eight images fill two rows, so the last tile closes the bottom right.
+        assert_eq!(tile_radii(7, 8, 4), radii(inner, inner, outer, inner));
+        // Six images: the sixth tile sits under the second, away from every corner.
+        assert_eq!(tile_radii(5, 6, 4), radii(inner, inner, inner, inner));
+    }
+
+    #[test]
+    fn mixed_message_runs_share_one_column_count() {
+        // image, file, image, image: three images make three columns for every run.
+        let kinds = [true, false, true, true];
+        let columns = gallery_columns(kinds.iter().filter(|kind| **kind).count());
+        assert_eq!(columns, 3);
+        let (outer, inner) = (11.0, 3.0);
+        let radii = |top_left, top_right, bottom_right, bottom_left| TileRadii {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        };
+        // A lone tile in a three-column grid is left aligned: its right edge is internal.
+        assert_eq!(tile_radii(0, 1, columns), radii(outer, inner, inner, outer));
+        // The two-tile run starts at the left edge and ends one column short of the right.
+        assert_eq!(tile_radii(0, 2, columns), radii(outer, inner, inner, outer));
+        assert_eq!(tile_radii(1, 2, columns), radii(inner, inner, inner, inner));
+    }
+
+    #[test]
+    fn attachments_keep_their_order_in_runs() {
+        let kinds = [true, true, false, false, true];
+        assert_eq!(
+            runs_by(&kinds, |kind| *kind),
+            [(true, 0..2), (false, 2..4), (true, 4..5)]
+        );
+        assert!(runs_by(&[] as &[bool], |kind| *kind).is_empty());
     }
 
     #[test]

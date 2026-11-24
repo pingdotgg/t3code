@@ -28,6 +28,10 @@ mod provider_banner;
 mod question_logic;
 mod question_panel;
 mod spinner;
+mod thumb_cache;
+
+/// A sent image thumbnail: attachment id and decode size.
+type ThumbKey = (String, thumb_cache::TargetPx);
 mod toc;
 
 use std::collections::{HashMap, HashSet};
@@ -284,10 +288,18 @@ pub(crate) struct ChatView {
     composer_height: Rc<std::cell::Cell<f32>>,
     /// The `composer_height` the last row was measured with.
     composer_height_applied: f32,
-    /// Downloaded image attachments of sent messages, by attachment id (filled while rendering).
-    attachment_images: std::cell::RefCell<
-        HashMap<String, (Entity<attachment_thumb::AttachmentImageState>, Subscription)>,
-    >,
+    /// Thumbnails of sent image attachments, by attachment id and decode size (filled while
+    /// rendering, bounded by [`thumb_cache::THUMB_BUDGET_BYTES`]).
+    attachment_thumbs:
+        std::cell::RefCell<thumb_cache::ByteLru<ThumbKey, attachment_thumb::SentImage>>,
+    /// Thumbnail loads waiting or running, at most [`thumb_cache::LOAD_CONCURRENCY`] at once.
+    thumb_loads: std::cell::RefCell<thumb_cache::LoadQueue<ThumbKey, attachment_thumb::ThumbJob>>,
+    /// The cancel flags of started thumbnail loads, by request.
+    thumb_cancels: std::cell::RefCell<HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// Number of the next thumbnail load, so a stale load never fills a newer entry.
+    next_thumb_request: std::cell::Cell<u64>,
+    /// The window's scale factor while timeline rows render; thumbnails decode at it.
+    thumb_scale: f32,
     /// The latest run when it was interrupted (`You stopped after ...`).
     interrupted_run_id: Option<String>,
     /// Copy button currently showing its check (`MessageCopyButton`).
@@ -506,7 +518,15 @@ impl ChatView {
             link_preview: link_preview::LinkPreview::default(),
             composer_height: Rc::new(std::cell::Cell::new(0.0)),
             composer_height_applied: 0.0,
-            attachment_images: std::cell::RefCell::new(HashMap::new()),
+            attachment_thumbs: std::cell::RefCell::new(thumb_cache::ByteLru::new(
+                thumb_cache::THUMB_BUDGET_BYTES,
+            )),
+            thumb_loads: std::cell::RefCell::new(thumb_cache::LoadQueue::new(
+                thumb_cache::LOAD_CONCURRENCY,
+            )),
+            thumb_cancels: std::cell::RefCell::new(HashMap::new()),
+            next_thumb_request: std::cell::Cell::new(0),
+            thumb_scale: 1.0,
             interrupted_run_id: None,
             copied_message_key: None,
             _copy_reset: None,
@@ -536,7 +556,7 @@ impl ChatView {
     ) {
         self.connected = connection.is_some();
         self.connection = connection.clone();
-        self.attachment_images.borrow_mut().clear();
+        self.clear_thumbs(cx);
         self.composer
             .update(cx, |c, cx| c.set_connection(connection, cx));
         cx.notify();
@@ -2068,42 +2088,92 @@ impl ChatView {
         let text = &*cache::humanize_task_ids(self.cache.rows(), text);
         // Conn `TimelineUserMessageRow`: `max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)!
         // bg-message text-message-foreground px-4 pt-2.5 pb-3 text-sm leading-relaxed`.
-        let preview: String = text.chars().take(120).collect();
+        let has_images = attachments
+            .iter()
+            .any(|att| matches!(att, ChatAttachment::Image(_)));
+        // An image message labels its Article structurally; its caption is a Label of its own.
+        let article_label: String = if has_images {
+            "User message".to_owned()
+        } else {
+            text.chars().take(120).collect()
+        };
         let mut bubble = div()
             .id(SharedString::from(format!("chat-user-{id}")))
             .a11y(
                 gpui_kit::Role::Article,
                 SharedString::from(format!("chat.message.user.{id}")),
-                preview,
+                article_label,
             )
             .relative()
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .max_w(relative(0.8))
             .min_w_0()
             .rounded(px(BUBBLE_RADIUS_PX))
             .bg(hsla(self.tokens.message_surface))
             .border_t_1()
             .border_color(message_highlight(&self.tokens))
-            .px(px(16.0))
-            .pt(px(10.0))
-            .pb(px(12.0))
             .text_size(px(BODY_FONT_PX))
             .line_height(px(BODY_LINE_HEIGHT_PX))
             .text_color(hsla(self.tokens.message_foreground));
-        if !attachments.is_empty() {
-            bubble =
-                bubble.child(self.render_attachment_chips(&format!("user-{id}"), attachments, cx));
-        }
-        if !text.is_empty() {
-            bubble = bubble.child(div().min_w_0().child(text.to_owned()));
+        // Image bubble: 80% wide, 3px inset (highlight included) on top, sides and bottom, the
+        // galleries painted on it. The caption comes first (16px sides, text 12px from the top),
+        // then 8px to the attachments. The radius stays 14px when grouped.
+        if has_images {
+            bubble = bubble
+                .w(relative(0.8))
+                .pt(px(attachment_thumb::GALLERY_INSET_PX - 1.0))
+                .pb(px(attachment_thumb::GALLERY_INSET_PX));
+            if !text.is_empty() {
+                let caption = SharedString::from(text.to_owned());
+                bubble = bubble.child(
+                    div()
+                        .min_w_0()
+                        .px(px(16.0))
+                        .pt(px(12.0 - attachment_thumb::GALLERY_INSET_PX))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("chat-caption-{id}")))
+                                .a11y(
+                                    gpui_kit::Role::Label,
+                                    SharedString::from(format!("chat.caption.{id}")),
+                                    caption.clone(),
+                                )
+                                .min_w_0()
+                                .child(caption),
+                        ),
+                );
+            }
+            for block in self.render_sent_attachments(
+                &format!("user-{id}"),
+                attachments,
+                !text.is_empty(),
+                cx,
+            ) {
+                bubble = bubble.child(block);
+            }
+        } else {
+            bubble = bubble
+                .max_w(relative(0.8))
+                .px(px(16.0))
+                .pt(px(10.0))
+                .pb(px(12.0));
+            if !attachments.is_empty() {
+                bubble = bubble.child(self.render_attachment_chips(
+                    &format!("user-{id}"),
+                    attachments,
+                    cx,
+                ));
+            }
+            if !text.is_empty() {
+                bubble = bubble.child(div().min_w_0().child(text.to_owned()));
+            }
         }
 
-        if grouped_with_previous {
+        if grouped_with_previous && !has_images {
             bubble = bubble.rounded_tr(px(BUBBLE_GROUPED_RADIUS_PX));
         }
-        if grouped_with_next {
+        if grouped_with_next && !has_images {
             bubble = bubble.rounded_br(px(BUBBLE_GROUPED_RADIUS_PX));
         }
 
@@ -3393,6 +3463,7 @@ impl ChatView {
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.log_first_paint();
+        self.sweep_thumb_loads(cx);
         if !self.pending_card_ids.is_empty()
             || !self.user_input_cards.is_empty()
             || !self.secret_forms.is_empty()
@@ -3504,7 +3575,10 @@ impl Render for ChatView {
             let list_state = self.list_state.clone();
             let virtual_list = list(
                 list_state.clone(),
-                cx.processor(|this, ix: usize, _window, cx| this.render_virtual_item(ix, cx)),
+                cx.processor(|this, ix: usize, window, cx| {
+                    this.thumb_scale = window.scale_factor();
+                    this.render_virtual_item(ix, cx)
+                }),
             )
             .size_full()
             .min_h_0();

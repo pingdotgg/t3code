@@ -10,6 +10,8 @@
 //!   day-aware timestamps (`timestampFormat.ts`), Copy, and Fork.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use conn_state::{
@@ -43,6 +45,14 @@ const SUMMARY_CLAMP_PX: f32 = 4.0 * BODY_LINE_HEIGHT_PX;
 const SUMMARY_FADE_PX: f32 = 32.0;
 /// Where a card's second and third lines start: icon (16) + gap (10).
 const SUBAGENT_TEXT_INDENT_PX: f32 = 26.0;
+
+fn attachment_name(att: &conn_contract::ChatAttachment) -> &str {
+    match att {
+        conn_contract::ChatAttachment::Image(image) => &image.name,
+        conn_contract::ChatAttachment::File(file) => &file.name,
+        conn_contract::ChatAttachment::Unknown(unknown) => &unknown.name,
+    }
+}
 
 /// The `expanded_ids` key of a subagent card's summary.
 pub(super) fn subagent_summary_key(entry_id: &str) -> String {
@@ -253,37 +263,147 @@ impl ChatView {
         )
     }
 
-    /// The downloaded image of a sent attachment, once it arrived. The first call starts the
-    /// download; the chat repaints when it ends.
+    /// The thumbnail of a sent attachment at `target` px, once it is decoded. The first call
+    /// queues its download and decode; the chat repaints when it ends.
     fn attachment_image(
         &self,
         image: &conn_contract::ChatImageAttachment,
+        target: super::thumb_cache::TargetPx,
         cx: &mut Context<'_, Self>,
-    ) -> Option<(std::sync::Arc<gpui_kit::Image>, Option<f32>)> {
-        let connection = self.connection.clone()?;
-        let mut images = self.attachment_images.borrow_mut();
-        let (state, _) = images.entry(image.id.clone()).or_insert_with(|| {
-            let state = cx.new(|cx| {
-                super::attachment_thumb::AttachmentImageState::fetch(
-                    connection,
-                    image.id.clone(),
-                    image.mime_type.clone(),
-                    cx,
-                )
-            });
-            let subscription = cx.observe(&state, |_, _, cx| cx.notify());
-            (state, subscription)
-        });
-        match &state.read(cx).load {
-            super::attachment_thumb::AttachmentImageLoad::Ready(image, aspect) => {
-                Some((image.clone(), *aspect))
+    ) -> Option<(gpui_kit::ImageSource, Option<f32>)> {
+        use super::attachment_thumb::{SentImage, ThumbJob};
+        self.connection.as_ref()?;
+        let key = (image.id.clone(), target);
+        let mut thumbs = self.attachment_thumbs.borrow_mut();
+        if let Some(entry) = thumbs.get(&key) {
+            if matches!(entry, SentImage::Loading(_)) {
+                self.thumb_loads.borrow_mut().touch(&key);
             }
-            _ => None,
+            return entry.source();
+        }
+        let request = self.next_thumb_request.get();
+        self.next_thumb_request.set(request + 1);
+        for old in thumbs.insert(key.clone(), SentImage::Loading(request), 0) {
+            old.release(cx);
+        }
+        drop(thumbs);
+        let job = ThumbJob {
+            attachment_id: image.id.clone(),
+            mime_type: image.mime_type.clone(),
+        };
+        let start = self.thumb_loads.borrow_mut().request(request, key, job);
+        if let Some(start) = start {
+            self.start_thumb(start, cx);
+        }
+        None
+    }
+
+    /// Downloads and decodes one thumbnail; its permit in [`Self::thumb_loads`] is taken. The
+    /// task is never dropped: a cancel only sets its flag, so the permit stays held until the
+    /// download and decode have really returned.
+    pub(super) fn start_thumb(
+        &self,
+        (request, key, job): (u64, super::ThumbKey, super::attachment_thumb::ThumbJob),
+        cx: &mut Context<'_, Self>,
+    ) {
+        use super::attachment_thumb::{SentImage, load_sent_image};
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.thumb_cancels
+            .borrow_mut()
+            .insert(request, cancel.clone());
+        let connection = self.connection.clone();
+        let svg_renderer = cx.svg_renderer();
+        let target = key.1;
+        cx.spawn(async move |this, cx| {
+            let bytes = match connection {
+                Some(connection) if !cancel.load(Ordering::Relaxed) => connection
+                    .fetch_attachment_bytes_within(
+                        &job.attachment_id,
+                        super::thumb_cache::LOAD_DEADLINES,
+                    )
+                    .await
+                    .ok(),
+                _ => None,
+            };
+            let loaded = match bytes {
+                Some(bytes) if !cancel.load(Ordering::Relaxed) => {
+                    cx.background_executor()
+                        .spawn(async move {
+                            load_sent_image(&job.mime_type, bytes, target, svg_renderer, &cancel)
+                        })
+                        .await
+                }
+                _ => (SentImage::Failed, 0),
+            };
+            let _ = this.update(cx, |view, cx| view.finish_thumb(request, key, loaded, cx));
+        })
+        .detach();
+    }
+
+    /// The work of load `request` returned: frees its permit, starts the next waiting load,
+    /// and stores the result unless a cancel, newer load or reconnect replaced it.
+    fn finish_thumb(
+        &mut self,
+        request: u64,
+        key: super::ThumbKey,
+        (image, cost): (super::attachment_thumb::SentImage, usize),
+        cx: &mut Context<'_, Self>,
+    ) {
+        use super::attachment_thumb::SentImage;
+        self.thumb_cancels.get_mut().remove(&request);
+        for start in self.thumb_loads.get_mut().exited(request) {
+            self.start_thumb(start, cx);
+        }
+        let current = matches!(
+            self.attachment_thumbs.get_mut().peek(&key),
+            Some(SentImage::Loading(waiting)) if *waiting == request
+        );
+        if current {
+            for old in self.attachment_thumbs.get_mut().insert(key, image, cost) {
+                old.release(cx);
+            }
+            cx.notify();
+        } else {
+            image.release(cx);
         }
     }
 
-    /// Attachment chips/thumbnails shown in user and queued bubbles. Images are `4:3` cells with
-    /// `object-cover`, `rounded-lg` and a `border-border/80` edge, `20rem` wide for one image
+    /// Starts a thumbnail frame (the cache trims what is no longer drawn) and cancels loads of
+    /// tiles not drawn since the last call. Runs once per chat render, before the timeline
+    /// lays out its rows.
+    pub(super) fn sweep_thumb_loads(&mut self, cx: &mut Context<'_, Self>) {
+        for old in self.attachment_thumbs.get_mut().begin_frame() {
+            old.release(cx);
+        }
+        for (request, key) in self.thumb_loads.get_mut().sweep() {
+            if let Some(cancel) = self.thumb_cancels.get_mut().remove(&request) {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            let stale = matches!(
+                self.attachment_thumbs.get_mut().peek(&key),
+                Some(super::attachment_thumb::SentImage::Loading(waiting)) if *waiting == request
+            );
+            if stale && let Some(entry) = self.attachment_thumbs.get_mut().remove(&key) {
+                entry.release(cx);
+            }
+        }
+    }
+
+    /// Cancels every thumbnail load and drops every thumbnail (reconnect). Running work keeps
+    /// its permit until it returns.
+    pub(super) fn clear_thumbs(&mut self, cx: &mut Context<'_, Self>) {
+        let _running = self.thumb_loads.get_mut().clear();
+        for (_, cancel) in self.thumb_cancels.get_mut().drain() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        for image in self.attachment_thumbs.get_mut().clear() {
+            image.release(cx);
+        }
+    }
+
+    /// Attachment chips/thumbnails shown in queued bubbles and in sent bubbles with files only
+    /// (a sent bubble with images uses [`Self::render_sent_attachments`]). Images are `4:3`
+    /// cells with `object-cover`, `rounded-lg` and a `border-border/80` edge, `20rem` wide for one image
     /// and two columns for several (`TimelineUserMessageRow.tsx`).
     pub(super) fn render_attachment_chips(
         &self,
@@ -291,7 +411,6 @@ impl ChatView {
         attachments: &[conn_contract::ChatAttachment],
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        let muted = hsla(self.tokens.muted_foreground);
         let image_count = attachments
             .iter()
             .filter(|att| matches!(att, conn_contract::ChatAttachment::Image(_)))
@@ -311,8 +430,10 @@ impl ChatView {
             let chip_id = (SharedString::from(format!("att-{key}")), idx);
             let chip = match att {
                 conn_contract::ChatAttachment::Image(img) => {
-                    use super::attachment_thumb::{ThumbFit, thumbnail};
-                    let (loaded, aspect) = match self.attachment_image(img, cx) {
+                    use super::attachment_thumb::{ThumbFit, chip_target, thumbnail};
+                    let target =
+                        chip_target(image_count == 1, (image_w, image_h), self.thumb_scale);
+                    let (loaded, aspect) = match self.attachment_image(img, target, cx) {
                         Some((image, aspect)) => (Some(image), aspect),
                         None => (None, None),
                     };
@@ -341,31 +462,139 @@ impl ChatView {
                             .child(thumbnail(loaded, &self.tokens, 7.0, ThumbFit::Cover))
                     }
                 }
-                conn_contract::ChatAttachment::File(file) => {
-                    let file_icon = crate::file_icons::file_icon(&file.name);
-                    let icon_color = file_icon
-                        .color
-                        .map(|c| hsla(c.for_appearance(self.tokens.appearance)))
-                        .unwrap_or(muted);
-                    self.attachment_pill(chip_id, file.name.clone())
-                        .child(icons::icon(file_icon.asset, 12.0, icon_color))
-                        .child(div().min_w_0().truncate().child(file.name.clone()))
-                }
-                conn_contract::ChatAttachment::Unknown(unknown) => self
-                    .attachment_pill(chip_id, unknown.name.clone())
-                    .child(div().min_w_0().truncate().child(unknown.name.clone())),
-            };
-            let name = match att {
-                conn_contract::ChatAttachment::Image(img) => &img.name,
-                conn_contract::ChatAttachment::File(file) => &file.name,
-                conn_contract::ChatAttachment::Unknown(unknown) => &unknown.name,
+                other => self.file_attachment_pill(chip_id, other),
             };
             row = row.child(chip.a11y_group(
                 format!("chat.attachment.{key}.{idx}"),
-                format!("Attachment {name}"),
+                format!("Attachment {}", attachment_name(att)),
             ));
         }
         row.into_any_element()
+    }
+
+    /// The pill of a non-image attachment: file icon and name, or the name alone.
+    fn file_attachment_pill(
+        &self,
+        id: (SharedString, usize),
+        att: &conn_contract::ChatAttachment,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        match att {
+            conn_contract::ChatAttachment::File(file) => {
+                let file_icon = crate::file_icons::file_icon(&file.name);
+                let icon_color = file_icon
+                    .color
+                    .map(|c| hsla(c.for_appearance(self.tokens.appearance)))
+                    .unwrap_or_else(|| hsla(self.tokens.muted_foreground));
+                self.attachment_pill(id, file.name.clone())
+                    .child(icons::icon(file_icon.asset, 12.0, icon_color))
+                    .child(div().min_w_0().truncate().child(file.name.clone()))
+            }
+            conn_contract::ChatAttachment::Unknown(unknown) => self
+                .attachment_pill(id, unknown.name.clone())
+                .child(div().min_w_0().truncate().child(unknown.name.clone())),
+            conn_contract::ChatAttachment::Image(image) => {
+                self.attachment_pill(id, image.name.clone())
+            }
+        }
+    }
+
+    /// The attachments of a sent user bubble, in their own order: each run of images is one
+    /// gallery painted straight on the bubble, each run of files a row of pills. The bubble owns
+    /// the insets of the galleries; the pill rows carry the 16px side padding of the caption.
+    /// `has_caption` tells a leading pill row whether the caption sits above it.
+    pub(super) fn render_sent_attachments(
+        &self,
+        key: &str,
+        attachments: &[conn_contract::ChatAttachment],
+        has_caption: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<AnyElement> {
+        use super::attachment_thumb::{gallery_columns, runs_by};
+        let is_image = |att: &conn_contract::ChatAttachment| {
+            matches!(att, conn_contract::ChatAttachment::Image(_))
+        };
+        // One column count for the whole message, so every run's tiles are the same size.
+        let columns = gallery_columns(attachments.iter().filter(|att| is_image(att)).count());
+        let runs = runs_by(attachments, is_image);
+        let last = runs.len().saturating_sub(1);
+        runs.into_iter()
+            .enumerate()
+            .map(|(position, (is_image, range))| {
+                let start = range.start;
+                let run = &attachments[range];
+                if is_image {
+                    self.render_image_gallery(key, start, run, columns, cx)
+                } else {
+                    // The bubble's top inset is 3px: without a caption above, a pill row
+                    // starts 10px down. The bubble's bottom inset is 3px: a last pill row sits
+                    // 12px above the edge.
+                    let mut row = div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.0))
+                        .px(px(16.0));
+                    if position == 0 && !has_caption {
+                        row = row.pt(px(7.0));
+                    }
+                    if position == last {
+                        row = row.pb(px(9.0));
+                    }
+                    for (offset, att) in run.iter().enumerate() {
+                        let idx = start + offset;
+                        let chip_id = (SharedString::from(format!("att-{key}")), idx);
+                        row = row.child(self.file_attachment_pill(chip_id, att).a11y_group(
+                            format!("chat.attachment.{key}.{idx}"),
+                            format!("Attachment {}", attachment_name(att)),
+                        ));
+                    }
+                    row.into_any_element()
+                }
+            })
+            .collect()
+    }
+
+    /// One run of images as a grid of `columns` equal columns of 4:3 cover tiles, 3px apart and
+    /// inset 3px from the bubble's sides. `columns` comes from the whole message, so a run with
+    /// fewer images than columns (or a partial last row) stays left aligned at the same tile
+    /// size. Tiles carry no border; the bubble is the frame.
+    fn render_image_gallery(
+        &self,
+        key: &str,
+        start: usize,
+        run: &[conn_contract::ChatAttachment],
+        columns: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        use super::attachment_thumb::{
+            GALLERY_INSET_PX, gallery_cell, gallery_tile, gallery_tile_target, tile_radii,
+        };
+        let target = gallery_tile_target(columns, self.thumb_scale);
+        let mut grid = div()
+            .grid()
+            .grid_cols(columns as u16)
+            .gap(px(GALLERY_INSET_PX))
+            .mx(px(GALLERY_INSET_PX))
+            .min_w_0();
+        for (offset, att) in run.iter().enumerate() {
+            let conn_contract::ChatAttachment::Image(image) = att else {
+                continue;
+            };
+            let idx = start + offset;
+            let loaded = self
+                .attachment_image(image, target, cx)
+                .map(|(image, _)| image);
+            let radii = tile_radii(offset, run.len(), columns);
+            let cell = gallery_cell((SharedString::from(format!("att-{key}")), idx))
+                .conn_tooltip(image.name.clone(), &self.tokens)
+                .child(gallery_tile(loaded, &self.tokens, radii));
+            grid = grid.child(cell.a11y_group(
+                format!("chat.attachment.{key}.{idx}"),
+                format!("Attachment {}", image.name),
+            ));
+        }
+        grid.into_any_element()
     }
 
     fn attachment_pill(

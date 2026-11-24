@@ -70,6 +70,61 @@ pub enum ClientError {
     Closed,
 }
 
+/// How long [`Connection::fetch_attachment_bytes_within`] waits for each step.
+#[derive(Clone, Copy, Debug)]
+pub struct FetchDeadlines {
+    /// The `assets.createUrl` call.
+    pub rpc: std::time::Duration,
+    /// The signed `GET`, from connecting until the whole body arrived.
+    pub download: std::time::Duration,
+}
+
+/// `fut`, or a [`ClientError::Connection`] timeout once `deadline` passes. Needs a Tokio
+/// runtime.
+async fn within<T>(
+    deadline: std::time::Duration,
+    label: &str,
+    fut: impl std::future::Future<Output = Result<T, ClientError>>,
+) -> Result<T, ClientError> {
+    tokio::time::timeout(deadline, fut).await.map_err(|_| {
+        ClientError::Connection(format!("{label} timed out after {}s", deadline.as_secs()))
+    })?
+}
+
+/// `GET`s `url` and reads the whole body, within `deadline` when given. Needs a Tokio runtime.
+async fn download_bytes(
+    http: reqwest::Client,
+    url: url::Url,
+    bearer: Option<String>,
+    deadline: Option<std::time::Duration>,
+) -> Result<Vec<u8>, ClientError> {
+    let failed = |err: reqwest::Error| {
+        if err.is_timeout() {
+            ClientError::Connection("attachment download timed out".to_owned())
+        } else {
+            ClientError::Connection(err.to_string())
+        }
+    };
+    let mut req = http.get(url);
+    if let Some(token) = bearer {
+        req = req.bearer_auth(token);
+    }
+    if let Some(deadline) = deadline {
+        req = req.timeout(deadline);
+    }
+    let resp = req.send().await.map_err(failed)?;
+    if !resp.status().is_success() {
+        return Err(ClientError::Connection(format!(
+            "attachment download failed ({})",
+            resp.status()
+        )));
+    }
+    resp.bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(failed)
+}
+
 /// How to reach and authenticate with a `conn-server`.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -448,6 +503,51 @@ impl Connection {
         &self,
         attachment_id: &str,
     ) -> Result<Vec<u8>, ClientError> {
+        let created = self.create_attachment_url(attachment_id).await?;
+        let url = self.http_base_url.join(&created.relative_url)?;
+        let http = self.http.clone();
+        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
+        self.run_on_tokio(
+            download_bytes(http, url, bearer, None),
+            "attachment download",
+        )
+        .await
+    }
+
+    /// [`Self::fetch_attachment_bytes`] that gives up after `deadlines`: the `assets.createUrl`
+    /// call and the `GET` (connect to last body byte) each fail with a timeout once theirs
+    /// passes. Both run on the client's runtime, so the work has ended when this returns.
+    ///
+    /// # Errors
+    /// Returns [`ClientError`] if the RPC, URL resolution or the download fails or times out.
+    pub async fn fetch_attachment_bytes_within(
+        &self,
+        attachment_id: &str,
+        deadlines: FetchDeadlines,
+    ) -> Result<Vec<u8>, ClientError> {
+        let this = self.clone();
+        let attachment_id = attachment_id.to_owned();
+        self.run_on_tokio(
+            async move {
+                let created = within(
+                    deadlines.rpc,
+                    "attachment url",
+                    this.create_attachment_url(&attachment_id),
+                )
+                .await?;
+                let url = this.http_base_url.join(&created.relative_url)?;
+                let bearer = this.bearer.read().ok().and_then(|g| g.clone());
+                download_bytes(this.http.clone(), url, bearer, Some(deadlines.download)).await
+            },
+            "attachment download",
+        )
+        .await
+    }
+
+    async fn create_attachment_url(
+        &self,
+        attachment_id: &str,
+    ) -> Result<conn_contract::rpc::assets::create_url::Success, ClientError> {
         let payload = conn_contract::AssetCreateUrlInput {
             resource: conn_contract::AssetResource::Attachment(
                 conn_contract::AssetResourceAttachment {
@@ -460,37 +560,9 @@ impl Connection {
                 },
             ),
         };
-        let created = self
-            .call::<conn_contract::rpc::assets::create_url::Payload, conn_contract::rpc::assets::create_url::Success>(
-                "assets.createUrl",
-                &payload,
-            )
-            .await?;
-        let url = self.http_base_url.join(&created.relative_url)?;
-        let http = self.http.clone();
-        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
-        self.run_on_tokio(
-            async move {
-                let mut req = http.get(url);
-                if let Some(token) = bearer {
-                    req = req.bearer_auth(token);
-                }
-                let resp = req
-                    .send()
-                    .await
-                    .map_err(|err| ClientError::Connection(err.to_string()))?;
-                if !resp.status().is_success() {
-                    return Err(ClientError::Connection(format!(
-                        "attachment download failed ({})",
-                        resp.status()
-                    )));
-                }
-                resp.bytes()
-                    .await
-                    .map(|bytes| bytes.to_vec())
-                    .map_err(|err| ClientError::Connection(err.to_string()))
-            },
-            "attachment download",
+        self.call::<conn_contract::rpc::assets::create_url::Payload, conn_contract::rpc::assets::create_url::Success>(
+            "assets.createUrl",
+            &payload,
         )
         .await
     }
@@ -1347,5 +1419,57 @@ mod tests {
         conn.close();
         let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_url_call_fails_at_its_deadline() {
+        let started = tokio::time::Instant::now();
+        let result: Result<(), _> = within(
+            Duration::from_secs(15),
+            "attachment url",
+            std::future::pending(),
+        )
+        .await;
+        let err = result.expect_err("a call that never answers times out");
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert_eq!(started.elapsed(), Duration::from_secs(15));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_download_body_fails_at_its_deadline() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        // Answers with headers promising 100 bytes, sends 7, then holds the socket open.
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")
+                .await;
+            std::future::pending::<()>().await;
+        });
+        let url = url::Url::parse(&format!("http://{address}/attachment")).expect("url");
+        let started = tokio::time::Instant::now();
+        let result = download_bytes(
+            reqwest::Client::new(),
+            url,
+            None,
+            Some(Duration::from_secs(30)),
+        )
+        .await;
+        let err = result.expect_err("a body that never ends times out");
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(started.elapsed() <= Duration::from_secs(30));
     }
 }
