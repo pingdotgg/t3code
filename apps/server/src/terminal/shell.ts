@@ -93,7 +93,7 @@ function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
   return env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
 }
 
-function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
+export function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
   return joinWindowsPath(
     windowsSystemRoot(env),
     "System32",

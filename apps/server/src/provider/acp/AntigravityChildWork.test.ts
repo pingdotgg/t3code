@@ -13,6 +13,7 @@ import {
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
   readAntigravityChildWork,
+  readAntigravityPendingReply,
 } from "./AntigravityChildWork.ts";
 import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
 import {
@@ -235,6 +236,31 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(child?.steps?.length).toBeLessThan(40);
       expect(child?.steps?.at(-1)?.text).toBe("marker 4242 found");
       expect(child?.steps?.[0]?.text?.length).toBeLessThanOrEqual(4_001);
+
+      const lastLine = JSON.stringify(transcriptLines[3]) + "\n";
+      const step = { step_index: 2, type: "VIEW_FILE", content: "" };
+      const remaining = 256 * 1024 - Buffer.byteLength(JSON.stringify(step) + "\n" + lastLine);
+      const firstLine = JSON.stringify({
+        ...step,
+        content: "é".repeat(Math.floor(remaining / 2)) + "x".repeat(remaining % 2),
+      });
+      const aligned = yield* makeProfile({
+        steps: autoApproved,
+        transcript: `${filler}\n${firstLine}\n${lastLine}`,
+      });
+      const [alignedChild] = yield* read(aligned.profile, `${ROOT}:1`);
+      expect(alignedChild).toMatchObject({
+        truncated: true,
+        steps: [{ index: 2 }, { index: 3 }],
+      });
+
+      const paddedLine = firstLine.padEnd(firstLine.length + Buffer.byteLength(lastLine) + 1);
+      const undelimited = yield* makeProfile({
+        steps: autoApproved,
+        transcript: filler + paddedLine,
+      });
+      const [undelimitedChild] = yield* read(undelimited.profile, `${ROOT}:1`);
+      expect(undelimitedChild).toMatchObject({ truncated: true, steps: [] });
     }),
   );
 
@@ -544,5 +570,116 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(children.every((child) => child.truncated)).toBe(true);
       expect(JSON.stringify(children).length).toBeLessThan(600 * 1024);
     }),
+  );
+
+  it.effect(
+    "detects unread high-priority inbox wakes and trailing waking SYSTEM_MESSAGE steps",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-pending-reply-" });
+        const write = (segments: ReadonlyArray<string>, body: string) => {
+          const file = path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            ROOT,
+            ".system_generated",
+            ...segments,
+          );
+          return fs
+            .makeDirectory(path.dirname(file), { recursive: true })
+            .pipe(Effect.andThen(fs.writeFileString(file, body)));
+        };
+        const pending = () =>
+          readAntigravityPendingReply({ profileDirectory: profile, sessionId: ROOT });
+
+        // Empty profile or invalid session id fails closed.
+        expect(yield* pending()).toBe(false);
+        expect(
+          yield* readAntigravityPendingReply({ profileDirectory: profile, sessionId: "../escape" }),
+        ).toBe(false);
+
+        // Low-priority unread notices (e.g. cancelled task / server restart) do not wake the agent.
+        yield* write(
+          ["messages", "low-1.json"],
+          JSON.stringify({ id: "low-1", priority: "MESSAGE_PRIORITY_LOW", sender: "system" }),
+        );
+        expect(yield* pending()).toBe(false);
+
+        // An unread high-priority message indicates a queued wake.
+        yield* write(
+          ["messages", "high-1.json"],
+          JSON.stringify({
+            id: "high-1",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: `${ROOT}/task-1`,
+          }),
+        );
+        expect(yield* pending()).toBe(true);
+
+        // Once marked read in read.json and followed by a completed PLANNER_RESPONSE, nothing is pending.
+        yield* write(["messages", "read.json"], JSON.stringify({ "high-1": true }));
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", status: "DONE", content: "Done." })}\n`,
+        );
+        expect(yield* pending()).toBe(false);
+
+        // A trailing waking SYSTEM_MESSAGE (even past a >64 KiB prefix) means the reply is in flight.
+        const filler = JSON.stringify({
+          step_index: 0,
+          type: "GENERIC",
+          status: "DONE",
+          content: "x".repeat(8_000),
+        });
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${Array.from({ length: 12 }, () => filler).join("\n")}\n${JSON.stringify({
+            step_index: 2,
+            type: "SYSTEM_MESSAGE",
+            status: "DONE",
+            content: "priority=MESSAGE_PRIORITY_HIGH task-2 finished",
+          })}\n`,
+        );
+        expect(yield* pending()).toBe(true);
+
+        // A low-priority-only trailing SYSTEM_MESSAGE does not hold the turn open.
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({
+            step_index: 3,
+            type: "SYSTEM_MESSAGE",
+            status: "DONE",
+            content: "priority=MESSAGE_PRIORITY_LOW server restart notice",
+          })}\n`,
+        );
+        expect(yield* pending()).toBe(false);
+
+        // Corrupt read.json fails closed rather than treating messages as unread.
+        yield* write(["messages", "read.json"], "{not json");
+        expect(yield* pending()).toBe(false);
+
+        // Symlinked transcript fails closed.
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-pending-outside-" });
+        const external = path.join(outside, "transcript.jsonl");
+        yield* fs.writeFileString(
+          external,
+          `${JSON.stringify({ step_index: 4, type: "SYSTEM_MESSAGE", status: "DONE", content: "priority=MESSAGE_PRIORITY_HIGH" })}\n`,
+        );
+        const transcriptPath = path.join(
+          profile,
+          "antigravity-acp",
+          "brain",
+          ROOT,
+          ".system_generated",
+          "logs",
+          "transcript.jsonl",
+        );
+        yield* fs.remove(transcriptPath);
+        yield* fs.symlink(external, transcriptPath);
+        expect(yield* pending()).toBe(false);
+      }),
   );
 });

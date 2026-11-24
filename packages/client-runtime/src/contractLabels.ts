@@ -283,6 +283,14 @@ const INSTALL_HINTS = [
       variable: "CAFE_TOKEN",
     },
   ),
+  msg(
+    "Install the TanStack Source CLI with {install}, then run {login}, save a token in Settings, or set {variable} on the server.",
+    {
+      install: "`curl -fsSL https://source.tanstack.com/install | sh`",
+      login: "`src auth login --web --hostname source.tanstack.com`",
+      variable: "SRC_TOKEN",
+    },
+  ),
 ];
 
 /** @public A source-control `installHint`, translated when it is one of the server's fixed hints. */

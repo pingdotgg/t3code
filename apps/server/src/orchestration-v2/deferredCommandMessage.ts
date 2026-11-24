@@ -6,13 +6,10 @@ const text = `json_extract(payload_json, '$.text')`;
 const whitespace = `'${JAVASCRIPT_TRIM_WHITESPACE}'`;
 
 /**
- * A user message that is a `/compact` or `/goal` command, whose turns defer context to the next
- * one. The partial index on it is only used when the read spells this text the same way.
+ * A user message that may be a slash command, whose turns defer context to the next one. The
+ * partial index on it is only used when the read spells this text the same way.
  */
-export const DEFERRED_COMMAND_MESSAGE_CONDITION = `role = 'user' AND (
-  lower(trim(${text}, ${whitespace})) = '/compact'
-  OR trim(${text}, ${whitespace}) GLOB '/goal*'
-)`;
+export const DEFERRED_COMMAND_MESSAGE_CONDITION = `role = 'user' AND trim(${text}, ${whitespace}) GLOB '/*'`;
 
 /** A user message starting `!`; settled shell runs defer history too. userShellCommand narrows it. */
 export const SHELL_COMMAND_MESSAGE_CONDITION = `role = 'user' AND ${text} GLOB '!*'`;
