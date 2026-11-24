@@ -20,12 +20,13 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   readonly queuedMessageCount: number;
   readonly deliveryDeferred: boolean;
 }): AnchorId | null {
-  if (input.deliveryDeferred || input.hasStartedTurn || input.hasUserMessage) {
-    return null;
-  }
-
+  // Keeping the first message's anchor holds a short thread in place; a follow-up never anchors.
   if (input.currentAnchorMessageId !== null) {
     return input.currentAnchorMessageId;
+  }
+
+  if (input.deliveryDeferred || input.hasStartedTurn || input.hasUserMessage) {
+    return null;
   }
 
   return input.queuedMessageCount > 0 ? null : input.submittedMessageId;

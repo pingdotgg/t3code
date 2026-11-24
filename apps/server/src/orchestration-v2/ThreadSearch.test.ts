@@ -305,6 +305,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
             plan.map((row) => row.detail).join("\n"),
           );
         }
+        // A cancelled run can hold tens of thousands of items; scanning them per hit took 50 s.
+        assert.isTrue(
+          plan.some(
+            (row) =>
+              row.detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx") &&
+              row.detail.includes("<expr>=?"),
+          ),
+          plan.map((row) => row.detail).join("\n"),
+        );
       }
     }),
   );
@@ -498,6 +507,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         [
           thread(parent, project),
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
+          message(
+            parent,
+            "webhook",
+            "assistant",
+            "Run it with https://relay.test/v1/hooks/0123456789abcdef/scheduled-task:7f3a9c1e/whk_secretvalue",
+          ),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
@@ -512,6 +527,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         result.matches.map((match) => [match.threadId, match.snippet]),
         [[parent, "Rename ThreadSearchService before shipping"]],
       );
+      // A snippet cut inside a webhook URL shows its token as withheld, and the token is not searchable.
+      assert.deepEqual(
+        (yield* search.search({ query: "7f3a9c1e" })).matches.map((match) => match.snippet),
+        ["…89abcdef/scheduled-task:7f3a9c1e/[withheld]"],
+      );
+      assert.deepEqual((yield* search.search({ query: "whk_secretvalue" })).matches, []);
       // "ab" alone cannot use the index; with a longer token it narrows the hits.
       assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
       assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
@@ -746,7 +767,8 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       const queued = ThreadId.make("thread:queued");
       const stopped = ThreadId.make("thread:stopped");
       const recovered = ThreadId.make("thread:recovered");
-      const run = (owner: ThreadId, status: "rolled_back" | "cancelled") =>
+      const restarted = ThreadId.make("thread:restarted");
+      const run = (owner: ThreadId, status: "rolled_back" | "cancelled", started = true) =>
         ({
           id: EventId.make(`run:${owner}`),
           type: "run.created",
@@ -767,7 +789,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
             activeAttemptId: null,
             status,
             requestedAt: at(1),
-            startedAt: at(1),
+            startedAt: started ? at(1) : null,
             completedAt: at(2),
             checkpointId: null,
             contextHandoffId: null,
@@ -818,7 +840,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
             runId: RunId.make(`run:${rewound}`),
           }),
           thread(queued, project),
-          run(queued, "cancelled"),
+          run(queued, "cancelled", false),
           message(queued, "queued-prompt", "user", "then mount the albatross drive", {
             runId: RunId.make(`run:${queued}`),
           }),
@@ -840,6 +862,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
             runId: RunId.make(`run:${recovered}`),
           }),
           shown(recovered, "recovered-reply", "reply"),
+          // A restart cancels a turn that already took its queued prompt.
+          thread(restarted, project),
+          run(restarted, "cancelled"),
+          message(restarted, "delivered-prompt", "user", "then label the albatross drive", {
+            runId: RunId.make(`run:${restarted}`),
+          }),
+          shown(restarted, "delivered-prompt", "queued_turn"),
         ],
         projections.apply,
         { discard: true },
@@ -848,7 +877,11 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         (yield* search.search({ query: "albatross" })).matches
           .map((match) => match.messageId)
           .sort(),
-        [MessageId.make("recovered-reply"), MessageId.make("stopped-prompt")],
+        [
+          MessageId.make("delivered-prompt"),
+          MessageId.make("recovered-reply"),
+          MessageId.make("stopped-prompt"),
+        ],
       );
     }),
   );
@@ -860,6 +893,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       const project = ProjectId.make("project:heron");
       const labeled = ThreadId.make("thread:heron-label");
       const addressOnly = ThreadId.make("thread:heron-address");
+      const mention = ThreadId.make("thread:heron-mention");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -867,6 +901,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           message(labeled, "heron-label", "assistant", "See [the heron plan](https://x.dev/a) now"),
           thread(addressOnly, project),
           message(addressOnly, "heron-address", "user", "Read [this](https://heron.dev/b)"),
+          thread(mention, project),
+          message(
+            mention,
+            "heron-mention",
+            "user",
+            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py) and [\_café\_.py](pkg/_caf%C3%A9_.py)`,
+          ),
         ],
         projections.apply,
         { discard: true },
@@ -876,6 +917,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         matches.map((match) => [match.threadId, match.snippet]),
         [[labeled, "See the heron plan now"]],
       );
+      for (const query of ["__init__.py", "_café_.py"]) {
+        const mentions = yield* search.search({ query });
+        assert.deepEqual(
+          mentions.matches.map((match) => [match.threadId, match.snippet]),
+          [[mention, "Fix __init__.py and _café_.py"]],
+        );
+      }
     }),
   );
 
@@ -1134,12 +1182,22 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
           thread(id("elsewhere"), other, { title: "Kestrel nest", settledAt: old }),
           thread(id("note"), project, { title: "Unrelated", settledAt: old }),
           thread(id("new-note"), project, { title: "Unrelated", settledAt: at(50) }),
+          thread(id("archived"), project, {
+            title: "Kestrel nest",
+            settledAt: old,
+            archivedAt: old,
+          }),
+          thread(id("archived-note"), project, {
+            title: "Unrelated",
+            settledAt: old,
+            archivedAt: old,
+          }),
         ],
         projections.apply,
         { discard: true },
       );
       const before = DateTime.formatIso(at(30));
-      const messageThreadIds = [id("new-note"), id("note"), id("old")];
+      const messageThreadIds = [id("new-note"), id("note"), id("archived-note"), id("old")];
       assert.sameMembers(
         [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],
