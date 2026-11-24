@@ -8,6 +8,34 @@ import { validateAntigravityCallbackUrl } from "./antigravityCallback.ts";
 const instanceId = ProviderInstanceId.make("antigravity-callback-test");
 const pending = { redirectUri: "http://127.0.0.1:51234/", state: "owned-state" };
 
+it.effect(
+  "accepts the exact owned Enterprise callback and rejects changed hosts, ports, paths, and state",
+  () =>
+    Effect.gen(function* () {
+      const business = {
+        redirectUri: "http://localhost:51234/auth/callback",
+        state: "owned-state",
+      };
+      const url = `${business.redirectUri}?state=owned-state&code=example-code`;
+      assert.equal(
+        (yield* validateAntigravityCallbackUrl(instanceId, business, url)).toString(),
+        url,
+      );
+      for (const invalid of [
+        url.replace("localhost", "127.0.0.1"),
+        url.replace("localhost", "localhost.example.invalid"),
+        url.replace("51234", "51235"),
+        url.replace("/auth/callback", "/other"),
+        url.replace("owned-state", "wrong-state"),
+      ]) {
+        const result = yield* validateAntigravityCallbackUrl(instanceId, business, invalid).pipe(
+          Effect.exit,
+        );
+        assert.isTrue(Exit.isFailure(result), invalid);
+      }
+    }),
+);
+
 it.effect("accepts the exact owned Google callback and an explicit Google denial", () =>
   Effect.gen(function* () {
     for (const response of ["code=example-code", "error=access_denied"]) {

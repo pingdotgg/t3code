@@ -27,7 +27,7 @@ export const validateAntigravityCallbackUrl = Effect.fn("validateAntigravityCall
     const expected = new URL(pending.redirectUri);
     if (
       callback.protocol !== "http:" ||
-      callback.hostname !== "127.0.0.1" ||
+      !["127.0.0.1", "localhost"].includes(callback.hostname) ||
       callback.origin !== expected.origin ||
       callback.pathname !== expected.pathname ||
       callback.username !== "" ||
@@ -76,7 +76,7 @@ export const forwardAntigravityCallback = (
     const request = NodeHttp.request(
       {
         protocol: "http:",
-        hostname: callback.hostname,
+        hostname: "127.0.0.1",
         port: callback.port,
         path: `${callback.pathname}${callback.search}`,
         method: "GET",

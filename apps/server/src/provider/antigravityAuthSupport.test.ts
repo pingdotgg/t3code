@@ -1,7 +1,6 @@
 import * as Sink from "effect/Sink";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
@@ -17,6 +16,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -55,6 +56,52 @@ describe("Antigravity process environment", () => {
     tempDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp/tmp",
     browserCommand: "managed-browser-helper",
   };
+
+  it("routes explicit Enterprise sign-in through the URL recorder without changing normal sessions", () => {
+    const baseEnv = {
+      PATH: "/usr/bin",
+      SSH_CONNECTION: "192.0.2.1 1234 192.0.2.2 22",
+      SSH_CLIENT: "192.0.2.1 1234 22",
+      SSH_TTY: "/dev/pts/1",
+    };
+    const original = { ...baseEnv };
+    const input = {
+      installation: { executablePath: "/release/acp" },
+      profile,
+      cwd: "/project",
+      baseEnv,
+      auth: {
+        authMethod: "oauth-business",
+        apiKey: "",
+        gcpProject: "enterprise-project",
+        gcpLocation: "global",
+      } satisfies AntigravityAuthConfig,
+    };
+    const browserBridge = {
+      executablePath: "/runtime/node",
+      scriptPath: `${profile.acpDirectory}/enterprise-browser.cjs`,
+    };
+    const signIn = buildAntigravityAcpSpawnInput({
+      ...input,
+      profile: { ...profile, browserBridge },
+    });
+    expect(signIn.command).toBe(browserBridge.executablePath);
+    expect(signIn.args).toEqual([
+      browserBridge.scriptPath,
+      "/release/acp",
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+    ]);
+    expect(signIn.env?.SSH_CONNECTION).toBe(baseEnv.SSH_CONNECTION);
+    const normal = buildAntigravityAcpSpawnInput(input).env;
+    expect(normal?.PATH).toBe(baseEnv.PATH);
+    expect(normal?.DISPLAY).toBeUndefined();
+    expect(normal?.SSH_CONNECTION).toBe(baseEnv.SSH_CONNECTION);
+    expect(baseEnv).toEqual(original);
+  });
 
   it("runs `agy acp` with an isolated profile without changing the base environment", () => {
     const baseEnv = {
@@ -224,6 +271,22 @@ describe("Antigravity process environment", () => {
 });
 
 describe("Antigravity authorization URL", () => {
+  it.effect("accepts the native Enterprise localhost callback", () =>
+    Effect.gen(function* () {
+      const url = authorizationUrl
+        .replace("/o/oauth2/v2/auth", "/o/oauth2/auth")
+        .replace(
+          "http%3A%2F%2F127.0.0.1%3A46353%2F",
+          "http%3A%2F%2Flocalhost%3A46353%2Fauth%2Fcallback",
+        );
+      expect(yield* parseAntigravityAuthorizationUrl(url)).toEqual({
+        authorizationUrl: url,
+        redirectUri: "http://localhost:46353/auth/callback",
+        state: "test-opaque-state",
+      });
+    }),
+  );
+
   it.effect(
     "rejects other origins, ambiguous state, and non-loopback redirects without retaining them",
     () =>
@@ -507,6 +570,68 @@ describe("Antigravity stderr compatibility", () => {
 });
 
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+  it.effect(
+    "captures the Enterprise URL even when the native browser launcher discards stderr",
+    () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) !== "linux") return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const auth: AntigravityAuthConfig = {
+          authMethod: "oauth-business",
+          apiKey: "",
+          gcpProject: "enterprise-project",
+          gcpLocation: "global",
+        };
+        const baseEnv = { PATH: "/usr/bin:/bin", SSH_CONNECTION: "remote-session" };
+        const profile = yield* prepareAntigravityProfile({
+          profileDirectory: path.join(directory, "profile with 'quotes'"),
+          userHome: path.join(directory, "home"),
+          runtimeExecutablePath: process.execPath,
+          baseEnv,
+          auth,
+          captureBrowser: true,
+        });
+        const agent = path.join(directory, "agent with spaces");
+        yield* fs.writeFileString(
+          agent,
+          `#!/bin/sh\nxdg-open '${authorizationUrl}' >/dev/null 2>/dev/null\n`,
+          { mode: 0o700 },
+        );
+        const spawn = buildAntigravityAcpSpawnInput({
+          installation: { executablePath: agent },
+          profile,
+          cwd: directory,
+          baseEnv,
+          auth,
+        });
+        const child = yield* spawner.spawn(
+          ChildProcess.make(spawn.command, [...spawn.args], {
+            cwd: directory,
+            env: spawn.env,
+            extendEnv: false,
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        const urls: string[] = [];
+        yield* makeAntigravityStderrHandler({
+          onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+        })(stderr);
+        expect(Number(exitCode)).toBe(0);
+        expect(stdout).toBe("");
+        expect(urls).toEqual([authorizationUrl]);
+      }).pipe(Effect.scoped),
+  );
+
   const prepareSpawn = Effect.fn(function* (
     bundles: ReadonlyArray<string>,
     baseEnv: NodeJS.ProcessEnv = {},
