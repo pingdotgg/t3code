@@ -69,6 +69,8 @@ export const AppleIntentIndexDelta = Schema.Struct({
   removedProjectIds: Schema.Array(Schema.String),
   upsertedThreads: Schema.Array(AppleIntentThreadRecord),
   removedThreadIds: Schema.Array(Schema.String),
+  /** The delta is a full snapshot: the native index drops every record it does not contain. */
+  replaceAll: Schema.optionalKey(Schema.Boolean),
 });
 export type AppleIntentIndexDelta = typeof AppleIntentIndexDelta.Type;
 

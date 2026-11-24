@@ -98,7 +98,7 @@ public struct StartThreadIntent: Sendable {
       updatedAt: ISO8601DateFormatter().string(from: Date()),
       deepLinkUrl: "\(T3IntentsConfig.urlScheme)://threads/\(encodedEnv)/\(encodedThread)"
     )
-    try? store.upsertThreadRecord(record)
+    try? store.insertThreadRecordIfAbsent(record)
     let entity = ThreadEntity(record: record)
     return .result(
       value: entity,

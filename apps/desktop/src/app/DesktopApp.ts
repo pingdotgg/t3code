@@ -423,7 +423,21 @@ const startup = Effect.gen(function* () {
     const intentsContext = yield* Effect.context<
       DesktopAppleIntents.DesktopAppleIntents | DesktopWebLinks.DesktopWebLinks
     >();
-    const runIntentsEffect = Effect.runPromiseWith(intentsContext);
+    // Activities arrive from Electron callbacks: log a failure rather than reject an unawaited promise.
+    const runIntentsEffect = <E>(
+      effect: Effect.Effect<
+        void,
+        E,
+        DesktopAppleIntents.DesktopAppleIntents | DesktopWebLinks.DesktopWebLinks
+      >,
+    ) =>
+      Effect.runPromiseWith(intentsContext)(
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("could not open a Siri or Spotlight activity", cause),
+          ),
+        ),
+      );
     yield* electronApp.on(
       "continue-activity",
       (event: { preventDefault: () => void }, type: string, userInfo: Record<string, unknown>) => {

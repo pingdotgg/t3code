@@ -144,6 +144,61 @@ struct T3IntentsCoreTests {
     #expect(store.allThreads().isEmpty)
   }
 
+  @Test("A replace-all delta drops records retained from an earlier launch")
+  func replaceAllReconcilesRetainedRecords() throws {
+    let store = makeTempStore()
+    let env = T3EnvironmentRecord(
+      id: "env-1",
+      label: "Mac",
+      httpBaseUrl: nil,
+      isLocal: true,
+      isConnected: true,
+      updatedAt: "2026-09-10T12:00:00.000Z"
+    )
+    let kept = makeThread(id: "thread-kept")
+    let stale = makeThread(id: "thread-stale")
+    try store.applyDelta(T3IndexDelta(environments: [env], upsertedThreads: [kept, stale]))
+    #expect(store.lastSyncedAt() != nil)
+
+    let plan = try store.applyDelta(
+      T3IndexDelta(environments: [env], upsertedThreads: [kept], replaceAll: true)
+    )
+    #expect(plan.removedThreadIds == ["env-1:thread-stale"])
+    #expect(store.allThreads().map(\.id) == ["env-1:thread-kept"])
+  }
+
+  @Test("A seeded launch record never overwrites state the host already synced")
+  func seedKeepsSyncedState() throws {
+    let store = makeTempStore()
+    try store.upsertThreadRecord(makeThread(id: "thread-1", status: "waiting"))
+    try store.insertThreadRecordIfAbsent(makeThread(id: "thread-1", status: "running"))
+    #expect(store.thread(id: "env-1:thread-1")?.status == "waiting")
+  }
+
+  private func makeThread(id: String, status: String = "idle") -> T3ThreadRecord {
+    T3ThreadRecord(
+      id: "env-1:\(id)",
+      environmentId: "env-1",
+      threadId: id,
+      projectId: "proj-1",
+      projectName: "t3code",
+      title: id,
+      branch: nil,
+      status: status,
+      hasPendingRequest: false,
+      pendingRequestSummary: nil,
+      isPinned: false,
+      isSettled: false,
+      isSnoozed: false,
+      snoozedUntil: nil,
+      lastMessagePreview: nil,
+      providerLabel: nil,
+      modelLabel: nil,
+      updatedAt: "2026-09-10T12:00:00.000Z",
+      deepLinkUrl: "t3code://threads/env-1/\(id)"
+    )
+  }
+
   @Test("Signs valid RFC 9449 ES256 DPoP proof JWT")
   func signsValidDpopProof() throws {
     let key = P256.Signing.PrivateKey()

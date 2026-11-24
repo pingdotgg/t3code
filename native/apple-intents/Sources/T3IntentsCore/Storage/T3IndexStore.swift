@@ -89,6 +89,10 @@ public final class T3IndexStore: @unchecked Sendable {
       );
       CREATE INDEX IF NOT EXISTS idx_threads_env ON threads(environment_id);
       CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at DESC);
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL
+      );
       """)
     db = opened
     return opened
@@ -117,55 +121,108 @@ public final class T3IndexStore: @unchecked Sendable {
     return String(cString: ptr)
   }
 
+  /// Every record the delta removes, including those cascaded from removed environments and,
+  /// for a `replaceAll` delta, those absent from the host's snapshot. Read-only.
+  public func planDelta(_ delta: T3IndexDelta) throws -> T3SpotlightDiff {
+    try queue.sync {
+      try plan(try ensureOpen(), delta)
+    }
+  }
+
+  /// Applies a delta with removals computed by `planDelta` in one transaction.
+  public func applyDelta(_ delta: T3IndexDelta, plan: T3SpotlightDiff) throws {
+    try queue.sync {
+      try apply(try ensureOpen(), delta, plan: plan)
+    }
+  }
+
+  /// Plans and applies a delta atomically.
+  @discardableResult
   public func applyDelta(_ delta: T3IndexDelta) throws -> T3SpotlightDiff {
     try queue.sync {
       let handle = try ensureOpen()
-      try exec(handle, sql: "BEGIN IMMEDIATE;")
-      do {
-        var removedProjectIds = Set(delta.removedProjectIds)
-        var removedThreadIds = Set(delta.removedThreadIds)
+      let planned = try plan(handle, delta)
+      try apply(handle, delta, plan: planned)
+      return planned
+    }
+  }
 
-        for envId in delta.removedEnvironmentIds {
-          for project in try queryProjects(handle, whereClause: "environment_id = ?", bindings: [envId]) {
-            removedProjectIds.insert(project.id)
-          }
-          for thread in try queryThreads(handle, whereClause: "environment_id = ?", bindings: [envId]) {
-            removedThreadIds.insert(thread.id)
-          }
-          try runDelete(handle, sql: "DELETE FROM threads WHERE environment_id = ?;", binding: envId)
-          try runDelete(handle, sql: "DELETE FROM projects WHERE environment_id = ?;", binding: envId)
-          try runDelete(handle, sql: "DELETE FROM environments WHERE id = ?;", binding: envId)
-        }
+  private static let allRows = 1_000_000
 
-        for env in delta.environments {
-          try upsertEnvironment(handle, env)
-        }
+  private func plan(_ handle: OpaquePointer, _ delta: T3IndexDelta) throws -> T3SpotlightDiff {
+    var removedEnvironmentIds = Set(delta.removedEnvironmentIds)
+    var removedProjectIds = Set(delta.removedProjectIds)
+    var removedThreadIds = Set(delta.removedThreadIds)
 
-        for projectId in delta.removedProjectIds {
-          try runDelete(handle, sql: "DELETE FROM projects WHERE id = ?;", binding: projectId)
-        }
-        for project in delta.upsertedProjects {
-          try upsertProject(handle, project)
-        }
-
-        for threadId in delta.removedThreadIds {
-          try runDelete(handle, sql: "DELETE FROM threads WHERE id = ?;", binding: threadId)
-        }
-        for thread in delta.upsertedThreads {
-          try upsertThread(handle, thread)
-        }
-
-        try exec(handle, sql: "COMMIT;")
-        return T3SpotlightDiff(
-          upsertedProjects: delta.upsertedProjects,
-          removedProjectIds: Array(removedProjectIds),
-          upsertedThreads: delta.upsertedThreads,
-          removedThreadIds: Array(removedThreadIds)
-        )
-      } catch {
-        try? exec(handle, sql: "ROLLBACK;")
-        throw error
+    if delta.replaceAll == true {
+      let keptEnvironments = Set(delta.environments.map(\.id))
+      let keptProjects = Set(delta.upsertedProjects.map(\.id))
+      let keptThreads = Set(delta.upsertedThreads.map(\.id))
+      for env in try queryEnvironments(handle, whereClause: nil, bindings: [])
+      where !keptEnvironments.contains(env.id) {
+        removedEnvironmentIds.insert(env.id)
       }
+      for project in try queryProjects(handle, whereClause: nil, bindings: [])
+      where !keptProjects.contains(project.id) {
+        removedProjectIds.insert(project.id)
+      }
+      for thread in try queryThreads(handle, whereClause: nil, bindings: [], limit: Self.allRows)
+      where !keptThreads.contains(thread.id) {
+        removedThreadIds.insert(thread.id)
+      }
+    }
+
+    for envId in removedEnvironmentIds {
+      for project in try queryProjects(handle, whereClause: "environment_id = ?", bindings: [envId]) {
+        removedProjectIds.insert(project.id)
+      }
+      for thread in try queryThreads(
+        handle,
+        whereClause: "environment_id = ?",
+        bindings: [envId],
+        limit: Self.allRows
+      ) {
+        removedThreadIds.insert(thread.id)
+      }
+    }
+
+    return T3SpotlightDiff(
+      upsertedProjects: delta.upsertedProjects,
+      removedProjectIds: removedProjectIds.sorted(),
+      upsertedThreads: delta.upsertedThreads,
+      removedThreadIds: removedThreadIds.sorted(),
+      removedEnvironmentIds: removedEnvironmentIds.sorted()
+    )
+  }
+
+  private func apply(_ handle: OpaquePointer, _ delta: T3IndexDelta, plan: T3SpotlightDiff) throws {
+    try exec(handle, sql: "BEGIN IMMEDIATE;")
+    do {
+      for envId in plan.removedEnvironmentIds {
+        try runDelete(handle, sql: "DELETE FROM threads WHERE environment_id = ?;", binding: envId)
+        try runDelete(handle, sql: "DELETE FROM projects WHERE environment_id = ?;", binding: envId)
+        try runDelete(handle, sql: "DELETE FROM environments WHERE id = ?;", binding: envId)
+      }
+      for projectId in plan.removedProjectIds {
+        try runDelete(handle, sql: "DELETE FROM projects WHERE id = ?;", binding: projectId)
+      }
+      for threadId in plan.removedThreadIds {
+        try runDelete(handle, sql: "DELETE FROM threads WHERE id = ?;", binding: threadId)
+      }
+      for env in delta.environments {
+        try upsertEnvironment(handle, env)
+      }
+      for project in delta.upsertedProjects {
+        try upsertProject(handle, project)
+      }
+      for thread in delta.upsertedThreads {
+        try upsertThread(handle, thread, replaceExisting: true)
+      }
+      try writeMeta(handle, key: Self.lastSyncedAtKey, value: ISO8601DateFormatter().string(from: Date()))
+      try exec(handle, sql: "COMMIT;")
+    } catch {
+      try? exec(handle, sql: "ROLLBACK;")
+      throw error
     }
   }
 
@@ -181,9 +238,48 @@ public final class T3IndexStore: @unchecked Sendable {
         DELETE FROM threads;
         DELETE FROM projects;
         DELETE FROM environments;
+        DELETE FROM meta;
         COMMIT;
         """)
     }
+  }
+
+  private static let lastSyncedAtKey = "last_synced_at"
+
+  /// When the host last delivered a sync. Intents use it to avoid presenting old state as current.
+  public func lastSyncedAt() -> Date? {
+    queue.sync {
+      guard let handle = try? ensureOpen(),
+            let value = try? readMeta(handle, key: Self.lastSyncedAtKey)
+      else { return nil }
+      return ISO8601DateFormatter().date(from: value)
+    }
+  }
+
+  private func writeMeta(_ handle: OpaquePointer, key: String, value: String) throws {
+    var stmt: OpaquePointer?
+    let sql = "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value;"
+    guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+      throw T3IndexStoreError.statementFailed(String(cString: sqlite3_errmsg(handle)))
+    }
+    defer { sqlite3_finalize(stmt) }
+    bindText(stmt, index: 1, value: key)
+    bindText(stmt, index: 2, value: value)
+    guard sqlite3_step(stmt) == SQLITE_DONE else {
+      throw T3IndexStoreError.statementFailed(String(cString: sqlite3_errmsg(handle)))
+    }
+  }
+
+  private func readMeta(_ handle: OpaquePointer, key: String) throws -> String? {
+    var stmt: OpaquePointer?
+    guard sqlite3_prepare_v2(handle, "SELECT value FROM meta WHERE key = ?;", -1, &stmt, nil) == SQLITE_OK,
+          let stmt
+    else {
+      throw T3IndexStoreError.statementFailed(String(cString: sqlite3_errmsg(handle)))
+    }
+    defer { sqlite3_finalize(stmt) }
+    bindText(stmt, index: 1, value: key)
+    return sqlite3_step(stmt) == SQLITE_ROW ? columnText(stmt, index: 0) : nil
   }
 
   public func allEnvironments() -> [T3EnvironmentRecord] {
@@ -274,14 +370,15 @@ public final class T3IndexStore: @unchecked Sendable {
   public func upsertThreadRecord(_ thread: T3ThreadRecord) throws {
     try queue.sync {
       let handle = try ensureOpen()
-      try upsertThread(handle, thread)
+      try upsertThread(handle, thread, replaceExisting: true)
     }
   }
 
-  public func deleteThreadRecord(id: String) throws {
+  /// Seeds a record only when the host has not synced one yet, so a seed never overwrites newer state.
+  public func insertThreadRecordIfAbsent(_ thread: T3ThreadRecord) throws {
     try queue.sync {
       let handle = try ensureOpen()
-      try runDelete(handle, sql: "DELETE FROM threads WHERE id = ?;", binding: id)
+      try upsertThread(handle, thread, replaceExisting: false)
     }
   }
 
@@ -358,32 +455,37 @@ public final class T3IndexStore: @unchecked Sendable {
     }
   }
 
-  private func upsertThread(_ handle: OpaquePointer, _ thread: T3ThreadRecord) throws {
+  private func upsertThread(_ handle: OpaquePointer, _ thread: T3ThreadRecord, replaceExisting: Bool) throws {
+    let conflictClause = replaceExisting
+      ? """
+        ON CONFLICT(id) DO UPDATE SET
+          environment_id = excluded.environment_id,
+          thread_id = excluded.thread_id,
+          project_id = excluded.project_id,
+          project_name = excluded.project_name,
+          title = excluded.title,
+          branch = excluded.branch,
+          status = excluded.status,
+          has_pending_request = excluded.has_pending_request,
+          pending_request_summary = excluded.pending_request_summary,
+          is_pinned = excluded.is_pinned,
+          is_settled = excluded.is_settled,
+          is_snoozed = excluded.is_snoozed,
+          snoozed_until = excluded.snoozed_until,
+          last_message_preview = excluded.last_message_preview,
+          provider_label = excluded.provider_label,
+          model_label = excluded.model_label,
+          updated_at = excluded.updated_at,
+          deep_link_url = excluded.deep_link_url;
+        """
+      : "ON CONFLICT(id) DO NOTHING;"
     let sql = """
       INSERT INTO threads (
         id, environment_id, thread_id, project_id, project_name, title, branch, status,
         has_pending_request, pending_request_summary, is_pinned, is_settled, is_snoozed,
         snoozed_until, last_message_preview, provider_label, model_label, updated_at, deep_link_url
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        environment_id = excluded.environment_id,
-        thread_id = excluded.thread_id,
-        project_id = excluded.project_id,
-        project_name = excluded.project_name,
-        title = excluded.title,
-        branch = excluded.branch,
-        status = excluded.status,
-        has_pending_request = excluded.has_pending_request,
-        pending_request_summary = excluded.pending_request_summary,
-        is_pinned = excluded.is_pinned,
-        is_settled = excluded.is_settled,
-        is_snoozed = excluded.is_snoozed,
-        snoozed_until = excluded.snoozed_until,
-        last_message_preview = excluded.last_message_preview,
-        provider_label = excluded.provider_label,
-        model_label = excluded.model_label,
-        updated_at = excluded.updated_at,
-        deep_link_url = excluded.deep_link_url;
+      \(conflictClause)
       """
     var stmt: OpaquePointer?
     guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {

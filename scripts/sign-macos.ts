@@ -1,12 +1,15 @@
 import * as NodeURL from "node:url";
 import { sign as signApplication, type SignOptions } from "@electron/osx-sign";
 
-const APP_INTENTS_EXTENSION_ENTITLEMENTS = NodeURL.fileURLToPath(
-  new URL(
-    "../native/apple-intents/macos/Extension/T3AppIntentsExtension.entitlements",
-    import.meta.url,
-  ),
-);
+// Release builds render these for the configured signing team; the checked-in file is the dev default.
+const APP_INTENTS_EXTENSION_ENTITLEMENTS =
+  process.env.T3CODE_APP_INTENTS_ENTITLEMENTS ??
+  NodeURL.fileURLToPath(
+    new URL(
+      "../native/apple-intents/macos/Extension/T3AppIntentsExtension.entitlements",
+      import.meta.url,
+    ),
+  );
 
 export default async function sign(options: SignOptions): Promise<void> {
   const previousOptionsForFile = options.optionsForFile;

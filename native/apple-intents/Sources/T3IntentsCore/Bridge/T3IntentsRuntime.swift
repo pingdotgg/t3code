@@ -10,6 +10,10 @@ public final class T3IntentsRuntime: @unchecked Sendable {
   private let credentials: any T3CredentialProviding
   private let activityLock = NSLock()
   private var activeUserActivity: NSUserActivity?
+  private var onscreenContextJSON: String?
+  private var onscreenEntityResolved = false
+  private let operationLock = NSLock()
+  private var operationTail: Task<Void, Never>?
 
   public var onOpenURL: (@MainActor @Sendable (URL) -> Void)?
 
@@ -35,29 +39,61 @@ public final class T3IntentsRuntime: @unchecked Sendable {
     }
   }
 
+  /// Runs index mutations one at a time, each store write together with its Spotlight update,
+  /// so a clear can never interleave with an in-flight sync.
+  private func serialized(_ work: @escaping @Sendable () async throws -> Void) async throws {
+    let task: Task<Void, any Error> = operationLock.withLock {
+      let previous = operationTail
+      let task = Task {
+        await previous?.value
+        try await work()
+      }
+      operationTail = Task { _ = await task.result }
+      return task
+    }
+    try await task.value
+  }
+
   public func syncIndexJSON(_ jsonString: String) async throws {
-    guard let data = jsonString.data(using: .utf8) else { return }
-    let delta = try JSONDecoder().decode(T3IndexDelta.self, from: data)
-    let diff = try store.applyDelta(delta)
-    await T3SpotlightIndexer.apply(diff: diff)
+    let delta = try JSONDecoder().decode(T3IndexDelta.self, from: Data(jsonString.utf8))
+    try await applyDelta(delta)
+  }
+
+  private func applyDelta(_ delta: T3IndexDelta) async throws {
+    let store = self.store
+    try await serialized {
+      // Spotlight removals run before the store commits, so a failed removal leaves the store
+      // unchanged and the host's retry plans the same removals again.
+      let plan = try store.planDelta(delta)
+      try await T3SpotlightIndexer.removeEntities(
+        threadIds: plan.removedThreadIds,
+        projectIds: plan.removedProjectIds
+      )
+      try store.applyDelta(delta, plan: plan)
+      try await T3SpotlightIndexer.indexEntities(
+        projects: delta.upsertedProjects,
+        threads: delta.upsertedThreads
+      )
+    }
+    refreshOnscreenEntityIfNeeded()
     if #available(iOS 27.3, macOS 27.3, *) {
       T3AppShortcuts.updateAppShortcutParameters()
     }
   }
 
   public func removeEnvironment(environmentId: String) async throws {
-    let diff = try store.removeEnvironment(environmentId: environmentId)
+    try await applyDelta(T3IndexDelta(removedEnvironmentIds: [environmentId]))
     credentials.removeCredential(for: environmentId)
-    await T3SpotlightIndexer.apply(diff: diff)
-    if #available(iOS 27.3, macOS 27.3, *) {
-      T3AppShortcuts.updateAppShortcutParameters()
-    }
   }
 
   public func clearIndex() async throws {
-    try store.clearAll()
-    credentials.clearAllCredentials()
-    await T3SpotlightIndexer.clearAll()
+    let store = self.store
+    let credentials = self.credentials
+    try await serialized {
+      try store.clearAll()
+      credentials.clearAllCredentials()
+      try await T3SpotlightIndexer.clearAll()
+    }
     setOnscreenContextJSON(nil)
     if #available(iOS 27.3, macOS 27.3, *) {
       T3AppShortcuts.updateAppShortcutParameters()
@@ -70,12 +106,24 @@ public final class T3IntentsRuntime: @unchecked Sendable {
     credentials.saveCredentials(records)
   }
 
+  /// Context published before its entity reached the index has no entity identifier; republish it.
+  private func refreshOnscreenEntityIfNeeded() {
+    activityLock.lock()
+    let pending = onscreenEntityResolved ? nil : onscreenContextJSON
+    activityLock.unlock()
+    if let pending {
+      setOnscreenContextJSON(pending)
+    }
+  }
+
   /// Publishes or clears the onscreen NSUserActivity with `appEntityIdentifier` so Siri
   /// ("summarize this thread", "stop this agent") resolves the visible thread or project.
   public func setOnscreenContextJSON(_ jsonString: String?) {
     activityLock.lock()
     let previous = activeUserActivity
     activeUserActivity = nil
+    onscreenContextJSON = jsonString
+    onscreenEntityResolved = false
     activityLock.unlock()
     previous?.invalidate()
 
@@ -98,14 +146,17 @@ public final class T3IntentsRuntime: @unchecked Sendable {
       activity.userInfo = ["deepLinkUrl": url.absoluteString]
     }
 
+    var entityResolved = false
     if #available(iOS 27.3, macOS 27.3, *) {
       if context.kind == "thread", let compositeId = context.compositeEntityId {
         if let record = store.thread(id: compositeId) {
           activity.appEntityIdentifier = EntityIdentifier(for: ThreadEntity(record: record))
+          entityResolved = true
         }
       } else if context.kind == "project", let compositeId = context.compositeEntityId {
         if let record = store.projects(for: [compositeId]).first {
           activity.appEntityIdentifier = EntityIdentifier(for: ProjectEntity(record: record))
+          entityResolved = true
         }
       }
     }
@@ -113,6 +164,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
     activity.becomeCurrent()
     activityLock.lock()
     activeUserActivity = activity
+    onscreenEntityResolved = entityResolved
     activityLock.unlock()
   }
 

@@ -195,6 +195,22 @@ describe("appleIntentsProjection", () => {
     const initialDiff = diffAppleIntentsSnapshots(null, first);
     expect(initialDiff.hasChanges).toBe(true);
     expect(initialDiff.delta.upsertedThreads).toHaveLength(2);
+    // The first sync of a launch replaces whatever the native index kept from earlier launches.
+    expect(initialDiff.delta.replaceAll).toBe(true);
+    expect(
+      diffAppleIntentsSnapshots(null, { environments: [], projects: [], threads: [] }),
+    ).toEqual({
+      hasChanges: true,
+      delta: {
+        environments: [],
+        removedEnvironmentIds: [],
+        upsertedProjects: [],
+        removedProjectIds: [],
+        upsertedThreads: [],
+        removedThreadIds: [],
+        replaceAll: true,
+      },
+    });
 
     const noopDiff = diffAppleIntentsSnapshots(first, first);
     expect(noopDiff.hasChanges).toBe(false);
@@ -215,6 +231,7 @@ describe("appleIntentsProjection", () => {
     );
     const updateDiff = diffAppleIntentsSnapshots(first, second);
     expect(updateDiff.hasChanges).toBe(true);
+    expect(updateDiff.delta.replaceAll).toBeUndefined();
     expect(updateDiff.delta.upsertedThreads.map((t) => t.threadId)).toEqual(["t1"]);
     expect(updateDiff.delta.removedThreadIds).toEqual([`${envId}:t2`]);
     expect(updateDiff.delta.upsertedProjects).toEqual([]);

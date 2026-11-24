@@ -41,7 +41,8 @@ public struct ListAttentionThreadsIntent: Sendable {
   }
 
   public func perform() async throws -> some IntentResult & ReturnsValue<[ThreadEntity]> & ProvidesDialog {
-    var records = store.allThreads(limit: 200)
+    // Read the whole index (capped at 500 by the host) so filters apply before the result limit.
+    var records = store.allThreads()
     if let project {
       records = records.filter {
         $0.environmentId == project.environmentId && $0.projectId == project.projectId

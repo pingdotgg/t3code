@@ -130,6 +130,8 @@ public struct T3IndexDelta: Codable, Sendable {
   public let removedProjectIds: [String]
   public let upsertedThreads: [T3ThreadRecord]
   public let removedThreadIds: [String]
+  /// The delta is the host's full snapshot: records absent from it are removed.
+  public let replaceAll: Bool?
 
   public init(
     environments: [T3EnvironmentRecord] = [],
@@ -137,7 +139,8 @@ public struct T3IndexDelta: Codable, Sendable {
     upsertedProjects: [T3ProjectRecord] = [],
     removedProjectIds: [String] = [],
     upsertedThreads: [T3ThreadRecord] = [],
-    removedThreadIds: [String] = []
+    removedThreadIds: [String] = [],
+    replaceAll: Bool? = nil
   ) {
     self.environments = environments
     self.removedEnvironmentIds = removedEnvironmentIds
@@ -145,6 +148,7 @@ public struct T3IndexDelta: Codable, Sendable {
     self.removedProjectIds = removedProjectIds
     self.upsertedThreads = upsertedThreads
     self.removedThreadIds = removedThreadIds
+    self.replaceAll = replaceAll
   }
 }
 
@@ -194,16 +198,19 @@ public struct T3SpotlightDiff: Sendable {
   public let removedProjectIds: [String]
   public let upsertedThreads: [T3ThreadRecord]
   public let removedThreadIds: [String]
+  public let removedEnvironmentIds: [String]
 
   public init(
     upsertedProjects: [T3ProjectRecord],
     removedProjectIds: [String],
     upsertedThreads: [T3ThreadRecord],
-    removedThreadIds: [String]
+    removedThreadIds: [String],
+    removedEnvironmentIds: [String] = []
   ) {
     self.upsertedProjects = upsertedProjects
     self.removedProjectIds = removedProjectIds
     self.upsertedThreads = upsertedThreads
     self.removedThreadIds = removedThreadIds
+    self.removedEnvironmentIds = removedEnvironmentIds
   }
 }

@@ -67,6 +67,9 @@ const desktopAppleIntentsSourceAtom = Atom.make((get) => {
     });
 
     if (httpBaseUrl) {
+      // Remote DPoP connections sign with a non-extractable WebCrypto key the native extension cannot
+      // use, so they get no intent credential: they stay searchable and openable, and Siri actions
+      // report that the environment must be used from the app.
       const auth = prepared?.httpAuthorization ?? null;
       if (auth?._tag === "Bearer") {
         rawCredentials.push({
@@ -92,11 +95,22 @@ const desktopAppleIntentsSourceAtom = Atom.make((get) => {
 let lastSnapshot: AppleIntentsSnapshot | null = null;
 let lastCredentialSignature = "";
 let lastOnscreenSignature = "";
+// The native index persists across launches, so assume it holds data until a clear succeeds.
+let nativeMayHoldData = true;
 
-export function resetDesktopAppleIntentsSyncCache(): void {
+function resetDesktopAppleIntentsSyncCache(): void {
   lastSnapshot = null;
   lastCredentialSignature = "";
   lastOnscreenSignature = "";
+}
+
+/** Clears the native index and credentials; the sync cache resets only once the clear succeeds. */
+export async function clearDesktopAppleIntentsIndex(): Promise<void> {
+  const bridge = window.desktopBridge?.appleIntents;
+  if (!bridge) return;
+  await bridge.clearIndex();
+  resetDesktopAppleIntentsSyncCache();
+  nativeMayHoldData = false;
 }
 
 function readOnscreenContext(
@@ -140,22 +154,9 @@ export function DesktopAppleIntentsCoordinator() {
 
           const settings = getClientSettings();
           const enabled = settings.appleIntentsEnabled;
-          const routeParams = (router.state.matches.at(-1)?.params ?? {}) as Record<
-            string,
-            string | undefined
-          >;
-          const onscreen = readOnscreenContext(routeParams, enabled);
-          const onscreenSig = JSON.stringify(onscreen);
-          if (onscreenSig !== lastOnscreenSignature) {
-            lastOnscreenSignature = onscreenSig;
-            await bridge.setOnscreenContext(onscreen);
-          }
 
           if (!enabled) {
-            if (lastSnapshot !== null || lastCredentialSignature !== "") {
-              resetDesktopAppleIntentsSyncCache();
-              await bridge.clearIndex();
-            }
+            if (nativeMayHoldData) await clearDesktopAppleIntentsIndex();
             return;
           }
 
@@ -167,8 +168,20 @@ export function DesktopAppleIntentsCoordinator() {
           });
           const diff = diffAppleIntentsSnapshots(lastSnapshot, nextSnapshot);
           if (diff.hasChanges) {
+            nativeMayHoldData = true;
             await bridge.syncIndex(diff.delta);
             lastSnapshot = nextSnapshot;
+          }
+
+          const routeParams = (router.state.matches.at(-1)?.params ?? {}) as Record<
+            string,
+            string | undefined
+          >;
+          const onscreen = readOnscreenContext(routeParams, enabled);
+          const onscreenSig = JSON.stringify(onscreen);
+          if (onscreenSig !== lastOnscreenSignature) {
+            await bridge.setOnscreenContext(onscreen);
+            lastOnscreenSignature = onscreenSig;
           }
 
           const needsLocalToken = source.rawCredentials.some(
@@ -190,6 +203,7 @@ export function DesktopAppleIntentsCoordinator() {
           }
           const credSig = JSON.stringify(credentials);
           if (credSig !== lastCredentialSignature) {
+            nativeMayHoldData = true;
             await bridge.syncAuthCredentials(credentials);
             lastCredentialSignature = credSig;
           }

@@ -15,14 +15,24 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+export class DesktopAppleIntentsNativeError extends Schema.TaggedError<DesktopAppleIntentsNativeError>()(
+  "DesktopAppleIntentsNativeError",
+  { operation: Schema.String, status: Schema.Number },
+) {
+  override get message(): string {
+    return `Apple Intents ${this.operation} failed with native status ${this.status}.`;
+  }
+}
+
+/** Each mutation returns the native status code: 0 on success. */
 interface AppleIntentsNativeBinding {
   readonly isSupported: () => boolean;
   readonly bootstrap: () => void;
-  readonly syncIndex: (json: string) => void;
-  readonly removeEnvironment: (environmentId: string) => void;
-  readonly clearIndex: () => void;
-  readonly setOnscreenContext: (json: string) => void;
-  readonly syncAuthCredentials: (json: string) => void;
+  readonly syncIndex: (json: string) => number;
+  readonly removeEnvironment: (environmentId: string) => number;
+  readonly clearIndex: () => number;
+  readonly setOnscreenContext: (json: string) => number;
+  readonly syncAuthCredentials: (json: string) => number;
   readonly resolveSpotlightUrl: (identifier: string) => string | null;
 }
 
@@ -32,10 +42,10 @@ let nativeBindingPromise: Promise<AppleIntentsNativeBinding | null> | undefined;
 
 async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeBinding | null> {
   try {
-    const { DataType, load, open, restorePointer } = await import("ffi-rs");
+    const { DataType, load, open, restorePointer, wrapPointer } = await import("ffi-rs");
     open({ library: FFI_LIBRARY_KEY, path: dylibPath });
 
-    const callVoid = (funcName: string) =>
+    const callVoid = (funcName: string): number =>
       load({
         library: FFI_LIBRARY_KEY,
         funcName,
@@ -44,7 +54,7 @@ async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeB
         paramsValue: [],
       });
 
-    const callString = (funcName: string, value: string) =>
+    const callString = (funcName: string, value: string): number =>
       load({
         library: FFI_LIBRARY_KEY,
         funcName,
@@ -58,21 +68,12 @@ async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeB
       bootstrap: () => {
         callVoid("t3_apple_intents_bootstrap");
       },
-      syncIndex: (json) => {
-        callString("t3_apple_intents_sync_index", json);
-      },
-      removeEnvironment: (environmentId) => {
-        callString("t3_apple_intents_remove_environment", environmentId);
-      },
-      clearIndex: () => {
-        callVoid("t3_apple_intents_clear_index");
-      },
-      setOnscreenContext: (json) => {
-        callString("t3_apple_intents_set_onscreen_context", json);
-      },
-      syncAuthCredentials: (json) => {
-        callString("t3_apple_intents_sync_auth_credentials", json);
-      },
+      syncIndex: (json) => callString("t3_apple_intents_sync_index", json),
+      removeEnvironment: (environmentId) =>
+        callString("t3_apple_intents_remove_environment", environmentId),
+      clearIndex: () => callVoid("t3_apple_intents_clear_index"),
+      setOnscreenContext: (json) => callString("t3_apple_intents_set_onscreen_context", json),
+      syncAuthCredentials: (json) => callString("t3_apple_intents_sync_auth_credentials", json),
       resolveSpotlightUrl: (identifier) => {
         const ptr = load({
           library: FFI_LIBRARY_KEY,
@@ -83,9 +84,10 @@ async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeB
         });
         if (!ptr) return null;
         try {
+          // A returned `char *` must be wrapped before restoring it as a string.
           const restored = restorePointer({
             retType: [DataType.String],
-            paramsValue: [ptr],
+            paramsValue: wrapPointer([ptr]),
           }) as ReadonlyArray<unknown>;
           const value = restored[0];
           return typeof value === "string" && value.length > 0 ? value : null;
@@ -108,20 +110,39 @@ async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeB
   }
 }
 
+type DesktopAppleIntentsMutation<A = void> = Effect.Effect<A, DesktopAppleIntentsNativeError>;
+
 export class DesktopAppleIntents extends Context.Service<
   DesktopAppleIntents,
   {
     readonly getStatus: Effect.Effect<AppleIntentStatus>;
-    readonly syncIndex: (delta: AppleIntentIndexDelta) => Effect.Effect<void>;
-    readonly removeEnvironment: (environmentId: EnvironmentId) => Effect.Effect<void>;
-    readonly clearIndex: Effect.Effect<void>;
-    readonly setOnscreenContext: (context: AppleIntentOnscreenContext) => Effect.Effect<void>;
+    readonly syncIndex: (delta: AppleIntentIndexDelta) => DesktopAppleIntentsMutation;
+    readonly removeEnvironment: (environmentId: EnvironmentId) => DesktopAppleIntentsMutation;
+    readonly clearIndex: DesktopAppleIntentsMutation;
+    readonly setOnscreenContext: (
+      context: AppleIntentOnscreenContext,
+    ) => DesktopAppleIntentsMutation;
     readonly syncAuthCredentials: (
       credentials: ReadonlyArray<AppleIntentAuthCredential>,
-    ) => Effect.Effect<void>;
+    ) => DesktopAppleIntentsMutation;
     readonly resolveSpotlightUrl: (identifier: string) => Effect.Effect<string | null>;
   }
 >()("@t3tools/desktop/intents/DesktopAppleIntents") {}
+
+// A failure keeps the renderer's sync baseline where it was, so the next flush retries.
+const runNative = (operation: string, call: () => number): DesktopAppleIntentsMutation =>
+  Effect.sync(call).pipe(
+    Effect.flatMap((status) =>
+      status === 0
+        ? Effect.void
+        : Effect.fail(new DesktopAppleIntentsNativeError({ operation, status })),
+    ),
+  );
+
+const encodeNativeJson = (operation: string, value: unknown) =>
+  encodeJsonString(value).pipe(
+    Effect.mapError(() => new DesktopAppleIntentsNativeError({ operation, status: -1 })),
+  );
 
 export const layer = Layer.effect(
   DesktopAppleIntents,
@@ -159,6 +180,9 @@ export const layer = Layer.effect(
         Effect.orElseSucceed(() => null),
       );
     });
+    const supportedBinding = resolveBinding.pipe(
+      Effect.map((binding) => (binding?.isSupported() ? binding : null)),
+    );
 
     return DesktopAppleIntents.of({
       getStatus: Effect.gen(function* () {
@@ -174,50 +198,35 @@ export const layer = Layer.effect(
           : { available: false, reason: "requires-macos-27.3" };
       }),
       syncIndex: Effect.fn("DesktopAppleIntents.syncIndex")(function* (delta) {
-        const binding = yield* resolveBinding;
-        if (!binding || !binding.isSupported()) return;
-        const json = yield* encodeJsonString(delta).pipe(Effect.orElseSucceed(() => ""));
-        if (json.length === 0) return;
-        yield* Effect.sync(() => {
-          binding.syncIndex(json);
-        });
+        const binding = yield* supportedBinding;
+        if (!binding) return;
+        const json = yield* encodeNativeJson("syncIndex", delta);
+        yield* runNative("syncIndex", () => binding.syncIndex(json));
       }),
       removeEnvironment: Effect.fn("DesktopAppleIntents.removeEnvironment")(
         function* (environmentId) {
-          const binding = yield* resolveBinding;
-          if (!binding || !binding.isSupported()) return;
-          yield* Effect.sync(() => {
-            binding.removeEnvironment(environmentId);
-          });
+          const binding = yield* supportedBinding;
+          if (!binding) return;
+          yield* runNative("removeEnvironment", () => binding.removeEnvironment(environmentId));
         },
       ),
       clearIndex: Effect.gen(function* () {
-        const binding = yield* resolveBinding;
-        if (!binding || !binding.isSupported()) return;
-        yield* Effect.sync(() => {
-          binding.clearIndex();
-        });
+        const binding = yield* supportedBinding;
+        if (!binding) return;
+        yield* runNative("clearIndex", () => binding.clearIndex());
       }),
       setOnscreenContext: Effect.fn("DesktopAppleIntents.setOnscreenContext")(function* (context) {
-        const binding = yield* resolveBinding;
-        if (!binding || !binding.isSupported()) return;
-        const json =
-          context === null
-            ? ""
-            : yield* encodeJsonString(context).pipe(Effect.orElseSucceed(() => ""));
-        yield* Effect.sync(() => {
-          binding.setOnscreenContext(json);
-        });
+        const binding = yield* supportedBinding;
+        if (!binding) return;
+        const json = context === null ? "" : yield* encodeNativeJson("setOnscreenContext", context);
+        yield* runNative("setOnscreenContext", () => binding.setOnscreenContext(json));
       }),
       syncAuthCredentials: Effect.fn("DesktopAppleIntents.syncAuthCredentials")(
         function* (credentials) {
-          const binding = yield* resolveBinding;
-          if (!binding || !binding.isSupported()) return;
-          const json = yield* encodeJsonString(credentials).pipe(Effect.orElseSucceed(() => ""));
-          if (json.length === 0) return;
-          yield* Effect.sync(() => {
-            binding.syncAuthCredentials(json);
-          });
+          const binding = yield* supportedBinding;
+          if (!binding) return;
+          const json = yield* encodeNativeJson("syncAuthCredentials", credentials);
+          yield* runNative("syncAuthCredentials", () => binding.syncAuthCredentials(json));
         },
       ),
       resolveSpotlightUrl: Effect.fn("DesktopAppleIntents.resolveSpotlightUrl")(

@@ -227,10 +227,12 @@ public struct ThreadEntityQuery: IndexedEntityQuery, EntityStringQuery, Sendable
 public struct ThreadStatusCardView: View {
   let thread: ThreadEntity
   let isCompact: Bool
+  let staleSince: Date?
 
-  public init(thread: ThreadEntity, isCompact: Bool = false) {
+  public init(thread: ThreadEntity, isCompact: Bool = false, staleSince: Date? = nil) {
     self.thread = thread
     self.isCompact = isCompact
+    self.staleSince = staleSince
   }
 
   private var statusColor: Color {
@@ -287,6 +289,16 @@ public struct ThreadStatusCardView: View {
       Text(statusLabel)
         .font(.caption.weight(.medium))
         .foregroundStyle(statusColor)
+
+      if let staleSince {
+        Text(
+          staleSince == .distantPast
+            ? "Not synced yet"
+            : "Last synced \(staleSince.formatted(.relative(presentation: .named)))"
+        )
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      }
 
       if !isCompact, let preview = thread.lastMessagePreview, !preview.isEmpty {
         Text(preview)

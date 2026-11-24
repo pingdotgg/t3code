@@ -5,9 +5,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
+import { newThreadProjectTarget, promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
@@ -209,6 +209,18 @@ export function DesktopWebLinkCoordinator() {
     const pairingUrl = readPairingAppLink(url);
     if (pairingUrl !== null) {
       await pairFromLink(pairingUrl);
+      return;
+    }
+    // Siri and Spotlight open a project by starting a new thread in it.
+    const projectTarget = newThreadProjectTarget(url);
+    if (projectTarget !== null) {
+      const opened = await openThread(
+        scopeProjectRef(
+          projectTarget.environmentId as EnvironmentId,
+          projectTarget.projectId as ProjectId,
+        ),
+      );
+      if (!opened) reportFailure(url);
       return;
     }
     const appPath = promptLinkAppPath(url);

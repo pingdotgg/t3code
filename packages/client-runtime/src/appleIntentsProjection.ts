@@ -293,11 +293,29 @@ export interface AppleIntentsDiffResult {
   readonly delta: AppleIntentIndexDelta;
 }
 
+/**
+ * With no previous snapshot (the first sync of a launch), the delta replaces the native index:
+ * records it retained from earlier launches that are no longer present are removed.
+ */
 export function diffAppleIntentsSnapshots(
   previous: AppleIntentsSnapshot | null,
   next: AppleIntentsSnapshot,
 ): AppleIntentsDiffResult {
-  const prevEnvMap = new Map((previous?.environments ?? []).map((item) => [item.id, item]));
+  if (previous === null) {
+    return {
+      hasChanges: true,
+      delta: {
+        environments: [...next.environments],
+        removedEnvironmentIds: [],
+        upsertedProjects: [...next.projects],
+        removedProjectIds: [],
+        upsertedThreads: [...next.threads],
+        removedThreadIds: [],
+        replaceAll: true,
+      },
+    };
+  }
+  const prevEnvMap = new Map(previous.environments.map((item) => [item.id, item]));
   const nextEnvIds = new Set(next.environments.map((item) => item.id));
   const environments: AppleIntentEnvironmentRecord[] = [];
   for (const env of next.environments) {
@@ -311,7 +329,7 @@ export function diffAppleIntentsSnapshots(
     if (!nextEnvIds.has(prevId)) removedEnvironmentIds.push(prevId);
   }
 
-  const prevProjectMap = new Map((previous?.projects ?? []).map((item) => [item.id, item]));
+  const prevProjectMap = new Map(previous.projects.map((item) => [item.id, item]));
   const nextProjectIds = new Set(next.projects.map((item) => item.id));
   const upsertedProjects: AppleIntentProjectRecord[] = [];
   for (const project of next.projects) {
@@ -325,7 +343,7 @@ export function diffAppleIntentsSnapshots(
     if (!nextProjectIds.has(prevId)) removedProjectIds.push(prevId);
   }
 
-  const prevThreadMap = new Map((previous?.threads ?? []).map((item) => [item.id, item]));
+  const prevThreadMap = new Map(previous.threads.map((item) => [item.id, item]));
   const nextThreadIds = new Set(next.threads.map((item) => item.id));
   const upsertedThreads: AppleIntentThreadRecord[] = [];
   for (const thread of next.threads) {

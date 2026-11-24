@@ -1,6 +1,10 @@
 import Foundation
+#if os(macOS)
+import Security
+#endif
 
 public enum T3IntentsConfig {
+  /// Fallback for unsigned dev builds; signed builds read the team from their own entitlements.
   public static let teamId = "ARK85ZXQ4Z"
   public static let iosBundleIdentifierDefault = "com.t3tools.t3code"
   public static let macBundleIdentifierDefault = "com.t3tools.t3code"
@@ -14,17 +18,17 @@ public enum T3IntentsConfig {
   public static let projectActivityType = "com.t3tools.t3code.view-project"
 
   public static var appGroupIdentifier: String {
-    #if os(macOS)
     if let configured = Bundle.main.object(forInfoDictionaryKey: "T3AppGroupIdentifier") as? String,
        !configured.isEmpty {
       return configured
+    }
+    #if os(macOS)
+    // The host app and extension are signed with the same group, so it never drifts from the team.
+    if let entitled = signedEntitlementStrings("com.apple.security.application-groups").first {
+      return entitled
     }
     return "\(teamId).\(macBundleIdentifierDefault)"
     #else
-    if let configured = Bundle.main.object(forInfoDictionaryKey: "T3AppGroupIdentifier") as? String,
-       !configured.isEmpty {
-      return configured
-    }
     let bundleId = Bundle.main.bundleIdentifier ?? iosBundleIdentifierDefault
     // Strip known extension suffixes so extensions resolve the parent app group.
     let baseBundleId = bundleId
@@ -41,11 +45,23 @@ public enum T3IntentsConfig {
       return configured
     }
     #if os(macOS)
-    return "\(teamId).\(macBundleIdentifierDefault)"
+    // `TEAM.com.t3tools.t3code`: the host's application identifier and the extension's keychain group.
+    return appGroupIdentifier
     #else
     return nil
     #endif
   }
+
+  #if os(macOS)
+  private static func signedEntitlementStrings(_ key: String) -> [String] {
+    guard let task = SecTaskCreateFromSelf(nil),
+          let value = SecTaskCopyValueForEntitlement(task, key as CFString, nil)
+    else {
+      return []
+    }
+    return (value as? [String]) ?? []
+  }
+  #endif
 
   public static var sharedContainerDirectory: URL {
     if let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {

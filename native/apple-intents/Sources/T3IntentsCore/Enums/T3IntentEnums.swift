@@ -44,6 +44,7 @@ public enum ThreadRunStatus: String, AppEnum, Sendable {
   }
 }
 
+/// Archiving is left to the app: archived threads leave the index, so Siri could not reverse it.
 @available(iOS 27.3, macOS 27.3, *)
 public enum ThreadOrganizationAction: String, AppEnum, Sendable {
   case settle
@@ -52,8 +53,6 @@ public enum ThreadOrganizationAction: String, AppEnum, Sendable {
   case unsnooze
   case pin
   case unpin
-  case archive
-  case unarchive
 
   public static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Thread Action")
 
@@ -64,8 +63,6 @@ public enum ThreadOrganizationAction: String, AppEnum, Sendable {
     .unsnooze: DisplayRepresentation(title: "Unsnooze", image: .init(systemName: "sun.max")),
     .pin: DisplayRepresentation(title: "Pin", image: .init(systemName: "pin.fill")),
     .unpin: DisplayRepresentation(title: "Unpin", image: .init(systemName: "pin.slash")),
-    .archive: DisplayRepresentation(title: "Archive", image: .init(systemName: "archivebox")),
-    .unarchive: DisplayRepresentation(title: "Unarchive", image: .init(systemName: "tray.and.arrow.up")),
   ]
 }
 

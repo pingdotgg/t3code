@@ -21,17 +21,23 @@ public struct ThreadStatusSnippetIntent: SnippetIntent, Sendable {
 
   public func perform() async throws -> some IntentResult & ShowsSnippetView {
     let fresh = store.thread(id: thread.id).map(ThreadEntity.init(record:)) ?? thread
-    return .result(view: ThreadStatusInteractiveSnippetView(thread: fresh))
+    return .result(
+      view: ThreadStatusInteractiveSnippetView(
+        thread: fresh,
+        staleSince: T3StatusFreshness.staleSince(store)
+      )
+    )
   }
 }
 
 @available(iOS 27.3, macOS 27.3, *)
 private struct ThreadStatusInteractiveSnippetView: View {
   let thread: ThreadEntity
+  let staleSince: Date?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      ThreadStatusCardView(thread: thread, isCompact: false)
+      ThreadStatusCardView(thread: thread, isCompact: false, staleSince: staleSince)
       HStack(spacing: 8) {
         Button(intent: OpenThreadIntent(target: thread)) {
           Label("Open", systemImage: "arrow.up.forward.app")

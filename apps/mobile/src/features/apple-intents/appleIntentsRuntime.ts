@@ -43,7 +43,9 @@ const activeOnscreenThreadRefAtom = Atom.make<ScopedThreadRef | null>(null).pipe
 
 const appleIntentsSourceAtom = Atom.make((get) => {
   const preferencesResult = get(mobilePreferencesAtom);
-  const preferences = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
+  // Until the saved opt-out is known, nothing may reach the native index; a failed read stays unknown.
+  const preferencesReady = AsyncResult.isSuccess(preferencesResult);
+  const preferences = preferencesReady ? preferencesResult.value : {};
   const enabled = preferences.appleIntentsEnabled ?? true;
   const indexMessagePreviews = preferences.appleIntentsIndexMessagePreviews ?? false;
   const connectionsById = get(savedConnectionsByIdAtom);
@@ -95,6 +97,7 @@ const appleIntentsSourceAtom = Atom.make((get) => {
     onscreenRef === null ? null : get(environmentThreadShells.threadShellAtom(onscreenRef));
 
   return {
+    preferencesReady,
     enabled,
     indexMessagePreviews,
     inputs,
@@ -118,6 +121,8 @@ const appleIntentsSourceAtom = Atom.make((get) => {
 let lastSnapshot: AppleIntentsSnapshot | null = null;
 let lastCredentialSignature = "";
 let lastOnscreenSignature = "";
+// The native index persists across launches, so assume it holds data until a clear succeeds.
+let nativeMayHoldData = true;
 
 async function readDpopPrivateScalarBase64Url(): Promise<string | null> {
   try {
@@ -130,11 +135,13 @@ async function readDpopPrivateScalarBase64Url(): Promise<string | null> {
   }
 }
 
+/** Clears the native index and credentials; the sync cache resets only once the clear succeeds. */
 export async function clearAppleIntentsIndex(): Promise<void> {
+  await clearAppleIntentsNativeIndex();
   lastSnapshot = null;
   lastCredentialSignature = "";
   lastOnscreenSignature = "";
-  await clearAppleIntentsNativeIndex();
+  nativeMayHoldData = false;
 }
 
 export function recordAppleIntentsNavigationState(state: NavigationState | undefined): void {
@@ -154,18 +161,10 @@ export function installAppleIntents(): () => void {
   const flush = (source: Atom.Type<typeof appleIntentsSourceAtom>) => {
     syncQueue = syncQueue
       .then(async () => {
-        if (disposed) return;
-
-        const onscreenSig = JSON.stringify(source.onscreen);
-        if (onscreenSig !== lastOnscreenSignature) {
-          lastOnscreenSignature = onscreenSig;
-          setAppleIntentsOnscreenContext(source.onscreen);
-        }
+        if (disposed || !source.preferencesReady) return;
 
         if (!source.enabled) {
-          if (lastSnapshot !== null || lastCredentialSignature !== "") {
-            await clearAppleIntentsIndex();
-          }
+          if (nativeMayHoldData) await clearAppleIntentsIndex();
           return;
         }
 
@@ -176,8 +175,15 @@ export function installAppleIntents(): () => void {
         });
         const diff = diffAppleIntentsSnapshots(lastSnapshot, nextSnapshot);
         if (diff.hasChanges) {
+          nativeMayHoldData = true;
           await syncAppleIntentsIndex(diff.delta);
           lastSnapshot = nextSnapshot;
+        }
+
+        const onscreenSig = JSON.stringify(source.onscreen);
+        if (onscreenSig !== lastOnscreenSignature) {
+          setAppleIntentsOnscreenContext(source.onscreen);
+          lastOnscreenSignature = onscreenSig;
         }
 
         const needsDpop = source.rawCredentials.some((item) => item.authScheme === "DPoP");
@@ -191,6 +197,7 @@ export function installAppleIntents(): () => void {
         }));
         const credSig = JSON.stringify(credentials);
         if (credSig !== lastCredentialSignature) {
+          nativeMayHoldData = true;
           await syncAppleIntentsAuthCredentials(credentials);
           lastCredentialSignature = credSig;
         }

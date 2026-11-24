@@ -6,7 +6,7 @@ import Foundation
 public struct OrganizeThreadIntent: Sendable {
   public static let title: LocalizedStringResource = "Organize Thread"
   public static let description = IntentDescription(
-    "Settle, unsettle, snooze, unsnooze, pin, unpin, archive, or unarchive a T3 Code thread.",
+    "Settle, unsettle, snooze, unsnooze, pin, or unpin a T3 Code thread.",
     categoryName: "Threads"
   )
   public static let supportedModes: IntentModes = .background
@@ -29,9 +29,6 @@ public struct OrganizeThreadIntent: Sendable {
     default: .oneHour
   )
   public var snoozeDuration: SnoozePreset
-
-  @Dependency
-  private var store: T3IndexStore
 
   @Dependency
   private var client: any T3EnvironmentOperating
@@ -57,26 +54,7 @@ public struct OrganizeThreadIntent: Sendable {
   }
 
   public func perform() async throws -> some IntentResult & ReturnsValue<ThreadEntity> & ProvidesDialog {
-    if action == .archive {
-      try await requestConfirmation(
-        actionName: .custom(
-          acceptLabel: "Archive",
-          acceptAlternatives: [],
-          denyLabel: "Cancel",
-          denyAlternatives: [],
-          destructive: true
-        ),
-        dialog: IntentDialog("Archive “\(thread.title)” in \(thread.projectName)?")
-      )
-    }
-
-    let payload = makeCommandPayload()
-    _ = try await client.dispatchCommand(environmentId: thread.environmentId, payload: payload)
-
-    if action == .archive {
-      try? store.deleteThreadRecord(id: thread.id)
-    }
-
+    _ = try await client.dispatchCommand(environmentId: thread.environmentId, payload: makeCommandPayload())
     return .result(
       value: thread,
       dialog: IntentDialog("\(actionPastTenseLabel()) “\(thread.title)”.")
@@ -104,10 +82,6 @@ public struct OrganizeThreadIntent: Sendable {
       payload["type"] = .string("thread.pin")
     case .unpin:
       payload["type"] = .string("thread.unpin")
-    case .archive:
-      payload["type"] = .string("thread.archive")
-    case .unarchive:
-      payload["type"] = .string("thread.unarchive")
     }
     return payload
   }
@@ -120,8 +94,6 @@ public struct OrganizeThreadIntent: Sendable {
     case .unsnooze: return "Unsnoozed"
     case .pin: return "Pinned"
     case .unpin: return "Unpinned"
-    case .archive: return "Archived"
-    case .unarchive: return "Unarchived"
     }
   }
 }

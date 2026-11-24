@@ -1362,6 +1362,32 @@ export function resolveMacWebAuthnEntitlements(
   };
 }
 
+/** The Apple Intents extension shares the host's app group and keychain group for the same team. */
+export function renderAppIntentsExtensionEntitlements(
+  configuration: Pick<MacPasskeySigningConfiguration, "appId" | "teamId">,
+): string {
+  const group = escapeXml(`${configuration.teamId}.${configuration.appId}`);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+      <string>${group}</string>
+    </array>
+    <key>keychain-access-groups</key>
+    <array>
+      <string>${group}</string>
+    </array>
+  </dict>
+</plist>
+`;
+}
+
 export function renderMacPasskeyEntitlements(
   configuration: MacPasskeySigningConfiguration,
   webAuthn: MacWebAuthnEntitlements,
@@ -2930,7 +2956,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSSpeechRecognitionUsageDescription:
           "T3 Code transcribes your dictation on this Mac when you choose Apple Speech.",
         NSUserActivityTypes: ["com.t3tools.t3code.view-thread", "com.t3tools.t3code.view-project"],
-        T3AppGroupIdentifier: "ARK85ZXQ4Z.com.t3tools.t3code",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
@@ -3963,6 +3988,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const macEntitlementsPath = macPasskeySigning
     ? path.join(stageAppDir, "entitlements.mac.plist")
     : undefined;
+  const appIntentsEntitlementsPath = macPasskeySigning
+    ? path.join(stageAppDir, "entitlements.appintents.plist")
+    : undefined;
   let macWebAuthn: MacWebAuthnEntitlements | undefined;
   if (macPasskeySigning && macEntitlementsPath) {
     if (!(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
@@ -3980,6 +4008,12 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     yield* fs.writeFileString(
       macEntitlementsPath,
       renderMacPasskeyEntitlements(macPasskeySigning, macWebAuthn),
+    );
+  }
+  if (macPasskeySigning && appIntentsEntitlementsPath) {
+    yield* fs.writeFileString(
+      appIntentsEntitlementsPath,
+      renderAppIntentsExtensionEntitlements(macPasskeySigning),
     );
   }
 
@@ -4131,6 +4165,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     delete buildEnv.APPLE_API_KEY;
     delete buildEnv.APPLE_API_KEY_ID;
     delete buildEnv.APPLE_API_ISSUER;
+  }
+  if (appIntentsEntitlementsPath) {
+    // scripts/sign-macos.ts signs the Apple Intents extension with the app group of this team.
+    buildEnv.T3CODE_APP_INTENTS_ENTITLEMENTS = appIntentsEntitlementsPath;
   }
 
   if (hostPlatform === "win32") {

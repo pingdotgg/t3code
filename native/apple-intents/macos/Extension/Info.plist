@@ -25,9 +25,5 @@
     <key>EXExtensionPointIdentifier</key>
     <string>com.apple.appintents-extension</string>
   </dict>
-  <key>T3AppGroupIdentifier</key>
-  <string>ARK85ZXQ4Z.com.t3tools.t3code</string>
-  <key>T3KeychainAccessGroup</key>
-  <string>ARK85ZXQ4Z.com.t3tools.t3code</string>
 </dict>
 </plist>

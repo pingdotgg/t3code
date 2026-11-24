@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { persistClientSettingsPatch, useClientSettings } from "../../hooks/useSettings";
 import { isMacPlatform } from "../../lib/utils";
-import { resetDesktopAppleIntentsSyncCache } from "../desktop/DesktopAppleIntentsCoordinator";
+import { clearDesktopAppleIntentsIndex } from "../desktop/DesktopAppleIntentsCoordinator";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
@@ -48,12 +48,17 @@ export function AppleIntentsSettingsSection() {
     return null;
   }
 
+  const reportClearFailure = () =>
+    toastManager.add({
+      type: "error",
+      title: gt("Could not clear Siri & Spotlight index"),
+      description: gt("Indexed threads may still appear in Spotlight. Try clearing it again."),
+    });
+
   const handleClearIndex = () => {
     if (clearing) return;
     setClearing(true);
-    resetDesktopAppleIntentsSyncCache();
-    void bridge
-      .clearIndex()
+    void clearDesktopAppleIntentsIndex()
       .then(() => {
         setClearing(false);
         toastManager.add({
@@ -64,10 +69,7 @@ export function AppleIntentsSettingsSection() {
       })
       .catch(() => {
         setClearing(false);
-        toastManager.add({
-          type: "error",
-          title: gt("Could not clear Siri & Spotlight index"),
-        });
+        reportClearFailure();
       });
   };
 
@@ -122,8 +124,7 @@ export function AppleIntentsSettingsSection() {
               const enabled = Boolean(checked);
               void persistClientSettingsPatch({ appleIntentsEnabled: enabled });
               if (!enabled) {
-                resetDesktopAppleIntentsSyncCache();
-                void bridge.clearIndex().catch(() => undefined);
+                void clearDesktopAppleIntentsIndex().catch(reportClearFailure);
               }
             }}
             aria-label={gt("Index for Siri & Spotlight")}

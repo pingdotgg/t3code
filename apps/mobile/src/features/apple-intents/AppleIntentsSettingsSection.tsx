@@ -28,6 +28,12 @@ export function AppleIntentsSettingsSection() {
   const enabled = preferences.appleIntentsEnabled ?? true;
   const indexMessagePreviews = preferences.appleIntentsIndexMessagePreviews ?? false;
 
+  const reportClearFailure = () =>
+    Dialog.alert(
+      gt("Could not clear index"),
+      gt("Indexed threads may still appear in Spotlight. Try clearing it again."),
+    );
+
   const handleClearIndex = () => {
     if (clearing) return;
     setClearing(true);
@@ -41,10 +47,7 @@ export function AppleIntentsSettingsSection() {
       },
       () => {
         setClearing(false);
-        Dialog.alert(
-          gt("Could not clear index"),
-          gt("Try again after reconnecting to your environment."),
-        );
+        reportClearFailure();
       },
     );
   };
@@ -60,6 +63,8 @@ export function AppleIntentsSettingsSection() {
         disabled={!preferencesReady}
         onValueChange={(next) => {
           void savePreferences({ appleIntentsEnabled: next });
+          // Clear now rather than after the sync debounce, which a quit could cut short.
+          if (!next) void clearAppleIntentsIndex().catch(reportClearFailure);
         }}
       />
       <SettingsSwitchRow

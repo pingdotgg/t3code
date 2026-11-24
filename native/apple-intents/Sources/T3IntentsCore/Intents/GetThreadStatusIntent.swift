@@ -32,6 +32,7 @@ public struct GetThreadStatusIntent: Sendable {
 
   public func perform() async throws -> some IntentResult & ReturnsValue<ThreadEntity> & ProvidesDialog & ShowsSnippetIntent {
     let fresh = store.thread(id: thread.id).map(ThreadEntity.init(record:)) ?? thread
+    let staleSince = T3StatusFreshness.staleSince(store)
     let dialogText: String
     if fresh.hasPendingRequest {
       let detail = fresh.pendingRequestSummary ?? "waiting for your input"
@@ -54,8 +55,26 @@ public struct GetThreadStatusIntent: Sendable {
     }
     return .result(
       value: fresh,
-      dialog: IntentDialog(stringLiteral: dialogText),
+      dialog: IntentDialog(stringLiteral: T3StatusFreshness.dialogPrefix(staleSince: staleSince) + dialogText),
       snippetIntent: ThreadStatusSnippetIntent(thread: fresh)
     )
+  }
+}
+
+/// The index changes only when a host syncs, so an old sync must not be presented as current state.
+enum T3StatusFreshness {
+  static let staleAfter: TimeInterval = 120
+
+  /// Nil when the index is fresh; otherwise when it was last synced (`distantPast` if never).
+  static func staleSince(_ store: T3IndexStore, now: Date = Date()) -> Date? {
+    guard let syncedAt = store.lastSyncedAt() else { return .distantPast }
+    return now.timeIntervalSince(syncedAt) > staleAfter ? syncedAt : nil
+  }
+
+  static func dialogPrefix(staleSince: Date?, now: Date = Date()) -> String {
+    guard let staleSince else { return "" }
+    guard staleSince != .distantPast else { return "Not synced yet: " }
+    let relative = RelativeDateTimeFormatter().localizedString(for: staleSince, relativeTo: now)
+    return "Last synced \(relative): "
   }
 }

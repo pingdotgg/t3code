@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildNewThreadLink,
+  newThreadProjectTarget,
   parseNewThreadLink,
   parseThreadLinkPrompt,
   promptLinkAppPath,
@@ -11,6 +12,24 @@ import {
   withoutPromptLinkParams,
 } from "./promptLinks.ts";
 import { hostedThreadLink } from "./threadLinks.ts";
+
+describe("newThreadProjectTarget", () => {
+  it("reads the project a Siri or Spotlight project link opens", () => {
+    expect(newThreadProjectTarget("t3code://new?environmentId=env-1&projectId=proj-1")).toEqual({
+      environmentId: "env-1",
+      projectId: "proj-1",
+    });
+  });
+
+  it.each([
+    "t3code://new?environmentId=env-1&projectId=proj-1&prompt=Fix%20it",
+    "t3code://new?environmentId=env-1",
+    "t3code://threads/env-1/thread-1?projectId=proj-1&environmentId=env-1",
+    "https://app.t3.codes/new?environmentId=env-1&projectId=proj-1",
+  ])("leaves %s to the prompt link parser", (link) => {
+    expect(newThreadProjectTarget(link)).toBeNull();
+  });
+});
 
 describe("sanitizeLinkedPrompt", () => {
   it("removes characters a reader cannot see and counts them", () => {
