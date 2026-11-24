@@ -123,6 +123,20 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.equal(single?.prompt, "Read README.md");
   });
 
+  it("reports the model a subagent launch asks for instead of the parent's", () => {
+    const launch = flavor.extractSubagentUpdate?.({
+      toolCallId: "call_model_override",
+      title: "Run invoke_subagent",
+      kind: "other",
+      status: "completed",
+      data: {
+        rawInput: { TypeName: "self", Role: "Clippy Fixer", Prompt: "Fix it", Model: "flash" },
+      },
+    });
+    assert.equal(launch?.title, "Clippy Fixer");
+    assert.isNotNull(launch?.model);
+  });
+
   it("routes interaction_* permission requests to the question card", () => {
     const question = flavor.extractPermissionQuestion?.(
       permissionRequest("interaction_1", [
