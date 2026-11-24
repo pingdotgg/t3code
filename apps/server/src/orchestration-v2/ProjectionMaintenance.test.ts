@@ -531,6 +531,14 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const now = yield* DateTime.now;
     const deleted = makeThread(ThreadId.make("thread:purge-backfill"), now);
+    // Renamed to the placeholder before deletion; its first title is still on record.
+    const renamed = makeThread(ThreadId.make("thread:purge-renamed"), now);
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>
+      sink.write({
+        events: [{ ...threadCreated(renamed, now), id: EventId.make("event:purge:renamed") }],
+      }),
+    );
+    yield* deleteThread({ ...renamed, title: ProjectionMaintenance.DELETED_THREAD_TITLE }, now);
     yield* writeThread(deleted, now);
     yield* deleteThread(deleted, now);
     // A late transcript import leaves a content event as the stream head.
@@ -551,7 +559,8 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
     `;
 
     // An earlier effect still reads the thread, so the pass waits for it.
-    assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
+    yield* maintenance.pruneEventStore();
+    assert.isAbove(yield* contentRowCount(deleted.id), 0);
     yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
 
     assert.isAbove((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
@@ -570,6 +579,11 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
         AND (payload_json LIKE '%reasoning:0%' OR payload_json LIKE ${`%${deleted.title}%`})
     `;
     assert.equal(leaked[0]?.count, 0);
+    const renamedLeaks = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_events
+      WHERE stream_id = ${renamed.id} AND payload_json LIKE ${`%${renamed.title}%`}
+    `;
+    assert.equal(renamedLeaks[0]?.count, 0);
     assert.equal((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
   }).pipe(Effect.provide(layerTest)),
 );

@@ -345,6 +345,16 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         )
         AND (${sql.or([
           sql`thread.title <> ${DELETED_THREAD_TITLE}`,
+          // A thread renamed to the placeholder still has its first title in thread.created.
+          sql`EXISTS (
+            SELECT 1 FROM orchestration_events
+              INDEXED BY idx_orchestration_events_agent_stream_sequence
+            WHERE application_event_version = 2
+              AND aggregate_kind = 'thread'
+              AND stream_id = thread.thread_id
+              AND event_type IN ('thread.created', 'thread.deleted')
+              AND json_extract(payload_json, '$.title') IS NOT ${DELETED_THREAD_TITLE}
+          )`,
           sql`json_type(thread.payload_json, '$.guestShare') IS NOT NULL`,
           ...DELETED_THREAD_CONTENT_TABLES.map(
             (table) => sql`EXISTS (SELECT 1 FROM ${sql(table)} WHERE thread_id = thread.thread_id)`,
@@ -416,7 +426,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             WHEN json_type(payload_json, '$.title') = 'text'
               THEN json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE})
             ELSE json_remove(payload_json, '$.feedback', '$.answers')
-          END
+          END,
+            last_error = NULL
           WHERE thread_id = ${threadId} AND status = 'failed'
         `;
         // Its v1 events then go with the imported-history prune, and no import refills it.
