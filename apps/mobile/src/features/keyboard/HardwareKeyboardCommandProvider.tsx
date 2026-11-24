@@ -27,6 +27,7 @@ import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import { CommandPalette } from "./CommandPalette";
 import {
+  activeThreadSubroute,
   dispatchHardwareKeyboardCommand,
   getHardwareKeyboardCommandRegistrationVersion,
   getRegisteredHardwareKeyboardCommands,
@@ -124,7 +125,7 @@ export function HardwareKeyboardCommandProvider({
       commands.add("files");
       commands.add("terminal");
       commands.add("review");
-      if (pathname.split("/")[4] !== "terminal") commands.add("copyThreadReference");
+      if (activeThreadSubroute(pathname) !== "terminal") commands.add("copyThreadReference");
     }
     return [...commands];
     // oxlint-disable-next-line react/memo-dependencies -- registrationVersion invalidates the snapshot of the external keyboard-command registry.
@@ -178,13 +179,14 @@ export function HardwareKeyboardCommandProvider({
 
       const thread = parseActiveThreadPath(pathname);
       if (!thread) return;
-      if (command === "files" && !/\/files(?:\/|$)/.test(pathname)) {
+      const subroute = activeThreadSubroute(pathname);
+      if (command === "files" && subroute !== "files") {
         navigation.navigate("ThreadFiles", thread);
       }
-      if (command === "terminal" && !/\/terminal(?:\/|$)/.test(pathname)) {
+      if (command === "terminal" && subroute !== "terminal") {
         navigation.navigate("ThreadTerminal", thread);
       }
-      if (command === "review" && !/\/review(?:\/|$)/.test(pathname)) {
+      if (command === "review" && subroute !== "review") {
         navigation.navigate("ThreadReview", thread);
       }
     },
