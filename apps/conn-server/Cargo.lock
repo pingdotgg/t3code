@@ -243,6 +243,7 @@ dependencies = [
  "conn-contract",
  "conn-support",
  "getrandom 0.3.4",
+ "globset",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
