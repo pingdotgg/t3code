@@ -160,7 +160,9 @@ describe("SidebarUpdatePill update everything", () => {
     await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
 
     const table = page.getByRole("table");
-    await expect.element(table.getByRole("columnheader", { name: "Machine" })).toBeVisible();
+    await expect
+      .element(table.getByRole("columnheader", { name: "Select all machines Machine" }))
+      .toBeVisible();
     await expect.element(table.getByRole("columnheader", { name: "T3 Code" })).toBeVisible();
     await expect.element(table.getByRole("columnheader", { name: "Providers" })).toBeVisible();
     const row = table.getByRole("row", { name: new RegExp(label) });
