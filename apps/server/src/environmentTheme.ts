@@ -532,23 +532,58 @@ const make = Effect.gen(function* () {
         yield* requirePublished(themeId);
         const removalError = (cause: unknown) =>
           new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause });
-        const removeFile = (suffix: string) =>
-          fs
-            .remove(NodePath.join(environmentThemesDir, `${themeId}${suffix}`), { force: true })
-            .pipe(Effect.mapError(removalError));
-        // Keep the JSON published until image cleanup succeeds so removal can be retried.
-        yield* Effect.forEach(
-          THEME_BACKGROUND_EXTENSIONS,
-          (extension) => {
-            const suffix = `.${extension}`;
-            const file = NodePath.join(environmentThemesDir, `${themeId}${suffix}`);
-            return Effect.try({
-              try: () => NodeFS.lstatSync(file, { throwIfNoEntry: false })?.isFile() ?? false,
-              catch: removalError,
-            }).pipe(Effect.flatMap((isFile) => (isFile ? removeFile(suffix) : Effect.void)));
-          },
-          { discard: true },
-        ).pipe(Effect.andThen(removeFile(THEME_FILE_SUFFIX)), Effect.ensuring(refresh));
+        yield* refreshSemaphore
+          .withPermits(1)(
+            Effect.gen(function* () {
+              // Keep staged files on the same filesystem and out of the published directory scan.
+              const staging = yield* fs
+                .makeTempDirectory({
+                  directory: environmentThemesDir,
+                  prefix: ".remove-theme-",
+                })
+                .pipe(Effect.mapError(removalError));
+              const moved: string[] = [];
+              const stage = (name: string) =>
+                fs
+                  .rename(NodePath.join(environmentThemesDir, name), NodePath.join(staging, name))
+                  .pipe(Effect.tap(() => Effect.sync(() => moved.push(name))));
+              const cleanup = fs
+                .remove(staging, { recursive: true })
+                .pipe(Effect.ignoreCause({ log: true }));
+
+              const removal = yield* Effect.exit(
+                Effect.gen(function* () {
+                  for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+                    const name = `${themeId}.${extension}`;
+                    const isFile = yield* Effect.try({
+                      try: () =>
+                        NodeFS.lstatSync(NodePath.join(environmentThemesDir, name), {
+                          throwIfNoEntry: false,
+                        })?.isFile() ?? false,
+                      catch: removalError,
+                    });
+                    if (isFile) yield* stage(name);
+                  }
+                  yield* stage(`${themeId}${THEME_FILE_SUFFIX}`);
+                }),
+              );
+              if (Exit.isFailure(removal)) {
+                const restored = yield* Effect.forEach(moved.reverse(), (name) =>
+                  fs
+                    .rename(NodePath.join(staging, name), NodePath.join(environmentThemesDir, name))
+                    .pipe(
+                      Effect.tapError((error) => Effect.logError(error)),
+                      Effect.exit,
+                    ),
+                );
+                // Keep any file whose restore failed so it can still be recovered.
+                if (restored.every(Exit.isSuccess)) yield* cleanup;
+                return yield* removalError(removal.cause);
+              }
+              yield* cleanup;
+            }).pipe(Effect.uninterruptible),
+          )
+          .pipe(Effect.ensuring(refresh));
       }),
     );
   });

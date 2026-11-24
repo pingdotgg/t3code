@@ -10,13 +10,18 @@ import {
   UploadIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
-import { readThemeHalvesRaw } from "../../hooks/useTheme";
+import {
+  readAppearanceModePreference,
+  readThemeHalvesRaw,
+  readThemePreferenceRaw,
+} from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { serverEnvironment, themeServerEditableEnvironmentIdAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  getCustomThemes,
   getThemeDefinition,
   singleAppearanceOf,
   getThemeModes,
@@ -599,6 +604,11 @@ export function ThemeLibrary({
     published: boolean;
   } | null>(null);
   const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
+  const removalConfirmation = useRef(0);
+  const changeRemovalOpen = (open: boolean) => {
+    removalConfirmation.current++;
+    setIsThemeRemovalOpen(open);
+  };
   const [themeIdsToRemove, setThemeIdsToRemove] = useState<ReadonlyArray<string>>([]);
   const themeIdsToRemoveSet = new Set(themeIdsToRemove);
   const removeDialogTheme = themeRemovalTarget?.theme;
@@ -640,17 +650,14 @@ export function ThemeLibrary({
   ) => {
     setThemeRemovalTarget({ theme: customTheme, collectionThemes, published });
     setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
-    setIsThemeRemovalOpen(true);
+    changeRemovalOpen(true);
   };
 
   const handleConfirmRemoveTheme = async () => {
     if (!themeRemovalTarget) return;
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
-    const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
-    // Read raw halves before persistTheme clears them; themeHalves omits published themes not yet streamed
-    // in.
-    const storedHalves = readThemeHalvesRaw();
+    const confirmation = removalConfirmation.current;
     const removesPublished = themeRemovalTarget.published;
     if (removesPublished) {
       if (editableEnvironmentId === null) return;
@@ -665,9 +672,23 @@ export function ThemeLibrary({
         return;
       }
     }
-    if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
-      return;
+    let base = getThemeDefinition(theme)?.id ?? "";
+    let fallback = appearanceMode;
+    if (removesPublished) {
+      try {
+        // The server update can arrive before the RPC completes and make the stored id unresolved.
+        base = readThemePreferenceRaw() ?? "system";
+        fallback = readAppearanceModePreference(base);
+      } catch {
+        notifyThemeSaveFailure();
+        return;
+      }
+      if (getCustomThemes().some(({ id }) => removedIds.has(id))) removedIds.clear();
     }
+    const removesBase = removedIds.has(base);
+    // Read the current raw halves before persistTheme clears them.
+    const storedHalves = readThemeHalvesRaw();
+    if (removesBase && !persistTheme(fallback)) return;
     for (const appearance of ["light", "dark"] as const) {
       const half = storedHalves[appearance];
       if (half === undefined) continue;
@@ -685,7 +706,7 @@ export function ThemeLibrary({
         return;
       }
     }
-    setIsThemeRemovalOpen(false);
+    if (removalConfirmation.current === confirmation) changeRemovalOpen(false);
   };
 
   const baseCardId = getThemeDefinition(theme)?.id ?? null;
@@ -1023,7 +1044,7 @@ export function ThemeLibrary({
         onOpenChange={onImportOpenChange}
         open={isImportOpen}
       />
-      <AlertDialog open={isThemeRemovalOpen} onOpenChange={setIsThemeRemovalOpen}>
+      <AlertDialog open={isThemeRemovalOpen} onOpenChange={changeRemovalOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>

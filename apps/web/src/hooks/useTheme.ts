@@ -184,11 +184,10 @@ function writeAppearanceModePreference(appearanceMode: ThemePreferenceMode): voi
   }
 }
 
-export function readThemePreference(): Theme {
-  if (typeof window === "undefined") return DEFAULT_THEME_SNAPSHOT.theme;
-  let raw: string | null;
+export function readThemePreferenceRaw(): string | null {
+  if (typeof window === "undefined") return null;
   try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
+    return window.localStorage.getItem(STORAGE_KEY);
   } catch (cause) {
     throw new ThemeStorageError({
       operation: "read",
@@ -196,6 +195,10 @@ export function readThemePreference(): Theme {
       cause,
     });
   }
+}
+
+export function readThemePreference(): Theme {
+  const raw = readThemePreferenceRaw();
   if (raw !== null && isKnownThemePreference(raw)) {
     return canonicalThemePreference(raw);
   }

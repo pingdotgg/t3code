@@ -11311,6 +11311,7 @@
   "cddde869ea4ceb29": "Sidebar selection",
   "735a61ef214f6836": "Terminal background",
   "afc8fb892e52f932": "Error",
+  "775d234da35a6835": "You can only edit existing palettes in a published theme.",
   "16ad4c65b7cde1bb": "“{label}” has no light palette. Create a theme with the same name to add one.",
   "0ec05a92bf5537a2": "“{label}” has no dark palette. Create a theme with the same name to add one.",
   "a9cfdfa41271d7d4": "“{label}” already has a light palette.",

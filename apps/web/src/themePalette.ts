@@ -275,7 +275,11 @@ function publishedThemeColors(
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
-function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
+type PublishedThemeDefinition = ThemeDefinition & {
+  readonly publishedSeeds?: { readonly canvas: string; readonly accent: string };
+};
+
+function environmentThemeDefinition(theme: EnvironmentTheme): PublishedThemeDefinition {
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   for (const [variantAppearance, variantColors] of Object.entries(theme.variants ?? {})) {
     if (variantAppearance === theme.appearance) continue;
@@ -292,15 +296,12 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    // Only the pure seeded form is guided-generator output. An exported file,
-    // or seeds carrying explicit role overrides, must open Duplicate in the
-    // advanced editor -- the guided one regenerates from canvas and accent and
-    // would discard whatever the machine hand-tuned.
-    ...(theme.canvas !== undefined &&
-    theme.accent !== undefined &&
-    theme.colors === undefined &&
-    theme.variants === undefined
-      ? { managed: true }
+    ...(theme.canvas !== undefined && theme.accent !== undefined
+      ? {
+          publishedSeeds: { canvas: theme.canvas, accent: theme.accent },
+          // Opening the guided editor would regenerate and discard explicit overrides.
+          ...(theme.colors === undefined && theme.variants === undefined ? { managed: true } : {}),
+        }
       : {}),
     ...(theme.css ? { css: theme.css } : {}),
   };
@@ -309,26 +310,23 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
 /** The file that publishes `theme`; its id is the file's name. */
 export function environmentThemeFile(
   theme: ThemeDefinition,
-  original: ThemeDefinition,
+  original: PublishedThemeDefinition,
 ): EnvironmentThemeFile {
-  const seeds = theme.managed ? theme.colors : original.colors;
-  const canvas = themeColorToHex(seeds.canvas);
-  const accent = themeColorToHex(seeds.accent);
-  const seeded =
-    !theme.variants &&
-    (theme.managed || original.managed) &&
-    canvas?.length === 7 &&
-    accent?.length === 7;
-  const generated = seeded
+  const guidedCanvas = theme.managed ? themeColorToHex(theme.colors.canvas) : null;
+  const guidedAccent = theme.managed ? themeColorToHex(theme.colors.accent) : null;
+  const seeds =
+    guidedCanvas?.length === 7 && guidedAccent?.length === 7
+      ? { canvas: guidedCanvas, accent: guidedAccent }
+      : original.publishedSeeds;
+  const generated = seeds
     ? createVividThemeColors(theme.appearance, seeds.canvas, seeds.accent)
     : null;
   const overrides = generated
     ? THEME_COLOR_ROLES.filter((role) => theme.colors[role] !== generated[role])
     : [];
-  const palette = seeded
+  const palette = seeds
     ? {
-        canvas,
-        accent,
+        ...seeds,
         ...(overrides.length > 0
           ? { colors: Object.fromEntries(overrides.map((role) => [role, theme.colors[role]])) }
           : {}),
@@ -351,7 +349,7 @@ export function environmentThemeFile(
  */
 export function publishedThemeDefinitions(
   themes: ReadonlyArray<EnvironmentTheme>,
-): ReadonlyArray<ThemeDefinition> {
+): ReadonlyArray<PublishedThemeDefinition> {
   return themes
     .filter((theme) => {
       if (isReservedThemeId(theme.id)) return false;

@@ -448,6 +448,9 @@ export function ThemeEditorPanel({
 
   const appearanceLockReason = (appearance: ThemeAppearance): string | null => {
     if (editableAppearances && !editableAppearances.includes(appearance)) {
+      if (onSaveToEnvironment) {
+        return gt("You can only edit existing palettes in a published theme.");
+      }
       return appearance === "light"
         ? gt("“{label}” has no light palette. Create a theme with the same name to add one.", {
             label: editingTheme?.label,

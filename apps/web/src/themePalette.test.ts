@@ -64,6 +64,42 @@ describe("published theme files", () => {
     expect(edited.colors).toEqual({ error: "#fa1234" });
     expect(publishedThemeDefinitions([{ id: theme.id, ...renamed }])[0]?.managed).toBe(true);
   });
+
+  it("keeps the original seeds and sparse overrides through an advanced editor save", () => {
+    const file = {
+      id: "nightfall",
+      name: "Nightfall",
+      appearance: "dark",
+      canvas: "#1a1b26",
+      accent: "#7aa2f7",
+      colors: { canvas: "#222222", error: "#fa1234" },
+    } as const;
+    const [original] = publishedThemeDefinitions([file]);
+    if (!original) throw new Error("Expected a published theme");
+    expect(original.managed).toBeUndefined();
+
+    const edited = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: original.id,
+      name: "Night sky",
+      appearance: original.appearance,
+      colors: original.colors,
+    });
+    const saved = environmentThemeFile(edited, original);
+    expect(saved).toEqual({
+      name: "Night sky",
+      appearance: "dark",
+      canvas: file.canvas,
+      accent: file.accent,
+      colors: {
+        canvas: canonical(file.colors.canvas),
+        error: canonical(file.colors.error),
+      },
+    });
+    expect(publishedThemeDefinitions([{ id: file.id, ...saved }])[0]?.colors).toEqual(
+      edited.colors,
+    );
+  });
 });
 
 function asHex(value: string): string {

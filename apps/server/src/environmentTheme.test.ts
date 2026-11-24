@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -705,6 +706,47 @@ describe("environment theme", () => {
         const missing = yield* themes.remove("look").pipe(Effect.flip);
         assert.match(missing.message, /not a published theme/);
       }),
+    ),
+  );
+
+  it.effect("restores the background when the published theme cannot be moved", () =>
+    withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "png" },
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        assert.isDefined((yield* themes.current)[0]?.background);
+
+        const refused = yield* themes.remove("look").pipe(Effect.flip);
+
+        assert.match(refused.message, /could not be removed/);
+        assert.isDefined((yield* themes.current)[0]?.background);
+        assert.equal(yield* fs.readFileString(path.join(environmentThemesDir, "look.png")), "png");
+        assert.deepEqual((yield* fs.readDirectory(environmentThemesDir)).toSorted(), [
+          "look.json",
+          "look.png",
+        ]);
+      }),
+      {
+        wrapFileSystem: (fs) => ({
+          ...fs,
+          rename: (source, destination) =>
+            source.endsWith("look.json")
+              ? Effect.fail(
+                  new PlatformError.PlatformError(
+                    new PlatformError.SystemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: source,
+                    }),
+                  ),
+                )
+              : fs.rename(source, destination),
+        }),
+      },
     ),
   );
 
