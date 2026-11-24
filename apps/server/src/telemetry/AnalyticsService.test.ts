@@ -203,6 +203,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
+  it.effect("sends an anonymous event under its own id and without the install id", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.linked");
+          yield* analytics.record("test.anonymous", {}, { anonymous: true });
+          yield* analytics.flush;
+        }),
+      );
+      const [linked, anonymous] = batches.flat();
+
+      assert.isDefined(linked?.properties.installId);
+      assert.equal(anonymous?.distinct_id, anonymous?.uuid);
+      assert.notEqual(anonymous?.distinct_id, linked?.distinct_id);
+      assert.isUndefined(anonymous?.properties.installId);
+    }),
+  );
+
   it.effect("client owner reports cannot use up the server's owner cap", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(

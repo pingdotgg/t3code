@@ -12798,5 +12798,8 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Auto-Merge für Stack abbrechen",
-  "012c67c7f1a99e33": "Auto-Merge für Stack"
+  "012c67c7f1a99e33": "Auto-Merge für Stack",
+  "4a18481bea4b4ad5": "Neues Gerät bei {environmentLabel} angemeldet",
+  "4144ab6aa487528a": "{device} hat sich über {product} verbunden. Warst du das nicht? Prüfe es.",
+  "a10cfdb27152c757": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht? Prüfe sie."
 }
