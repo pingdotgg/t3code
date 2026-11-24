@@ -2268,21 +2268,20 @@ code {
 }
 
 /* Prose fences hold sentences, not code: each line takes the direction of its
-   own words, and coding-font ligatures would overprint right-to-left letters.
-   plaintext goes on the block that holds the lines; on an inline it isolates them. */
-.chat-markdown-codeblock:is(
-  [data-language="md" i],
-  [data-language="markdown" i],
-  [data-language="mdx" i],
-  [data-language="text" i],
-  [data-language="txt" i],
-  [data-language="plain" i],
-  [data-language="plaintext" i]
-) {
-  .chat-markdown & pre {
-    unicode-bidi: plaintext;
-    font-variant-ligatures: none;
-  }
+   own words. Coding-font ligatures assume left-to-right and would overprint RTL letters. */
+.chat-markdown
+  .chat-markdown-codeblock:is(
+    [data-language="md" i],
+    [data-language="markdown" i],
+    [data-language="mdx" i],
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  )
+  pre {
+  unicode-bidi: plaintext;
+  font-variant-ligatures: none;
 }
 
 /* Sent messages color prose with the message foreground, which is not chosen
