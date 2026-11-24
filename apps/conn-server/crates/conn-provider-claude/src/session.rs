@@ -60,6 +60,8 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(20);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// `CLAUDE_STOP_CONFIRM_TIMEOUT_MS`: how long an interrupt waits for the CLI to exit.
 const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a workflow `stopTask` may wait for the SDK (T3's `"15 seconds"`).
+const WORKFLOW_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 /// The helper's session-file calls (T3's worker timeout).
 const FUNCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
@@ -278,6 +280,25 @@ impl Inner {
                     let tail = self.lock().tails.remove(&tool_use_id);
                     if let Some(tail) = tail {
                         tail.finish().await;
+                    }
+                }
+                Out::StopTask { task_id } => {
+                    // `stopTask` only on a live query that is not already stopping.
+                    let query = {
+                        let state = self.lock();
+                        state
+                            .live
+                            .as_ref()
+                            .filter(|l| !l.stopping.load(Ordering::Relaxed) && !*l.ended.borrow())
+                            .map(|l| l.query.clone())
+                    };
+                    if let Some(query) = query {
+                        // An unanswered stop must not hold the turn's settlement.
+                        tokio::spawn(async move {
+                            let _ = query
+                                .call("stopTask", json!([task_id]), WORKFLOW_STOP_TIMEOUT)
+                                .await;
+                        });
                     }
                 }
                 Out::Skipped(kind) => {
@@ -2269,7 +2290,7 @@ impl Session for ClaudeSession {
                 accepted: false,
             };
             if let Err(error) = query
-                .call("stopTask", json!([input.task_id]), Duration::from_secs(15))
+                .call("stopTask", json!([input.task_id]), WORKFLOW_STOP_TIMEOUT)
                 .await
             {
                 return Err(failed_err(

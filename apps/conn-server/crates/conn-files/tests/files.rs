@@ -565,6 +565,177 @@ fn searches_names_and_contents_without_ignored_files() {
     assert_eq!((long.matches.len(), long.truncated), (1, true));
 }
 
+fn names(f: &Fixture, query: &str, limit: i64) -> Vec<String> {
+    let input = ProjectSearchEntriesInput {
+        cwd: String::new(),
+        query: query.into(),
+        limit,
+        kind: None,
+        image_only: None,
+    };
+    let mut paths: Vec<String> = search::search_entries(&f.project, &input, &f.files.internal)
+        .entries
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// fff and ripgrep read `.ignore` ahead of Git's rules: the nearest matching rule decides,
+/// before ranking and the limit (`WorkspaceSearchIndex.ts` `decideByIgnoreFiles`).
+#[test]
+fn search_leaves_out_what_ignore_files_exclude() {
+    let f = fixture("dot-ignore");
+    git(&f.project, &["init", "-q"]);
+    let d = Dir(f.project.clone());
+    d.write(".ignore", "*.scratch\n");
+    d.write(".gitignore", "*.log\n");
+    d.write("select-me.scratch", "ignore example");
+    d.write("long/directory/select-me.ts", "include example");
+    d.write("unused.scratch", "uniquemarker");
+    d.write("build.log", "uniquemarker");
+    d.write("src/a.ts", "uniquemarker");
+    // The nearer `.ignore` re-includes; a Git ignore rule there loses to it as well.
+    d.write("keep/.ignore", "!*.scratch\n!*.log\n");
+    d.write("keep/kept.scratch", "uniquemarker");
+    d.write("keep/kept.log", "uniquemarker");
+
+    assert_eq!(names(&f, "select-me", 1), ["long/directory/select-me.ts"]);
+    let grep = ProjectSearchContentsInput {
+        cwd: String::new(),
+        query: "uniquemarker".into(),
+        limit: 30,
+        case_sensitive: true,
+        whole_word: false,
+        use_regex: false,
+    };
+    let mut content: Vec<String> = search::search_contents(&f.project, &grep, &f.files.internal)
+        .matches
+        .into_iter()
+        .map(|m| m.path)
+        .collect();
+    content.sort();
+    assert_eq!(content, ["keep/kept.log", "keep/kept.scratch", "src/a.ts"]);
+    let listed = entries::list_all(&f.project, &f.files.internal);
+    let listed: Vec<&str> = listed.entries.iter().map(|e| e.path.as_str()).collect();
+    assert!(!listed.contains(&"unused.scratch"), "{listed:?}");
+    assert!(listed.contains(&"keep/kept.scratch"), "{listed:?}");
+}
+
+/// T3's WorkspaceEntries test: a path in a gitignored nested worktree is found only exactly.
+#[test]
+fn finds_a_path_inside_a_gitignored_nested_worktree_only_by_its_exact_path() {
+    let f = fixture("nested-worktree");
+    let id = [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+    ];
+    let git_id = |args: &[&str]| git(&f.project, &[&id[..], args].concat());
+    git_id(&["init", "-q"]);
+    let d = Dir(f.project.clone());
+    d.write(".gitignore", ".worktrees/\nignored/\n");
+    git_id(&["add", ".gitignore"]);
+    git_id(&["commit", "-qm", "init"]);
+    git_id(&["worktree", "add", "-q", "-b", "x", ".worktrees/x"]);
+    d.write(".worktrees/x/src/foo.py", "print(1)");
+    git_id(&["worktree", "add", "-q", "--detach", ".worktrees/line\nname"]);
+    d.write(".worktrees/line\nname/src/foo.py", "print(2)");
+    // The same file in an ignored folder that is not a checkout stays out.
+    d.write("ignored/src/foo.py", "print(3)");
+
+    assert_eq!(
+        names(&f, "src/foo.py", 25),
+        [
+            ".worktrees/line\nname/src/foo.py",
+            ".worktrees/x/src/foo.py"
+        ]
+    );
+    assert!(names(&f, "src/fo", 25).is_empty());
+    assert_eq!(names(&f, "src/foo.py", 1).len(), 1, "the limit holds");
+    // A drive-letter-like relative name is a path, not a Windows absolute one.
+    d.write(".worktrees/x/a:docs/new.py", "print(5)");
+    assert_eq!(
+        names(&f, "a:docs/new.py", 25),
+        [".worktrees/x/a:docs/new.py"]
+    );
+    // A link out of the workspace or into `.git` is not a file of the checkout.
+    symlink(
+        f.outside.join("secret.txt"),
+        f.project.join(".worktrees/x/src/leak.py"),
+    )
+    .unwrap();
+    symlink(
+        f.project.join(".git/HEAD"),
+        f.project.join(".worktrees/x/src/head.py"),
+    )
+    .unwrap();
+    for query in ["src/leak.py", "src/head.py"] {
+        assert!(names(&f, query, 25).is_empty(), "{query}");
+    }
+    // As in the walk, a name under a `.git` folder stays out; a link inside the checkout counts.
+    d.write(".worktrees/x/sub/.git/plain.py", "print(6)");
+    assert!(names(&f, "sub/.git/plain.py", 25).is_empty());
+    symlink(
+        f.project.join(".worktrees/x/src/foo.py"),
+        f.project.join(".worktrees/x/src/alias.py"),
+    )
+    .unwrap();
+    assert_eq!(names(&f, "src/alias.py", 25), [".worktrees/x/src/alias.py"]);
+    // A gone checkout's folder is no longer one of them.
+    fs::remove_dir_all(f.project.join(".worktrees/x")).unwrap();
+    d.write(".worktrees/x/src/foo.py", "print(4)");
+    assert_eq!(
+        names(&f, "src/foo.py", 25),
+        [".worktrees/line\nname/src/foo.py"]
+    );
+}
+
+/// T3's WorkspaceEntries test "matches glob metacharacters in the query literally".
+#[test]
+fn name_globs_take_brace_alternatives_and_keep_literal_braces() {
+    let f = fixture("brace-glob");
+    let d = Dir(f.project.clone());
+    for path in [
+        "src/app/game/[id]/index.tsx",
+        "src/foo{bar}.ts",
+        "src/main.ts",
+        "src/notes.md",
+        "src/UPPER.TS",
+        "src/clip.ts}",
+        "config/.env",
+        "config/app.ENV",
+    ] {
+        d.write(path, "");
+    }
+    for query in ["game/[i", "game/[id]"] {
+        assert!(names(&f, query, 10).contains(&"src/app/game/[id]/index.tsx".into()));
+    }
+    assert!(names(&f, "foo{bar}.ts", 10).contains(&"src/foo{bar}.ts".into()));
+    assert_eq!(
+        names(&f, "*.{ts,tsx}", 10),
+        [
+            "src/app/game/[id]/index.tsx",
+            "src/foo{bar}.ts",
+            "src/main.ts"
+        ]
+    );
+    assert_eq!(names(&f, "*.{ts}", 10), ["src/foo{bar}.ts", "src/main.ts"]);
+    // fff: `*.ext` filters extensions in any case; a brace glob matches case as written.
+    assert_eq!(
+        names(&f, "*.ts", 10),
+        ["src/UPPER.TS", "src/foo{bar}.ts", "src/main.ts"]
+    );
+    assert_eq!(names(&f, "*.ts}", 10), ["src/clip.ts}"]);
+    // fff wants a name longer than the extension: a bare `.env` is not an `*.env` file.
+    assert_eq!(names(&f, "*.env", 10), ["config/app.ENV"]);
+    assert_eq!(names(&f, "src/{main}.ts", 10), ["src/main.ts"]);
+    assert_eq!(names(&f, "src/{foo{bar},notes}.md", 10), ["src/notes.md"]);
+    assert_eq!(names(&f, "*.{TS}", 10), ["src/foo{bar}.ts", "src/main.ts"]);
+}
+
 #[test]
 fn browses_folders_for_the_project_picker() {
     let f = fixture("browse");

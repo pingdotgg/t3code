@@ -41,7 +41,7 @@ import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 
-import { schemaRule } from "./schema-rules.mjs";
+import { nullRule, schemaRule } from "./schema-rules.mjs";
 import { importSource, inMonorepo, packageImporter, repoRoot } from "./monorepo.mjs";
 
 const check = process.argv.includes("--check");
@@ -66,6 +66,9 @@ const client = await importSource(CLIENT_FILE);
 const rpc = await importSource("packages/contracts/src/rpc.ts");
 const orchestration = await importSource("packages/contracts/src/orchestrationV2.ts");
 const settings = await importSource("packages/contracts/src/settings.ts");
+const SettingsSchemaApi = await packageImporter("packages/contracts")("effect/Schema");
+const SettingsExitApi = await packageImporter("packages/contracts")("effect/Exit");
+const SettingsDecode = { decode: SettingsSchemaApi.decodeUnknownExit, isSuccess: SettingsExitApi.isSuccess };
 
 const scopes = Object.entries(auth.RPC_REQUIRED_SCOPES)
   .map(([tag, scope]) => [tag, scope])
@@ -287,6 +290,25 @@ for (const id of [...defaultEnabledInstances, ...defaultDisabledDrivers, "conn-t
 }
 
 const strs = (list) => `&[${list.map(str).join(", ")}]`;
+// Persisted settings for the null-rule differential: T3's own decoder gives each verdict.
+const nullRuleCases = (() => {
+  const SettingsSchema = settings.ServerSettings;
+  const rules = { worktreeAfterDays: null, worktreeOnMerge: true, worktreeOnDelete: true, worktreeUnchanged: false };
+  const docs = [
+    { defaultThreadEnvMode: null },
+    { projectSettingsFolded: null },
+    { providerInstances: { claudeAgent: { driver: "claudeAgent", enabled: null } } },
+    { hiddenThreadTags: [null, "keep"] },
+    { worktreeCleanup: null },
+    { worktreeCleanup: { mode: "off", rules: null } },
+    { worktreeCleanup: { mode: "custom", rules } },
+    { worktreeCleanup: { mode: "custom", rules: { ...rules, worktreeKeepWhen: null } } },
+    { responseStreamingMode: null },
+    { projectSettingsOverrides: { p: { defaultThreadEnvMode: null } } },
+  ];
+  return docs.map((doc) => [doc, SettingsDecode.isSuccess(SettingsDecode.decode(SettingsSchema)(doc))]);
+})();
+
 const secretsRs = rustfmt(
   [
     ...HEADER,
@@ -336,6 +358,18 @@ const secretsRs = rustfmt(
     "",
     "/// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).",
     `pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = ${strs(defaultEnabledInstances)};`,
+    "",
+    "/// Where `ServerSettings` (packages/contracts/src/settings.ts) takes an explicit `null`, by",
+    "/// T3's own decoder (`nullRule` in tools/schema-rules.mjs): `n` marks a node that may be null,",
+    "/// `f` an object's known fields, `v` a record's values, `i` array items.",
+    `pub(super) const NULL_RULES: &str = ${JSON.stringify(JSON.stringify(nullRule(contracts.ServerSettings.ast)))};`,
+    "",
+    "/// Persisted settings and whether T3's own `ServerSettings` decoder takes them: the null",
+    "/// rules and the settings load must agree on each (`settings/file.rs` tests).",
+    "#[cfg(test)]",
+    "pub(super) const NULL_RULE_CASES: &[(&str, bool)] = &[",
+    ...nullRuleCases.map(([doc, accepted]) => `(${str(JSON.stringify(doc))}, ${accepted}),`),
+    "];",
     "",
   ].join("\n"),
 );

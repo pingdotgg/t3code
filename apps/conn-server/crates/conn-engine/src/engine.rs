@@ -589,6 +589,9 @@ impl Inner {
         guard: Option<crate::guard::DispatchGuard>,
         commit_gate: Option<Arc<dyn crate::guard::CommitGate>>,
     ) -> Result<(u64, bool), DispatchError> {
+        if let Some(host) = &self.host {
+            host.refresh_settings().await;
+        }
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
@@ -1679,6 +1682,9 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
             // thread, so a refused launch leaves no thread behind.
+            if let Some(host) = &self.inner.host {
+                host.refresh_settings().await;
+            }
             if let Some(host) = &self.inner.host
                 && let (Some(project), Some(instance)) = (
                     input["projectId"].as_str(),
