@@ -7,10 +7,8 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-export const CritOpenInput = Schema.Struct({
+export const CritReviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  portlessPort: Schema.optional(PositiveInt),
-  tailscale: Schema.optional(Schema.Boolean),
   scope: Schema.Union([
     Schema.Struct({ kind: Schema.Literal("working-tree") }),
     Schema.Struct({ kind: Schema.Literal("branch"), baseRef: TrimmedNonEmptyString }),
@@ -29,6 +27,12 @@ export const CritOpenInput = Schema.Struct({
       toRef: CheckpointRef,
     }),
   ]),
+});
+export const CritOpenInput = Schema.Struct({
+  ...CritReviewInput.fields,
+  tailscale: Schema.optional(Schema.Boolean),
+  // Older SSH clients must fail explicitly before opening a browser on the host.
+  portlessPort: Schema.optional(PositiveInt),
 });
 export type CritOpenInput = typeof CritOpenInput.Type;
 

@@ -235,7 +235,7 @@ describe("resolveBranchTriggerLabel", () => {
     );
   });
 
-  it("shows the origin ref when a new worktree will start from origin", () => {
+  it("leaves the tracked remote name to the server", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -245,10 +245,10 @@ describe("resolveBranchTriggerLabel", () => {
         startFromOrigin: true,
         terminology: DEFAULT_VCS_TERMINOLOGY,
       }),
-    ).toBe("From origin/main");
+    ).toBe("From main (remote)");
   });
 
-  it("shows the origin ref for local branch names that contain slashes", () => {
+  it("marks local branch names containing slashes as remote bases", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -258,7 +258,7 @@ describe("resolveBranchTriggerLabel", () => {
         startFromOrigin: true,
         terminology: DEFAULT_VCS_TERMINOLOGY,
       }),
-    ).toBe("From origin/feature/demo");
+    ).toBe("From feature/demo (remote)");
   });
 
   it("shows the local ref when start from origin is disabled", () => {

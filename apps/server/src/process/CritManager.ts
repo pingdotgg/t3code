@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off globalFetch:off - supervises an external CLI and its loopback health endpoint.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -12,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const READY =
@@ -149,28 +149,6 @@ function waitForTailscaleForward(child: NodeChildProcess.ChildProcess, url: stri
   });
 }
 
-async function portlessAlias(command: string, args: string[], port: number): Promise<void> {
-  const env = { ...process.env, PORTLESS_PORT: String(port), PORTLESS_SYNC_HOSTS: "0" };
-  try {
-    await execFile(command, args, { env, timeout: 10_000 });
-  } catch (error) {
-    if (
-      !(
-        command === "portless" &&
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )
-    )
-      throw error;
-    await execFile(
-      NodePath.join(NodeOS.homedir(), ".local/bin/mise"),
-      ["exec", "--", "portless", ...args],
-      { env, timeout: 10_000 },
-    );
-  }
-}
-
 async function critArgs(input: CritOpenInput): Promise<string[]> {
   switch (input.scope.kind) {
     case "working-tree":
@@ -225,7 +203,6 @@ interface ManagedReview {
 export function createCritManager(
   options: {
     readonly command?: string;
-    readonly portlessCommand?: string;
     readonly tailscaleCommand?: string;
     readonly sudoCommand?: string;
     readonly outputDir?: string;
@@ -235,7 +212,6 @@ export function createCritManager(
   } = {},
 ) {
   const command = options.command ?? "crit";
-  const portlessCommand = options.portlessCommand ?? "portless";
   const tailscaleCommand = options.tailscaleCommand ?? "tailscale";
   const sudoCommand = options.sudoCommand ?? "sudo";
   const outputDir = options.outputDir ?? NodePath.join(NodeOS.homedir(), ".crit");
@@ -243,9 +219,9 @@ export function createCritManager(
   const reviews = new Set<ManagedReview>();
   const allocatedTailnetPorts = new Set<number>();
 
-  const open = async (input: CritOpenInput): Promise<string | null> => {
-    if (input.tailscale && input.portlessPort) {
-      throw new Error("Choose either Tailscale or SSH forwarding for the Crit review.");
+  const launch = async (input: CritOpenInput, forwarded: boolean) => {
+    if (input.portlessPort !== undefined) {
+      throw new Error("Update the desktop app to open SSH reviews with standard port forwarding.");
     }
     const tailnet = input.tailscale ? await tailscaleTarget(tailscaleCommand) : null;
     const args = await critArgs(input);
@@ -263,7 +239,6 @@ export function createCritManager(
       githubRepository = `${url.hostname}/${repository[1]}/${repository[2]}`;
     }
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-crit-"));
-    const alias = input.portlessPort ? `t3-crit-${NodeCrypto.randomUUID()}` : null;
     const providerBin = NodePath.join(root, "bin");
     if (input.scope.kind === "pull-request" && !isWindows) {
       try {
@@ -291,12 +266,7 @@ export function createCritManager(
       await NodeFSP.rm(root, { recursive: true, force: true });
       throw error;
     }
-    const reviewUrl =
-      tailnet && tailnetPort
-        ? `https://${tailnet.hostname}:${tailnetPort}`
-        : alias
-          ? `https://${alias}.localhost:${input.portlessPort}`
-          : null;
+    const reviewUrl = tailnet && tailnetPort ? `https://${tailnet.hostname}:${tailnetPort}` : null;
     const env = {
       ...process.env,
       HOME: root,
@@ -316,9 +286,8 @@ export function createCritManager(
         "--output",
         outputDir,
         ...(tailnetPort === null ? [] : ["--port", String(tailnetPort)]),
-        ...(reviewUrl
-          ? ["--no-open", "--public-url", reviewUrl, "--allow-unauthenticated-network"]
-          : []),
+        ...(reviewUrl || forwarded ? ["--no-open"] : []),
+        ...(reviewUrl ? ["--public-url", reviewUrl, "--allow-unauthenticated-network"] : []),
         ...args,
       ],
       {
@@ -338,7 +307,6 @@ export function createCritManager(
     child.once("exit", resolveExit);
     child.once("error", resolveExit);
     let stopPromise: Promise<void> | undefined;
-    let aliased = false;
     let tailnetChild: NodeChildProcess.ChildProcess | undefined;
     let tailnetExited: Promise<void> | undefined;
     const review: ManagedReview = {
@@ -355,13 +323,6 @@ export function createCritManager(
             await tailnetExited;
           }
           if (tailnetPort !== null) allocatedTailnetPorts.delete(tailnetPort);
-          if (aliased && alias && input.portlessPort) {
-            await portlessAlias(
-              portlessCommand,
-              ["alias", "--remove", alias],
-              input.portlessPort,
-            ).catch(() => undefined);
-          }
           // Crit's session registry is confined to this launch's HOME, even if
           // its CLI has already exited without stopping the daemon.
           try {
@@ -413,10 +374,6 @@ export function createCritManager(
         ).sessions[0]?.port;
       if (!port || !Number.isInteger(port) || port > 65_535) {
         throw new Error("Could not determine Crit's listening port.");
-      }
-      if (alias && input.portlessPort) {
-        await portlessAlias(portlessCommand, ["alias", alias, String(port)], input.portlessPort);
-        aliased = true;
       }
       if (tailnetPort !== null && reviewUrl !== null) {
         // Foreground Serve owns a separate session; exiting removes only this review's endpoint.
@@ -502,22 +459,38 @@ export function createCritManager(
         })();
       }, options.browserCheckIntervalMs ?? BROWSER_CHECK_INTERVAL_MS);
       void exited.then(() => review.stop()).catch(() => undefined);
-      return reviewUrl;
+      return { port, reviewUrl, exited, stop: review.stop };
     } catch (error) {
       await review.stop();
       throw error;
     }
   };
 
+  const start = (input: CritOpenInput, forwarded: boolean) =>
+    Effect.tryPromise({
+      try: () => launch(input, forwarded),
+      catch: (cause) =>
+        new CritOpenError({
+          message: cause instanceof Error ? cause.message : "Could not open Crit.",
+        }),
+    });
+
   return {
-    open: (input: CritOpenInput): Effect.Effect<string | null, CritOpenError> =>
-      Effect.tryPromise({
-        try: () => open(input),
-        catch: (cause) =>
-          new CritOpenError({
-            message: cause instanceof Error ? cause.message : "Could not open Crit.",
-          }),
-      }),
+    open: (input: CritOpenInput) =>
+      start(input, false).pipe(Effect.map((review) => review.reviewUrl)),
+    forward: (input: CritOpenInput) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const review = yield* Effect.acquireRelease(start(input, true), (review) =>
+            Effect.promise(review.stop),
+          );
+          // The review and desktop listener share the lifetime of this RPC stream.
+          return Stream.concat(
+            Stream.succeed(review.port),
+            Stream.fromEffectDrain(Effect.promise(() => review.exited)),
+          );
+        }),
+      ),
     dispose: async (): Promise<void> => {
       await Promise.all([...reviews].map((review) => review.stop()));
     },

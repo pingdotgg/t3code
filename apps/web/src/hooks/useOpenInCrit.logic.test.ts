@@ -71,7 +71,6 @@ describe("Crit forwarding", () => {
     );
     expect(resolveCritForwarding(catalog, prepared(ssh, "http://127.0.0.1:4444/"))).toEqual({
       kind: "ssh",
-      target: sshTarget,
     });
   });
 

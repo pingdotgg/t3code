@@ -196,8 +196,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ),
   disconnectSshEnvironment: (target) =>
     ipcRenderer.invoke(IpcChannels.DISCONNECT_SSH_ENVIRONMENT_CHANNEL, target),
-  syncSshPortlessForward: (input) =>
-    ipcRenderer.invoke(IpcChannels.SYNC_SSH_PORTLESS_FORWARD_CHANNEL, input),
   fetchSshEnvironmentDescriptor: (httpBaseUrl) =>
     ipcRenderer.invoke(IpcChannels.FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL, { httpBaseUrl }),
   bootstrapSshBearerSession: (httpBaseUrl, credential) =>
@@ -459,10 +457,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
     resolveTunnelAccess: (requestId, url) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL, { requestId, url }),
-    forwardPort: (environmentId, remotePort) =>
-      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_START_CHANNEL, { environmentId, remotePort }),
-    stopPortForward: (environmentId, remotePort) =>
-      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, { environmentId, remotePort }),
+    forwardPort: (environmentId, remotePort, owner) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_START_CHANNEL, {
+        environmentId,
+        remotePort,
+        owner,
+      }),
+    stopPortForward: (environmentId, remotePort, owner) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, {
+        environmentId,
+        remotePort,
+        owner,
+      }),
     listPortForwards: () => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_LIST_CHANNEL),
     sharesLoopback: (environmentId) =>
       ipcRenderer.invoke(IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL, { environmentId }),

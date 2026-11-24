@@ -1233,7 +1233,6 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleKeepPullRequests",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
-  "autoCollapseTestAndSnapshotFiles",
   "speechProjectCustomWords",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
@@ -1273,7 +1272,6 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
-  autoCollapseTestAndSnapshotFiles: Schema.optionalKey(Schema.Boolean),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
@@ -1405,9 +1403,6 @@ export const CloudSpeechCredentials = Schema.Struct({
 export const ServerSettings = Schema.Struct({
   savedPrompts: Schema.Record(SavedPromptName, SavedPromptBody).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
-  ),
-  autoCollapseTestAndSnapshotFiles: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1860,7 +1855,6 @@ const ModelSelectionPatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   savedPrompts: Schema.optionalKey(Schema.Record(SavedPromptName, Schema.NullOr(SavedPromptBody))),
-  autoCollapseTestAndSnapshotFiles: Schema.optionalKey(Schema.Boolean),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),

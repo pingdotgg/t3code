@@ -57,13 +57,12 @@ const provider: ServerProvider = {
 };
 
 describe("provider compatibility", () => {
-  it("supports the fork V2 runtime before the upstream 0.0.46 release", () => {
-    // The fork already ships the V2 adapter under 0.0.45.
+  it("keeps releases before V2 on the OpenCode 1 policy they shipped with", () => {
+    // Older builds fetch main's manifest; their V1 orchestrator cannot drive OpenCode 2.
     const opencode = ProviderDriverKind.make("opencode");
     for (const [version, expected] of [
-      ["1.14.19", "graceful"],
-      ["2.0.18", "supported"],
-      ["2.0.22", "supported"],
+      ["1.14.19", "supported"],
+      ["2.0.18", "broken"],
       ["1.14.18", "broken"],
     ] as const) {
       const advisory = resolveProviderCompatibility(
@@ -73,7 +72,7 @@ describe("provider compatibility", () => {
         "0.0.45",
       );
       assert.strictEqual(advisory?.status, expected, `OpenCode ${version} on 0.0.45`);
-      assert.strictEqual(advisory?.recommendedRange, ">=2.0.18");
+      assert.strictEqual(advisory?.recommendedVersion, "1.14.19");
     }
     // The current policy rates a prerelease or build by its base version.
     for (const [version, expected] of [

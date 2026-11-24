@@ -8,6 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { CheckpointRef, ThreadId, type CritOpenInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -20,9 +21,6 @@ const decodeArguments = Schema.decodeUnknownSync(
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const decodeForwardRoute = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ port: Schema.Number })),
-);
-const decodeAlias = Schema.decodeSync(
-  Schema.fromJsonString(Schema.Struct({ args: Schema.Array(Schema.String), port: Schema.String })),
 );
 const decodeEnvironment = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -440,66 +438,49 @@ it.effect("fetches a pull request commit absent from the local checkout", () =>
 );
 
 it.effect(
-  "registers remote reviews on the forwarded Portless gateway and removes the route on close",
+  "the desktop review stream releases its isolated Crit daemon when the client leaves",
   () =>
     Effect.gen(function* () {
       const directory = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-crit-portless-test-")),
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-crit-forward-test-")),
       );
       fixtures.push(() => NodeFSP.rm(directory, { recursive: true, force: true }));
       const command = NodePath.join(directory, "crit");
-      const portlessCommand = NodePath.join(directory, "portless");
-      const aliasLog = NodePath.join(directory, "aliases.jsonl");
-      const argsLog = NodePath.join(directory, "args.json");
       yield* Effect.promise(() =>
-        Promise.all([
-          NodeFSP.writeFile(
-            command,
-            `#!${process.execPath}\n` +
-              `if(process.argv.includes('stop'))process.exit(0);\n` +
-              `if(process.argv.includes('status')){process.stdout.write('{"sessions":[{"port":41234}]}');process.exit(0);}\n` +
-              `require('node:fs').writeFileSync(${encodeJsonString(argsLog)},JSON.stringify(process.argv.slice(2)));\n` +
-              `process.stderr.write('Started crit daemon at '+process.argv[process.argv.indexOf('--public-url')+1]+' (session test, PID '+process.pid+')\\n');\n` +
-              `setInterval(()=>{},1000);\n` +
-              `process.on('SIGTERM',()=>process.exit(0));\n`,
-            { mode: 0o755 },
-          ),
-          NodeFSP.writeFile(
-            portlessCommand,
-            `#!${process.execPath}\n` +
-              `require('node:fs').appendFileSync(${encodeJsonString(aliasLog)},JSON.stringify({args:process.argv.slice(2),port:process.env.PORTLESS_PORT})+'\\n');\n`,
-            { mode: 0o755 },
-          ),
-        ]),
+        NodeFSP.writeFile(
+          command,
+          `#!${process.execPath}\n` +
+            `const fs = require('node:fs'); const path = require('node:path');\n` +
+            `const args = process.argv.slice(2);\n` +
+            `if (args[0] === 'stop') { fs.writeFileSync(path.join(__dirname, 'stopped'), process.env.HOME); process.exit(0); }\n` +
+            `fs.writeFileSync(path.join(__dirname, 'args'), JSON.stringify(args));\n` +
+            `process.stderr.write('Started crit daemon at http://127.0.0.1:41234 (session test)\\n');\n` +
+            `setInterval(() => {}, 1000);\n`,
+          { mode: 0o755 },
+        ),
       );
-      const manager = createCritManager({ command, portlessCommand, outputDir: directory });
+      const manager = createCritManager({ command, outputDir: directory });
       fixtures.push(() => manager.dispose());
-      const url = yield* manager.open({
-        cwd: process.cwd(),
-        portlessPort: 58345,
-        scope: { kind: "working-tree" },
-      });
-      NodeAssert.ok(url);
-      NodeAssert.match(url, /^https:\/\/t3-crit-[a-f0-9-]+\.localhost:58345$/);
-      const args = decodeArguments(yield* Effect.promise(() => NodeFSP.readFile(argsLog, "utf8")));
-      NodeAssert.deepEqual(args.slice(4), [
+      const ports = yield* manager
+        .forward({ cwd: directory, scope: { kind: "working-tree" } })
+        .pipe(Stream.take(1), Stream.runCollect);
+      NodeAssert.deepEqual(ports, [41234]);
+      const args = decodeArguments(
+        yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(directory, "args"), "utf8")),
+      );
+      NodeAssert.deepEqual(args, [
+        "--host",
+        "127.0.0.1",
+        "--output",
+        directory,
         "--no-open",
-        "--public-url",
-        url,
-        "--allow-unauthenticated-network",
         "--base-branch",
         "HEAD",
       ]);
-      yield* Effect.promise(() => manager.dispose());
-      const aliases = (yield* Effect.promise(() => NodeFSP.readFile(aliasLog, "utf8")))
-        .trim()
-        .split("\n")
-        .map((line) => decodeAlias(line));
-      const name = new URL(url).hostname.slice(0, -".localhost".length);
-      NodeAssert.deepEqual(aliases, [
-        { args: ["alias", name, "41234"], port: "58345" },
-        { args: ["alias", "--remove", name], port: "58345" },
-      ]);
+      const reviewHome = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(directory, "stopped"), "utf8"),
+      );
+      NodeAssert.equal(NodeFS.existsSync(reviewHome), false);
     }),
 );
 

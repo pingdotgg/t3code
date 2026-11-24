@@ -608,7 +608,7 @@ function PullRequestCodeTab({
     reportFailure: false,
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
-  const { open: openInCrit, opening: openingCrit } = useOpenInCrit(environmentId);
+  const { open: openInCrit, disabled: critDisabled } = useOpenInCrit(environmentId);
 
   const viewedFilesStore = detail.capabilities.viewedFiles;
   const filesViewed = usePullRequestFilesViewed({
@@ -1590,7 +1590,7 @@ function PullRequestCodeTab({
                   size="icon-sm"
                   variant="ghost"
                   aria-label={gt("Open in Crit")}
-                  disabled={openingCrit}
+                  disabled={critDisabled}
                   onClick={() =>
                     void openInCrit({
                       cwd: detail.workspaceRoot,

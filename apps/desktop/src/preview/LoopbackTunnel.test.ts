@@ -5,6 +5,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { expect, it } from "@effect/vitest";
 import * as NodeNet from "node:net";
+import * as NodeEvents from "node:events";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -86,15 +87,16 @@ const makeTunnel = (
   /** A function answers each access request with its current value. */
   tunnelUrl: string | null | (() => string | null),
   host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
+  contents = new NodeEvents.EventEmitter(),
 ) =>
   Effect.gen(function* () {
     const accessRequests = yield* Queue.unbounded<string>();
     const window = {
       isDestroyed: () => false,
-      webContents: {
+      webContents: Object.assign(contents, {
         send: (_channel: string, request: { readonly requestId: string }) =>
           Queue.offerUnsafe(accessRequests, request.requestId),
-      },
+      }),
     };
     const services = yield* Layer.build(
       LoopbackTunnel.layer.pipe(
@@ -362,6 +364,51 @@ it.effect("forwards a port over the tunnel on the same local port until stopped"
   }),
 );
 
+it.effect("closing a review releases only its own forward", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* listenEndpoint;
+    const target = { environmentId: EnvironmentId.make("remote"), remotePort: yield* unusedPort };
+    const tunnel = yield* makeTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+    );
+    const first = yield* tunnel.forward({ ...target, owner: "first" });
+    yield* tunnel.stopForward({ ...target, owner: "first" });
+    expect(yield* refusesConnections(first.localPort)).toBe(true);
+    yield* tunnel.forward({ ...target, owner: "second" });
+    yield* tunnel.stopForward({ ...target, owner: "first" });
+    expect(yield* tunnel.forwards).toHaveLength(1);
+    const manual = yield* tunnel.forward(target);
+    yield* tunnel.stopForward({ ...target, owner: "second" });
+    yield* tunnel.forward({ ...target, owner: "third" });
+    yield* tunnel.stopForward({ ...target, owner: "third" });
+    expect(yield* tunnel.forwards).toEqual([manual]);
+    yield* tunnel.stopForward(target);
+    expect(yield* refusesConnections(manual.localPort)).toBe(true);
+  }),
+);
+
+it.effect("a renderer reload releases a review's forward", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* listenEndpoint;
+    const contents = new NodeEvents.EventEmitter();
+    const tunnel = yield* makeTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+      undefined,
+      contents,
+    );
+    const target = { environmentId: EnvironmentId.make("remote"), remotePort: yield* unusedPort };
+    const forward = yield* tunnel.forward({ ...target, owner: "review" });
+    const changes = yield* Queue.unbounded<number>();
+    yield* tunnel.subscribeForwards((forwards) =>
+      Queue.offer(changes, forwards.length).pipe(Effect.asVoid),
+    );
+    contents.emit("did-navigate");
+    expect(yield* Queue.take(changes)).toBe(0);
+    expect(yield* refusesConnections(forward.localPort)).toBe(true);
+    expect(contents.listenerCount("render-process-gone")).toBe(0);
+  }),
+);
+
 const hasIpv6Loopback = await new Promise<boolean>((resolve) => {
   const probe = NodeNet.createServer();
   probe.once("error", () => resolve(false));
@@ -422,6 +469,11 @@ it.effect("refuses to forward from an environment that shares this machine's loo
       .forward({ environmentId: EnvironmentId.make("remote"), remotePort })
       .pipe(Effect.flip);
     expect(error._tag).toBe("LoopbackTunnelSameMachineError");
+    const target = { environmentId: EnvironmentId.make("remote"), remotePort };
+    expect(yield* tunnel.forward({ ...target, owner: "review" })).toEqual({
+      ...target,
+      localPort: remotePort,
+    });
     expect(yield* refusesConnections(remotePort)).toBe(true);
     expect(yield* tunnel.forwards).toEqual([]);
   }),
@@ -520,6 +572,9 @@ it.effect("closes connections beyond a forward's limit without tunnelling them",
       () =>
         new Promise<boolean>((resolve) => {
           const socket = NodeNet.connect(forward.localPort, "127.0.0.1");
+          socket.on("error", (error: NodeJS.ErrnoException) =>
+            resolve(error.code === "ECONNRESET"),
+          );
           socket.on("close", () => resolve(true));
           socket.on("data", () => resolve(false));
           socket.write(Uint8Array.of(2));

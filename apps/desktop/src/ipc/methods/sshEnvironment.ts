@@ -13,7 +13,6 @@ import {
   DesktopSshEnvironmentEnsureInputSchema,
   DesktopSshEnvironmentEnsureResultSchema,
   DesktopSshEnvironmentTargetSchema,
-  DesktopSshPortlessForwardInputSchema,
   DesktopSshHttpBaseUrlInputSchema,
   DesktopSshPasswordPromptCancelledType,
   DesktopSshPasswordPromptResolutionInputSchema,
@@ -156,16 +155,6 @@ export const disconnectSshEnvironment = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.sshEnvironment.disconnectEnvironment")(function* (target) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     yield* sshEnvironment.disconnectEnvironment(target);
-  }),
-});
-
-export const syncSshPortlessForward = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SYNC_SSH_PORTLESS_FORWARD_CHANNEL,
-  payload: DesktopSshPortlessForwardInputSchema,
-  result: Schema.NullOr(Schema.Number),
-  handler: Effect.fn("desktop.ipc.sshEnvironment.syncPortlessForward")(function* (input) {
-    const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
-    return yield* sshEnvironment.syncPortlessForward(input);
   }),
 });
 
