@@ -507,6 +507,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         [
           thread(parent, project),
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
+          message(
+            parent,
+            "webhook",
+            "assistant",
+            "Run it with https://relay.test/v1/hooks/0123456789abcdef/scheduled-task:7f3a9c1e/whk_secretvalue",
+          ),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
@@ -521,6 +527,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         result.matches.map((match) => [match.threadId, match.snippet]),
         [[parent, "Rename ThreadSearchService before shipping"]],
       );
+      // A snippet cut inside a webhook URL shows its token as withheld, and the token is not searchable.
+      assert.deepEqual(
+        (yield* search.search({ query: "7f3a9c1e" })).matches.map((match) => match.snippet),
+        ["…89abcdef/scheduled-task:7f3a9c1e/[withheld]"],
+      );
+      assert.deepEqual((yield* search.search({ query: "whk_secretvalue" })).matches, []);
       // "ab" alone cannot use the index; with a longer token it narrows the hits.
       assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
       assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
@@ -1462,6 +1474,7 @@ it.effect("starts snippets a few words before the match so one line shows it", (
       snippet(`x${"🚀".repeat(200)}needle`, "needle"),
       /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/,
     );
+    assert.equal(snippet(`needle${" ".repeat(473)}🚀 tail`, "needle"), "needle 🚀…");
     // Emphasis and code marks go, as the thread shows the text.
     assert.equal(
       ThreadSearch.buildSearchSnippet("Use **bold** and `code` here", 0),

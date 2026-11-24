@@ -40,6 +40,7 @@ import {
   nonPlaceholderMessageCondition,
 } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
+import { withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
@@ -200,7 +201,8 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   // Cut between characters, not inside an emoji's surrogate pair.
   if (isLowSurrogate(text.charCodeAt(start))) start++;
   // Collapsing whitespace shortens the text, so read more of it.
-  const rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
+  let rawEnd = Math.min(text.length, start + SNIPPET_LENGTH * 2);
+  if (isLowSurrogate(text.charCodeAt(rawEnd))) rawEnd++;
   // Emphasis and code marks do not show in a thread either.
   const shown = text
     .slice(start, rawEnd)
@@ -556,7 +558,8 @@ export const make = Effect.gen(function* () {
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
     for (const row of rows) {
-      const text = row.text.replace(MARKDOWN_LINK, "$1");
+      // Webhook URL tokens are withheld before matching, so a snippet cut inside the URL has none.
+      const text = withoutWebhookUrlToken(row.text.replace(MARKDOWN_LINK, "$1"));
       const match = matchMessage(text);
       if (match === null) continue;
       const hit = { row, text, ...match };

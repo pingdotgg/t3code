@@ -234,6 +234,11 @@ Where you can edit a description, you can also tick its checkboxes from the Summ
 (the Overview tab on mobile).
 GitLab calls these merge requests.
 
+A merge or review applies to the commits you opened the pull request on. When someone pushes
+meanwhile, the web and desktop apps offer **Load new commits**; until you do, a merge or review is refused and your
+review draft is kept. Merging from a thread's pull request row, or from the list, lands the head that
+row had when you confirmed.
+
 Save a filter setup with **Views → Save current view** on the Pull Requests page. For example, choose
 **Reviewing** (**Your review** on mobile) and save it as "PRs Requesting My Review". Choose a saved view to restore its search,
 filters, sort order, and server/project scope. After changing filters, use **Update saved view** to
@@ -304,7 +309,9 @@ Choose **Write guide** to have the review guide model from Settings → Source c
 change in a temporary checkout; without one set, the source control writer model is used. Nothing
 in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
 the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
-its progress. Claude and Codex can write guides. The guide is
+its progress. Claude and Codex can write guides. Claude writes them with your user settings, but
+tool approvals in those settings do not apply: it reads files and runs `git diff`, `git log` and
+`git show`, nothing else. The guide is
 kept for everyone using this server. To write it again, for example after a push or after changing
 the model or instructions, choose **Rewrite guide** from the pull request's **⋯** menu.
 
@@ -421,9 +428,11 @@ reads its teams through the account you picked them under.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
-comment, edit the title and description, change labels and assignees, react, and close or
-reopen (with a close reason where the tracker records one) when the tracker and your account
-allow it. An issue read through a project that does not own its repository is shown read-only.
+comment, edit the title and description, change labels and assignees, react, and move it to
+another state when the tracker and your account allow it. Where a GitHub repository has issue
+statuses (Backlog, Todo, In progress, and so on), those are the states you move between, as a
+Linear team's workflow states are; elsewhere you close or reopen, with a close reason where the
+tracker records one. An issue read through a project that does not own its repository is shown read-only.
 
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**

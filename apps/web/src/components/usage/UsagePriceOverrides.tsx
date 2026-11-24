@@ -232,7 +232,12 @@ export function UsagePriceOverrides({
   const editAlias = (row: UsagePriceDraft, value: string) => {
     const { alias: _alias, ...rest } = row;
     const original = usageAliasCell(selected, row.model, messages);
-    updateOrDropDraft(matchesSaved(row, original, value) ? rest : { ...rest, alias: value });
+    updateOrDropDraft(
+      matchesSaved(row, original, value)
+        ? // A restored mapping hides the price inputs, so their typed values go too.
+          { ...rest, values: value === "" ? rest.values : {} }
+        : { ...rest, alias: value },
+    );
   };
   const save = async (retry = false) => {
     if (pending) return;
