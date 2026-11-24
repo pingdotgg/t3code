@@ -440,6 +440,7 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
     translate_legacy_project_overrides(settings, &mut patch);
     let idle_compaction = patched_idle_compaction(settings, &patch);
     let background_profile = preset_background_profile(&patch);
+    remember_worktrees_directory(settings, &mut patch);
 
     let set_favorites = patch.remove("setModelFavorites");
     let set_hidden = patch.remove("setModelsHidden");
@@ -580,6 +581,36 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
             }
         }
     }
+}
+
+/// `applyServerSettingsPatch`: a moved `worktreesDirectory` keeps the one it replaces in
+/// `previousWorktreesDirectories`, so worktrees made there stay managed.
+fn remember_worktrees_directory(settings: &Map<String, Value>, patch: &mut Map<String, Value>) {
+    let Some(next) = patch.get("worktreesDirectory").and_then(Value::as_str) else {
+        return;
+    };
+    let current = settings
+        .get("worktreesDirectory")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if next == current {
+        return;
+    }
+    let mut previous: Vec<Value> = settings
+        .get("previousWorktreesDirectories")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let remember = !current.is_empty() && !previous.iter().any(|d| d == current);
+    let current = json!(current);
+    previous.retain(|d| d != next);
+    if remember {
+        previous.push(current);
+    }
+    patch.insert(
+        "previousWorktreesDirectories".into(),
+        Value::Array(previous),
+    );
 }
 
 /// `translateLegacyProjectOverridePatch`: the legacy per-project maps become
@@ -919,6 +950,20 @@ mod tests {
         // Every write stores the idle compaction mode, as the T3 server does.
         assert_eq!(next["idleCompaction"], "onReturn");
         assert_eq!(next["compactIdleThreads"], false);
+    }
+
+    /// T3 `applyServerSettingsPatch`: a moved `worktreesDirectory` stays managed.
+    #[test]
+    fn a_moved_worktrees_directory_is_remembered() {
+        let next = patched(
+            json!({ "worktreesDirectory": "/a" }),
+            json!({ "worktreesDirectory": "/b" }),
+        );
+        assert_eq!(next["previousWorktreesDirectories"], json!(["/a"]));
+        let back = patched(next, json!({ "worktreesDirectory": "/a" }));
+        assert_eq!(back["previousWorktreesDirectories"], json!(["/b"]));
+        let cleared = patched(back, json!({ "worktreesDirectory": "" }));
+        assert_eq!(cleared["previousWorktreesDirectories"], json!(["/b", "/a"]));
     }
 
     #[test]

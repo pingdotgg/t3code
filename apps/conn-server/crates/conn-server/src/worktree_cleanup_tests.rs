@@ -943,6 +943,46 @@ async fn a_dev_home_manages_only_its_own_worktrees_folder() {
     }
 }
 
+/// T3 `resolveWorktreesDirectory`: `~` expands, so a checkout in the documented `~/worktrees`
+/// style of folder is managed; a relative folder, such as the server's working directory, is not.
+#[tokio::test(flavor = "current_thread")]
+async fn managed_folders_expand_home_and_refuse_relative_paths() {
+    let fx = Fixture::new();
+    let real = fx.dir.join("real");
+    let other = real.join("repo").join("other");
+    git(
+        &fx.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "other",
+            other.to_str().unwrap(),
+        ],
+    );
+    fx.environment
+        .settings
+        .update_server(json!({"worktreesDirectory": "."}))
+        .unwrap();
+    let cwd = std::fs::canonicalize(".").unwrap();
+    assert!(!managed_roots(&fx.environment).await.contains(&cwd));
+
+    let home = std::env::var("HOME").unwrap();
+    let up = "../".repeat(Path::new(&home).components().count());
+    let tilde = format!("~/{up}{}", real.strip_prefix("/").unwrap().display());
+    fx.environment
+        .settings
+        .update_server(json!({"worktreesDirectory": tilde}))
+        .unwrap();
+    fx.thread_on("home", &other, "other").await;
+    fx.rules(json!({"worktreeAfterDays": 1}));
+    fx.advance_days(5);
+    let outcomes: Vec<_> = fx.sweep().await.into_iter().map(|(o, _)| o).collect();
+    assert_eq!(outcomes, vec![Outcome::Removed]);
+    assert!(!other.exists());
+}
+
 /// Commits made on a detached HEAD live on only in the worktree's own HEAD log, which
 /// `git worktree remove` deletes.
 #[tokio::test(flavor = "current_thread")]

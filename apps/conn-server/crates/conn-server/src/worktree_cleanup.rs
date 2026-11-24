@@ -615,25 +615,11 @@ impl Running {
 /// from real data, so its settings can name the developer's real folders: it manages only its
 /// own `worktrees` folder.
 async fn managed_roots(environment: &Environment) -> Vec<PathBuf> {
-    let settings = environment.settings.raw();
-    let own = environment.state_dir.join("worktrees");
-    let mut configured = vec![crate::host::worktrees_dir(environment)];
-    configured.extend(
-        settings
-            .get("previousWorktreesDirectories")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|f| !f.is_empty())
-            .map(PathBuf::from),
-    );
+    let mut folders = crate::host::managed_worktree_dirs(environment);
     let state_dir = environment.state_dir.clone();
     blocking(move || {
-        let mut folders = vec![own];
-        if !in_dev_home(&state_dir) {
-            folders.extend(configured);
+        if in_dev_home(&state_dir) {
+            folders.truncate(1);
         }
         let mut roots: Vec<PathBuf> = Vec::new();
         for folder in folders {
