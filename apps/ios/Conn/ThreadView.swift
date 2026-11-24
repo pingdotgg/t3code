@@ -245,7 +245,6 @@ struct ThreadView: View {
         let online = store.status == .connected
         Task {
             defer { if request == historyRequest { paging = false } }
-            defer { if request == historyRequest { paging = false } }
             do {
                 if let prompt {
                     let window = try await reader.promptWindow(thread: threadId, id: prompt, online: online)
