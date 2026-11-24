@@ -7,6 +7,8 @@ import {
   injectMcpAppCookieBootstrap,
   MCP_APP_COLOR_SCHEME_PARAM,
   mcpAppContentSecurityPolicy,
+  mcpAppFramePolicy,
+  mcpAppSandboxDocument,
   mcpAppToolCallableByApp,
   mcpAppToolResourceUri,
   readMcpAppCsp,
@@ -35,6 +37,24 @@ describe("mcpAppContentSecurityPolicy", () => {
     expect(policy).toContain("connect-src https://api.weather.test");
     expect(policy).toContain("script-src 'unsafe-inline' https://*.cdn.test");
     expect(policy).toContain("img-src data: blob: https://*.cdn.test");
+  });
+});
+
+describe("mcpAppSandboxDocument", () => {
+  it("frames only the app's own document", () => {
+    expect(mcpAppFramePolicy("https://host.test:8443/api/assets/a;b,c/app.html?x=1")).toBe(
+      "frame-src https://host.test:8443/api/assets/a%3Bb%2Cc/app.html",
+    );
+  });
+
+  it("keeps the URL inside its script and attribute", () => {
+    const html = mcpAppSandboxDocument({
+      src: 'https://host.test/a?q="></script><script>x()</script>',
+      allow: '"><b>',
+      colorScheme: "dark",
+    });
+    expect(html.match(/<script>/g)).toHaveLength(1);
+    expect(html).not.toContain("<b>");
   });
 });
 

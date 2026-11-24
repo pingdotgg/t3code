@@ -251,6 +251,43 @@ export function injectMcpAppCookieBootstrap(html: string): string {
   return `${prefix}${bootstrap}${html.slice(prefix.length)}`;
 }
 
+/**
+ * The policy of the page around an app. A frame keeps its window when it navigates, so a page the
+ * app went to could speak for it; this lets the frame show nothing but the app's own document.
+ */
+export function mcpAppFramePolicy(src: string): string {
+  const { protocol, origin, pathname } = new URL(src);
+  return origin === "null"
+    ? `frame-src ${protocol}`
+    : `frame-src ${origin}${pathname.replaceAll(";", "%3B").replaceAll(",", "%2C")}`;
+}
+
+/** The page around an app: relays messages between it and T3 until it leaves its document. */
+export function mcpAppSandboxDocument(input: {
+  readonly src: string;
+  readonly allow: string;
+  readonly colorScheme: "light" | "dark";
+}): string {
+  return `<!doctype html><html style="color-scheme:${input.colorScheme}"><head>
+<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(mcpAppFramePolicy(input.src))}">
+<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}iframe{border:0;display:block;width:100%;height:100%}</style></head>
+<body><iframe id="app" sandbox="allow-scripts allow-forms" allow="${escapeAttribute(input.allow)}"></iframe>
+<script>(function(){
+var frame=document.getElementById("app"),loads=0;
+frame.addEventListener("load",function(){loads+=1;if(loads===2)parent.postMessage({t3:"navigated"},"*");});
+window.addEventListener("message",function(e){
+  if(loads>1)return;
+  if(e.source===frame.contentWindow){parent.postMessage(e.data,"*");return;}
+  if(e.source!==parent)return;
+  var m=e.data||{},theme=m.method==="ui/notifications/host-context-changed"?m.params&&m.params.theme:m.result&&m.result.hostContext&&m.result.hostContext.theme;
+  // A frame whose scheme differs from its page's is painted opaque.
+  if(theme==="light"||theme==="dark")document.documentElement.style.colorScheme=theme;
+  frame.contentWindow.postMessage(m,"*");
+});
+frame.src=${JSON.stringify(input.src).replace(/</g, "\\u003c")};
+})();</script></body></html>`;
+}
+
 export function mcpAppAllowAttribute(permissions: McpAppPermissions | undefined): string {
   const features: Array<string> = [];
   if (permissions?.camera) features.push("camera");

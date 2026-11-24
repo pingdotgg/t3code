@@ -19,6 +19,7 @@ import {
   MCP_APP_MAX_HEIGHT,
   mcpAppAllowAttribute,
   mcpAppFileName,
+  mcpAppSandboxDocument,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import { T3_WIDGET_SERVER } from "@t3tools/shared/toolOutput";
@@ -133,14 +134,20 @@ export function McpAppFrame(props: {
     disposition: "inline" as const,
     renderIntent: "mcp-app" as const,
   };
-  // The frame keeps its first URL: a re-minted one would reload the app.
-  const [src, setSrc] = useState<string | null>(null);
-  const asset = useLongLivedAssetUrl(src === null ? props.environmentId : null, resource);
-  if (src === null && asset._tag === "Success") {
+  // The frame keeps its first document: a re-minted URL would reload the app.
+  const [srcDoc, setSrcDoc] = useState<string | null>(null);
+  const asset = useLongLivedAssetUrl(srcDoc === null ? props.environmentId : null, resource);
+  if (srcDoc === null && asset._tag === "Success") {
     // The app paints before `ui/initialize`, so it reads the initial scheme from its URL.
     const url = new URL(asset.url);
     url.searchParams.set(MCP_APP_COLOR_SCHEME_PARAM, theme.appearance);
-    setSrc(url.toString());
+    setSrcDoc(
+      mcpAppSandboxDocument({
+        src: url.toString(),
+        allow: mcpAppAllowAttribute(app.permissions),
+        colorScheme: theme.appearance,
+      }),
+    );
   }
 
   const detail = useTurnItemDetail({
@@ -241,17 +248,18 @@ ${action.text}`,
     }
   };
 
-  // Navigation retains the frame window; reject second loads to prevent impersonation.
+  const stopNavigated = () => {
+    hostRef.current?.dispose();
+    setNavigatedAway(true);
+  };
+  // A reloaded frame holds an app this host never met.
   const loads = useRef({ generation: 0, count: 0 });
   const onFrameLoad = () => {
     if (loads.current.generation !== documentGeneration) {
       loads.current = { generation: documentGeneration, count: 0 };
     }
     loads.current.count += 1;
-    if (loads.current.count > 1) {
-      hostRef.current?.dispose();
-      setNavigatedAway(true);
-    }
+    if (loads.current.count > 1) stopNavigated();
   };
 
   // The host belongs to this frame element, which is replaced when the document is reopened.
@@ -437,7 +445,9 @@ ${action.text}`,
     });
     hostRef.current = host;
     const receive = (event: MessageEvent) => {
-      if (event.source !== null && event.source === target()) host.receive(event.data);
+      if (event.source === null || event.source !== target()) return;
+      if (event.data?.t3 === "navigated") stopNavigated();
+      else host.receive(event.data);
     };
     window.addEventListener("message", receive);
     return () => {
@@ -458,7 +468,7 @@ ${action.text}`,
   useEffect(() => {
     if (toolCall !== undefined) hostRef.current?.setToolCall(toolCall);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
-  }, [toolCall, src, documentGeneration]);
+  }, [toolCall, srcDoc, documentGeneration]);
 
   if (closed) {
     return (
@@ -472,7 +482,7 @@ ${action.text}`,
           size="xs"
           variant="ghost"
           onClick={() => {
-            setSrc(null);
+            setSrcDoc(null);
             setDocumentGeneration((value) => value + 1);
             setClosed(false);
           }}
@@ -526,10 +536,10 @@ ${action.text}`,
               The <Var>{app.server}</Var> app left its page and was stopped
             </T>
           </p>
-        ) : src !== null ? (
+        ) : srcDoc !== null ? (
           <iframe
             ref={attachFrame}
-            src={src}
+            srcDoc={srcDoc}
             title={gt("{server} app", { server: app.server })}
             // Omitting allow-same-origin isolates the app from the session.
             sandbox="allow-scripts allow-forms"

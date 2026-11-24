@@ -16,6 +16,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { CommandId, MessageId } from "@t3tools/contracts";
 import {
   mcpAppAllowAttribute,
+  mcpAppFramePolicy,
   mcpAppFileName,
   mcpAppReferencesEqual,
   type McpAppReference,
@@ -65,6 +66,7 @@ function outerDocument(src: string, allow: string, secret: string) {
   const attribute = (value: string) =>
     value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="${attribute(mcpAppFramePolicy(src))}">
 <style>html,body{margin:0;height:100%;background:transparent}iframe{border:0;display:block;width:100%;height:100%}</style></head>
 <body><iframe id="app" sandbox="allow-scripts allow-forms" allow="${attribute(allow)}"></iframe>
 <script>(function(){var frame=document.getElementById("app"),secret=${JSON.stringify(secret)},loads=0,live=true;
