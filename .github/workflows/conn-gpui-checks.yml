@@ -44,7 +44,7 @@ jobs:
   checks:
     name: Conn GPUI checks
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-6vcpu-macos-27' || 'macos-15' }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/conn-gpui

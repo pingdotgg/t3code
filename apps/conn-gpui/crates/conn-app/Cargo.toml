@@ -72,6 +72,7 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 tokio-tungstenite.workspace = true
 
 [features]
+default = ["zed-files"]
 zed-files = ["dep:zed_util", "dep:zed_editor", "dep:zed_language", "dep:zed_settings", "dep:zed_theme", "dep:zed_theme_settings", "dep:zed_text", "dep:tree-sitter-php"]
 # Scripted UI automation and screenshot capture hook for visual verification in nick-vm
 # (modeled on .refs/threadbear/desktop/gpui/src/automation.rs). Never enabled in release builds.
