@@ -327,7 +327,7 @@ export function claudeProviderTurnTokenUsage(
   autoCompactWindow = "",
   requestedAt?: DateTime.Utc,
 ) {
-  // Top-level counts sum all sampling passes. The context meter describes the last main-model pass.
+  // after an advisor call, the response totals can count the same context twice.
   const sample = usage.iterations?.findLast((iteration) => iteration.type === "message") ?? usage;
   const inputTokens = claudeMessageInputTokens(sample);
   const outputTokens = optionalClaudeUsageTokenCount(sample.output_tokens) ?? 0;
