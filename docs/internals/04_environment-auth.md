@@ -33,6 +33,9 @@ model.
   read needs `providers:manage` on top of its method's scope, whether the reference is saved in
   settings or used once, as in a secret request answered with a reference. Typed values need only
   the method's scope. Clients hide the secret provider picker from sessions without it.
+- **Project scripts need `orchestration:operate`.** The host runs a saved project script itself,
+  on worktree creation and on settle, so saving one needs `orchestration:operate` on top of
+  `settings:write`, whether it arrives in a settings patch or a project update.
 - **Backward-compatible scope evolution.** Token exchange intersects requested scopes with the
   pairing grant, dropping retired/unknown names and failing before consuming a link if none remain.
   Stored grants are never expanded when scopes split. Auth responses preserve legacy `scopes`
@@ -52,7 +55,10 @@ model.
   `mcp-client` sessions (except the read-only thread relay and client-pairing routes restricted to
   [peer links](./05_remote.md#peer-links)). Every MCP tool must statically declare its access level in
   [`McpToolAccess.ts`](../../apps/server/src/mcp/McpToolAccess.ts), and thread-only tools must still
-  refuse outside callers in handlers—hiding from tool listings is only discovery.
+  refuse outside callers in handlers—hiding from tool listings is only discovery. A workflow run
+  picks its own modes, so only a caller at the broadest mode a thread may run in here (full access,
+  or an administrator's ceiling below it) can start or change runs, change what workflows store, or
+  read webhook paths. Narrower callers can still read runs.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather

@@ -253,6 +253,60 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("a polled backend is ready only once its listener answers as this launch", () =>
+    Effect.gen(function* () {
+      const answersAsLaunch = yield* Ref.make(false);
+      const probedUrls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const ready = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const instance = yield* makeTestInstance({
+        config: {
+          ...pollingConfig,
+          readinessProbe: Effect.succeed({
+            path: "/launch-proof?challenge=abc",
+            accept: (body: string) => Effect.succeed(body === "proof-for-abc"),
+          }),
+        },
+        onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.acquireRelease(
+              Effect.succeed(makeProcess({ exitCode: Deferred.await(exit) })),
+              () => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+            ),
+          ),
+        ),
+        httpClientLayer: layerHttpClient((request) =>
+          Ref.update(probedUrls, (urls) => [...urls, request.url]).pipe(
+            Effect.andThen(Ref.get(answersAsLaunch)),
+            Effect.map((asLaunch) =>
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(asLaunch ? "proof-for-abc" : "{}", { status: 200 }),
+              ),
+            ),
+          ),
+        ),
+      });
+      yield* instance.start;
+      yield* TestClock.adjust(Duration.seconds(5));
+
+      assert.isFalse(yield* Deferred.isDone(ready));
+      assert.isFalse((yield* instance.snapshot).ready);
+      assert.deepStrictEqual(
+        [...new Set(yield* Ref.get(probedUrls))],
+        ["http://127.0.0.1:3773/launch-proof?challenge=abc"],
+      );
+
+      yield* Ref.set(answersAsLaunch, true);
+      yield* TestClock.adjust(Duration.seconds(1));
+
+      assert.isTrue(yield* Deferred.isDone(ready));
+      yield* instance.stop();
+    }),
+  );
+
   it.effect("notices a WSL backend soon after it listens despite slow refused connects", () =>
     Effect.gen(function* () {
       const ready = yield* Deferred.make<void>();

@@ -1794,9 +1794,10 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         }),
         queryRunner: {
           allocateSessionId: Effect.succeed("native-thread-claude-gate"),
-          open: () =>
-            Effect.sync(() => {
+          open: (input) =>
+            Effect.gen(function* () {
               log.push("open query");
+              if (input.onStartupPhase !== undefined) yield* input.onStartupPhase("mcp");
               return {
                 messages: Stream.never,
                 offer: () => Effect.void,
@@ -1815,7 +1816,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
-              };
+              } satisfies ClaudeAdapterV2.ClaudeAgentSdkQuerySession;
             }),
           forkSession: () => Effect.die("unused"),
           subagentLaunchToolUseId: () => Effect.succeed(null),
@@ -1855,6 +1856,25 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
       );
 
       assert.deepStrictEqual(log, [`enter ${instanceId}`, "open query", "exit"]);
+      // The step reported while the process opens is cleared before the turn runs.
+      const startup = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" || event.type === "provider_turn.updated",
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+      );
+      assert.deepStrictEqual(
+        Array.from(startup, (event) =>
+          event.type === "provider_session.updated"
+            ? (event.providerSession.startupPhase ?? null)
+            : event.type === "provider_turn.updated"
+              ? event.providerTurn.status
+              : null,
+        ),
+        ["mcp", null, "running"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -4530,6 +4550,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(harness.processQueues.length, 2);
       yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000704"));
       assert.deepEqual(initCwds, ["/workspace", "/workspace"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reports connecting while a turn's first API request is unanswered", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions();
+      const status = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make("connecting-phase"),
+          text: "Hello",
+          attachments: [],
+        }),
+      );
+      // Init lands before the request and must not count as its answer.
+      yield* harness.offerAndWait(wakeTurnInit);
+      yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000901"));
+      yield* harness.offerAndWait(
+        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000902", text: "Hi." }),
+      );
+      // A later request in the same turn is the model working, not startup.
+      yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000903"));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "provider_session.updated"
+            ? [event.providerSession.startupPhase ?? null]
+            : [],
+        ),
+        ["connecting", null],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -13784,6 +13856,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
+        // A sleep is a timer the agent ends its turn on, so a restart must wake it.
+        const sleeps = [
+          ["timer", "sleep 1740; date", true],
+          ["computed_timer", "sleep $((29 * 60)); date", true],
+          ["quoted_timer", 'sleep "60" && date', true],
+          ["single_quoted_timer", "sleep '60'; date", true],
+          ["quoted_computed_timer", 'sleep "$((29 * 60))"; date', true],
+          ["expanded_timer", 'sleep "${DELAY:-60}"; date', true],
+          ["unit_timer", 'sleep 5m && echo "Time to check the build"', true],
+          ["quoted_note_timer", 'sleep 60 && echo "Timer finished; check build"', true],
+          ["endless_sleep", "sleep infinity", false],
+          ["delayed_server", "sleep 5 && npm run dev", false],
+          ["substituted_server", 'sleep 60; echo "$(npm run dev)"', false],
+        ] as const;
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_background_timer",
+              type: "message",
+              role: "assistant",
+              content: sleeps.map(([taskId, command]) => ({
+                type: "tool_use",
+                id: `toolu_${taskId}`,
+                name: "Bash",
+                input: { command, run_in_background: true },
+              })),
+            },
+            parent_tool_use_id: null,
+            uuid: "background-timer-launch",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        for (const [index, [taskId]] of sleeps.entries()) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: taskId,
+              tool_use_id: `toolu_${taskId}`,
+              description: "Wait before the next check",
+              is_backgrounded: true,
+              task_type: "local_bash",
+              uuid: `00000000-0000-4000-8000-00000000021${index}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* harness.awaitTerminal(1);
 
@@ -13794,6 +13917,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const started = (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? [])[0];
         assert.equal(started?.taskId, WAKE_TASK_ID);
         assert.equal(started?.nativeItemId, WAKE_TOOL_USE_ID);
+        assert.deepEqual(
+          (afterStart.at(-1)?.providerThread.pendingBackgroundTasks ?? []).map((task) => [
+            task.taskId,
+            task.awaited === true,
+          ]),
+          [
+            [WAKE_TASK_ID, false],
+            ["moved-build", false],
+            ...sleeps.map(([taskId, , awaited]) => [taskId, awaited]),
+          ],
+        );
 
         const command = harness.events.find(
           (event) =>

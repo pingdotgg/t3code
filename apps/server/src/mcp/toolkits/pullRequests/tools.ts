@@ -767,10 +767,11 @@ export type ReviewLineComment = typeof ReviewLineComment.Type;
 
 const ReviewPullRequestTool = Tool.make("pull_request_review", {
   description:
-    "Submit a review: approve, request changes, or comment, with optional line comments.",
+    "Submit a review: approve, request changes, or comment, with optional line comments. Approving needs expectedHeadSha (headSha in pull_request_read). Refuses if the head moved from it.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     verdict: PullRequestReviewVerdict,
+    expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
     body: Schema.optional(Schema.String),
     comments: Schema.optional(Schema.Array(ReviewLineComment).check(Schema.isMaxLength(50))),
   }),

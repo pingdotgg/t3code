@@ -13,6 +13,7 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 
 const { setMobileVersion } = require("./set-mobile-version.cjs");
+const { RELEASE_PACKAGE_FILES, setReleaseVersion } = require("./set-release-version.cjs");
 
 const read = (path) => readFileSync(join(__dirname, "..", path), "utf8");
 
@@ -200,6 +201,15 @@ test("the version override token covers this repository only", () => {
   assert.doesNotMatch(production, /RELEASE_APP|create-github-app-token/);
 });
 
+test("the release version bump is pushed by a job that installs nothing, with a token for this repository only", () => {
+  const { finalize } = jobs("workflows/release.yml");
+  const mint = steps(finalize).find((step) => step.includes("create-github-app-token"));
+  assert.doesNotMatch(mint, /^\s+(?:owner|repositories):/m);
+  assert.match(mint, /^\s+permission-contents: write$/m);
+  assert.ok(!runsProjectCode(finalize), "finalize holds a write token and runs code");
+  assert.match(finalize, /run: node \.github\/scripts\/set-release-version\.cjs /);
+});
+
 test("the Vite+ toolchain is cached before the job installs or runs project code", () => {
   const names = Array.from(
     read("actions/setup-ci-deps/action.yml").matchAll(
@@ -299,4 +309,36 @@ test("a version override rewrites only the app version", () => {
     assert.throws(() => setMobileVersion(config, version), /two or three dot-separated integers/);
   }
   assert.throws(() => setMobileVersion("export default {};", "1.2.3"), /Could not update/);
+});
+
+test("a release version bump rewrites only the version of each release manifest", () => {
+  const listed = /releasePackageFiles = \[\n([^\]]+)\]/.exec(
+    read("../scripts/lib/tagged-source-version.ts"),
+  )[1];
+  assert.deepEqual(
+    RELEASE_PACKAGE_FILES,
+    Array.from(listed.matchAll(/"([^"]+)"/g), (m) => m[1]),
+  );
+  for (const file of RELEASE_PACKAGE_FILES) {
+    const manifest = read(`../${file}`);
+    const next = setReleaseVersion(manifest, "98.7.6");
+    assert.equal(JSON.parse(next).version, "98.7.6");
+    assert.deepEqual(
+      { ...JSON.parse(next), version: "" },
+      { ...JSON.parse(manifest), version: "" },
+    );
+    assert.equal(setReleaseVersion(next, "98.7.6"), next);
+    assert.deepEqual(
+      next.split("\n").filter((line, index) => line !== manifest.split("\n")[index]).length,
+      1,
+    );
+  }
+  for (const version of ["", "1", "1.2", "v1.2.3", '1.2.3", "x": "y']) {
+    assert.throws(() => setReleaseVersion('{\n  "version": "1.0.0"\n}\n', version), /Invalid/);
+  }
+  assert.equal(
+    setReleaseVersion('{\n  "version": "1.0.0"\n}\n', "1.2.3-rc.1"),
+    '{\n  "version": "1.2.3-rc.1"\n}\n',
+  );
+  assert.throws(() => setReleaseVersion('{\n  "name": "x"\n}\n', "1.2.3"), /exactly one/);
 });
