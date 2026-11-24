@@ -784,7 +784,7 @@ function PlatformIcon(props: {
             ) : null}
           </>
         ) : several ? (
-          <dl className="mt-2 space-y-2 text-xs">
+          <dl className="mt-2 space-y-1.5 text-xs">
             {props.known.map((environment) => {
               const entry = availability(environment);
               return (
