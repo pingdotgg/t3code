@@ -1558,7 +1558,10 @@ async fn a_worktree_cleanup_cannot_remove_keeps_its_branch_and_says_so() {
             worktree: &'a std::path::Path,
         ) -> SetupFuture<'a, Result<Option<StartedSetup>, String>> {
             Box::pin(async move {
-                git(worktree, &["worktree", "lock", &worktree.display().to_string()]);
+                git(
+                    worktree,
+                    &["worktree", "lock", &worktree.display().to_string()],
+                );
                 Ok(Some(StartedSetup {
                     name: "Setup".into(),
                     command: "git worktree lock && exit 3".into(),

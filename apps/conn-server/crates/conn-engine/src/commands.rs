@@ -2847,8 +2847,7 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
     live_thread(tx, &c.thread_id)?;
     // Checked under the thread lock (T3's `onlyIfUnused`): a message sent since the client
     // looked keeps the thread, and the delete is accepted with no change.
-    if c.only_if_unused == Some(true) && is_used(tx, &c.thread_id)?
-    {
+    if c.only_if_unused == Some(true) && is_used(tx, &c.thread_id)? {
         return Ok(vec![]);
     }
     let side_chats = live_side_chats(tx, &c.thread_id)?;

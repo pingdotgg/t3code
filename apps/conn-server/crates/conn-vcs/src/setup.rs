@@ -414,7 +414,6 @@ impl std::fmt::Debug for ProvisionRequest {
     }
 }
 
-
 /// What provisioning does when `base_ref` names no commit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MissingBase {

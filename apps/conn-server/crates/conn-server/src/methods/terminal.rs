@@ -86,7 +86,13 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             let folder = input.worktree_path.clone().flatten();
             let _lease = match &worktree {
                 Some(_) => r.lease(worktree.as_ref()).await,
-                None => lease(leases.as_deref(), Some(folder.as_deref().unwrap_or(&input.cwd))).await,
+                None => {
+                    lease(
+                        leases.as_deref(),
+                        Some(folder.as_deref().unwrap_or(&input.cwd)),
+                    )
+                    .await
+                }
             };
             match m.open(input.clone()) {
                 Err(TerminalOpenError::TerminalCwdNotFoundError(_))

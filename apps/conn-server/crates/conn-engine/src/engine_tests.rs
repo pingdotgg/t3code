@@ -3373,9 +3373,11 @@ async fn an_aborted_launch_still_starts_its_committed_run() {
         "initialMessage": {"messageId": "m-a", "text": "hi", "attachments": []},
     });
     let launcher = engine.clone();
-    abort_inside_commit(&engine, "A", async move {
-        launcher.launch_thread(input).await
-    })
+    abort_inside_commit(
+        &engine,
+        "A",
+        async move { launcher.launch_thread(input).await },
+    )
     .await;
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
@@ -11261,8 +11263,9 @@ async fn a_detached_session_keeps_its_folder_in_use_until_it_exits() {
         title: "Project".into(),
         workspace_root: ROOT.into(),
     }];
-    config.providers =
-        vec![Arc::new(FakeProvider::new("claudeAgent").with_process_exit(exit.clone()))];
+    config.providers = vec![Arc::new(
+        FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+    )];
     config.host = Some(host.clone());
     let engine = SqliteEngine::open(config).unwrap();
     dispatch(&engine, create("t1", "c1")).await;

@@ -1260,7 +1260,6 @@ mod tests {
         assert_eq!(next["compactIdleThreads"], false);
     }
 
-
     #[test]
     fn a_client_patch_cannot_set_the_theme_defaults() {
         let Value::Object(mut patch) = json!({
