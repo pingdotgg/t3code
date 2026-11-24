@@ -67,3 +67,6 @@
 "@effect/ai/Prompt#TypeId":
   replacement: "Prompt.isPrompt"
   note: "The Prompt type id is private in v4 and its internal literal changed. Use the public isPrompt guard instead of importing or inspecting the marker."
+"@effect/ai/Prompt#Message":
+  replacement: "Prompt.Message"
+  note: "Use the Message type and codec from effect/ai/Prompt for model conversation messages. AgUiSchema.Message describes AG-UI wire messages and is not a replacement for Prompt.Message."

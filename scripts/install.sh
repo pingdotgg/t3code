@@ -262,6 +262,8 @@ else
 
   rm -rf "$target_dir"
   mv "$staging" "$target_dir"
+  # When a concurrent install published first, mv moved this copy inside it; keep only theirs.
+  rm -rf "${target_dir}/${staging##*/}"
   trap - EXIT
 fi
 

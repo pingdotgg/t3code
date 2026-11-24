@@ -1,8 +1,69 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Schema } from "effect"
+import { Cause, Effect, Layer, Schema } from "effect"
 import { AsyncResult, Atom, AtomRegistry, Hydration } from "effect/reactivity"
 
 describe("Hydration", () => {
+  it.each([false, true])("runs a hydrated waiting seed with skipInitialRun (refresh before mount: %s)", (refresh) => {
+    const options = { key: "count", schema: AsyncResult.Schema({ success: Schema.Number }), skipInitialRun: true }
+    const server = AtomRegistry.make()
+    const client = AtomRegistry.make()
+    try {
+      const seed = Atom.make<AsyncResult.AsyncResult<number>>(AsyncResult.success(10, { waiting: true }))
+      server.mount(seed.pipe(Atom.serializable(options)))
+      Hydration.hydrate(client, Hydration.dehydrate(server))
+      const atom = Atom.make(Effect.succeed(20)).pipe(Atom.serializable(options))
+      if (refresh) client.refresh(atom)
+      client.mount(atom)
+      const result = client.get(atom)
+      assert(AsyncResult.isSuccess(result))
+      assert.strictEqual(result.value, 20)
+      assert.isFalse(result.waiting)
+    } finally {
+      server.dispose()
+      client.dispose()
+    }
+  })
+
+  it("keeps a seeded success while a pre-mount refresh waits for the runtime", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>()
+    const runtime = Atom.runtime(Layer.effectDiscard(Effect.promise(() => promise)))
+    const atom = runtime.atom(Effect.succeed(20))
+    const client = AtomRegistry.make({
+      initialValues: [Atom.initialValue(atom, AsyncResult.success(10), { skipInitialRun: true })]
+    })
+    try {
+      client.refresh(atom)
+      client.mount(atom)
+
+      const pending = client.get(atom)
+      assert(AsyncResult.isSuccess(pending))
+      assert.strictEqual(pending.value, 10)
+      assert.isTrue(pending.waiting)
+
+      resolve()
+      assert.strictEqual(await Effect.runPromise(AtomRegistry.getResult(client, atom, { suspendOnWaiting: true })), 20)
+    } finally {
+      client.dispose()
+    }
+  })
+
+  it("publishes runtime acquisition failure over a waiting seed", () => {
+    const runtime = Atom.runtime(Layer.effectDiscard(Effect.fail("offline")))
+    const atom = runtime.atom(Effect.succeed(20))
+    const registry = AtomRegistry.make({
+      initialValues: [Atom.initialValue(atom, AsyncResult.success(10, { waiting: true }), { skipInitialRun: true })]
+    })
+    try {
+      registry.mount(atom)
+      const result = registry.get(atom)
+      assert(AsyncResult.isFailure(result))
+      assert.deepStrictEqual(result.cause, Cause.fail("offline"))
+      assert.isFalse(result.waiting)
+    } finally {
+      registry.dispose()
+    }
+  })
+
   it("runs a plain hydrated effect atom on mount and tracks factory dependencies", () => {
     const dependency = Atom.make(1)
     let runs = 0

@@ -207,13 +207,20 @@ async function install(name, version, entry) {
   }) : [];
   const emulatorExtraArgs = [cameraArgs.join(' '), process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
+  // A hub recorded without a token predates --require-token and is replaced.
+  if (!hub || hub.owner !== owner || !hub.token || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
-      const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
-        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
+      // The hub prints the session token it generates, so its log is private and read from here on.
+      // It also records the token in its state folder, kept in this host's private folder.
+      const logFile = path.join(state, 'hub.log');
+      const log = fs.openSync(logFile, 'a', 0o600);
+      fs.fchmodSync(log, 0o600);
+      const logStart = fs.fstatSync(log).size;
+      const announcedToken = () => /\btoken=([\w.~-]+)/.exec(fs.readFileSync(logFile, 'utf8').slice(logStart))?.[1];
+      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--require-token', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
+        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_STATE_DIR: state, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
@@ -223,7 +230,7 @@ async function install(name, version, entry) {
       const deadline = Date.now() + 30000;
       let listening = false;
       while (child.exitCode === null && child.signalCode === null) {
-        if (await healthy(hub.port, '/readyz')) { listening = true; break; }
+        if (await healthy(hub.port, '/readyz') && (hub.token = announcedToken())) { write(hubFile, hub); listening = true; break; }
         if (Date.now() > deadline) { stopHub(hub); throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log')); }
         await sleep(200);
       }
@@ -258,7 +265,7 @@ async function install(name, version, entry) {
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
   await pruneTools(path.join(root, 'tools'), [['expo-device-hub', hubVersion], ...(mode === 'agent-start' ? [['agent-device', agentVersion]] : [])], true).catch(() => {});
-  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
+  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, hubToken: hub.token, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
   } finally { releaseHost(); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

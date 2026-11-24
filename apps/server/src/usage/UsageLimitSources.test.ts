@@ -109,6 +109,82 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
+it.effect("publishes validated HTTP quotas as display-only accounts", () => {
+  const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 };
+  const accounts = [
+    { id: "account", label: "External plan", providerInstanceId: "work-codex", windows: [window] },
+  ];
+  let usedPercent = 35;
+  let oversized = false;
+  const client = HttpClient.make((request, url) =>
+    Effect.sync(() => {
+      expect(url.href).toBe("https://quota.test/v1");
+      expect(request.headers.authorization).toBe("Bearer test-token");
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify({
+                    version: 1,
+                    accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent }] }],
+                  }),
+                ),
+              );
+              if (oversized) controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+              controller.close();
+            },
+          }),
+        ),
+      );
+    }),
+  );
+  return Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
+    const [snapshot] = yield* sources.current;
+    expect(snapshot).toMatchObject({ kind: "http", accounts: [], quotaAccounts: accounts });
+    expect(snapshot?.origin).toBeUndefined();
+    usedPercent = 101;
+    yield* sources.refresh;
+    const [failed] = yield* sources.current;
+    expect(failed).toMatchObject({ accounts: [], error: "Could not read the HTTP quota source." });
+    expect(failed?.quotaAccounts).toBeUndefined();
+    usedPercent = 35;
+    oversized = true;
+    yield* sources.refresh;
+    expect((yield* sources.current)[0]).toMatchObject({
+      accounts: [],
+      error: "Could not read the HTTP quota source.",
+    });
+  }).pipe(
+    Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("quota")]: {
+            kind: "http",
+            url: "https://quota.test/v1",
+            managementKey: "test-token",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(HttpClient.HttpClient, client),
+      NodeCrypto.layer,
+    ]),
+  );
+});
+
 it.effect("reads a management key from its secret provider", () => {
   const authorizations: Array<string | undefined> = [];
   const keySource = (reference: string) => ({
@@ -175,6 +251,107 @@ it.effect("reads a management key from its secret provider", () => {
   );
 });
 
+it.effect("keeps an account's last good reading when the hub's next read of it is refused", () => {
+  let refused = true;
+  let workspace = "account-a";
+  let listsIdentity = true;
+  const readAccount = Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    return Effect.gen(function* () {
+      yield* sources.refresh;
+      const [source] = yield* sources.current;
+      return source?.accounts[0]?.usageLimits;
+    });
+  });
+  return Effect.gen(function* () {
+    const read = yield* readAccount;
+    // Nothing to keep yet: the account stays listed as unreadable.
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
+    refused = false;
+    const good = yield* read;
+    expect(good?.windows.map((window) => window.usedPercent)).toEqual([78]);
+    expect(good?.unavailable).toBeUndefined();
+    refused = true;
+    expect(yield* read).toEqual(good);
+    // The same auth file now holds another login, whose reading is unknown.
+    workspace = "account-b";
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
+    // A file that lists no login cannot show whether the next one is the same.
+    listsIdentity = false;
+    refused = false;
+    yield* read;
+    refused = true;
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "http://hub.test:8317",
+            managementKey: "management-secret",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (new URL(request.url).pathname.endsWith("/auth-files")) {
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  files: [
+                    {
+                      id: "first.json",
+                      auth_index: "a",
+                      provider: "codex",
+                      ...(listsIdentity
+                        ? {
+                            email: "first@example.com",
+                            id_token: { chatgpt_account_id: workspace },
+                          }
+                        : {}),
+                    },
+                  ],
+                }),
+              );
+            }
+            const usage = {
+              plan_type: "pro",
+              rate_limit: {
+                secondary_window: {
+                  used_percent: 78,
+                  reset_at: 4070908800,
+                  limit_window_seconds: 604800,
+                },
+              },
+            };
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                refused
+                  ? { status_code: 429, body: "{}" }
+                  : { status_code: 200, body: JSON.stringify(usage) },
+              ),
+            );
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+  );
+});
+
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 const at = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(NOW + hours * 3_600_000));
 const spent = (id: string, hours: number): ServerProviderUsageWindow => ({
@@ -187,6 +364,7 @@ const spent = (id: string, hours: number): ServerProviderUsageWindow => ({
 const hub = (
   accounts: ReadonlyArray<{
     driver?: string;
+    models?: ReadonlyArray<string>;
     windows?: ReadonlyArray<ServerProviderUsageWindow>;
     unavailable?: true;
   }>,
@@ -198,6 +376,7 @@ const hub = (
   accounts: accounts.map((account, index) => ({
     id: `account-${index}`,
     driver: ProviderDriverKind.make(account.driver ?? "claudeAgent"),
+    ...(account.models ? { models: account.models } : {}),
     usageLimits: {
       checkedAt: at(0),
       windows: account.windows ?? [],
@@ -252,6 +431,86 @@ it.each([
     accounts: [{ driver: "codex", windows: [spent("five_hour", 1)] }],
     model: "claude-haiku-5-5",
     expected: null,
+  },
+  // regression: #30778 only the accounts the hub routes the model to can refill it
+  {
+    name: "an account of another driver the hub routes the model to counts",
+    accounts: [
+      { driver: "codex", models: ["gpt-5.6-sol"], windows: [spent("five_hour", 3)] },
+      { models: ["claude-sonnet-4-6"], windows: [] },
+    ],
+    model: "gpt-5.6-sol",
+    expected: at(3),
+  },
+  {
+    name: "an account that lists no models is left out of an alias",
+    accounts: [{ windows: [spent("five_hour", 1)] }, { models: [], windows: [] }],
+    model: "opus",
+    expected: at(1),
+  },
+  {
+    name: "a spent Gemini quota does not hold back Claude on Antigravity",
+    accounts: [
+      {
+        driver: "antigravity",
+        models: ["claude-opus-4-6-thinking"],
+        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
+      },
+    ],
+    model: "claude-opus-4-6-thinking",
+    expected: at(1),
+  },
+  {
+    name: "a hub thinking suffix routes by its base model",
+    accounts: [
+      { driver: "codex", models: ["gpt-5.2"], windows: [spent("five_hour", 3)] },
+      { models: ["claude-sonnet-4-6"], windows: [] },
+    ],
+    model: "gpt-5.2(high)",
+    expected: at(3),
+  },
+  {
+    name: "a prefixed Gemini model is held back by the Gemini quota",
+    accounts: [
+      {
+        driver: "antigravity",
+        models: ["ag/gemini-3.1-pro-high"],
+        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
+      },
+    ],
+    model: "ag/gemini-3.1-pro-high",
+    expected: at(24),
+  },
+  {
+    name: "an alias of unknown family is held back by every Antigravity quota",
+    accounts: [{ driver: "antigravity", models: ["fast"], windows: [spent("gemini-5h", 24)] }],
+    model: "fast",
+    expected: at(24),
+  },
+  {
+    name: "an own-driver account whose model list was unread still counts",
+    accounts: [
+      { windows: [spent("five_hour", 1)] },
+      {
+        driver: "antigravity",
+        models: ["claude-sonnet-4-6"],
+        windows: [spent("3p-5h", 8)],
+      },
+    ],
+    model: "claude-sonnet-4-6",
+    expected: at(1),
+  },
+  {
+    name: "an Argon model waits only for the Argon quota",
+    accounts: [
+      {
+        driver: "antigravity",
+        models: ["gemini-4-argon-high"],
+        windows: [spent("gemini-argon-5h", 2), spent("gemini-carbon-weekly", 96)],
+      },
+    ],
+    model: "gemini-4-argon-high",
+    expected: at(2),
   },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(

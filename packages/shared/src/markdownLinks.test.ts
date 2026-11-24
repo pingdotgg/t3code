@@ -48,6 +48,21 @@ describe("inlineCodeFilePathCandidate", () => {
     ["./bin/run:12", "./bin/run:12"],
     ["src/資料.備份:12", "src/資料.備份:12"],
     ["src/foo.c++:12", "src/foo.c++:12"],
+    // regression: #37740 absolute paths with spaces are files, commands are not
+    ["/Users/me/Path Test/notes with spaces.md", "/Users/me/Path Test/notes with spaces.md"],
+    ["~/Library/Mobile Documents/notes.md", "~/Library/Mobile Documents/notes.md"],
+    [
+      "/Users/me/Library/CloudStorage/OneDrive-Org/Alex/Partners/Acme/Finance Use Cases/working/2026-11-16 message - draft.md",
+      "/Users/me/Library/CloudStorage/OneDrive-Org/Alex/Partners/Acme/Finance Use Cases/working/2026-11-16 message - draft.md",
+    ],
+    ["cd /tmp && ls", null],
+    ["/usr/bin/python3 -m venv .venv", null],
+    ["/usr/local/bin/node server.js", null],
+    ["/usr/bin/env python3 foo.py", null],
+    ["/opt/homebrew/bin/python3 manage.py", null],
+    ["/bin/echo hello world.txt", null],
+    ["~/bin/run tests.sh", null],
+    ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -78,6 +93,22 @@ describe("parseMarkdownFileLink", () => {
   ])("reads back the composer's link to %s", (path) => {
     const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
     expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
+  });
+
+  // regression: #41223 names the parser rejects bare; the composer adds `./` to them
+  it.each([
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/a,b.ts",
+    "docs/100%.md",
+    "docs/why?.md",
+    "icon@2x.png",
+  ])("resolves the composer's link to %s", (path) => {
+    const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
+    expect(resolveMarkdownFileLinkTarget(destination ?? "", "/workspace/project")).toBe(
+      `/workspace/project/${path}`,
+    );
   });
 
   it.each([
@@ -159,6 +190,9 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
+    ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
+    ["[a [b]\n\nc](src/a.ts) [outer [inner]()](src/b.ts)", []],
     [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
@@ -170,6 +204,9 @@ describe("extractMarkdownLinkHrefs", () => {
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
+    [`[a](a.ts "mixed') [b](b.ts)`, ["b.ts"]],
+    [`[a](a.ts "it's\n\n[b](lib/a.ts)")`, ["lib/a.ts"]],
     ["[a](a(b(c))d) [b](ok)", ["a(b(c))d", "ok"]],
     ["[a](x\\)y) [b](x\\(y)", ["x\\)y", "x\\(y"]],
     ["[a](unclosed(paren) [b](ok)", ["ok"]],

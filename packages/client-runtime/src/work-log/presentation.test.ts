@@ -4,6 +4,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
+  resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -202,5 +203,25 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveViewedImageAsset", () => {
+  it("requests the file the agent read when its name holds %, # or ?", () => {
+    const path = "/Users/me/.grok/sessions/%2FUsers%2Fme%2Fproject/shot #1?/1.jpg";
+    expect(
+      resolveViewedImageAsset(path, { threadId: ThreadId.make("thread"), workspaceRoot: "/repo" }),
+    ).toEqual({
+      resource: { _tag: "media-file", threadId: ThreadId.make("thread"), path },
+      alt: "1.jpg",
+      srcFragment: "",
+    });
+  });
+
+  it("still decodes a file URL", () => {
+    expect(
+      resolveViewedImageAsset("file:///repo/my%20shot.png", { threadId: ThreadId.make("thread") })
+        ?.resource.path,
+    ).toBe("/repo/my shot.png");
   });
 });
