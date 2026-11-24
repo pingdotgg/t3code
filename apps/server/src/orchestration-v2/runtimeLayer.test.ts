@@ -12711,20 +12711,18 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           (run) => run.id === runC.id,
         )!;
         assert.deepEqual(afterC.output?.value, { from: "continued" });
-        // Resumed natively on its own bound credential, C has only A's prompt and names A.
-        const resumedNamingSource = yield* submit(
-          "run-output-resumed-naming-a",
-          '{"from":"resumed"}',
-          {
-            callerRunId: runC.id,
-            requestedRunId: runA.id,
-          },
-        );
-        assert.equal(resumedNamingSource.runId, runC.id);
+        // A's late call naming A on C's live-updated credential does not overwrite C's result; C is
+        // prompted with its own runId.
+        const lateFromAOnC = yield* submit("run-output-late-a-on-c", '{"from":"late-a"}', {
+          callerRunId: runC.id,
+          requestedRunId: runA.id,
+        }).pipe(Effect.flip);
+        assert.equal(lateFromAOnC._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromAOnC.message, "no longer active");
         assert.deepEqual(
           (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runC.id)
             ?.output?.value,
-          { from: "resumed" },
+          { from: "continued" },
         );
 
         // A plain turn with no schema preserves the plain-turn guidance even for stale/unbound MCP callers.

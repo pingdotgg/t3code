@@ -1043,6 +1043,9 @@ export const layer: Layer.Layer<
           attemptId: attempt.id,
           requireRunScopedMcp: run.outputSchema !== undefined,
           ...(owedOutputRun === undefined ? {} : { owedOutputRunId: owedOutputRun.id }),
+          ...(message?.createdBy === "agent" && message.creationSource === "provider"
+            ? { providerStartedTurn: true }
+            : {}),
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),
@@ -2010,9 +2013,9 @@ export const layer: Layer.Layer<
         needsOutputRunIdCheck && Option.isSome(mcpSessions)
           ? yield* mcpSessions.value.read(projection.thread.id)
           : undefined;
-      // An unbound MCP credential cannot supply run.id, so a typed continuation must prompt with it.
-      const needsPromptedOutputRunId =
-        needsOutputRunIdCheck && mcpSession !== undefined && mcpSession.runId !== run.id;
+      // A typed continuation must prompt with its own run.id: the agent names it, and a call naming
+      // the run it continues may be that stopped run's late one.
+      const needsPromptedOutputRunId = needsOutputRunIdCheck && mcpSession !== undefined;
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
         contextUsage: handoffUsage,

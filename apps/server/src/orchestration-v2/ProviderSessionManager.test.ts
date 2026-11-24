@@ -3647,6 +3647,7 @@ it.effect.each([
         readonly attemptId?: RunAttemptId;
         readonly requireRunScopedMcp?: boolean;
         readonly owedOutputRunId?: RunId;
+        readonly providerStartedTurn?: boolean;
       },
     ) =>
       manager.open({
@@ -3739,6 +3740,20 @@ it.effect.each([
         assert.notEqual(wakeToken, token1);
         assert.equal((yield* registry.resolve(wakeToken))?.thread.runId, wakeRun);
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+
+        // A wake the provider already started runs on the credential it holds, so that one stays,
+        // unbound: the agent answers run 1 by naming it.
+        yield* openFor(manager, providerSessionId, threadId, {
+          runId: RunId.make("run-live-provider-wake"),
+          attemptId: RunAttemptId.make("attempt-live-provider-wake"),
+          requireRunScopedMcp: false,
+          owedOutputRunId: run1,
+          providerStartedTurn: true,
+        });
+        assert.equal(rawBearer(yield* mcpSessions.read(threadId)), wakeToken);
+        const providerWake = yield* registry.resolve(wakeToken);
+        assert.isDefined(providerWake);
+        assert.isUndefined(providerWake!.thread.runId);
 
         const run2 = RunId.make("run-live-2");
         const attempt2 = RunAttemptId.make("attempt-live-2");

@@ -1090,23 +1090,10 @@ const make = Effect.gen(function* () {
     const matchesRun = (candidate: OrchestrationV2Run) =>
       candidate.id === callerRunId &&
       (input.callerAttemptId === undefined || candidate.activeAttemptId === input.callerAttemptId);
-    // A continuation that resumes natively on a bound credential still has only the earlier
-    // run's prompt, so the run named in the call may be one the target continues.
-    const continuesNamedRun = (named: RunId) => {
-      let current: OrchestrationV2Run | undefined = run;
-      for (let hops = 0; current !== undefined && hops <= records.runs.length; hops++) {
-        if (current.id === named) return true;
-        const continued: RunId | undefined =
-          current.restartContinuationOfRunId ??
-          current.usageLimitContinuationOfRunId ??
-          current.manualContinuationOfRunId;
-        current = records.runs.find((candidate) => candidate.id === continued);
-      }
-      return false;
-    };
     // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
+    // The run named in the call must be that target, even when a bound credential names another.
     if (
-      !continuesNamedRun(requestedRunId) ||
+      requestedRunId !== run.id ||
       (!matchesRun(active) && !(run.id !== active.id && matchesRun(run)))
     ) {
       return yield* new ThreadManagementRunOutputRejectedError({

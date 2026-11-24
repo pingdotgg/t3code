@@ -257,6 +257,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly attemptId?: RunAttemptId;
     readonly requireRunScopedMcp?: boolean;
     readonly owedOutputRunId?: RunId;
+    /** The provider already started this turn natively, on the credential it holds. */
+    readonly providerStartedTurn?: boolean;
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
     readonly initialNativeThreadId?: string;
     readonly initialProviderItemIdentityVersion?: 2;
@@ -2229,6 +2231,7 @@ export const layerWithOptions = (
           readonly attemptId?: RunAttemptId | undefined;
           readonly requireRunScopedMcp?: boolean | undefined;
           readonly owedOutputRunId?: RunId | undefined;
+          readonly providerStartedTurn?: boolean | undefined;
         }) {
           if (options.configureMcp === false) return;
           let reservedCredentialId: string | undefined;
@@ -2353,8 +2356,9 @@ export const layerWithOptions = (
                 if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) return;
                 continue;
               }
-              // A runtime that cannot take a new credential now (no way to deliver one, or a reload that
-              // would end background work) keeps it unbound; the agent then names its run in the call.
+              // A turn that cannot take a new credential now (the provider already started it, no way to
+              // deliver one, or a reload that would end background work) keeps it unbound; the agent
+              // then names its run in the call.
               // A shared session reloads only this thread, so only this thread's own work blocks it.
               const loadedThread = (yield* Ref.get(sessions))
                 .get(sessionKey(input.providerSessionId))
@@ -2371,6 +2375,7 @@ export const layerWithOptions = (
                       })
                   : (input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false));
               const cannotRotate =
+                input.providerStartedTurn === true ||
                 input.runtime.mcpCredentialRotation === "none" ||
                 (input.runtime.mcpCredentialRotation !== "live" &&
                   (yield* pendingWork.pipe(
@@ -4028,6 +4033,7 @@ export const layerWithOptions = (
                     attemptId: input.attemptId,
                     requireRunScopedMcp: input.requireRunScopedMcp,
                     owedOutputRunId: input.owedOutputRunId,
+                    providerStartedTurn: input.providerStartedTurn,
                   });
                 } else if (
                   options.configureMcp !== false &&

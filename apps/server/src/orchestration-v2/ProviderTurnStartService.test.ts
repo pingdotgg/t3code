@@ -493,6 +493,7 @@ function makeLocalCommandHarness(input: {
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly createdBy?: "agent" | "system";
+  readonly creationSource?: "provider";
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
@@ -595,7 +596,7 @@ function makeLocalCommandHarness(input: {
     attachments: [],
     streaming: false,
     createdBy: input.createdBy ?? "user",
-    creationSource: input.createdBy === undefined ? "web" : "mcp",
+    creationSource: input.creationSource ?? (input.createdBy === undefined ? "web" : "mcp"),
     ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
     createdAt: now,
     updatedAt: now,
@@ -2415,56 +2416,54 @@ effectIt.effect("sends new steering text when restarting a manual continuation",
     expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("New steering instruction");
     expect(harness.startRootRun.mock.calls[0]?.[0].resume).toBe(false);
 
-    // An unbound MCP credential cannot supply runId, so typed continuations prompt with their own runId.
-    const unboundManual = makeLocalCommandHarness({
-      text: "",
-      manualContinuation: true,
-      outputSchema: { type: "object" },
-      mcpSession: "unbound",
-      sideChat: { contextRun: "delivered" },
-    });
-    yield* unboundManual.start;
-    const unboundManualTurn = unboundManual.startTurn.mock.calls[0]?.[0];
-    expect(unboundManualTurn?.resume).toBeUndefined();
-    expect(unboundManualTurn?.message.text).toContain("Continue where you left off.");
-    expect(unboundManualTurn?.message.text).toContain("run-native-account-command");
-    expect(unboundManualTurn?.inlineContextLength).toBeUndefined();
+    // A typed continuation prompts with its own runId on any credential: a call naming the run it
+    // continues may be that stopped run's late one.
+    for (const mcpSession of ["unbound", "bound"] as const) {
+      const manual = makeLocalCommandHarness({
+        text: "",
+        manualContinuation: true,
+        outputSchema: { type: "object" },
+        mcpSession,
+        sideChat: { contextRun: "delivered" },
+      });
+      yield* manual.start;
+      const manualTurn = manual.startTurn.mock.calls[0]?.[0];
+      expect(manualTurn?.resume).toBeUndefined();
+      expect(manualTurn?.message.text).toContain("Continue where you left off.");
+      expect(manualTurn?.message.text).toContain("run-native-account-command");
+      expect(manualTurn?.inlineContextLength).toBeUndefined();
 
-    // A bound MCP credential supplies runId itself, so native resume keeps sending no prompt text.
-    const boundManual = makeLocalCommandHarness({
-      text: "",
-      manualContinuation: true,
-      outputSchema: { type: "object" },
-      mcpSession: "bound",
-      sideChat: { contextRun: "delivered" },
-    });
-    yield* boundManual.start;
-    const boundManualTurn = boundManual.startTurn.mock.calls[0]?.[0];
-    expect(boundManualTurn?.resume).toBe(true);
-    expect(boundManualTurn?.message.text).toBe("");
+      const restart = makeLocalCommandHarness({
+        text: "Continue where you left off.",
+        restartContinuation: true,
+        outputSchema: { type: "object" },
+        mcpSession,
+        sideChat: { contextRun: "delivered" },
+      });
+      yield* restart.start;
+      expect(restart.startTurn.mock.calls[0]?.[0].restartContinuationOfRunId).toBeUndefined();
+    }
+  }),
+);
 
-    // An unbound typed restart continuation strips restartContinuationOfRunId; a bound one keeps it.
-    const unboundRestart = makeLocalCommandHarness({
-      text: "Continue where you left off.",
-      restartContinuation: true,
-      outputSchema: { type: "object" },
-      mcpSession: "unbound",
-      sideChat: { contextRun: "delivered" },
-    });
-    yield* unboundRestart.start;
-    expect(unboundRestart.startTurn.mock.calls[0]?.[0].restartContinuationOfRunId).toBeUndefined();
-
-    const boundRestart = makeLocalCommandHarness({
-      text: "Continue where you left off.",
-      restartContinuation: true,
-      outputSchema: { type: "object" },
-      mcpSession: "bound",
-      sideChat: { contextRun: "delivered" },
-    });
-    yield* boundRestart.start;
-    expect(boundRestart.startTurn.mock.calls[0]?.[0].restartContinuationOfRunId).toBe(
-      "stopped-run",
-    );
+effectIt.effect("opens a turn the provider started on the MCP credential it holds", () =>
+  Effect.gen(function* () {
+    for (const [creationSource, expected] of [
+      ["provider", true],
+      [undefined, undefined],
+    ] as const) {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        createdBy: "agent",
+        ...(creationSource === undefined ? {} : { creationSource }),
+        sideChat: { contextRun: "delivered" },
+      });
+      yield* harness.start;
+      const [opened] = harness.open.mock.calls[0] as unknown as [
+        { readonly providerStartedTurn?: boolean },
+      ];
+      expect(opened.providerStartedTurn).toBe(expected);
+    }
   }),
 );
 
