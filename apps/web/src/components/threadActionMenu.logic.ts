@@ -135,6 +135,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "project-settings",
     "mark-unread",
     "share-guest",
+    "filter-by-project",
     "copy",
     "copy-path",
     "copy-branch",

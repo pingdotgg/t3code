@@ -79,14 +79,17 @@ it("does not dispatch a later mutation after access changes while awaiting a rec
   expect(state.run).toHaveBeenCalledTimes(1);
 });
 
-it("reports an offline environment instead of a permission problem", async () => {
-  state.allowed.add(second);
-  state.offline.add(second);
-  const mutate = useOrchestrationCommand(command, { reportFailure: false });
-  const result = await mutate(target(second));
-  assert(result._tag === "Failure");
-  const error = Cause.squash(result.cause);
-  expect(error).toBeInstanceOf(EnvironmentRpcUnavailableError);
-  expect(error).toMatchObject({ environmentId: second, message: "Build box is offline." });
-  expect(state.run).not.toHaveBeenCalled();
-});
+it.each([true, false])(
+  "reports an offline environment instead of a permission problem (operate granted: %s)",
+  async (granted) => {
+    if (granted) state.allowed.add(second);
+    state.offline.add(second);
+    const mutate = useOrchestrationCommand(command, { reportFailure: false });
+    const result = await mutate(target(second));
+    assert(result._tag === "Failure");
+    const error = Cause.squash(result.cause);
+    expect(error).toBeInstanceOf(EnvironmentRpcUnavailableError);
+    expect(error).toMatchObject({ environmentId: second, message: "Build box is offline." });
+    expect(state.run).not.toHaveBeenCalled();
+  },
+);
