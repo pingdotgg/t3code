@@ -367,7 +367,7 @@ export function HtmlRenderTimelineRow({
     return <div className="min-w-0 px-1">{ctx.renderHtmlRender(row)}</div>;
   }
   return (
-    <div className="min-w-0 px-1">
+    <div className="html-preview-lane min-w-0 px-1">
       <HtmlRenderFrame
         key={row.htmlRender.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}

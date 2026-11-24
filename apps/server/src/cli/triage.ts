@@ -86,6 +86,17 @@ export class TriageAgentSpawnError extends Schema.TaggedError<TriageAgentSpawnEr
   }
 }
 
+export const matchAgentAnswer = <Agent extends { readonly id: string }>(
+  agents: ReadonlyArray<Agent>,
+  answer: string,
+) => {
+  const trimmed = answer.trim();
+  return (
+    agents.find((_, index) => String(index + 1) === trimmed) ??
+    agents.find((agent) => agent.id === trimmed.toLowerCase())
+  );
+};
+
 const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
   Effect.promise(async () => {
     const readline = NodeReadlinePromises.createInterface({
@@ -97,14 +108,10 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
         .map((agent, index) => `  [${String(index + 1)}] ${agent.label}`)
         .join("\n");
       for (;;) {
-        const answer = (await readline.question(`Run triage with:\n${menu}\n> `)).trim();
-        const byNumber = agents[Number.parseInt(answer, 10) - 1];
-        if (byNumber !== undefined) {
-          return byNumber;
-        }
-        const byId = agents.find((agent) => agent.id === answer.toLowerCase());
-        if (byId !== undefined) {
-          return byId;
+        const answer = await readline.question(`Run triage with:\n${menu}\n> `);
+        const picked = matchAgentAnswer(agents, answer);
+        if (picked !== undefined) {
+          return picked;
         }
       }
     } finally {

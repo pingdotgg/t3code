@@ -135,6 +135,11 @@ const stepResultCut = (text: string) => {
   const end = splitsSurrogatePair(text, STEP_RESULT_KEPT) ? STEP_RESULT_KEPT - 1 : STEP_RESULT_KEPT;
   return `${text.slice(0, end)}…`;
 };
+const DETAIL_KEPT = 2_000;
+export const detailCut = (text: string) =>
+  text.length <= DETAIL_KEPT
+    ? text
+    : text.slice(0, splitsSurrogatePair(text, DETAIL_KEPT) ? DETAIL_KEPT - 1 : DETAIL_KEPT);
 const SIGNAL_IDS_KEPT = Duration.days(7);
 const REFERENCE_TITLE_KEPT = 300;
 const idsKeptUntil = Effect.map(DateTime.now, (at) =>
@@ -498,7 +503,7 @@ export const make = Effect.gen(function* () {
     }),
     runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail, held) {
       const at = yield* now;
-      const reason = detail.slice(0, 2000);
+      const reason = detailCut(detail);
       const paused = yield* sql`
         UPDATE workflow_runs
         SET status = 'paused', detail = ${reason}, pauses = pauses + 1,
@@ -568,10 +573,8 @@ export const make = Effect.gen(function* () {
       return true;
     }),
     runTitle: Effect.fn("WorkflowStore.runTitle")(function* (runId, title) {
-      yield* write(
-        runId,
-        sql`UPDATE workflow_runs SET title = ${title.slice(0, 200)} WHERE run_id = ${runId}`,
-      );
+      const kept = title.slice(0, splitsSurrogatePair(title, 200) ? 199 : 200);
+      yield* write(runId, sql`UPDATE workflow_runs SET title = ${kept} WHERE run_id = ${runId}`);
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
       const at = yield* now;
@@ -594,7 +597,7 @@ export const make = Effect.gen(function* () {
           Effect.andThen(
             sql`
               UPDATE workflow_steps
-              SET status = ${status}, detail = ${detail === null ? null : detail.slice(0, 2000)}, ended_at = ${at}
+              SET status = ${status}, detail = ${detail === null ? null : detailCut(detail)}, ended_at = ${at}
               WHERE run_id = ${runId} AND name = ${name}
             `,
             // A step that finished is progress: the next pause is the first in a row again.

@@ -57,6 +57,7 @@ import * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 
 import { run } from "./scenarios/shell.ts";
+import { serveFakeGitHub, type FakeGitHub } from "./server-metrics-forge.ts";
 import {
   compareMetrics,
   CpuProfile,
@@ -65,6 +66,9 @@ import {
   HeapSnapshot,
   heapByConstructor,
   heapGrowth,
+  heapRetainers,
+  retainerGrowth,
+  type RetainerGrowth,
   competingBetween,
   loadWarnings,
   noiseReport,
@@ -135,6 +139,9 @@ const RECONNECT_CLIENTS = 3;
 const RECONNECT_THREADS = 10;
 /** Clients that drop and reconnect at once in the opt-in storm, each holding one thread. */
 const STORM_CLIENTS = 20;
+/** Threads the soak keeps open; every few turns the oldest is replaced. */
+const SOAK_THREADS = 10;
+const SOAK_CHURN_TURNS = 4;
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
 const LOOP_RESOLUTION_MS = 10;
 const LoopStats = Schema.Struct({
@@ -523,7 +530,8 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       yield* send("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
       const json = chunks.join("");
       chunks.length = 0;
-      return heapByConstructor(yield* decodeJson(HeapSnapshot)(json));
+      const snapshot = yield* decodeJson(HeapSnapshot)(json);
+      return { byConstructor: heapByConstructor(snapshot), retainers: heapRetainers(snapshot) };
     }),
   };
 });
@@ -582,7 +590,8 @@ const descendantsOf = Effect.fn("serverMetrics.descendantsOf")(function* (pid: n
     }
   } else if (platform === "darwin") {
     const table = yield* output("ps", ["-A", "-o", "pid=,ppid="]);
-    for (const line of Option.getOrElse(table, () => "").split("\n")) {
+    if (Option.isNone(table)) return yield* new MetricsError({ message: "ps listed no processes" });
+    for (const line of table.value.split("\n")) {
       const [child, parent] = line.trim().split(/\s+/).map(Number);
       if (child && parent) add(child, parent);
     }
@@ -611,6 +620,8 @@ interface Environment {
 interface ServerOptions {
   /** A base dir `migrate-dev-db` prepared; the server starts on a copy of its database. */
   readonly seed?: string;
+  /** A fake GitHub host the project's origin points at. */
+  readonly forge?: FakeGitHub;
 }
 
 /** Transcript text: paths there are words in a conversation, which the server never acts on. */
@@ -834,12 +845,14 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   yield* fs.makeDirectory(project);
   yield* fs.writeFileString(path.join(project, "README.md"), "# bench\n");
   for (const args of [
-    ["init", "-q", "-b", "main"],
+    // Loose refs on purpose: the soak writes them as files, which a reftable store would ignore.
+    ["-c", "init.defaultRefFormat=files", "init", "-q", "-b", "main"],
     ["add", "."],
     ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench", "commit", "-qm", "init"],
   ]) {
     yield* run("git", args, { cwd: project });
   }
+  if (options.forge !== undefined) yield* options.forge.setupProject(project);
   const baseDir = path.join(directory, "base");
   // Branch names come from Claude too, so a worktree launch's naming call reaches the fake API.
   yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
@@ -872,6 +885,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     OTEL_SDK_DISABLED: "true",
     T3CODE_DEV_SEED: "0",
+    ...options.forge?.env,
   };
   const port = yield* freePort;
   const started = yield* nowMs;
@@ -1025,6 +1039,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
 
   return {
     readyMs,
+    pid,
     startedAt: started,
     origin: `http://127.0.0.1:${port}`,
     /** The seeded projects' clones; none without a seed. */
@@ -1247,6 +1262,8 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     threadId: string,
     item: OrchestrationV2ThreadStreamItem,
   ) => Effect.Effect<void> = () => Effect.void,
+  /** How long the server may go silent before the client drops the connection or a report fails. */
+  pingTimeout?: Duration.Input,
 ) {
   const http = yield* HttpClient.HttpClient;
   // Headers alone do not finish a request; the deadline covers the body too.
@@ -1265,7 +1282,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     );
   const { ticket } = yield* decodeJson(Schema.Struct({ ticket: Schema.String }))(ticketBody);
   const protocol = yield* Layer.build(
-    RpcClient.layerProtocolSocket().pipe(
+    RpcClient.layerProtocolSocket(pingTimeout === undefined ? {} : { pingTimeout }).pipe(
       Layer.provide(
         Socket.layerWebSocket(
           `${server.origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
@@ -1279,6 +1296,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   // client costs, so the first such loss is kept for `healthy` to report.
   const lost = yield* Ref.make<string | undefined>(undefined);
   const ready = Effect.fn("serverMetrics.subscription")(function* <A, E, R>(
+    name: string,
     stream: Stream.Stream<A, E, R>,
     isReady: (item: A) => boolean,
     onItem: (item: A) => Effect.Effect<void> = () => Effect.void,
@@ -1294,8 +1312,10 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
           Effect.andThen(isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void),
         ),
       ),
-      Effect.andThen(lose("a subscription ended")),
-      Effect.catchCause(() => lose("a subscription failed")),
+      Effect.andThen(lose(`the ${name} subscription ended`)),
+      Effect.catchCause((cause) =>
+        lose(`the ${name} subscription failed: ${describeFailure(Cause.squash(cause))}`),
+      ),
       Effect.forkScoped,
     );
     return Deferred.await(synchronized);
@@ -1317,7 +1337,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   }).pipe(
     // A server that keeps the socket open but never answers would otherwise hang the scenario.
     Effect.timeoutOrElse({
-      duration: Duration.seconds(15),
+      duration: pingTimeout ?? Duration.seconds(15),
       orElse: () => new MetricsError({ message: "an activity report got no answer" }),
     }),
   );
@@ -1346,6 +1366,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   const synchronized = (item: { readonly kind: string }) => item.kind === "synchronized";
   const waits = [
     yield* ready(
+      "shell",
       client["orchestration.subscribeShell"]({
         requestCompletionMarker: true,
         omitIdleSubagents: true,
@@ -1353,9 +1374,10 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       }),
       synchronized,
     ),
-    yield* ready(client.subscribeVcsStatus({ cwd: server.project }), () => true),
+    yield* ready("VCS status", client.subscribeVcsStatus({ cwd: server.project }), () => true),
     ...(yield* Effect.forEach(threadIds, (threadId) =>
       ready(
+        `thread ${threadId}`,
         client["orchestration.subscribeThread"]({
           threadId: ThreadId.make(threadId),
           requestCompletionMarker: true,
@@ -1389,6 +1411,14 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
         createdBy: "user",
         creationSource: "web",
         dispatchMode: { type: "start_immediately" },
+      }),
+    rpc: client,
+    /** Archives or deletes a thread the way the sidebar does. */
+    retire: (type: "thread.archive" | "thread.delete", threadId: string, commandId: string) =>
+      client["orchestration.dispatchCommand"]({
+        type,
+        commandId: CommandId.make(commandId),
+        threadId: ThreadId.make(threadId),
       }),
     /** Fails if any of this client's subscriptions or reports was lost since it attached. */
     healthy: Effect.flatMap(Ref.get(lost), (message) =>
@@ -1640,6 +1670,7 @@ interface RunOptions {
 /** One pass: startup, rest and firstWord share a server; quiet, streaming and soak get their own. */
 const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOptions) {
   const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
   const path = yield* Path.Path;
   const machine = yield* watchMachine;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-metrics-" });
@@ -1658,6 +1689,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
   const measured: { -readonly [K in keyof Measured]: Measured[K] } = {};
   const profiles: Record<string, ProfileSummary> = {};
   let soakHeapGrowth: ReturnType<typeof heapGrowth> | undefined;
+  let soakRetainerGrowth: ReadonlyArray<RetainerGrowth> | undefined;
   const withServer = <A, E, R>(
     name: string,
     body: (server: Server) => Effect.Effect<A, E, R>,
@@ -1916,50 +1948,165 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     );
   }
   if (options.soakMinutes > 0) {
-    yield* withServer("soak", (server) =>
-      Effect.gen(function* () {
-        const threads = yield* openThreads(server, 0, 10);
-        yield* Effect.sleep(Duration.seconds(60));
-        // The snapshot inflates RSS once, so the slopes start after it.
-        const before = yield* server.snapshot;
-        const samples: Array<{ hours: number; window: Window }> = [];
-        const start = yield* nowMs;
-        const elapsed = Effect.map(nowMs, (now) => now - start);
-        const takeSample = Effect.gen(function* () {
-          samples.push({ hours: (yield* elapsed) / 3_600_000, window: yield* server.measure(5) });
-        });
-        let nextSample = 0;
-        for (let turn = 0; (yield* elapsed) < options.soakMinutes * 60_000; turn++) {
-          if ((yield* elapsed) >= nextSample) {
-            yield* takeSample;
-            nextSample += 120_000;
+    const forge = yield* serveFakeGitHub();
+    yield* withServer(
+      "soak",
+      (server) =>
+        Effect.gen(function* () {
+          let threads = yield* openThreads(server, 0, SOAK_THREADS);
+          // A busy repository under a web client: thousands of loose remote-tracking refs, more
+          // arriving every turn as fetches and agent branches add them, so caches keyed by ref
+          // state churn the way they do on a real checkout.
+          const head = (yield* run("git", ["rev-parse", "HEAD"], { cwd: server.project })).stdout;
+          // Under a remote with no config, so no fetch (or a host's fetch.prune) can delete them.
+          const remotes = path.join(server.project, ".git", "refs", "remotes", "mirror");
+          yield* fs.makeDirectory(remotes, { recursive: true });
+          yield* Effect.forEach(
+            Array.from({ length: 3_000 }, (_, index) => index),
+            (index) => fs.writeFileString(path.join(remotes, `bench-${index}`), head),
+            { concurrency: 64, discard: true },
+          );
+          // A reftable store (GIT_DEFAULT_REF_FORMAT can still pick one) ignores refs written as files.
+          const listed = yield* run(
+            "git",
+            ["for-each-ref", "--count=3000", "refs/remotes/mirror/"],
+            {
+              cwd: server.project,
+            },
+          );
+          if (listed.stdout.trim().split("\n").length < 3_000) {
+            return yield* new MetricsError({ message: "git does not see the soak's loose refs" });
           }
-          // Round robin, so two soaks send the same turns to the same threads.
-          const threadId = threads[turn % threads.length];
-          if (threadId === undefined)
-            return yield* new MetricsError({ message: "no soak threads" });
-          const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
-          if (sent.exitCode !== 0) {
-            return yield* new MetricsError({
-              message: `soak turn ${turn} on ${threadId} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
-            });
+          const token = yield* server.issueToken;
+          // The client gets a scope of its own so each churn cycle can drop it and reconnect.
+          const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
+            Scope.close(scope, exit),
+          );
+          // Each client also polls pull requests the way the sidebar and an open PR do.
+          const connect = Effect.fn("serverMetrics.soakClient")(function* (
+            threadIds: ReadonlyArray<string>,
+          ) {
+            // A heap snapshot pauses the server for longer than the default 5 s ping timeout.
+            const client = yield* attachClient(
+              server,
+              token,
+              threadIds,
+              undefined,
+              Duration.minutes(2),
+            );
+            yield* forge
+              .pollLikeWebClient({
+                list: client.rpc["pullRequests.list"],
+                summary: client.rpc["pullRequests.summary"],
+                checks: client.rpc["pullRequests.checks"],
+              })
+              .pipe(Effect.forkScoped);
+            return client;
+          });
+          let scope = yield* clientScope;
+          let client = yield* connect(threads).pipe(Scope.provide(scope));
+          yield* Effect.sleep(Duration.seconds(60));
+          // The first snapshot inflates RSS once, so the slopes start after it.
+          const snapshots = [yield* server.snapshot];
+          const samples: Array<{
+            hours: number;
+            window: Window;
+            rssMB: number;
+            processes: number | null;
+          }> = [];
+          const start = yield* nowMs;
+          const elapsed = Effect.map(nowMs, (now) => now - start);
+          let snapshotRssMB = 0;
+          const takeSample = Effect.gen(function* () {
+            const hours = (yield* elapsed) / 3_600_000;
+            const window = yield* server.measure(5);
+            // Windows lists no descendants, which is not the same as having none.
+            const processes =
+              platform === "win32"
+                ? null
+                : yield* descendantsOf(server.pid).pipe(
+                    Effect.map((found) => found.length),
+                    // Unknown, not zero: a failed probe leaves the process slope out.
+                    Effect.orElseSucceed(() => null),
+                  );
+            samples.push({ hours, window, rssMB: window.rssMB - snapshotRssMB, processes });
+            yield* Console.error(
+              `soak ${round(hours * 60)} min: heap ${window.heapAfterGcMB} MB, RSS ${window.rssMB} MB${processes === null ? "" : `, ${processes} child processes`}`,
+            );
+          });
+          let nextSample = 0;
+          for (let turn = 0; (yield* elapsed) < options.soakMinutes * 60_000; turn++) {
+            if (snapshots.length === 1 && (yield* elapsed) >= options.soakMinutes * 30_000) {
+              // RSS the snapshot itself added stays off the slope: later samples drop the step.
+              const before = (yield* sample(server.pid)).rss;
+              snapshots.push(yield* server.snapshot);
+              snapshotRssMB = Math.max(0, ((yield* sample(server.pid)).rss - before) / 1e6);
+            }
+            if ((yield* elapsed) >= nextSample) {
+              yield* takeSample;
+              nextSample += 120_000;
+            }
+            // Users come and go: a new thread replaces the oldest, which is archived and deleted,
+            // and the client reconnects, so state kept per thread or per connection must be freed.
+            if (turn > 0 && turn % SOAK_CHURN_TURNS === 0) {
+              yield* client.healthy;
+              const [fresh] = yield* openThreads(server, SOAK_THREADS + turn, 1);
+              const [oldest, ...rest] = threads;
+              if (fresh === undefined || oldest === undefined)
+                return yield* new MetricsError({ message: "no soak thread to churn" });
+              threads = [...rest, fresh];
+              const retiring = client;
+              yield* Scope.close(scope, Exit.void);
+              // A loss while the replacement thread started still counts against the run.
+              yield* retiring.healthy.pipe(
+                Effect.mapError(
+                  (error) => new MetricsError({ message: `the retired client: ${error.message}` }),
+                ),
+              );
+              scope = yield* clientScope;
+              client = yield* connect(threads).pipe(Scope.provide(scope));
+              yield* forge.advanceRemote;
+              yield* client.retire("thread.archive", oldest, `bench-archive-${turn}`);
+              yield* client.retire("thread.delete", oldest, `bench-delete-${turn}`);
+            }
+            // Round robin, so two soaks send the same turns to the same threads.
+            const threadId = threads[turn % threads.length];
+            if (threadId === undefined)
+              return yield* new MetricsError({ message: "no soak threads" });
+            yield* fs.writeFileString(path.join(remotes, `soak-${turn}`), head);
+            const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
+            if (sent.exitCode !== 0) {
+              return yield* new MetricsError({
+                message: `soak turn ${turn} on ${threadId} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
+              });
+            }
+            yield* Effect.sleep(
+              Duration.millis(Math.max(0, (turn + 1) * 30_000 - (yield* elapsed))),
+            );
           }
-          yield* Effect.sleep(Duration.millis(Math.max(0, (turn + 1) * 30_000 - (yield* elapsed))));
-        }
-        yield* takeSample;
-        const perHour = (pick: (window: Window) => number) =>
-          round(slope(samples.map(({ hours, window }) => [hours, pick(window)])));
-        measured.soak = {
-          minutes: options.soakMinutes,
-          heapMBPerHour: perHour((window) => window.heapAfterGcMB),
-          rssMBPerHour: perHour((window) => window.rssMB),
-        };
-        soakHeapGrowth = heapGrowth(before, yield* server.snapshot);
-      }),
+          yield* takeSample;
+          yield* client.healthy;
+          yield* forge.checkFetched(server.project);
+          const perHour = (pick: (sample: (typeof samples)[number]) => number) =>
+            round(slope(samples.map((sample) => [sample.hours, pick(sample)])));
+          measured.soak = {
+            minutes: options.soakMinutes,
+            heapMBPerHour: perHour(({ window }) => window.heapAfterGcMB),
+            rssMBPerHour: perHour(({ rssMB }) => rssMB),
+            ...(samples.some(({ processes }) => processes === null)
+              ? {}
+              : { childProcessesPerHour: perHour(({ processes }) => processes ?? 0) }),
+          };
+          snapshots.push(yield* server.snapshot);
+          soakHeapGrowth = heapGrowth(snapshots[0]!.byConstructor, snapshots.at(-1)!.byConstructor);
+          soakRetainerGrowth = retainerGrowth(snapshots.map((snapshot) => snapshot.retainers));
+        }),
+      { forge },
     );
+    yield* forge.verify;
   }
   measured.machine = yield* machine;
-  return { measured: measured as Measured, profiles, soakHeapGrowth };
+  return { measured: measured as Measured, profiles, soakHeapGrowth, soakRetainerGrowth };
 }, Effect.scoped);
 
 const machineLoad = Effect.gen(function* () {
@@ -2129,8 +2276,56 @@ const writeMetrics = Effect.fn("serverMetrics.writeMetrics")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const json = yield* encodeMetrics(metrics);
-  if (Option.isSome(out)) yield* fs.writeFileString(out.value, `${json}\n`);
-  else yield* Console.log(json);
+  if (Option.isNone(out)) return yield* Console.log(json);
+  // A sibling then a rename, so a failed write keeps the previous file whole.
+  const temp = `${out.value}.tmp`;
+  yield* fs.writeFileString(temp, `${json}\n`);
+  yield* fs.rename(temp, out.value);
+});
+
+/**
+ * Runs A and B alternately, saving a side after each of its runs so a failure keeps the finished
+ * runs. On a failure it reports how many runs of each side reached disk.
+ */
+export const runAbRounds = Effect.fn("serverMetrics.abRounds")(function* <
+  A,
+  S,
+  E,
+  R,
+  ES,
+  RS,
+>(options: {
+  readonly rounds: number;
+  readonly outDir: string;
+  readonly runSide: (side: 0 | 1) => Effect.Effect<A, E, R>;
+  readonly save: (side: 0 | 1, runs: ReadonlyArray<A>) => Effect.Effect<S, ES, RS>;
+}) {
+  const runs: [A[], A[]] = [[], []];
+  const persisted = [0, 0];
+  const saveSide = Effect.fn("serverMetrics.abSave")(function* (side: 0 | 1) {
+    const count = runs[side].length;
+    const saved = yield* options.save(side, runs[side]);
+    persisted[side] = count;
+    return saved;
+  });
+  const saved: [S, S] = [yield* saveSide(0), yield* saveSide(1)];
+  yield* Effect.gen(function* () {
+    for (let round = 0; round < options.rounds; round++) {
+      // A B, then B A, so a drift in machine load lands on both sides.
+      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
+        yield* Console.error(`round ${round + 1}/${options.rounds}: ${side === 0 ? "A" : "B"}`);
+        runs[side].push(yield* options.runSide(side));
+        saved[side] = yield* saveSide(side);
+      }
+    }
+  }).pipe(
+    Effect.onError(() =>
+      Console.error(
+        `ab stopped early; ${options.outDir} keeps ${persisted[0]} A and ${persisted[1]} B runs`,
+      ),
+    ),
+  );
+  return saved;
 });
 
 /** Prints the comparison and sets exit code 1 when a metric got worse. */
@@ -2229,7 +2424,7 @@ const runFlags = {
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
-      "Minutes of soak: 10 threads, a short turn every 30 s; heap and RSS slopes per hour and the constructors that grew. Runs alone unless --only names more.",
+      "Minutes of soak: 10 threads under one web client, a short turn every 30 s in a project with 3,000 loose remote refs that gains one per turn. From minute 2, every 2 minutes a new thread replaces the oldest (archived, then deleted), the client reconnects and a fake GitHub remote gains a commit; the client polls that host's pull requests and checks. Reports heap, RSS and child-process slopes per hour, the constructors that grew, and the objects whose retained size grew at each of three snapshots with the path that holds them. Needs openssl on PATH and Node 24.5 or later. Runs alone unless --only names more.",
     ),
     Flag.withDefault(0),
   ),
@@ -2333,6 +2528,7 @@ const runCommand = Command.make(
       runs,
       ...(last ? { profiles: last.profiles } : {}),
       ...(last?.soakHeapGrowth ? { soakHeapGrowth: last.soakHeapGrowth } : {}),
+      ...(last?.soakRetainerGrowth ? { soakRetainerGrowth: last.soakRetainerGrowth } : {}),
     });
   }, Effect.scoped),
 ).pipe(
@@ -2375,20 +2571,21 @@ const abCommand = Command.make(
       yield* withSeed(unseeded[0], input),
       yield* withSeed(unseeded[1], input),
     ] as const;
-    const runs: [Measured[], Measured[]] = [[], []];
-    for (let round = 0; round < input.rounds; round++) {
-      // A B, then B A, so a drift in machine load lands on both sides.
-      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
-        yield* Console.error(`round ${round + 1}/${input.rounds}: ${side === 0 ? "A" : "B"}`);
-        runs[side].push((yield* runOnce(sides[side])).measured);
-      }
-    }
-    const loadAfter = yield* machineLoad;
-    const before: ServerMetrics = { meta: { ...metas[0], loadAfter }, runs: runs[0] };
-    const after: ServerMetrics = { meta: { ...metas[1], loadAfter }, runs: runs[1] };
-    yield* writeMetrics(Option.some(path.join(outDir, "a.json")), before);
-    yield* writeMetrics(Option.some(path.join(outDir, "b.json")), after);
-    yield* report(before, after, input.threshold);
+    // Written up front and after every run; compare takes unequal run counts.
+    const saved = yield* runAbRounds({
+      rounds: input.rounds,
+      outDir,
+      runSide: (side) => runOnce(sides[side]).pipe(Effect.map((run) => run.measured)),
+      save: Effect.fn("serverMetrics.abSaveFile")(function* (side, runs) {
+        const file: ServerMetrics = {
+          meta: { ...metas[side], loadAfter: yield* machineLoad },
+          runs: [...runs],
+        };
+        yield* writeMetrics(Option.some(path.join(outDir, side === 0 ? "a.json" : "b.json")), file);
+        return file;
+      }),
+    });
+    yield* report(saved[0], saved[1], input.threshold);
   }, Effect.scoped),
 ).pipe(
   Command.withDescription(

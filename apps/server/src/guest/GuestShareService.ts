@@ -52,7 +52,6 @@ import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoa
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
   projectTurnItemForDetail,
-  projectTurnItemForWire,
   threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
@@ -217,6 +216,16 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
       return null;
   }
 };
+
+/** A guest sees that a file changed, never the text of the change, whatever its status. */
+const withoutFileText = (item: OrchestrationV2TurnItem): OrchestrationV2TurnItem => {
+  if (item.type !== "file_change") return item;
+  const { diffStr: _diff, oldStr: _old, newStr: _new, ...shown } = item;
+  return shown;
+};
+const rowWithoutFileText = <Row extends { readonly item: OrchestrationV2TurnItem }>(
+  row: Row,
+): Row => ({ ...row, item: withoutFileText(row.item) });
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -566,12 +575,16 @@ const make = Effect.gen(function* () {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
           if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
+          const shown =
+            item.event.type === "turn-item.updated"
+              ? { ...item, event: { ...item.event, payload: withoutFileText(item.event.payload) } }
+              : item;
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
           return view === null
-            ? [{ type: "thread", item }]
+            ? [{ type: "thread", item: shown }]
             : [
-                { type: "thread", item },
+                { type: "thread", item: shown },
                 { type: "view", view },
               ];
         }),
@@ -585,7 +598,11 @@ const make = Effect.gen(function* () {
     );
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
-      projection: snapshot.projection,
+      projection: {
+        ...snapshot.projection,
+        turnItems: snapshot.projection.turnItems.map(withoutFileText),
+        visibleTurnItems: snapshot.projection.visibleTurnItems.map(rowWithoutFileText),
+      },
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
@@ -669,10 +686,7 @@ const make = Effect.gen(function* () {
 
   const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
     const { item } = yield* threadItem(session, itemId);
-    return {
-      item:
-        item.type === "file_change" ? projectTurnItemForWire(item) : projectTurnItemForDetail(item),
-    };
+    return { item: projectTurnItemForDetail(withoutFileText(item)) };
   });
 
   const history = Effect.fn("GuestShareService.history")(function* (
@@ -687,7 +701,7 @@ const make = Effect.gen(function* () {
       share.id,
       page.items.map((row) => row.item),
     );
-    return page;
+    return { ...page, items: page.items.map(rowWithoutFileText) };
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (

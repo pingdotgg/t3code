@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} não respondeu em nenhuma rota salva.",
   "b0dd3cd876937ca8": "O perfil de conexão {connectionId} não está disponível.",
   "5ce46783e79ca9d1": "A credencial de conexão {connectionId} não está disponível.",
-  "0bda0cac7f5acc20": "O ambiente conectado {actual} não corresponde a {expected}.",
+  "b39d1428ec8b23f5": "Este endereço agora executa outra instalação do T3 Code ({actual}, não {expected}). Remova esta conexão e adicione-a novamente.",
   "ea0d3e4e51d5706f": "A credencial do ambiente é inválida.",
   "7283ebfd16d09677": "A credencial do ambiente não concede o acesso necessário.",
   "d3e9a9cb543b4b7b": "O ambiente rejeitou a solicitação de autenticação.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Iniciando servidores MCP do {provider}",
   "fedaa29ff8815a77": "Carregando hooks do {provider}",
   "57025ae4de5beb57": "Carregando regras e skills do {provider}",
+  "1cbfbcad9f0d04fe": "Retomando a sessão do {provider}",
   "4729a188600f1501": "Conectando ao {provider}",
   "8c8977097681630f": "Iniciando {provider}",
   "f1d27d127ab27ac6": "Iniciando",
@@ -5608,5 +5609,6 @@
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
   "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
   "99d51127f573296b": "Outra conta",
-  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}."
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
+  "892f08d21b8e48a9": "Mesclar {layers} em {base} usando {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} quando os requisitos forem atendidos. Isso pode acontecer imediatamente."
 }
