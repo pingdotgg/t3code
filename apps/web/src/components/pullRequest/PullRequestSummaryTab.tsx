@@ -56,7 +56,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
@@ -912,7 +912,8 @@ export function PullRequestSummaryTab({
   };
 
   return (
-    <div
+    <TooltipScrollDismissArea
+      dismissFocused
       ref={(node) => {
         scrollRef.current = node;
         scrollerRef(node);
@@ -922,7 +923,7 @@ export function PullRequestSummaryTab({
       }}
       tabIndex={-1}
       data-workspace-focus-default
-      className="h-full overflow-y-auto outline-none"
+      className="h-full overflow-y-auto"
       data-pull-request-summary-scroll
     >
       <section className="px-4 pt-2.5 pb-1">
@@ -1269,6 +1270,6 @@ export function PullRequestSummaryTab({
           </>
         )}
       </PullRequestSection>
-    </div>
+    </TooltipScrollDismissArea>
   );
 }

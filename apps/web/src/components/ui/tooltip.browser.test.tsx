@@ -25,16 +25,21 @@ function TimelineAction({ shared }: { shared: boolean }) {
 }
 
 it.each([
-  { shared: false, focus: "mouse", keptOpen: false },
-  { shared: false, focus: "keyboard", keptOpen: true },
-  { shared: true, focus: "mouse", keptOpen: false },
-  { shared: true, focus: "keyboard", keptOpen: true },
+  { shared: false, focus: "mouse", hover: true, dismissFocused: false, keptOpen: false },
+  { shared: false, focus: "keyboard", hover: true, dismissFocused: false, keptOpen: true },
+  { shared: true, focus: "mouse", hover: true, dismissFocused: false, keptOpen: false },
+  { shared: true, focus: "keyboard", hover: true, dismissFocused: false, keptOpen: true },
+  { shared: false, focus: "keyboard", hover: false, dismissFocused: true, keptOpen: false },
+  { shared: false, focus: "keyboard", hover: true, dismissFocused: true, keptOpen: false },
+  { shared: true, focus: "keyboard", hover: false, dismissFocused: true, keptOpen: false },
+  { shared: true, focus: "keyboard", hover: true, dismissFocused: true, keptOpen: false },
 ])(
-  "scrolling with a $focus-focused hovered trigger (shared: $shared) keeps it open: $keptOpen",
+  "scrolling a $focus-focused trigger (shared: $shared, hover: $hover, dismissFocused: $dismissFocused) keeps it open: $keptOpen",
   async (c) => {
     const onScroll = vi.fn();
     await using screen = await render(
       <TooltipScrollDismissArea
+        dismissFocused={c.dismissFocused}
         data-testid="timeline"
         onScrollCapture={onScroll}
         className="h-32 overflow-y-auto"
@@ -51,7 +56,7 @@ it.each([
     } else {
       await userEvent.keyboard("{Tab}");
     }
-    await userEvent.hover(trigger);
+    if (c.hover) await userEvent.hover(trigger);
     await expect.element(trigger).toHaveFocus();
     await expect.element(page.getByText("Description")).toBeVisible();
 
@@ -61,6 +66,7 @@ it.each([
 
     if (c.keptOpen) await expect.element(page.getByText("Description")).toBeVisible();
     else await expect.element(page.getByText("Description")).not.toBeInTheDocument();
+    await expect.element(trigger).toHaveFocus();
   },
 );
 
@@ -135,4 +141,37 @@ it("opens a shared tooltip in place the first time", async () => {
     .map((transition) => transition.transitionProperty)
     .filter((property) => ["top", "left", "right", "bottom", "transform"].includes(property));
   expect(moving).toEqual([]);
+});
+
+it("keeps a tooltip through focus scrolling and dismisses it on the next scroll", async () => {
+  const onScroll = vi.fn();
+  await using screen = await render(
+    <>
+      <button>Start navigation</button>
+      <TooltipScrollDismissArea
+        dismissFocused
+        data-testid="scroller"
+        onScrollCapture={onScroll}
+        className="h-32 overflow-y-auto"
+      >
+        <div className="h-96" />
+        <Tooltip>
+          <TooltipTrigger>Offscreen action</TooltipTrigger>
+          <TooltipPopup>Offscreen description</TooltipPopup>
+        </Tooltip>
+        <div className="h-96" />
+      </TooltipScrollDismissArea>
+    </>,
+  );
+  const scroller = screen.getByTestId("scroller").element();
+  await userEvent.click(screen.getByRole("button", { name: "Start navigation" }));
+  await userEvent.keyboard("{Tab}");
+  await vi.waitFor(() => {
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    expect(onScroll).toHaveBeenCalled();
+  });
+  await expect.element(screen.getByRole("button", { name: "Offscreen action" })).toHaveFocus();
+  await expect.element(page.getByText("Offscreen description")).toBeVisible();
+  scroller.scrollTop += 20;
+  await expect.element(page.getByText("Offscreen description")).not.toBeInTheDocument();
 });

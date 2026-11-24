@@ -193,18 +193,26 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
       anchorRef.current = trigger;
       api.show(trigger, content, false);
       // Scrolling the timeline closes it, as it does a TooltipTrigger's.
-      scrollTracker?.hover(trigger, api, () => api.dismiss(trigger));
+      scrollTracker?.hover(trigger, trigger, () => api.dismiss(trigger));
     },
     onPointerLeave: (event) => api.hide(event.currentTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
-      if (event.currentTarget.matches(":focus-visible")) {
-        anchorRef.current = event.currentTarget;
-        api.show(event.currentTarget, content, true);
+      const trigger = event.currentTarget;
+      if (trigger.matches(":focus-visible")) {
+        anchorRef.current = trigger;
+        api.show(trigger, content, true);
+        scrollTracker?.focus(trigger, trigger, () => api.dismiss(trigger));
       }
     },
-    onBlur: (event) => api.hide(event.currentTarget),
-    onPointerDown: (event) => api.dismiss(event.currentTarget),
+    onBlur: (event) => {
+      scrollTracker?.blur(event.currentTarget);
+      api.hide(event.currentTarget);
+    },
+    onPointerDown: (event) => {
+      scrollTracker?.release(event.currentTarget);
+      api.dismiss(event.currentTarget);
+    },
   };
 }
 
