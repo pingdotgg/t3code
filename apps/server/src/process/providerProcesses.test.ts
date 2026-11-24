@@ -13,8 +13,11 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import * as ProcessLauncher from "./ProcessLauncher.ts";
 import * as ProviderProcesses from "./providerProcesses.ts";
 
 // Real child processes stand in for servers and CLIs; only PIDs captured at spawn are signalled.
@@ -121,6 +124,35 @@ describe.runIf(HostProcess.Platform.defaultValue() === "linux")("ProviderProcess
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-restart-ownership-" }).pipe(
           Layer.provideMerge(NodeServices.layer),
         ),
+      ),
+    ),
+  );
+
+  // The Cursor SDK worker is spawned with piped stdio through the server's spawner, as here.
+  it.live("registers a provider spawned through the server's process launcher", () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(ProviderProcesses.layer);
+      const { register } = Context.get(context, ProviderProcesses.ProviderProcesses);
+      assert(register !== undefined);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, ["-e", "process.stdin.resume()"], {
+          stdin: { stream: "pipe", endOnDone: false },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+
+      const forget = register(handle.pid);
+      forget();
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-launched-ownership-" }),
+          ProcessLauncher.layerServer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     ),
   );
