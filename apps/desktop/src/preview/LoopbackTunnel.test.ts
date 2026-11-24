@@ -145,6 +145,7 @@ const routeThroughTunnel = (tunnelUrl: string | null, host?: HostLayer) =>
       },
       closeAllConnections: async () => undefined,
       webRequest: { onBeforeRequest: () => undefined },
+      protocol: { handle: () => undefined },
     };
     yield* tunnel.route({
       environmentId: "remote",
@@ -219,6 +220,65 @@ const socksConnect = (proxyPort: number, host: string, port: number) =>
     ),
     ({ socket }) => Effect.sync(() => socket.destroy()),
   );
+
+it.effect("routes only the Device Trust page's agent request away from the remote tunnel", () =>
+  Effect.gen(function* () {
+    type Interceptor = (
+      details: Electron.OnBeforeRequestListenerDetails,
+      callback: (response: Electron.CallbackResponse) => void,
+    ) => void;
+    let intercept: Interceptor | undefined;
+    let urls: string[] = [];
+    const session = {
+      setProxy: async () => undefined,
+      closeAllConnections: async () => undefined,
+      webRequest: {
+        onBeforeRequest: (filter: Electron.WebRequestFilter, listener: Interceptor) => {
+          urls = filter.urls ?? [];
+          intercept = listener;
+        },
+      },
+      protocol: { handle: () => undefined },
+    };
+    const tunnel = yield* makeTunnel(null);
+    yield* tunnel.route({
+      environmentId: "remote",
+      session: session as unknown as Electron.Session,
+      tunnelled: true,
+    });
+    expect(intercept).toBeDefined();
+    const request = (initiatorOrigin: string | undefined, url: string, resourceType = "xhr") => {
+      const { protocol, hostname } = new URL(url);
+      if (!urls.includes(`${protocol}//${hostname}/*`)) return Promise.resolve({});
+      return new Promise<Electron.CallbackResponse>((resolve) =>
+        intercept!(
+          {
+            initiatorOrigin,
+            url,
+            resourceType,
+            method: "POST",
+          } as Electron.OnBeforeRequestListenerDetails,
+          resolve,
+        ),
+      );
+    };
+    const agent = "http://127.0.0.1:12519/v1/cmd";
+    const auth = "https://auth.kolide.com";
+    expect(yield* Effect.promise(() => request(auth, agent))).toEqual({
+      redirectURL: expect.stringMatching(/^t3code-device-trust:\/\/agent\/[\da-f-]+$/),
+    });
+    for (const [origin, url, type] of [
+      ["https://unrelated.test", agent, "xhr"],
+      ["https://auth.kolide.com.unrelated.test", agent, "xhr"],
+      [undefined, agent, "xhr"],
+      [auth, "http://127.0.0.1:12520/v1/cmd", "xhr"],
+      [auth, "http://127.0.0.1:12519/other", "xhr"],
+      [auth, agent, "mainFrame"],
+    ] as const) {
+      expect(yield* Effect.promise(() => request(origin, url, type))).toEqual({});
+    }
+  }),
+);
 
 it.effect.each(["localhost", "localhost."])(
   "carries a loopback CONNECT for %s over the tunnel WebSocket, not to local listeners",

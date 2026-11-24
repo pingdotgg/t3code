@@ -12,6 +12,8 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
+import { DEVICE_TRUST_SCHEME } from "../preview/DeviceTrustAgent.ts";
+
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
 const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
@@ -130,6 +132,17 @@ function registerDesktopSchemePrivilegesSync(): void {
         supportFetchAPI: true,
         corsEnabled: true,
         stream: true,
+      },
+    },
+    {
+      scheme: DEVICE_TRUST_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        // The bridge accepts only one-time redirects for requests that already passed the page CSP.
+        bypassCSP: true,
       },
     },
   ]);

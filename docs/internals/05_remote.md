@@ -61,6 +61,11 @@ through `/api/preview/tunnel` on the environment's own origin:
   proxy that routes only loopback through the tunnel (excluding link-local addresses) and never
   falls back directly—a failed or disabled tunnel must error rather than silently load the
   reviewer's own localhost.
+- **Local device sign-in.** The desktop routes recognized Kolide agent requests separately from the
+  tunnel. It checks Chromium's request initiator and the exact loopback endpoints in
+  [DeviceTrustAgent](../../apps/desktop/src/preview/DeviceTrustAgent.ts). Do not put those ports in
+  the proxy bypass list: proxy rules cannot distinguish a sign-in page from other tabs or preserve
+  access to a remote service on the same port.
 - **Media tickets and local-owner check.** Desktop main holds no environment credentials, so the
   renderer supplies a media ticket per connection (also tracking route switches). Because Chromium
   cannot authenticate to SOCKS5 and a forwarded port is a plain local port, on Linux and macOS both

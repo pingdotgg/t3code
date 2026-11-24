@@ -31,6 +31,11 @@ import * as Socket from "effect/socket/Socket";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import {
+  DEVICE_TRUST_REQUESTS,
+  DEVICE_TRUST_SCHEME,
+  makeDeviceTrustAgent,
+} from "./DeviceTrustAgent.ts";
 
 const ACCESS_TIMEOUT = "15 seconds";
 const PROBE_TIMEOUT = "3 seconds";
@@ -71,6 +76,7 @@ const sendUnspecifiedToLocalhost = (
   callback: (response: Electron.CallbackResponse) => void,
 ) => {
   const url = new URL(details.url);
+  if (url.hostname !== "0.0.0.0" && url.hostname !== "[::]") return callback({});
   // A WebSocket handshake can't be redirected.
   if (url.protocol === "ws:" || url.protocol === "wss:") return callback({ cancel: true });
   url.hostname = "localhost";
@@ -339,6 +345,7 @@ const make = Effect.gen(function* () {
   const userId = yield* HostProcess.UserId;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const random = yield* SecureRandom.SecureRandom;
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
   const net = yield* NetService.NetService;
   const listenerScope = yield* Effect.scope;
   const routing = yield* Semaphore.make(1);
@@ -617,6 +624,11 @@ const make = Effect.gen(function* () {
       () => Effect.sync(() => forwardListeners.delete(listener)),
     ).pipe(Effect.asVoid);
 
+  const deviceTrustRoutes = new WeakMap<
+    Electron.Session,
+    ReturnType<typeof makeDeviceTrustAgent>
+  >();
+
   const listen = Effect.fn("LoopbackTunnel.listen")(function* (environmentId: string) {
     const existing = listenerPorts.get(environmentId);
     if (existing !== undefined) return existing;
@@ -653,12 +665,27 @@ const make = Effect.gen(function* () {
                 proxyBypassRules: "*,<-loopback>,169.254.0.0/16,fe80::/10",
               },
         );
-        // The bypass rules don't cover the unspecified address, so it would reach this machine.
-        if (port === null) session.webRequest.onBeforeRequest(null);
-        else {
+        if (port === null) {
+          session.webRequest.onBeforeRequest(null);
+          if (deviceTrustRoutes.has(session)) {
+            session.protocol.unhandle(DEVICE_TRUST_SCHEME);
+            deviceTrustRoutes.delete(session);
+          }
+        } else {
+          let deviceTrust = deviceTrustRoutes.get(session);
+          if (deviceTrust === undefined) {
+            deviceTrust = makeDeviceTrustAgent(() => runSync(random.uuidV4()));
+            session.protocol.handle(DEVICE_TRUST_SCHEME, deviceTrust.handle);
+            deviceTrustRoutes.set(session, deviceTrust);
+          }
+          const interceptDeviceTrust = deviceTrust.beforeRequest;
           session.webRequest.onBeforeRequest(
-            { urls: UNSPECIFIED_ADDRESS_URLS },
-            sendUnspecifiedToLocalhost,
+            { urls: [...UNSPECIFIED_ADDRESS_URLS, DEVICE_TRUST_REQUESTS] },
+            (details, callback) => {
+              const response = interceptDeviceTrust(details);
+              if (response !== null) return callback(response);
+              sendUnspecifiedToLocalhost(details, callback);
+            },
           );
         }
         await session.closeAllConnections();
