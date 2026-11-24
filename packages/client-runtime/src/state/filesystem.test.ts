@@ -78,6 +78,13 @@ describe("filesystem browse model", () => {
       parentPath: "~/",
       canBrowseUp: true,
     });
+    expect(getFilesystemBrowsePath("D:", "Win32")).toEqual({
+      isBrowsing: true,
+      directoryPath: "D:\\",
+      filterQuery: "",
+      parentPath: null,
+      canBrowseUp: false,
+    });
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
@@ -107,6 +114,18 @@ describe("filesystem browse model", () => {
       isComplete: false,
     });
     expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
+    // The list also shows substring and fuzzy matches; Tab completes only the typed name.
+    expect(getFilesystemBrowseTabCompletion([entry("t3code"), entry("my-t3code")], "t3")).toEqual({
+      name: "t3code",
+      isComplete: true,
+    });
+    expect(
+      getFilesystemBrowseTabCompletion(
+        [entry("OpenSourced"), entry("OpenAI"), entry("reopen"), entry("photos")],
+        "op",
+      ),
+    ).toEqual({ name: "Open", isComplete: false });
+    expect(getFilesystemBrowseTabCompletion([entry("t3code")], "tcd")).toBeNull();
   });
 
   it("matches folder names stored decomposed, as macOS Finder names them", () => {

@@ -1,5 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { pathSetupCommand } from "@t3tools/shared/shell";
+import { pathSetupCommand, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -156,7 +156,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       if (!path.isAbsolute(entry) || detectCliRunner(`${entry}/`) !== null) continue;
       for (const name of windows ? ["t3.cmd", "t3.exe"] : ["t3"]) {
         const candidate = path.join(entry, name);
-        if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return candidate;
+        if (yield* resolveCommandPath(candidate, { env: environment })) return candidate;
       }
     }
     return undefined;
@@ -322,7 +322,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
     .readFileString(path.join(runtimeDir, "launchers"))
     .pipe(Effect.orElseSucceed(() => ""));
   const candidates = [
-    ...launchers.split(/\r?\n/).filter(Boolean),
+    ...launchers.split(/\r?\n/).filter((launcher) => path.isAbsolute(launcher)),
     path.join(path.dirname(runtimeDir), "bin", windows ? "t3.cmd" : "t3"),
     ...(environment.PATH ?? environment.Path ?? "")
       .split(windows ? ";" : ":")
@@ -332,7 +332,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
       .flatMap((directory) => names.map((name) => path.join(directory, name))),
   ];
   for (const candidate of candidates) {
-    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return true;
+    if (yield* resolveCommandPath(candidate, { env: environment })) return true;
   }
 
   const declinedFile = path.join(runtimeDir, "install-prompt-declined");

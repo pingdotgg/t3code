@@ -185,7 +185,8 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
 ) {
   const platform = yield* HostProcess.Platform;
   const withArgs = (prefix: string) =>
-    [prefix, ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
+    // An empty subcommand names the root `t3` command.
+    [prefix.trimEnd(), ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
   const command = yield* resolveCliCommand(subcommand);
   if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
   const onPath = yield* resolveCommandPath("t3");
@@ -204,7 +205,16 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
           )
         : null;
     if (own === null || own === (yield* real(onPath))) {
-      return { command: withArgs(command), launcher: false };
+      const path = yield* Path.Path;
+      const searchPath = (yield* HostProcess.Environment).PATH ?? "";
+      // With an empty or relative PATH entry, plain `t3` depends on the directory it runs from.
+      const cwdDependent =
+        platform !== "win32" &&
+        searchPath.length > 0 &&
+        searchPath.split(":").some((entry) => !path.isAbsolute(entry));
+      if (!cwdDependent) return { command: withArgs(command), launcher: false };
+      const quoted = hostShellWord(platform, path.resolve(onPath));
+      return { command: withArgs(`${quoted} ${subcommand}`), launcher: false };
     }
   }
   const launcher = yield* resolveInstallLauncher;

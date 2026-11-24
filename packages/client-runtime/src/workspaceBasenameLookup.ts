@@ -1,20 +1,12 @@
 import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
+  isNetworkPath,
   isWindowsAbsolutePath,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
 
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
-
-// All callers open one panel; the newest click must win across callers.
-let latestLookupSequence = 0;
-
-export function claimWorkspaceBasenameLookup(): () => boolean {
-  latestLookupSequence += 1;
-  const claimed = latestLookupSequence;
-  return () => claimed === latestLookupSequence;
-}
 
 export interface WorkspaceEntryCandidate {
   readonly path: string;
@@ -91,18 +83,25 @@ export function pickWorkspaceLinkMatch(
 ): string | null {
   const trimmed = relativePath.trim();
   if (needsWorkspaceBasenameLookup(trimmed)) return pickWorkspaceBasenameMatch(trimmed, entries);
-  const stripped = stripRepeatedWorkspacePrefix(trimmed, cwd);
+  const matches = workspaceQualifiedPathMatches(trimmed, cwd, entries);
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+function workspaceQualifiedPathMatches(
+  relativePath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): ReadonlyArray<string> {
+  const stripped = stripRepeatedWorkspacePrefix(relativePath, cwd);
   const strippedMatch =
     stripped === null ? null : pickStrippedWorkspaceMatch(stripped, cwd, entries);
-  if (strippedMatch !== null) return strippedMatch;
-  const suffix = trimmed.replaceAll("\\", "/");
-  const matches = entries.filter(
-    (entry) =>
-      entry.kind === "file" &&
-      (entry.path.replaceAll("\\", "/") === suffix ||
-        entry.path.replaceAll("\\", "/").endsWith(`/${suffix}`)),
-  );
-  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+  if (strippedMatch !== null) return [strippedMatch];
+  const suffix = relativePath.replaceAll("\\", "/");
+  return entries.flatMap((entry) => {
+    if (entry.kind !== "file") return [];
+    const path = entry.path.replaceAll("\\", "/");
+    return path === suffix || path.endsWith(`/${suffix}`) ? [entry.path] : [];
+  });
 }
 
 function pickStrippedWorkspaceMatch(
@@ -120,8 +119,9 @@ function pickStrippedWorkspaceMatch(
 }
 
 /**
- * The absolute path of the one file a chat link names across other project roots, or null when
- * no root or more than one has it. Agents cite paths relative to whichever repo they worked in.
+ * The absolute path of the one file a chat link names across project roots, or null when
+ * no root has it or roots name different files. Agents cite paths relative to their repo.
+ * Nested project roots list the same file more than once, which still names one file.
  */
 export function pickProjectLinkMatch(
   relativePath: string,
@@ -130,11 +130,39 @@ export function pickProjectLinkMatch(
     readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
   }>,
 ): string | null {
-  const matches = searches.flatMap(({ root, entries }) => {
-    const match = pickWorkspaceLinkMatch(relativePath, root, entries);
-    return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
-  });
-  return matches.length === 1 ? (matches[0] ?? null) : null;
+  const target = relativePath.trim();
+  const isBasename = needsWorkspaceBasenameLookup(target);
+  const folded = target.toLowerCase();
+  const isFoldedMatch = (entry: WorkspaceEntryCandidate) =>
+    entry.kind === "file" && basenameOfPath(entry.path).toLowerCase() === folded;
+  const matches = new Map<string, string>();
+  let rootHits = 0;
+  const addMatch = (path: string) => {
+    // Windows paths that differ only by case stay distinct: a directory can be case-sensitive.
+    const key = isWindowsAbsolutePath(path) ? path.replaceAll("/", "\\") : path;
+    if (!matches.has(key)) matches.set(key, path);
+  };
+  for (const { root, entries } of searches) {
+    if (isBasename) {
+      if (!entries.some(isFoldedMatch)) continue;
+      rootHits += 1;
+      const match = pickWorkspaceBasenameMatch(target, entries);
+      if (match !== null) addMatch(resolveWorkspaceFilePath(match, root));
+    } else {
+      for (const match of workspaceQualifiedPathMatches(target, root, entries)) {
+        addMatch(resolveWorkspaceFilePath(match, root));
+      }
+    }
+  }
+  if (isBasename && rootHits > 1) {
+    // A root's pick, or a root left ambiguous by case, can hide another file elsewhere.
+    for (const { root, entries } of searches) {
+      for (const entry of entries) {
+        if (isFoldedMatch(entry)) addMatch(resolveWorkspaceFilePath(entry.path, root));
+      }
+    }
+  }
+  return matches.size === 1 ? ([...matches.values()][0] ?? null) : null;
 }
 
 const AGENT_DIRECTORY_SEARCH_LIMIT = 4;
@@ -152,8 +180,9 @@ export async function findAgentDirectoryMatch(
   }>,
 ): Promise<string | null> {
   for (const directory of directories.slice(0, AGENT_DIRECTORY_SEARCH_LIMIT)) {
-    const match = pickProjectLinkMatch(relativePath, [await searchRoot(directory)]);
-    if (match !== null) return match;
+    const { root, entries } = await searchRoot(directory);
+    const match = pickWorkspaceLinkMatch(relativePath, root, entries);
+    if (match !== null) return resolveWorkspaceFilePath(match, root);
   }
   return null;
 }
@@ -201,6 +230,8 @@ function literalDirectory(operand: string): string | null {
   const path = /^["']/.test(operand) ? operand.slice(1, -1) : operand;
   // The shell would expand these, and only it knows to what.
   if (!isAbsolutePath(path) || /[$`*?[\]{}"']/.test(path)) return null;
+  // Search roots are local directories; the server stats each one.
+  if (isNetworkPath(path)) return null;
   return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
 }
 

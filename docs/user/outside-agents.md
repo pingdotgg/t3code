@@ -135,6 +135,23 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
+when something happens without reading threads over and over: a turn ended, an
+agent waits on a person, a guest asked something, a watched pull request woke
+its thread. [Workflow runs](workflows.md) are events too: a run started, paused,
+resumed or ended, or waits on a person. A bot can poll, stream, or receive each
+event type by webhook, narrowed to projects and threads or to workflows and
+runs; runs another run started are left out unless asked for, as subagent
+threads are, and narrowing thread events to a run picks out its agent steps.
+The environment keeps its latest 1,000 milestones in memory, so a bot that was
+away longer, or reconnects after a restart, is told some may be missing and
+should reread what it cares about. Webhooks go only to public `https` addresses,
+a subscription lasts at most an hour before the bot must renew it, and signing
+the bot out ends its subscriptions. To test with a receiver on your own machine
+or network, start the environment with `T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS` set to
+its host names, for example `localhost,127.0.0.1`; those hosts may also use
+plain `http`.
+
 ## Scripts on the host
 
 On the machine that runs the environment, `t3 thread` uses the same tools
@@ -150,8 +167,16 @@ t3 thread list
 `.` means the project that contains the current folder, or a git worktree of
 its repository; a project id also works. A new thread uses the project's
 default model and permission mode, and runs in the project folder unless you
-pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
-the message as its next turn. Pass `-` as the message to read it from stdin.
+pass `--worktree <base-branch>`. Its title is the message's first line, or
+`--title`; add `--generate-title` to have it named from the message, as threads
+started in the app are. `send` never interrupts: a busy thread gets the message
+as its next turn. Pass `-` as the message to read it from stdin.
+
+To choose the model, pass `--provider <instance-id> --model <slug>`. Add
+`--option id=value` for each model option. For reasoning effort, Codex uses
+`--option reasoningEffort=high`, while Claude uses `--option effort=high`.
+Option ids and allowed values depend on the provider and model; use those
+reported by `orchestrator_capabilities`. `true` and `false` set on/off options.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a

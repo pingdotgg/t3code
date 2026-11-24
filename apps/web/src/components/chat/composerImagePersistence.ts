@@ -11,27 +11,23 @@ export async function serializeComposerImages(
   const existingPersistedById = new Map(
     persistedAttachments.map((attachment) => [attachment.id, attachment]),
   );
-  const stagedAttachmentById = new Map<string, PersistedComposerImageAttachment>();
-  await Promise.all(
+  const staged = await Promise.all(
     images.map(async (image) => {
       try {
         const dataUrl =
           existingPersistedById.get(image.id)?.dataUrl ?? (await readFileAsDataUrl(image.file));
-        stagedAttachmentById.set(image.id, {
+        return {
           id: image.id,
           name: image.name,
           mimeType: image.mimeType,
           sizeBytes: image.sizeBytes,
           dataUrl,
           ...(image.source ? { source: image.source } : {}),
-        });
+        };
       } catch {
-        const existingPersisted = existingPersistedById.get(image.id);
-        if (existingPersisted) {
-          stagedAttachmentById.set(image.id, existingPersisted);
-        }
+        return existingPersistedById.get(image.id);
       }
     }),
   );
-  return Array.from(stagedAttachmentById.values());
+  return staged.filter((attachment) => attachment !== undefined);
 }
