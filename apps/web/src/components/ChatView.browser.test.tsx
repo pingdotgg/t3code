@@ -1083,7 +1083,7 @@ it("/side sends the draft's attachments and context, and keeps them when it does
   );
 });
 
-it("opening Settings without a page event closes the composer model picker", async () => {
+it("opening Settings without a page event closes the composer model picker and permissions menu", async () => {
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -1113,4 +1113,13 @@ it("opening Settings without a page event closes the composer model picker", asy
   await act(() => router.navigate({ to: "/settings" }));
   await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
   await expect.element(search).not.toBeInTheDocument();
+
+  await act(() => router.navigate({ to: "/draft/$draftId", params: { draftId } }));
+  await page.getByRole("button", { name: /^Permissions: / }).click();
+  // The modal Settings dialog aria-hides everything outside it, so match text, not role.
+  const permissions = page.getByText("Allow commands and edits without prompts.").last();
+  await expect.element(permissions).toBeVisible();
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(permissions).not.toBeInTheDocument();
 });
