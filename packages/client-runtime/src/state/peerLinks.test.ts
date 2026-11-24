@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  PeerLinkThreadReadError,
   WS_METHODS,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadStreamItem,
@@ -15,17 +16,25 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { TestClock } from "effect/testing";
 
+import {
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { LinkedThreadView } from "../linkedThread.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { v2MessageRow, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { createPeerLinkEnvironmentAtoms, linkThroughRoutes } from "./peerLinks.ts";
 
 // regression: #40544 earlier messages vanished when a linked thread's view opened again
 it.effect(
-  "keeps loaded messages when a linked thread's view opens again on the same snapshot",
+  "keeps loaded messages when a linked thread retries and reopens on the same snapshot",
   () =>
     Effect.gen(function* () {
       const recent = v2MessageRow("Recent message", 2);
@@ -38,7 +47,7 @@ it.effect(
         hasMoreHistory: true,
       });
       const subscriptions = yield* Queue.unbounded<{
-        items: Queue.Queue<OrchestrationV2ThreadStreamItem>;
+        items: Queue.Queue<OrchestrationV2ThreadStreamItem, PeerLinkThreadReadError>;
         stopped: Deferred.Deferred<void>;
       }>();
       const requested: string[] = [];
@@ -46,7 +55,10 @@ it.effect(
         [WS_METHODS.peerLinksSubscribeThread]: () =>
           Stream.unwrap(
             Effect.gen(function* () {
-              const items = yield* Queue.unbounded<OrchestrationV2ThreadStreamItem>();
+              const items = yield* Queue.unbounded<
+                OrchestrationV2ThreadStreamItem,
+                PeerLinkThreadReadError
+              >();
               const stopped = yield* Deferred.make<void>();
               yield* Effect.addFinalizer(() => Deferred.succeed(stopped, undefined));
               yield* Queue.offer(subscriptions, { items, stopped });
@@ -102,8 +114,26 @@ it.effect(
         older.sourceItemId,
         recent.sourceItemId,
       ]);
+      const unreachable = new PeerLinkThreadReadError({
+        reason: "unreachable",
+        label: "Linked",
+        message: "The linked machine is temporarily unreachable.",
+      });
+      yield* Queue.fail(first.items, unreachable);
+      expect((yield* Queue.take(views)).error).toBe(unreachable);
+
+      registry.refresh(links.threadView(target));
+      yield* TestClock.adjust(0);
+      const retry = yield* Queue.poll(subscriptions);
+      if (Option.isNone(retry)) throw new Error("Refresh did not start a new linked thread read");
+      yield* Queue.offer(retry.value.items, snapshot("before-recent"));
+      const recovered = yield* Queue.take(views).pipe(
+        Effect.repeat({ until: (view) => view.error === null }),
+      );
+      expect(visibleMessages(recovered)).toEqual([older.sourceItemId, recent.sourceItemId]);
+
       unmount();
-      yield* Deferred.await(first.stopped);
+      yield* Deferred.await(retry.value.stopped);
 
       open();
       const reopened = yield* Queue.take(subscriptions);
@@ -167,4 +197,73 @@ describe("linkThroughRoutes", () => {
       },
     ]);
   });
+});
+
+describe("refreshNamesLacking", () => {
+  // regression: #41707 a link made outside this client stayed unknown while the names were read
+  it.effect("rereads fresh names that lack a wanted machine, once per miss", () =>
+    Effect.gen(function* () {
+      const target = new PrimaryConnectionTarget({
+        environmentId: id("via"),
+        label: "Via",
+        httpBaseUrl: "https://via.example.test",
+        wsBaseUrl: "wss://via.example.test",
+      });
+      let stored = [{ environmentId: id("known"), label: "Known" }];
+      let reads = 0;
+      const client = {
+        [WS_METHODS.peerLinksNames]: () =>
+          Effect.sync(() => {
+            reads += 1;
+            return { links: stored };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const session = { client } as unknown as RpcSession;
+      const supervisor = EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "connected",
+        }),
+        session: yield* SubscriptionRef.make(Option.some(session)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      } as unknown as EnvironmentSupervisor["Service"]);
+      const environment = EnvironmentRegistry.of({
+        run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        followStream: (_id, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry["Service"]);
+      const links = createPeerLinkEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environment)),
+      );
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const names = links.names({ environmentId: target.environmentId, input: {} });
+      registry.mount(names);
+      const settled = () =>
+        AtomRegistry.toStream(registry, names).pipe(
+          Stream.filter((result) => AsyncResult.isSuccess(result) && !result.waiting),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+      yield* settled();
+      expect(reads).toBe(1);
+
+      links.refreshNamesLacking(registry, target.environmentId, [id("known")]);
+      expect(reads).toBe(1);
+
+      // Linked from the CLI or another client inside the names' stale time: the server has it,
+      // this client was not told.
+      stored = [...stored, { environmentId: id("new"), label: "New" }];
+      links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
+      // A second reader meeting the same machine joins the read under way.
+      links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
+      const reread = yield* settled();
+      expect(reads).toBe(2);
+      expect(
+        AsyncResult.isSuccess(reread) && reread.value.links.map((link) => link.environmentId),
+      ).toEqual([id("known"), id("new")]);
+    }).pipe(Effect.scoped),
+  );
 });
