@@ -205,7 +205,7 @@ export const RUN_KNOBS = [
 /** What the cargo runner sets itself, whatever the shell has. */
 export const RUN_SET = [
   "HOME", "PATH", "SHELL", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
-  "CONN_CLAUDE_STATUS_PROBE", "CONN_CODEX_STATUS_PROBE", "CONN_MODEL_MANIFEST_URL",
+  "GIT_CEILING_DIRECTORIES", "CONN_CLAUDE_STATUS_PROBE", "CONN_CODEX_STATUS_PROBE", "CONN_MODEL_MANIFEST_URL",
 ];
 
 /**
@@ -231,8 +231,10 @@ export const RUN_DIR_PREFIX = "conn-run-";
  * The environment for a binary that cargo runs (tests, examples, benches, `cargo run`), built
  * by `tools/cargo-runner.mjs`: `RUNTIME_VARIABLES` and the canary's variables, what cargo and
  * libtest set (`CARGO_RUN_VARIABLE`), `RUN_KNOBS`; then a fresh HOME, a stand-in shell, a
- * `PATH` without provider or host CLIs, no global or system git configuration, the status
- * probes and the model manifest fetch off. `dir` must be a fresh temp folder.
+ * `PATH` without provider or host CLIs, no global or system git configuration, git's
+ * repository search stopped at the temp folder (a test's folder there never finds a checkout
+ * that holds it), the status probes and the model manifest fetch off. `dir` must be a fresh
+ * temp folder.
  */
 export function sealedRunEnv(dir, env = process.env) {
   const passed = Object.fromEntries(
@@ -254,6 +256,7 @@ export function sealedRunEnv(dir, env = process.env) {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CEILING_DIRECTORIES: env.TMPDIR || NodeOS.tmpdir(),
     CONN_CLAUDE_STATUS_PROBE: "off",
     CONN_CODEX_STATUS_PROBE: "off",
     CONN_MODEL_MANIFEST_URL: "off",

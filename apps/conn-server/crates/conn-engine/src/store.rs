@@ -110,6 +110,9 @@ CREATE TABLE IF NOT EXISTS pending_rollbacks (
 );
 ";
 
+/// A command's receipt: a key lookup, never a scan of the event log.
+pub(crate) const RECEIPT_SQL: &str = "SELECT sequence, owner_kind, owner_id, error, command_type FROM receipts WHERE command_id = ?1";
+
 /// A thread's turn items in timeline order; served by `turn_items_in_order`.
 pub(crate) const TRANSCRIPT_ITEMS_SQL: &str =
     "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems' ORDER BY ordinal, id";
@@ -583,6 +586,52 @@ impl Store {
     /// answer. A receipt already there stays.
     pub(crate) fn record_refusal(&self, key: &ReceiptKey<'_>, refusal: &str) -> StoreResult<()> {
         refuse(&self.conn, key, refusal)
+    }
+
+    /// Whether `command_id` was an accepted `message.dispatch` for `thread_id` that made a run:
+    /// the proof of a launch's first message (T3: "Initial message was accepted without a
+    /// durable run"). Both reads are key lookups.
+    pub(crate) fn accepted_first_message(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+    ) -> StoreResult<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM receipts WHERE command_id = ?1
+                     AND command_type = 'message.dispatch' AND owner_kind = 'thread'
+                     AND owner_id = ?2 AND error IS NULL)
+                 AND EXISTS(SELECT 1 FROM events WHERE command_id = ?1 AND thread_id = ?2
+                     AND type = 'run.created')",
+                params![command_id, thread_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
+    /// The checkout a launch's claim recorded: the `worktreePath` of the thread event that
+    /// `command_id` wrote on `thread_id` (`thread.created`, or the reuse claim's
+    /// `thread.metadata-updated`). `None` when no such event exists. Reads the thread's own
+    /// events, through `events_by_thread`.
+    pub(crate) fn claimed_checkout(
+        &self,
+        command_id: &str,
+        thread_id: &str,
+    ) -> StoreResult<Option<Value>> {
+        let event: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT event FROM events WHERE thread_id = ?2 AND command_id = ?1
+                   AND type IN ('thread.created', 'thread.metadata-updated')
+                 ORDER BY seq LIMIT 1",
+                params![command_id, thread_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        event
+            .map(|event| parse(event).map(|e| e["payload"]["worktreePath"].clone()))
+            .transpose()
     }
 
     pub(crate) fn created_run_status(&self, command_id: &str) -> StoreResult<Option<String>> {
@@ -1916,6 +1965,17 @@ impl Tx<'_> {
             .transpose()
     }
 
+    /// Whether the thread has any record of `kind`: stops at the first row of the key range.
+    pub(crate) fn has(&self, thread_id: &str, kind: &str) -> StoreResult<bool> {
+        self.tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM entities WHERE thread_id = ?1 AND kind = ?2)",
+                params![thread_id, kind],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
     pub(crate) fn count(&self, thread_id: &str, kind: &str) -> StoreResult<u64> {
         self.tx
             .query_row(
@@ -2707,25 +2767,20 @@ pub(crate) enum StoredOwner {
 
 /// A command's receipt, read on any connection or write.
 fn receipt_of(conn: &Connection, command_id: &str) -> StoreResult<Option<Receipt>> {
-    conn.query_row(
-        "SELECT sequence, owner_kind, owner_id, error, command_type FROM receipts
-         WHERE command_id = ?1",
-        [command_id],
-        |row| {
-            let kind: Option<String> = row.get(1)?;
-            let id: Option<String> = row.get(2)?;
-            Ok(Receipt {
-                sequence: row.get::<_, i64>(0)? as u64,
-                owner: match (kind.as_deref(), id) {
-                    (Some("thread"), Some(id)) => Some(StoredOwner::Thread(id)),
-                    (Some("project"), id) => Some(StoredOwner::Project(id)),
-                    _ => None,
-                },
-                refusal: row.get(3)?,
-                command_type: row.get(4)?,
-            })
-        },
-    )
+    conn.query_row(RECEIPT_SQL, [command_id], |row| {
+        let kind: Option<String> = row.get(1)?;
+        let id: Option<String> = row.get(2)?;
+        Ok(Receipt {
+            sequence: row.get::<_, i64>(0)? as u64,
+            owner: match (kind.as_deref(), id) {
+                (Some("thread"), Some(id)) => Some(StoredOwner::Thread(id)),
+                (Some("project"), id) => Some(StoredOwner::Project(id)),
+                _ => None,
+            },
+            refusal: row.get(3)?,
+            command_type: row.get(4)?,
+        })
+    })
     .optional()
     .map_err(err)
 }

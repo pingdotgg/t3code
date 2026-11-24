@@ -2168,9 +2168,15 @@ async fn launch_thread_creates_and_starts_in_one_call() {
     assert_eq!(result["threadId"], "t9");
     assert_eq!(result["resumed"], false);
     assert_eq!(result["projection"]["messages"][0]["text"], "hi");
-    let retry = engine.launch_thread(input).await.unwrap();
+    let retry = engine.launch_thread(input.clone()).await.unwrap();
     assert_eq!(retry["resumed"], true);
     assert_eq!(retry["sequence"], result["sequence"]);
+    // The replay starts no second turn.
+    assert_eq!(user_messages(&retry["projection"]), 1);
+    assert_eq!(record_count(&retry["projection"], "runs"), 1);
+    let mut moved = input;
+    moved["projectId"] = json!("project:other");
+    assert_eq!(refusal(&engine, moved).await, "Project identity changed.");
 
     let missing = engine.get_thread_projection("nope".into()).await;
     assert!(matches!(missing, Err(EngineError::Rejected(_))));
@@ -2786,6 +2792,1128 @@ async fn a_scheduled_launch_keeps_its_task_id_and_actor() {
     let message = &result["projection"]["messages"][0];
     assert_eq!(message["scheduledTaskId"], "scheduled-task:t");
     assert_eq!(message["createdBy"], "agent");
+}
+
+fn launch_input(command: &str, thread: &str, text: &str) -> Value {
+    json!({
+        "commandId": command, "threadId": thread, "projectId": project_id(), "title": "Launched",
+        "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+        "runtimeMode": "full-access", "interactionMode": "default",
+        "workspaceStrategy": {"type": "root"},
+        "initialMessage": {"messageId": format!("m-{command}"), "text": text, "attachments": []},
+    })
+}
+
+fn record_count(projection: &Value, kind: &str) -> usize {
+    projection[kind].as_array().map_or(0, Vec::len)
+}
+
+/// The user's messages; the fake provider's answer may already be there too.
+fn user_messages(projection: &Value) -> usize {
+    projection["messages"]
+        .as_array()
+        .map_or(0, |m| m.iter().filter(|m| m["role"] == "user").count())
+}
+
+async fn refusal(engine: &SqliteEngine, input: Value) -> String {
+    match engine.launch_thread(input).await {
+        Err(EngineError::Rejected(error)) => error["message"].as_str().unwrap().to_owned(),
+        Ok(_) => panic!("expected a refusal, got a launch"),
+        Err(EngineError::Internal(e)) => panic!("expected a refusal, got {e}"),
+    }
+}
+
+/// Holds the first attachment claim forever, as a launch whose caller went away.
+#[derive(Default)]
+struct HoldFirstClaim {
+    held: std::sync::atomic::AtomicBool,
+    reached: tokio::sync::Notify,
+}
+
+impl crate::EngineHost for HoldFirstClaim {
+    fn claim_attachments(
+        &self,
+        _thread_id: String,
+        attachments: Value,
+    ) -> crate::BoxFuture<'_, Result<Value, String>> {
+        if self.held.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(std::future::ready(Ok(attachments)));
+        }
+        self.reached.notify_one();
+        Box::pin(std::future::pending())
+    }
+}
+
+/// `ThreadLaunchService`: the thread and its first message commit in one transaction, so a
+/// launch dropped part way (a closed socket) leaves no empty thread.
+#[tokio::test(flavor = "current_thread")]
+async fn a_dropped_launch_leaves_no_empty_thread() {
+    let db = TempDb::new("launch-dropped");
+    let host = Arc::new(HoldFirstClaim::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    let mut input = launch_input("launch-drop", "t-drop", "hi");
+    input["initialMessage"]["attachments"] = json!([{"type": "image", "id": "pending-1",
+        "name": "a.png", "mimeType": "image/png", "sizeBytes": 3}]);
+    tokio::select! {
+        _ = engine.launch_thread(input.clone()) => panic!("the claim never ends"),
+        () = host.reached.notified() => {}
+    }
+    assert!(
+        engine
+            .get_thread_projection(conn_contract::ThreadId::from("t-drop"))
+            .await
+            .is_err()
+    );
+    let result = engine.launch_thread(input).await.unwrap();
+    assert_eq!(result["resumed"], false);
+    assert_eq!(result["projection"]["messages"][0]["text"], "hi");
+}
+
+/// Older builds wrote a launch's thread and first message as two commands: a replay finishes
+/// a launch cut between them, and replays a complete one without a second turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_split_by_an_older_build_completes_on_replay() {
+    let db = TempDb::new("launch-split");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-cut", "launch-cut")).await;
+    let cut = engine
+        .launch_thread(launch_input("launch-cut", "t-cut", "hi"))
+        .await
+        .unwrap();
+    assert_eq!(cut["projection"]["messages"][0]["text"], "hi");
+    assert_eq!(record_count(&cut["projection"], "runs"), 1);
+
+    dispatch(&engine, create("t-whole", "launch-whole")).await;
+    let mut first = message("t-whole", "launch-whole:initial-message", "hi");
+    first["messageId"] = json!("m-launch-whole");
+    dispatch(&engine, first).await;
+    let whole = engine
+        .launch_thread(launch_input("launch-whole", "t-whole", "hi"))
+        .await
+        .unwrap();
+    assert_eq!(whole["resumed"], true);
+    assert_eq!(user_messages(&whole["projection"]), 1);
+    assert_eq!(record_count(&whole["projection"], "runs"), 1);
+}
+
+/// `validateReusableThread`: a launch reuses only an empty, active thread of its project.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_reuses_only_an_empty_active_thread_of_its_project() {
+    const REFUSED: &str =
+        "Only an empty active thread in the target project can change workspace during launch.";
+    let db = TempDb::new("launch-reuse");
+    let (engine, _) = open(&db);
+    let reuse = |command: &str, thread: &str| {
+        let mut input = launch_input(command, thread, "hi");
+        input["reuseExistingThread"] = json!(true);
+        input
+    };
+    dispatch(&engine, create("t-busy", "c-busy")).await;
+    dispatch(&engine, message("t-busy", "c-busy-m", "earlier")).await;
+    assert_eq!(refusal(&engine, reuse("l-busy", "t-busy")).await, REFUSED);
+
+    let mut other = create("t-other", "c-other");
+    other["projectId"] = json!("project:other");
+    dispatch(&engine, other).await;
+    assert_eq!(refusal(&engine, reuse("l-other", "t-other")).await, REFUSED);
+
+    dispatch(&engine, create("t-archived", "c-archived")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "c-archive", "threadId": "t-archived"}),
+    )
+    .await;
+    assert_eq!(
+        refusal(&engine, reuse("l-archived", "t-archived")).await,
+        REFUSED
+    );
+
+    dispatch(&engine, create("t-empty", "c-empty")).await;
+    let first = engine
+        .launch_thread(reuse("l-empty", "t-empty"))
+        .await
+        .unwrap();
+    assert_eq!(first["resumed"], false);
+    let again = engine
+        .launch_thread(reuse("l-empty", "t-empty"))
+        .await
+        .unwrap();
+    assert_eq!(again["resumed"], true);
+    assert_eq!(user_messages(&again["projection"]), 1);
+    assert_eq!(record_count(&again["projection"], "runs"), 1);
+
+    // A reuse without a message still records its claim (T3's `thread.metadata.update`).
+    dispatch(&engine, create("t-quiet", "c-quiet")).await;
+    let mut quiet = reuse("l-quiet", "t-quiet");
+    quiet.as_object_mut().unwrap().remove("initialMessage");
+    let first = engine.launch_thread(quiet.clone()).await.unwrap();
+    assert_eq!(first["resumed"], false);
+    let again = engine.launch_thread(quiet).await.unwrap();
+    assert_eq!(again["resumed"], true);
+}
+
+/// T3's `replayCommandReceipt` and claim check: a launch's id is bound to its thread and
+/// project, so a replay elsewhere starts nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_replay_stays_on_its_thread_and_project() {
+    let db = TempDb::new("launch-bound");
+    let (engine, _) = open(&db);
+    engine
+        .launch_thread(launch_input("launch-a", "t-a", "hi"))
+        .await
+        .unwrap();
+    let conflict =
+        "Command launch-a was already handled for thread t-a and cannot be replayed for t-b.";
+    dispatch(&engine, create("t-b", "c-b")).await;
+    let mut reuse = launch_input("launch-a", "t-b", "hi");
+    reuse["reuseExistingThread"] = json!(true);
+    assert_eq!(refusal(&engine, reuse).await, conflict);
+    assert_eq!(
+        refusal(&engine, launch_input("launch-a", "t-b", "hi")).await,
+        conflict
+    );
+    assert_eq!(record_count(&projection(&engine, "t-b").await, "runs"), 0);
+
+    // An older build's create-only claim, replayed for another project: no message lands.
+    dispatch(&engine, create("t-old", "launch-old")).await;
+    let mut moved = launch_input("launch-old", "t-old", "hi");
+    moved["projectId"] = json!("project:other");
+    assert_eq!(refusal(&engine, moved).await, "Project identity changed.");
+    assert_eq!(user_messages(&projection(&engine, "t-old").await), 0);
+}
+
+/// `DispatchModeLimit`: an agent's first message, sent apart from its claim, may not run in
+/// broader modes than the agent launched with.
+#[tokio::test(flavor = "current_thread")]
+async fn an_agent_launch_message_keeps_its_mode_limit() {
+    let db = TempDb::new("launch-modes");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-wide", "launch-wide")).await;
+    let mut narrow = launch_input("launch-wide", "t-wide", "hi");
+    narrow["runtimeMode"] = json!("approval-required");
+    narrow["createdBy"] = json!("agent");
+    narrow["creationSource"] = json!("mcp");
+    assert_eq!(
+        refusal(&engine, narrow).await,
+        "Thread t-wide now runs in full-access/default mode, above what this caller may change."
+    );
+    assert_eq!(user_messages(&projection(&engine, "t-wide").await), 0);
+    // T3 records no receipt for this refusal: once the user lowers the thread's modes, the
+    // same launch goes through.
+    dispatch(
+        &engine,
+        json!({"type": "thread.runtime-mode.set", "commandId": "c-lower", "threadId": "t-wide",
+               "runtimeMode": "approval-required"}),
+    )
+    .await;
+    let mut retry = launch_input("launch-wide", "t-wide", "hi");
+    retry["runtimeMode"] = json!("approval-required");
+    retry["createdBy"] = json!("agent");
+    retry["creationSource"] = json!("mcp");
+    let launched = engine.launch_thread(retry).await.unwrap();
+    assert_eq!(user_messages(&launched["projection"]), 1);
+}
+
+/// Provisions worktrees with unique branches (as git does), can hold or refuse attachment
+/// claims, and turns the provider off.
+#[derive(Default)]
+struct LaunchHost {
+    provider_off: std::sync::atomic::AtomicBool,
+    /// Turns the provider off while a worktree is made.
+    off_during_provision: std::sync::atomic::AtomicBool,
+    refuse_claims: std::sync::atomic::AtomicBool,
+    /// The claim, counted from 1, that waits for `release`; 0 holds none.
+    hold_claim: std::sync::atomic::AtomicUsize,
+    claims: std::sync::atomic::AtomicUsize,
+    reached: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    branches: Mutex<std::collections::HashSet<String>>,
+    discarded: Mutex<Vec<String>>,
+    discard_done: tokio::sync::Notify,
+    /// The attachment ids the engine asked to release.
+    released: Mutex<Vec<String>>,
+    /// Claims return new ids (`claimed-<n>`), as a claim of a pending upload does.
+    rename_claims: std::sync::atomic::AtomicBool,
+    /// A discard waits for `discard_gate`.
+    hold_discard: std::sync::atomic::AtomicBool,
+    discard_gate: tokio::sync::Notify,
+    /// Worktree setup runs until the engine cancels it (a slow fetch or submodule update).
+    block_provision: std::sync::atomic::AtomicBool,
+    provision_reached: tokio::sync::Notify,
+    cancel_gate: tokio::sync::Notify,
+    /// The threads whose preparation the engine cancelled.
+    cancelled: Mutex<Vec<String>>,
+}
+
+impl crate::EngineHost for LaunchHost {
+    fn provider_instance_enabled(&self, _project_id: Option<&str>, _instance_id: &str) -> bool {
+        !self.provider_off.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn claim_attachments(
+        &self,
+        _thread_id: String,
+        attachments: Value,
+    ) -> crate::BoxFuture<'_, Result<Value, String>> {
+        use std::sync::atomic::Ordering;
+        let n = self.claims.fetch_add(1, Ordering::SeqCst) + 1;
+        let held = self.hold_claim.load(Ordering::SeqCst) == n;
+        Box::pin(async move {
+            if held {
+                self.reached.notify_one();
+                self.release.notified().await;
+            }
+            if self.refuse_claims.load(Ordering::SeqCst) {
+                Err("The upload is gone.".to_owned())
+            } else if self.rename_claims.load(Ordering::SeqCst) {
+                let mut renamed = attachments;
+                for a in renamed.as_array_mut().into_iter().flatten() {
+                    a["id"] = json!(format!("claimed-{n}"));
+                }
+                Ok(renamed)
+            } else {
+                Ok(attachments)
+            }
+        })
+    }
+
+    fn provision_worktree(
+        &self,
+        request: crate::WorktreeRequest,
+    ) -> crate::BoxFuture<'_, Result<crate::ProvisionedWorktree, String>> {
+        use std::sync::atomic::Ordering;
+        if self.off_during_provision.load(Ordering::SeqCst) {
+            self.provider_off.store(true, Ordering::SeqCst);
+        }
+        let branch = format!("conn/{}", request.thread_id);
+        let blocked = self.block_provision.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if blocked {
+                self.provision_reached.notify_one();
+                // conn-vcs removes what it made when its setup is cancelled.
+                self.cancel_gate.notified().await;
+                return Err("Worktree setup cancelled.".to_owned());
+            }
+            if self.branches.lock().unwrap().insert(branch.clone()) {
+                Ok(crate::ProvisionedWorktree {
+                    path: format!("/tmp/worktrees/{}", request.thread_id),
+                    branch,
+                })
+            } else {
+                Err(format!("A branch named '{branch}' already exists."))
+            }
+        })
+    }
+
+    fn cancel_preparation(&self, thread_id: &str) {
+        self.cancelled.lock().unwrap().push(thread_id.to_owned());
+        self.cancel_gate.notify_one();
+    }
+
+    fn release_attachments(&self, attachments: Value) -> crate::BoxFuture<'_, ()> {
+        let ids = attachments
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a["id"].as_str().map(str::to_owned));
+        self.released.lock().unwrap().extend(ids);
+        Box::pin(std::future::ready(()))
+    }
+
+    fn discard_worktree(
+        &self,
+        _thread_id: String,
+        _project_root: String,
+        worktree: crate::ProvisionedWorktree,
+        _refused: Option<String>,
+    ) -> crate::BoxFuture<'_, Result<(), String>> {
+        let held = self.hold_discard.load(std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            if held {
+                self.discard_gate.notified().await;
+            }
+            self.branches.lock().unwrap().remove(&worktree.branch);
+            self.discarded.lock().unwrap().push(worktree.branch);
+            self.discard_done.notify_one();
+            Ok(())
+        })
+    }
+}
+
+fn launch_engine(db: &TempDb, host: &Arc<LaunchHost>) -> SqliteEngine {
+    let mut config = EngineConfig::new(db.path());
+    config.home = Some(db.0.join("home"));
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    SqliteEngine::open(config).unwrap()
+}
+
+fn with_attachment(mut input: Value) -> Value {
+    input["initialMessage"]["attachments"] = json!([{"type": "image", "id": "pending-1",
+        "name": "a.png", "mimeType": "image/png", "sizeBytes": 3}]);
+    input
+}
+
+fn reused(mut input: Value) -> Value {
+    input["reuseExistingThread"] = json!(true);
+    input
+}
+
+fn without_message(mut input: Value) -> Value {
+    input.as_object_mut().unwrap().remove("initialMessage");
+    input
+}
+
+fn in_worktree(mut input: Value) -> Value {
+    input["workspaceStrategy"] = json!({"type": "worktree", "baseRef": "main"});
+    input
+}
+
+fn launch_refusal(result: Result<Value, EngineError<Value>>) -> String {
+    match result {
+        Err(EngineError::Rejected(error)) => error["message"].as_str().unwrap().to_owned(),
+        Ok(value) => panic!("expected a refusal, got {value}"),
+        Err(EngineError::Internal(e)) => panic!("expected a refusal, got {e}"),
+    }
+}
+
+/// T3 reads the committed thread's project before the first message, and the message's own
+/// write sees the thread as it is then. A scratch thread promoted to a project while a legacy
+/// launch replays gets no message.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_message_checks_its_project_in_its_own_write() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-promoted");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    let scratch = call(&engine, "projects.ensureScratch", json!({}))
+        .await
+        .unwrap();
+    let folder = db.0.join("home/scratch/2026-11-23-idea");
+    std::fs::create_dir_all(&folder).unwrap();
+    // An older build's create-only claim.
+    let mut old = create("t-old", "launch-old");
+    old["projectId"] = scratch["projectId"].clone();
+    old["worktreePath"] = json!(folder.to_string_lossy());
+    dispatch(&engine, old).await;
+
+    let mut input = with_attachment(launch_input("launch-old", "t-old", "hi"));
+    input["projectId"] = scratch["projectId"].clone();
+    // The replayed create claims nothing; the first message's claim is the first.
+    host.hold_claim.store(1, Ordering::SeqCst);
+    let launch = engine.launch_thread(input);
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the message claim is held"),
+        () = host.reached.notified() => {}
+    }
+    call(
+        &engine,
+        "projects.createFromThread",
+        json!({"threadId": "t-old"}),
+    )
+    .await
+    .unwrap();
+    host.release.notify_one();
+    assert_eq!(launch_refusal(launch.await), "Project identity changed.");
+    assert_eq!(user_messages(&projection(&engine, "t-old").await), 0);
+}
+
+/// T3 stores each receipt's thread: a launch id another thread's command already used is a
+/// conflict, even when that command wrote no event under its id.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_id_another_thread_used_is_a_conflict() {
+    let db = TempDb::new("launch-owner");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-a", "c-a")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "shared", "threadId": "t-a",
+               "title": "Renamed"}),
+    )
+    .await;
+    dispatch(&engine, create("t-b", "c-b")).await;
+    let conflict =
+        "Command shared was already handled for thread t-a and cannot be replayed for t-b.";
+    let quiet = without_message(reused(launch_input("shared", "t-b", "hi")));
+    assert_eq!(refusal(&engine, quiet).await, conflict);
+    assert_eq!(
+        refusal(&engine, reused(launch_input("shared", "t-b", "hi"))).await,
+        conflict
+    );
+    assert_eq!(record_count(&projection(&engine, "t-b").await, "runs"), 0);
+}
+
+/// The server owns a launch once it started: a caller that goes away during the attachment
+/// claim still gets its worktree removed when the claim fails, so a retry can make it again.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_dropped_during_its_claim_still_cleans_up() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-cancel");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    let input = with_attachment(in_worktree(launch_input("launch-cut", "t-cut", "hi")));
+    host.hold_claim.store(1, Ordering::SeqCst);
+    tokio::select! {
+        _ = engine.launch_thread(input.clone()) => panic!("the claim is held"),
+        () = host.reached.notified() => {}
+    }
+    host.refuse_claims.store(true, Ordering::SeqCst);
+    host.release.notify_one();
+    timeout(Duration::from_secs(5), host.discard_done.notified())
+        .await
+        .expect("the server removes the worktree after the caller left");
+    assert_eq!(
+        *host.discarded.lock().unwrap(),
+        vec!["conn/t-cut".to_owned()]
+    );
+    host.refuse_claims.store(false, Ordering::SeqCst);
+    let retry = engine.launch_thread(input).await.unwrap();
+    assert_eq!(retry["resumed"], false);
+    assert_eq!(retry["projection"]["messages"][0]["text"], "hi");
+}
+
+/// T3 lets an accepted launch replay whatever the provider's state now: also a reuse an older
+/// build completed with only its `:initial-message` receipt.
+#[tokio::test(flavor = "current_thread")]
+async fn an_older_reuse_replays_after_its_provider_is_off() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-old-reuse");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    dispatch(&engine, create("t-r", "c-r")).await;
+    let mut first = message("t-r", "l-r:initial-message", "hi");
+    first["messageId"] = json!("m-l-r");
+    dispatch(&engine, first).await;
+    host.provider_off.store(true, Ordering::SeqCst);
+    let replay = engine
+        .launch_thread(reused(launch_input("l-r", "t-r", "hi")))
+        .await
+        .unwrap();
+    assert_eq!(replay["resumed"], true);
+    assert_eq!(record_count(&replay["projection"], "runs"), 1);
+}
+
+/// The claim is the atomic step: an identical retry that finishes while another waits makes
+/// the waiting one replay, not fail.
+#[tokio::test(flavor = "current_thread")]
+async fn identical_reuse_retries_converge() {
+    let db = TempDb::new("launch-converge");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-same", "c-same")).await;
+    let input = reused(launch_input("l-same", "t-same", "hi"));
+    let pause = engine.test_pause_at("launch.receipts-read");
+    let first = engine.launch_thread(input.clone());
+    tokio::pin!(first);
+    tokio::select! {
+        _ = &mut first => panic!("the first launch is held"),
+        () = pause.reached.notified() => {}
+    }
+    let second = engine.launch_thread(input).await.unwrap();
+    assert_eq!(second["resumed"], false);
+    pause.resume.notify_one();
+    let first = first.await.unwrap();
+    assert_eq!(first["resumed"], true);
+    assert_eq!(user_messages(&first["projection"]), 1);
+    assert_eq!(record_count(&first["projection"], "runs"), 1);
+}
+
+/// The reuse claim checks the thread in its own write: one archived after the launch began is
+/// not claimed.
+#[tokio::test(flavor = "current_thread")]
+async fn a_reuse_refuses_a_thread_archived_before_its_claim() {
+    let db = TempDb::new("launch-archived");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-arch", "c-arch")).await;
+    let pause = engine.test_pause_at("launch.before-claim");
+    let launch = engine.launch_thread(without_message(reused(launch_input(
+        "l-arch", "t-arch", "hi",
+    ))));
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the launch is held"),
+        () = pause.reached.notified() => {}
+    }
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "c-archive", "threadId": "t-arch"}),
+    )
+    .await;
+    pause.resume.notify_one();
+    assert_eq!(
+        launch_refusal(launch.await),
+        "Only an empty active thread in the target project can change workspace during launch."
+    );
+}
+
+/// A launch's receipt is durable: its id replays onto the same thread long after, also
+/// past more writes than the store once kept receipts for. No second thread appears.
+#[tokio::test(flavor = "current_thread")]
+async fn an_old_launch_id_replays_after_many_writes() {
+    let db = TempDb::new("launch-durable");
+    let (engine, _) = open(&db);
+    let mut input = launch_input("l-old", "unused", "hi");
+    input.as_object_mut().unwrap().remove("threadId");
+    let first = engine.launch_thread(input.clone()).await.unwrap();
+    dispatch(&engine, create("t-other", "c-other")).await;
+    for n in 0..4_400 {
+        dispatch(
+            &engine,
+            json!({"type": "thread.metadata.update", "commandId": format!("c-w{n}"),
+                   "threadId": "t-other", "title": format!("Title {n}")}),
+        )
+        .await;
+    }
+    let again = engine.launch_thread(input).await.unwrap();
+    assert_eq!(again["threadId"], first["threadId"]);
+    assert_eq!(again["resumed"], true);
+    let launched = engine.shell_snapshot().await.unwrap()["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["title"] == "Launched")
+        .count();
+    assert_eq!(launched, 1);
+}
+
+/// A refused launch releases only the files its own claim made. An attachment the message
+/// names by a stable id (already a thread's file) passes the claim unchanged and stays.
+#[tokio::test(flavor = "current_thread")]
+async fn a_refused_launch_keeps_attachments_it_did_not_claim() {
+    let db = TempDb::new("launch-keep-files");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    dispatch(&engine, create("t-taken", "c-taken")).await;
+    let mut input = launch_input("l-taken", "t-taken", "hi");
+    input["initialMessage"]["attachments"] = json!([{"type": "image",
+        "id": "thread-old-0f8fad5b-d9cb-469f-a165-70867728950e", "name": "a.png",
+        "mimeType": "image/png", "sizeBytes": 3}]);
+    refusal(&engine, input).await;
+    assert_eq!(*host.released.lock().unwrap(), Vec::<String>::new());
+}
+
+/// T3's `replayCommandReceipt` needs the receipt's thread. A receipt that names none (an old
+/// one whose command wrote no event) cannot prove the command ran for this thread.
+#[tokio::test(flavor = "current_thread")]
+async fn a_receipt_without_an_owner_replays_for_no_thread() {
+    let db = TempDb::new("receipt-no-owner");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "INSERT INTO receipts (command_id, command_type, sequence) VALUES ('c-old', 'x', 1)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        refused(
+            &engine,
+            json!({"type": "thread.metadata.update", "commandId": "c-old", "threadId": "t1",
+                   "title": "Renamed"}),
+        )
+        .await,
+        "Command c-old was handled before receipts named their owner; it cannot be replayed for t1."
+    );
+}
+
+/// Round 3. `ThreadLaunchService` records the launch's checkout on a reused thread: an empty
+/// thread bound to checkout A, launched for checkout B, runs its provider in B.
+#[tokio::test(flavor = "current_thread")]
+async fn a_reused_thread_runs_in_the_launch_checkout() {
+    let db = TempDb::new("launch-reuse-checkout");
+    let (engine, _) = open(&db);
+    let (a, b) = (db.0.join("checkout-a"), db.0.join("checkout-b"));
+    let mut thread = create("t-ck", "c-ck");
+    thread["worktreePath"] = json!(a.to_string_lossy());
+    dispatch(&engine, thread).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t-ck"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    let mut input = reused(launch_input("l-ck", "t-ck", "hi"));
+    input["workspaceStrategy"] = json!({"type": "existing_worktree",
+        "worktreePath": b.to_string_lossy(), "branch": "b"});
+    engine.launch_thread(input).await.unwrap();
+    until_run_ends(&mut stream).await;
+    let p = projection(&engine, "t-ck").await;
+    assert_eq!(p["thread"]["worktreePath"], json!(b.to_string_lossy()));
+    assert_eq!(p["thread"]["branch"], "b");
+    assert_eq!(p["providerSessions"][0]["cwd"], json!(b.to_string_lossy()));
+}
+
+/// Round 3. Only a first message proves a send: T3 needs an accepted `message.dispatch` with
+/// its run (`ThreadLaunchService.ts`, "Initial message was accepted without a durable run").
+/// A metadata command that used the message's id is not one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_metadata_command_under_the_message_id_is_no_first_message() {
+    let db = TempDb::new("launch-not-a-send");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-m", "c-m")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "l-m:initial-message",
+               "threadId": "t-m", "title": "Renamed"}),
+    )
+    .await;
+    assert_eq!(
+        refusal(&engine, reused(launch_input("l-m", "t-m", "hi"))).await,
+        "Initial message was accepted without a durable run."
+    );
+    assert_eq!(user_messages(&projection(&engine, "t-m").await), 0);
+}
+
+/// Round 3. Shutdown waits for a launch it admitted: one that owns a worktree commits or
+/// removes it first. A launch after shutdown began is refused.
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_waits_for_a_launch_that_owns_a_worktree() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-shutdown");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    let input = with_attachment(in_worktree(launch_input("l-sd", "t-sd", "hi")));
+    host.hold_claim.store(1, Ordering::SeqCst);
+    host.hold_discard.store(true, Ordering::SeqCst);
+    let launch = engine.launch_thread(input);
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the claim is held"),
+        () = host.reached.notified() => {}
+    }
+    host.refuse_claims.store(true, Ordering::SeqCst);
+    host.release.notify_one();
+    let (discarded_when_shut, ()) = tokio::join!(
+        async {
+            engine.shutdown().await;
+            host.discarded.lock().unwrap().len()
+        },
+        async {
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+            host.discard_gate.notify_one();
+        }
+    );
+    assert_eq!(
+        discarded_when_shut, 1,
+        "shutdown returned before the cleanup"
+    );
+    assert_eq!(launch_refusal(launch.await), "The upload is gone.");
+    assert_eq!(
+        refusal(&engine, launch_input("l-late", "t-late", "hi")).await,
+        "The server is shutting down."
+    );
+}
+
+/// Round 3. Two identical launches each claim the upload; the one that replays releases the
+/// copy its own claim made.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replayed_launch_releases_the_copies_its_claim_made() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-replay-copies");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    host.rename_claims.store(true, Ordering::SeqCst);
+    host.hold_claim.store(1, Ordering::SeqCst);
+    let input = with_attachment(launch_input("l-twice", "t-twice", "hi"));
+    let first = engine.launch_thread(input.clone());
+    tokio::pin!(first);
+    tokio::select! {
+        _ = &mut first => panic!("the claim is held"),
+        () = host.reached.notified() => {}
+    }
+    let second = engine.launch_thread(input).await.unwrap();
+    assert_eq!(second["resumed"], false);
+    host.release.notify_one();
+    let first = first.await.unwrap();
+    assert_eq!(first["resumed"], true);
+    assert_eq!(*host.released.lock().unwrap(), vec!["claimed-1".to_owned()]);
+}
+
+/// Round 3, T3's "does not let a failing same-command caller strand a concurrent durable
+/// launch": an invalid reuse is refused at admission and records nothing, so a valid launch
+/// with the same id still runs.
+#[tokio::test(flavor = "current_thread")]
+async fn an_invalid_reuse_does_not_burn_its_launch_id() {
+    let db = TempDb::new("launch-burn");
+    let (engine, _) = open(&db);
+    refusal(&engine, reused(launch_input("l-burn", "t-missing", "hi"))).await;
+    let launched = engine
+        .launch_thread(launch_input("l-burn", "t-peer", "hi"))
+        .await
+        .unwrap();
+    assert_eq!(launched["threadId"], "t-peer");
+    assert_eq!(user_messages(&launched["projection"]), 1);
+}
+
+/// Round 3. The projection a launch returns is checked too: a thread moved to another
+/// project while a replay ran is not returned as this launch's.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replay_returns_no_projection_from_another_project() {
+    let db = TempDb::new("launch-moved");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    let scratch = call(&engine, "projects.ensureScratch", json!({}))
+        .await
+        .unwrap();
+    let folder = db.0.join("home/scratch/2026-11-23-moved");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut input = launch_input("l-moved", "t-moved", "hi");
+    input["projectId"] = scratch["projectId"].clone();
+    input["workspaceStrategy"] = json!({"type": "existing_worktree",
+        "worktreePath": folder.to_string_lossy()});
+    engine.launch_thread(input.clone()).await.unwrap();
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t-moved"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    // Promotion refuses a thread that is still working: wait for its run unless it ended.
+    let status = projection(&engine, "t-moved").await["runs"][0]["status"].clone();
+    if !["completed", "failed", "interrupted", "cancelled"].contains(&status.as_str().unwrap_or(""))
+    {
+        until_run_ends(&mut stream).await;
+    }
+    let pause = engine.test_pause_at("launch.before-projection");
+    let replay = engine.launch_thread(input);
+    tokio::pin!(replay);
+    tokio::select! {
+        _ = &mut replay => panic!("the replay is held"),
+        () = pause.reached.notified() => {}
+    }
+    call(
+        &engine,
+        "projects.createFromThread",
+        json!({"threadId": "t-moved"}),
+    )
+    .await
+    .unwrap();
+    pause.resume.notify_one();
+    assert_eq!(launch_refusal(replay.await), "Project identity changed.");
+}
+
+/// Round 4. The separate first message checks the checkout its claim recorded: a reuse that
+/// rebinds the empty thread meanwhile makes the first launch refuse, not start elsewhere.
+#[tokio::test(flavor = "current_thread")]
+async fn a_rebound_checkout_refuses_the_first_message() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-rebound");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    dispatch(&engine, create("t-rb", "c-rb")).await;
+    let checkout = |input: &mut Value, path: &std::path::Path| {
+        input["workspaceStrategy"] =
+            json!({"type": "existing_worktree", "worktreePath": path.to_string_lossy()});
+    };
+    let mut first = with_attachment(reused(launch_input("l-rb-a", "t-rb", "hi")));
+    checkout(&mut first, &db.0.join("checkout-a"));
+    host.hold_claim.store(1, Ordering::SeqCst);
+    let launch = engine.launch_thread(first);
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the message claim is held"),
+        () = host.reached.notified() => {}
+    }
+    let mut second = without_message(reused(launch_input("l-rb-b", "t-rb", "hi")));
+    checkout(&mut second, &db.0.join("checkout-b"));
+    engine.launch_thread(second).await.unwrap();
+    host.release.notify_one();
+    assert_eq!(
+        launch_refusal(launch.await),
+        "The thread's checkout changed during the launch."
+    );
+    assert_eq!(user_messages(&projection(&engine, "t-rb").await), 0);
+}
+
+/// Round 4. Only a `message.dispatch` is a first message: a metadata update whose
+/// continuation made a run under the message's id does not stand in for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_continuation_run_is_no_first_message() {
+    let db = TempDb::new("launch-continuation");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-cont", "c-cont")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "l-cont:initial-message",
+               "threadId": "t-cont", "title": "Moved",
+               "continuation": {"messageId": "m-cont", "text": "go on"}}),
+    )
+    .await;
+    assert_eq!(
+        refusal(&engine, reused(launch_input("l-cont", "t-cont", "hi"))).await,
+        "Only an empty active thread in the target project can change workspace during launch."
+    );
+}
+
+/// Round 4. Shutdown cancels a launch's worktree setup instead of waiting for it.
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_cancels_a_stalled_worktree_setup() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-stalled-setup");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    host.block_provision.store(true, Ordering::SeqCst);
+    let launch = engine.launch_thread(in_worktree(launch_input("l-st", "t-st", "hi")));
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the setup is held"),
+        () = host.provision_reached.notified() => {}
+    }
+    timeout(Duration::from_secs(30), engine.shutdown())
+        .await
+        .expect("shutdown cancels the setup");
+    assert_eq!(*host.cancelled.lock().unwrap(), vec!["t-st".to_owned()]);
+    assert_eq!(launch_refusal(launch.await), "Worktree setup cancelled.");
+}
+
+/// Round 4. T3 reads the `:initial-message` receipt only when the claim needs a separate first
+/// message: a stray command under that id does not change a fresh launch's admission.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stray_message_id_does_not_change_admission() {
+    let db = TempDb::new("launch-stray-id");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-else", "c-else")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "l-fresh:initial-message",
+               "threadId": "t-else", "title": "Renamed"}),
+    )
+    .await;
+    let launched = engine
+        .launch_thread(launch_input("l-fresh", "t-fresh", "hi"))
+        .await
+        .unwrap();
+    assert_eq!(launched["resumed"], false);
+    assert_eq!(user_messages(&launched["projection"]), 1);
+}
+
+/// Round 5. Every separate first message checks the checkout its claim recorded, read from
+/// the claim's own event: an older build's split launch, replayed after a reuse rebound its
+/// thread, is refused instead of starting in the other checkout.
+#[tokio::test(flavor = "current_thread")]
+async fn a_split_launch_replay_keeps_its_claimed_checkout() {
+    let db = TempDb::new("launch-split-checkout");
+    let (engine, _) = open(&db);
+    let (a, b) = (db.0.join("checkout-a"), db.0.join("checkout-b"));
+    // An older build's create-only claim, in checkout A.
+    let mut old = create("t-split", "l-split");
+    old["worktreePath"] = json!(a.to_string_lossy());
+    dispatch(&engine, old).await;
+    let mut rebind = without_message(reused(launch_input("l-rebind", "t-split", "hi")));
+    rebind["workspaceStrategy"] =
+        json!({"type": "existing_worktree", "worktreePath": b.to_string_lossy()});
+    engine.launch_thread(rebind).await.unwrap();
+    assert_eq!(
+        refusal(&engine, launch_input("l-split", "t-split", "hi")).await,
+        "The thread's checkout changed during the launch."
+    );
+    assert_eq!(user_messages(&projection(&engine, "t-split").await), 0);
+}
+
+/// Round 5. A launch's replay is only a launch when its id's receipt is a `thread.create`:
+/// a continuation that ran under the launch id does not stand in for its first message.
+#[tokio::test(flavor = "current_thread")]
+async fn a_continuation_under_the_launch_id_is_no_launch() {
+    let db = TempDb::new("launch-id-continuation");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-lc", "c-lc")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "l-lc", "threadId": "t-lc",
+               "title": "Moved", "continuation": {"messageId": "m-lc", "text": "go on"}}),
+    )
+    .await;
+    assert_eq!(
+        refusal(&engine, launch_input("l-lc", "t-lc", "hi")).await,
+        "Command l-lc was already handled as thread.metadata.update and cannot be replayed as a launch."
+    );
+}
+
+/// Guidance proof: a send wins a race against a conditional delete. T3 decides
+/// `onlyIfUnused` under the thread lock; a thread with a message or run stays, and the delete
+/// is accepted with no change.
+#[tokio::test(flavor = "current_thread")]
+async fn a_send_wins_against_a_conditional_delete() {
+    let db = TempDb::new("delete-if-unused");
+    let (engine, _) = open(&db);
+    let delete = |thread: &str, command: &str| {
+        json!({"type": "thread.delete", "commandId": command, "threadId": thread,
+               "onlyIfUnused": true})
+    };
+    dispatch(&engine, create("t-used", "c-used")).await;
+    dispatch(&engine, message("t-used", "c-used-m", "mine")).await;
+    dispatch(&engine, delete("t-used", "d-used")).await;
+    let kept = projection(&engine, "t-used").await;
+    assert_eq!(kept["thread"]["deletedAt"], Value::Null);
+    assert_eq!(user_messages(&kept), 1);
+
+    dispatch(&engine, create("t-unused", "c-unused")).await;
+    dispatch(&engine, delete("t-unused", "d-unused")).await;
+    assert!(
+        engine
+            .get_thread_projection("t-unused".into())
+            .await
+            .is_err()
+    );
+}
+
+/// Guidance proof: a send wins a race against a rebinding. A reuse launch held before its
+/// claim finds the thread used and claims nothing; the send stays the only message.
+#[tokio::test(flavor = "current_thread")]
+async fn a_send_wins_against_a_reuse_claim() {
+    let db = TempDb::new("launch-rebind");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t-race", "c-race")).await;
+    let pause = engine.test_pause_at("launch.before-claim");
+    let launch = engine.launch_thread(reused(launch_input("l-race", "t-race", "theirs")));
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the launch is held"),
+        () = pause.reached.notified() => {}
+    }
+    dispatch(&engine, message("t-race", "c-race-m", "mine")).await;
+    pause.resume.notify_one();
+    assert_eq!(
+        launch_refusal(launch.await),
+        "Only an empty active thread in the target project can change workspace during launch."
+    );
+    let p = projection(&engine, "t-race").await;
+    assert_eq!(user_messages(&p), 1);
+    assert_eq!(p["messages"][0]["text"], "mine");
+}
+
+/// Guidance proof: receipts are durable (T3 keeps them) and record refusals too. An old
+/// retry after an undo, and after more than 4,400 unrelated writes, changes nothing; a
+/// refused command replays its refusal after the state that refused it changed.
+#[tokio::test(flavor = "current_thread")]
+async fn an_old_retry_after_an_undo_and_many_writes_changes_nothing() {
+    let db = TempDb::new("receipts-durable");
+    let (engine, _) = open(&db);
+    let archive = json!({"type": "thread.archive", "commandId": "c-arch", "threadId": "t-u"});
+    let rename = json!({"type": "thread.metadata.update", "commandId": "c-early",
+                        "threadId": "t-late", "title": "Too early"});
+    dispatch(&engine, create("t-u", "c-u")).await;
+    dispatch(&engine, archive.clone()).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.unarchive", "commandId": "c-unarch", "threadId": "t-u"}),
+    )
+    .await;
+    let early = refused(&engine, rename.clone()).await;
+    dispatch(&engine, create("t-other", "c-other")).await;
+    for n in 0..4_400 {
+        dispatch(
+            &engine,
+            json!({"type": "thread.metadata.update", "commandId": format!("c-w{n}"),
+                   "threadId": "t-other", "title": format!("Title {n}")}),
+        )
+        .await;
+    }
+    dispatch(&engine, archive).await;
+    assert_eq!(
+        projection(&engine, "t-u").await["thread"]["archivedAt"],
+        Value::Null
+    );
+    dispatch(&engine, create("t-late", "c-late")).await;
+    assert_eq!(
+        refused(&engine, rename).await,
+        format!("Command c-early was previously rejected: {early}")
+    );
+    assert_eq!(
+        projection(&engine, "t-late").await["thread"]["title"],
+        "New thread"
+    );
+}
+
+/// T3 checks the provider again in the commit: one turned off while the worktree is made, or
+/// during the attachment claim, refuses the launch and leaves no thread.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_turned_off_mid_launch_refuses_it() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-off");
+    let host = Arc::new(LaunchHost::default());
+    let engine = launch_engine(&db, &host);
+    let off = format!(
+        "Provider instance \"claudeAgent\" is disabled for project {}.",
+        project_id()
+    );
+    host.off_during_provision.store(true, Ordering::SeqCst);
+    assert_eq!(
+        refusal(&engine, in_worktree(launch_input("l-off", "t-off", "hi"))).await,
+        off
+    );
+    assert!(engine.get_thread_projection("t-off".into()).await.is_err());
+    assert_eq!(
+        *host.discarded.lock().unwrap(),
+        vec!["conn/t-off".to_owned()]
+    );
+
+    host.off_during_provision.store(false, Ordering::SeqCst);
+    host.provider_off.store(false, Ordering::SeqCst);
+    host.hold_claim.store(1, Ordering::SeqCst);
+    let launch = engine.launch_thread(with_attachment(launch_input("l-claim", "t-claim", "hi")));
+    tokio::pin!(launch);
+    tokio::select! {
+        _ = &mut launch => panic!("the claim is held"),
+        () = host.reached.notified() => {}
+    }
+    host.provider_off.store(true, Ordering::SeqCst);
+    host.release.notify_one();
+    assert_eq!(launch_refusal(launch.await), off);
+    assert!(
+        engine
+            .get_thread_projection("t-claim".into())
+            .await
+            .is_err()
+    );
+}
+
+/// `ThreadLaunchService`: a refused claim removes the worktree made for it, and a launch
+/// already accepted replays after its provider was turned off.
+#[tokio::test(flavor = "current_thread")]
+async fn a_launch_cleans_up_its_worktree_and_replays_past_a_disabled_provider() {
+    use std::sync::atomic::Ordering;
+    let db = TempDb::new("launch-host");
+    let host = Arc::new(LaunchHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+
+    let mut worktree = launch_input("launch-wt", "t-wt", "hi");
+    worktree["workspaceStrategy"] = json!({"type": "worktree", "baseRef": "main"});
+    worktree["initialMessage"]["attachments"] = json!([{"type": "image", "id": "pending-1",
+        "name": "a.png", "mimeType": "image/png", "sizeBytes": 3}]);
+    host.refuse_claims.store(true, Ordering::SeqCst);
+    assert_eq!(refusal(&engine, worktree).await, "The upload is gone.");
+    assert_eq!(
+        *host.discarded.lock().unwrap(),
+        vec!["conn/t-wt".to_owned()]
+    );
+    host.refuse_claims.store(false, Ordering::SeqCst);
+
+    let input = launch_input("launch-on", "t-on", "hi");
+    engine.launch_thread(input.clone()).await.unwrap();
+    host.provider_off.store(true, Ordering::SeqCst);
+    let replay = engine.launch_thread(input).await.unwrap();
+    assert_eq!(replay["resumed"], true);
+    assert_eq!(record_count(&replay["projection"], "runs"), 1);
 }
 
 fn message_with(
@@ -8419,6 +9547,7 @@ async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart
         let command = json!({"commandId":"secret-pending","threadId":"t1","runId":run["id"],"nodeId":run["rootNodeId"],"turnItemId":"secret-card","label":"API key","reason":"Test","secretStatus":"pending"});
         // A refused command's id stays refused (its receipt), so the wrong try has its own.
         let mut wrong = command.clone();
+        wrong["commandId"] = json!("secret-wrong");
         wrong["nodeId"] = json!("wrong");
         wrong["commandId"] = json!("secret-wrong");
         assert!(engine.record_secret_request(wrong).await.is_err());
@@ -9101,6 +10230,24 @@ fn transcript_queries_use_their_indexes() {
     let interrupts = plan(crate::store::TRANSCRIPT_INTERRUPTS_SQL);
     assert!(interrupts.contains("turn_item_interrupts"), "{interrupts}");
     assert!(!interrupts.contains("TEMP B-TREE"), "{interrupts}");
+}
+
+/// A receipt's thread is a key lookup, not a scan of the event log under the store lock.
+#[test]
+fn the_receipt_owner_is_a_key_lookup() {
+    let db = TempDb::new("receipt-plan");
+    drop(open(&db));
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let mut stmt = conn
+        .prepare(&format!("EXPLAIN QUERY PLAN {}", crate::store::RECEIPT_SQL))
+        .unwrap();
+    let plan = stmt
+        .query_map(["c1"], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("; ");
+    assert!(!plan.contains("SCAN"), "{plan}");
 }
 
 fn remote(command: &str, kind: &str, extra: Value) -> Value {

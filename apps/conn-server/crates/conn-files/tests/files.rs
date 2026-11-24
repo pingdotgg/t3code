@@ -917,7 +917,7 @@ fn uploads_claims_and_deletes_attachments() {
     let before = fs::read_dir(store.dir()).unwrap().count();
     assert!(
         store
-            .claim_all("Thread 1", &[attachment.clone(), missing])
+            .claim_all("Thread 1", &[attachment.clone(), missing.clone()])
             .unwrap_err()
             .contains("not found")
     );
@@ -925,6 +925,23 @@ fn uploads_claims_and_deletes_attachments() {
         fs::read_dir(store.dir()).unwrap().count(),
         before,
         "failed batch must release its claimed copies"
+    );
+    // An attachment already a thread's file passes the claim unchanged; a failed batch keeps it.
+    let ChatAttachment::Image(existing) = store.claim("Thread 1", &attachment).unwrap() else {
+        panic!()
+    };
+    let existing = ChatAttachment::Image(existing);
+    assert!(
+        store
+            .claim_all("Thread 1", &[existing.clone(), missing])
+            .is_err()
+    );
+    let ChatAttachment::Image(kept_file) = &existing else {
+        unreachable!()
+    };
+    assert!(
+        store.resolve(&kept_file.id).is_some(),
+        "a failed batch must keep files it did not claim"
     );
 
     // Delete removes pending uploads only.
