@@ -4752,6 +4752,110 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  // regression: #42024 a runtime mode change must not close the session under a running turn
+  it.live("keeps a running Claude turn alive when the runtime mode changes", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("runtime-mode-running-turn");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const started = yield* Deferred.make<void>();
+      const threadId = ThreadId.make("thread:runtime-mode-running-turn");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:runtime-mode-running-turn:create"),
+          threadId,
+          projectId: ProjectId.make("project:runtime-mode-running-turn"),
+          title: "Runtime mode change during a turn",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const sessionAttached = yield* orchestrator.streamStoredEvents.pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "provider-session.attached" && event.threadId === threadId,
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:runtime-mode-running-turn:send"),
+          threadId,
+          messageId: MessageId.make("message:runtime-mode-running-turn:send"),
+          text: "Long task",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Deferred.await(started);
+        yield* Fiber.join(sessionAttached);
+        yield* worker.drain();
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          before.providerSessions.map((session) => session.status),
+          ["ready"],
+        );
+
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("command:runtime-mode-running-turn:change"),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* worker.drain();
+
+        // The running turn keeps its old-mode session; the next turn applies the new mode.
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.runtimeMode, "approval-required");
+        assert.deepEqual(
+          projection.providerSessions.map((session) => [session.id, session.status]),
+          [[before.providerSessions[0]!.id, "ready"]],
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["running"],
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "runtime-mode-running-turn",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            ProviderAdapterRegistry.layerFromAdapters([
+              makeTestAdapter({
+                instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                driver: CLAUDE_DRIVER,
+                capabilities: ClaudeProviderCapabilitiesV2,
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                responseByRunOrdinal: { 1: "Long task finished" },
+                capturedTurns,
+                holdFirstTurn: started,
+              }),
+            ]),
+          ),
+        ),
+      );
+    }),
+  );
+
   // regression: a session kept by a queued hand-off is probed when a later change detaches it
   it.live(
     "refuses a later instance change while a retained hand-off session runs background work",
