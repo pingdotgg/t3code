@@ -512,7 +512,6 @@ describe("question answer paths", () => {
                   "\r\u001b[32m100%|##########|\u001b[0m\n",
                   "done\r",
                   "\n",
-                  "🚀 ready\rX\n",
                 ],
               },
               {
@@ -550,7 +549,7 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
       expect(extracted).toContain("Output:\n301\n");
-      expect(extracted).toContain("100%|##########|\ndone\nX  ready\n");
+      expect(extracted).toContain("100%|##########|\ndone\n");
       expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");

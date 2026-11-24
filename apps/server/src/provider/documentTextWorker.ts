@@ -5,6 +5,7 @@ import * as NodeUtil from "node:util";
 import { characterEntities } from "character-entities";
 import { SaxesParser } from "saxes";
 import * as Yauzl from "yauzl";
+import { terminalOutputCollapseRedraws } from "@t3tools/shared/terminalOutput";
 
 const MAX_INPUT = 16 * 1024 * 1024;
 const MAX_EXPANDED = 32 * 1024 * 1024;
@@ -411,16 +412,6 @@ async function archive(path: string): Promise<Map<string, string>> {
 
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
 
-// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
-// redraws leave on the line. Walking the frames from the last keeps this linear.
-function lastFrame(line: string): string {
-  let row = "";
-  for (const frame of line.split("\r").reverse())
-    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
-    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
-  return row;
-}
-
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
@@ -435,9 +426,7 @@ function* notebook(source: string): Generator<string, void> {
   function outputText(value: unknown, stream = false): string {
     // Notebook fragments can split a terminal escape sequence or a CRLF pair.
     const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
-    return stream && /\r(?!\n)/.test(plain)
-      ? plain.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
-      : plain;
+    return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
