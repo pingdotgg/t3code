@@ -1566,9 +1566,11 @@ export const layer: Layer.Layer<
               return forked.success.value;
             }
             if (forked._tag === "Failure") {
-              if (input.willRetry === true) return yield* forked.failure;
+              const sourceUnavailable =
+                forked.failure._tag === "ProviderAdapterForkThreadError" &&
+                forked.failure.sourceUnavailable === true;
+              if (input.willRetry === true && !sourceUnavailable) return yield* forked.failure;
               if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
-              // Retries are spent (e.g. the source's native session is gone): start fresh with portable history.
               yield* Effect.logWarning("Starting a native fork in a fresh native session", {
                 driver: session.driver,
                 providerThreadId: providerThread.id,
@@ -1576,11 +1578,13 @@ export const layer: Layer.Layer<
                 runId,
                 errorTag: forked.failure._tag,
               });
-              nativeForkFailure = makeProviderFailure({
-                cause: forked.failure,
-                message: startFailureMessage(forked.failure),
-                class: "provider_error",
-              }).message;
+              nativeForkFailure = sourceUnavailable
+                ? "the provider's transcript is not available on this server"
+                : makeProviderFailure({
+                    cause: forked.failure,
+                    message: startFailureMessage(forked.failure),
+                    class: "provider_error",
+                  }).message;
               sourceProjection = {
                 ...sourceProjection,
                 ...(yield* projectionStore.getThreadRecords(nativeForkTransfer.sourceThreadId, [

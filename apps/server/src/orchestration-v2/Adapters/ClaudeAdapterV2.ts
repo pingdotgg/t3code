@@ -15278,14 +15278,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
             (effect, forkInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterForkThreadError({
-                      driver: CLAUDE_PROVIDER,
-                      providerThreadId: forkInput.sourceProviderThread.id,
-                      cause,
-                    }),
-                ),
+                Effect.mapError((cause) => {
+                  const sdkCause = isClaudeAgentSdkQueryRunnerError(cause)
+                    ? cause.cause
+                    : undefined;
+                  const detail =
+                    sdkCause instanceof Error
+                      ? sdkCause.message
+                      : typeof sdkCause === "string"
+                        ? sdkCause.split(/\r?\n/u).at(-1)
+                        : undefined;
+                  const sessionId = forkInput.sourceProviderThread.nativeThreadRef?.nativeId;
+                  return new ProviderAdapter.ProviderAdapterForkThreadError({
+                    driver: CLAUDE_PROVIDER,
+                    providerThreadId: forkInput.sourceProviderThread.id,
+                    ...(sessionId != null && detail === `Session ${sessionId} not found`
+                      ? { sourceUnavailable: true }
+                      : {}),
+                    cause,
+                  });
+                }),
               ),
           ),
         };

@@ -19,18 +19,23 @@ export async function runClaudeHistoryWorker(
 ): Promise<void> {
   const options = decodeHistoryOptions(rawOptions ?? "{}");
   if (!sessionId) throw new Error("Claude history session id is required.");
-  const result =
-    method === "getSessionMessages"
-      ? await getSessionMessages(sessionId, options)
-      : method === "forkSession"
-        ? await forkSession(sessionId, options).then(async (forked) => {
-            const headMessageId = await getSessionMessages(forked.sessionId, options)
-              .then((messages) => messages.at(-1)?.uuid)
-              .catch(() => undefined);
-            return headMessageId === undefined ? forked : { ...forked, headMessageId };
-          })
-        : (() => {
-            throw new Error("Unknown Claude history operation.");
-          })();
-  process.stdout.write(JSON.stringify(result));
+  if (method === "getSessionMessages") {
+    process.stdout.write(JSON.stringify(await getSessionMessages(sessionId, options)));
+    return;
+  }
+  if (method !== "forkSession") throw new Error("Unknown Claude history operation.");
+
+  // Preserve the SDK message across the process boundary without dumping its minified source line.
+  const forked = await forkSession(sessionId, options).catch((cause: unknown) => {
+    process.stderr.write(cause instanceof Error ? cause.message : String(cause));
+    process.exitCode = 1;
+    return undefined;
+  });
+  if (forked === undefined) return;
+  const headMessageId = await getSessionMessages(forked.sessionId, options)
+    .then((messages) => messages.at(-1)?.uuid)
+    .catch(() => undefined);
+  process.stdout.write(
+    JSON.stringify(headMessageId === undefined ? forked : { ...forked, headMessageId }),
+  );
 }

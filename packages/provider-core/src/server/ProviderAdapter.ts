@@ -388,6 +388,7 @@ export class ProviderAdapterForkThreadError extends Schema.TaggedError<ProviderA
   {
     driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
+    sourceUnavailable: Schema.optionalKey(Schema.Literal(true)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

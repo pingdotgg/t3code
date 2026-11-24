@@ -9361,6 +9361,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     close: (sdkMessages) => Queue.shutdown(sdkMessages),
   });
 
+  it.live("reports a missing source when forking in a different Claude home", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-fork-missing-",
+      });
+      const warningScript = (yield* Path.Path).join(configDir, "worker-warning.cjs");
+      yield* fileSystem.writeFileString(warningScript, 'console.error("worker startup warning");');
+      const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          ...process.env,
+          CLAUDE_CONFIG_DIR: configDir,
+          NODE_OPTIONS: `--require "${warningScript}"`,
+        },
+        nativeSessionId: "10000000-0000-4000-8000-000000000000",
+        forkSession: runner.forkSession,
+      });
+      const failure = yield* harness.runtime
+        .forkThread({
+          sourceProviderThread: harness.providerThread,
+          targetThreadId: ThreadId.make("thread-fork-missing-transcript"),
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapter.ProviderAdapterForkThreadError);
+      assert.propertyVal(failure, "sourceUnavailable", true);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          ClaudeAdapterV2.layerQueryRunner.pipe(
+            Layer.provide(PortScanner.layerTest),
+            Layer.provide(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+          ),
+        ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+      ),
+    ),
+  );
+
   it.effect.each([
     { kind: "fork with inherited head", fork: true, headMessageId: "remapped-inherited-head" },
     { kind: "fork without recorded head", fork: true, headMessageId: undefined },

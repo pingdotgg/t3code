@@ -2948,6 +2948,17 @@ effectIt.effect.each([
     commitFork: true,
   },
   {
+    sourceBoundary: "native",
+    canForkWhileSourceRunning: false,
+    nativeForkFrom: "idle",
+    forks: true,
+    transferStatus: "resolved_portable",
+    handoffIds: ["side-chat-fork-context"],
+    memoryFails: false,
+    forkFails: "missing_transcript",
+    commitFork: true,
+  },
+  {
     memoryFails: false,
     forkFails: false,
     commitFork: true,
@@ -3102,6 +3113,7 @@ effectIt.effect.each([
               : new ProviderAdapter.ProviderAdapterForkThreadError({
                   driver: ProviderDriverKind.make("codex"),
                   providerThreadId: ProviderThreadId.make("side-chat-parent-provider-thread"),
+                  ...(forkFails === "missing_transcript" ? { sourceUnavailable: true } : {}),
                 }),
           ),
         );
@@ -3110,7 +3122,20 @@ effectIt.effect.each([
           Effect.succeed({ committed: false, storedEvents: [] }),
         );
 
-      yield* harness.start;
+      yield* forkFails === "missing_transcript" ? harness.startWithRetry : harness.start;
+      if (forkFails === "missing_transcript") {
+        expect(harness.events).toContainEqual(
+          expect.objectContaining({
+            type: "turn-item.updated",
+            payload: expect.objectContaining({
+              type: "system_notice",
+              message: expect.stringContaining(
+                "the provider's transcript is not available on this server",
+              ),
+            }),
+          }),
+        );
+      }
 
       expect(harness.forkThread).toHaveBeenCalledTimes(forks ? 1 : 0);
       if (!commitFork) {
