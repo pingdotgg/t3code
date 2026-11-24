@@ -6,20 +6,20 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.2-astra
-  at: 2026-11-24T17:06:17+00:00
+  at: 2026-11-24T17:22:01+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-24T17:06:17+00:00
+    at: 2026-11-24T17:22:01+00:00
 snapshot:
-  at: 2026-11-24T17:06:17+00:00
+  at: 2026-11-24T17:22:01+00:00
   fork_main: d978ce37d2fc8c12628046c847ee2bb32b8624eb
-  upstream_main: b197474104a260470d4473aa6d249552c1e145e2
+  upstream_main: 1a01d7ee6f78a3da27810202a3151ff815adc4d4
   shared_baseline: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
   last_main_integration: d978ce37d2fc8c12628046c847ee2bb32b8624eb
   last_main_upstream: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
-  missing_upstream_on_main: 280
-  branch_integration: c812354785c9d02822d04458d87f310af0b0c712
-  branch_code_tip: 8b7ee4396873f639d7bd1b9a81e658c8df66f62f
+  missing_upstream_on_main: 284
+  branch_integration: 72c40a5254d9a1e596db390ca2dab055dc522486
+  branch_code_tip: 03aca524d1c001a8e5f127fb94c71619ddc6d972
   missing_upstream_on_branch: 0
 sources:
   - id: upstream-nov23-policy
@@ -443,7 +443,7 @@ sources:
 
 # Upstream integration
 
-The November 24 candidate merges all 280 upstream commits from `fa2ee196b5` through [upstream `b197474104`](https://github.com/pingdotgg/t3code/commit/b197474104a260470d4473aa6d249552c1e145e2). PR attribution uses the fork’s shared Git/Jujutsu creation path. Worktree recovery retains the fork’s workspace service and hands a recreated checkout to upstream’s setup runner.
+The November 24 candidate merges all 284 upstream commits from `fa2ee196b5` through [upstream `1a01d7ee6f`](https://github.com/pingdotgg/t3code/commit/1a01d7ee6f78a3da27810202a3151ff815adc4d4). PR attribution uses the fork’s shared Git/Jujutsu creation path. Worktree recovery retains the fork’s workspace service and hands a recreated checkout to upstream’s setup runner.
 
 ## November 23 sync
 

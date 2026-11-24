@@ -2,7 +2,7 @@
 
 ## 2026-11-24
 
-- Recorded the [upstream candidate](upstream-integration.md) through `b197474104` and its Git/Jujutsu integration points.
+- Recorded the [upstream candidate](upstream-integration.md) through `1a01d7ee6f` and its Git/Jujutsu integration points.
 - Updated the [OpenCode and remote Crit boundaries](upstream-integration.md) for upstream advisories and desktop port forwarding.
 
 ## 2026-11-23
