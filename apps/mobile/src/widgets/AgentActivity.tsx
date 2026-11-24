@@ -385,7 +385,7 @@ export function AgentActivity(
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}
         <Text modifiers={[font({ weight: "bold", size: 13 }), foregroundStyle(tint)]}>
-          {allDone ? doneLabel : `${props.activeCount}`}
+          {allDone || environment.isStale ? activeLabel : `${props.activeCount}`}
         </Text>
       </HStack>
     ),

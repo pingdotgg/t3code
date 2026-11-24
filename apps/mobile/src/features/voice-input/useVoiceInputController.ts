@@ -18,6 +18,7 @@ export function useVoiceInputController(input: {
   readonly subscribeToDraftChanges?: (onChange: () => void) => () => void;
   readonly selection: ComposerEditorSelection;
   readonly disabled?: boolean;
+  readonly hidden?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onChangeSelection: (selection: ComposerEditorSelection) => void;
 }) {
@@ -38,10 +39,10 @@ export function useVoiceInputController(input: {
   useFocusEffect(
     useCallback(() => {
       const ownerKey = input.ownerKey;
-      if (!ownerKey) return;
+      if (!ownerKey || input.hidden) return;
       session.setOwnerFocused(ownerKey, true);
       return () => session.setOwnerFocused(ownerKey, false);
-    }, [input.ownerKey, session]),
+    }, [input.hidden, input.ownerKey, session]),
   );
 
   const start = useCallback(() => {

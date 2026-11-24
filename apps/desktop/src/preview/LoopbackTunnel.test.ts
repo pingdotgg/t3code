@@ -1,4 +1,5 @@
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -12,6 +13,9 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as LoopbackTunnel from "./LoopbackTunnel.ts";
@@ -81,11 +85,16 @@ const unusedPort = Effect.promise(
     }),
 );
 
+type HostLayer =
+  | Layer.Layer<FileSystem.FileSystem>
+  | Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>
+  | Layer.Layer<never>;
+
 /** The tunnel service, with every access request answered with `tunnelUrl`. */
 const makeTunnel = (
   /** A function answers each access request with its current value. */
   tunnelUrl: string | null | (() => string | null),
-  host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
+  host?: HostLayer,
 ) =>
   Effect.gen(function* () {
     const accessRequests = yield* Queue.unbounded<string>();
@@ -103,12 +112,12 @@ const makeTunnel = (
             Layer.mock(ElectronWindow.ElectronWindow, {
               currentMainOrFirst: Effect.succeedSome(window as unknown as Electron.BrowserWindow),
             }),
-            NodeFileSystem.layer,
+            host ?? Layer.empty,
             SecureRandom.layerWebCrypto,
             NetService.layer,
-            host ?? Layer.empty,
           ),
         ),
+        Layer.provide(NodeServices.layer),
       ),
     );
     const tunnel = Context.get(services, LoopbackTunnel.LoopbackTunnel);
@@ -126,10 +135,7 @@ const makeTunnel = (
   });
 
 /** Routes a stand-in session through the tunnel and returns its SOCKS listener port. */
-const routeThroughTunnel = (
-  tunnelUrl: string | null,
-  host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
-) =>
+const routeThroughTunnel = (tunnelUrl: string | null, host?: HostLayer) =>
   Effect.gen(function* () {
     const tunnel = yield* makeTunnel(tunnelUrl, host);
     let proxyRules = "";
@@ -247,6 +253,7 @@ it.effect.each([
   { case: "another OS user's client", host: "localhost", tunnel: "other-user" },
   { case: "a TCP row whose client address differs", host: "localhost", tunnel: "moved-client" },
   { case: "a TCP row whose listener address differs", host: "localhost", tunnel: "moved-listener" },
+  { case: "no TCP row and no user id to compare", host: "localhost", tunnel: "no-user-id" },
 ] as const)("fails the SOCKS request for $case without dialling locally", ({ host, tunnel }) =>
   Effect.gen(function* () {
     const decoy = yield* listenDecoy;
@@ -266,12 +273,110 @@ it.effect.each([
               Layer.succeed(HostProcess.Platform, "linux"),
               tcpTablesWithMovedAddress(tunnel === "moved-client" ? 1 : 2),
             )
-          : undefined,
+          : tunnel === "no-user-id"
+            ? Layer.mergeAll(
+                Layer.succeed(HostProcess.Platform, "linux"),
+                Layer.succeed(HostProcess.UserId, undefined),
+                tcpTablesWithMovedAddress(1),
+              )
+            : undefined,
     );
     const { reply } = yield* socksConnect(proxyPort, host, addressPort(decoy.server));
     expect(reply[1]).not.toBe(0);
     expect(endpoint.requests).toEqual([]);
     expect(decoy.connections()).toBe(0);
+  }),
+);
+
+/** Stands in for the system's own tools: each command prints what `print` returns for it. */
+const systemTools = (print: (command: string, args: ReadonlyArray<string>) => string) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const { command: name, args } = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(print(name, args))),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    ),
+  );
+
+const ownUserId = process.getuid?.() ?? 501;
+
+it.effect.each([
+  { client: "own", served: true },
+  { client: "another user's", served: false },
+  { client: "unlisted", served: false },
+] as const)(
+  "serves a SOCKS client on macOS only when the system lists it as this user's: $client",
+  ({ client, served }) =>
+    Effect.gen(function* () {
+      const decoy = yield* listenDecoy;
+      const endpoint = yield* listenEndpoint;
+      const commands: Array<string> = [];
+      let proxyPort = 0;
+      const lsof = (args: ReadonlyArray<string>) => {
+        const clientEnd = /^-iTCP@(.+)$/.exec(args[1] ?? "")?.[1];
+        // The listener's accepted socket is this app's own and is always listed.
+        const accepted = `p100\nu${ownUserId}\nf30\nn127.0.0.1:${proxyPort}->${clientEnd}\n`;
+        if (client === "unlisted") return accepted;
+        const owner = client === "own" ? ownUserId : ownUserId + 1;
+        return `${accepted}p200\nu${owner}\nf12\nn${clientEnd}->127.0.0.1:${proxyPort}\n`;
+      };
+      proxyPort = yield* routeThroughTunnel(
+        `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+        Layer.mergeAll(
+          Layer.succeed(HostProcess.Platform, "darwin"),
+          Layer.succeed(HostProcess.UserId, ownUserId),
+          systemTools((command, args) => {
+            commands.push(command);
+            return command === "/usr/sbin/lsof" ? lsof(args) : "";
+          }),
+        ),
+      );
+      const { reply } = yield* socksConnect(proxyPort, "localhost", addressPort(decoy.server));
+      expect(reply[1] === 0).toBe(served);
+      expect(endpoint.requests.length).toBe(served ? 1 : 0);
+      expect(decoy.connections()).toBe(0);
+      expect(commands).toEqual(["/usr/sbin/lsof"]);
+    }),
+);
+
+it.effect("serves a SOCKS client on Windows without looking up its owner", () =>
+  Effect.gen(function* () {
+    const decoy = yield* listenDecoy;
+    const endpoint = yield* listenEndpoint;
+    const commands: Array<string> = [];
+    const proxyPort = yield* routeThroughTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.UserId, undefined),
+        systemTools((command) => {
+          commands.push(command);
+          return "";
+        }),
+      ),
+    );
+    const { reply } = yield* socksConnect(proxyPort, "localhost", addressPort(decoy.server));
+    expect(reply[1]).toBe(0);
+    expect(endpoint.requests.length).toBe(1);
+    expect(decoy.connections()).toBe(0);
+    expect(commands).toEqual([]);
   }),
 );
 

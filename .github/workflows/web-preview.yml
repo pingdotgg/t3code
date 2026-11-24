@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: web-preview-${{ github.event.pull_request.number }}
@@ -39,11 +38,9 @@ jobs:
       (github.event.action != 'labeled' || github.event.label.name == 'preview:web')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -54,6 +51,8 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
+      # The Vercel CLI imports @vercel/config from here to read apps/web/vercel.ts.
+      # No dependency lifecycle script runs in this job.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
@@ -61,12 +60,18 @@ jobs:
           cache: true
           run-install: |
             args:
+              - --ignore-scripts
               - --filter=@t3tools/scripts...
               - --filter=@t3tools/web...
 
       - id: deploy
         name: Deploy preview
         shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
         run: |
           set -euo pipefail
 

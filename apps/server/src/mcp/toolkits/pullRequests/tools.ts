@@ -38,6 +38,7 @@ import {
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
 } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
@@ -181,6 +182,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
   PullRequestThreadRequiredError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
@@ -374,7 +376,7 @@ const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
 
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   description:
-    "List a thread's PRs, with last known state and stack order (bottom to top). Not an end-of-work check.",
+    "List thread PRs and last known states in stack order, bottom to top. Check readiness separately.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
@@ -403,7 +405,7 @@ const WatchPullRequestInput = Schema.Struct({
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, conflicts, and once on merge or close unless you did it via CLI. Handle old comments first; only new ones wake you. After this call, end your turn. The watch stays on: do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+    "Watch and link an open PR. Handle existing comments first. End your turn after calling. The watch persists across wakes. T3 wakes on failed checks, passed required checks, new comments or reviews, conflicts, and merge or close unless you did it via CLI. Check readiness before merging.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
@@ -765,10 +767,11 @@ export type ReviewLineComment = typeof ReviewLineComment.Type;
 
 const ReviewPullRequestTool = Tool.make("pull_request_review", {
   description:
-    "Submit a review: approve, request changes, or comment, with optional line comments.",
+    "Approve, request changes, or comment with optional line comments. Approving requires expectedHeadSha from pull_request_read. Refuses a moved head.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     verdict: PullRequestReviewVerdict,
+    expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
     body: Schema.optional(Schema.String),
     comments: Schema.optional(Schema.Array(ReviewLineComment).check(Schema.isMaxLength(50))),
   }),
@@ -797,7 +800,7 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
     ),
     stack: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge this PR and every open stack layer below it at once. Not with auto.",
+        description: "Merge this PR and every open stack layer below it at once.",
       }),
     ),
   }),

@@ -262,9 +262,14 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
     if (this.action === "preview-config" || this.action === "apply-config") {
       if (this.reason === "unsupported-session")
         return "Config setup requires a Niri or Hyprland session.";
-      return this.action === "preview-config"
-        ? "Couldn't prepare your capture shortcut changes."
-        : "Couldn't save your capture shortcut.";
+      const summary =
+        this.action === "preview-config"
+          ? "Couldn't prepare your capture shortcut changes."
+          : "Couldn't save your capture shortcut.";
+      // Only the message crosses IPC, and the config steps throw the reason the user needs.
+      return this.cause instanceof Error && this.cause.message
+        ? `${summary} ${this.cause.message}`
+        : summary;
     }
     const kde = this.action === "install-kde-helper" || this.action === "remove-kde-helper";
     const hyprland =
