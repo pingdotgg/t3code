@@ -1,8 +1,15 @@
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  ACP_REGISTRY_MAX_AGENTS,
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+} from "@t3tools/contracts";
+import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
+import { Dialog, DialogPopup } from "../ui/dialog";
 
 const state = vi.hoisted(() => ({
   result: null as { readonly agents: ReadonlyArray<AcpRegistrySearchAgent> } | null,
@@ -141,4 +148,77 @@ it("leaves out Registry agents that T3 Code supports as their own providers", as
 
   expect(page.getByRole("button", { name: "Add Gemini CLI" }).query()).not.toBeNull();
   expect(page.getByRole("button", { name: "Add Codex" }).query()).toBeNull();
+});
+
+function DialogStep() {
+  const [open, setOpen] = useState(true);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogPopup aria-label="Add provider">
+        <Step />
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+it("clears the registry search on Esc without closing the Add provider dialog", async () => {
+  setup();
+  await using _screen = await render(<DialogStep />);
+  const dialog = page.getByRole("dialog", { name: "Add provider" });
+  const search = page.getByRole("searchbox", { name: "Search ACP Registry" });
+  await expect.element(search).toBeVisible();
+
+  await userEvent.fill(search, "gemini");
+  await vi.waitFor(() => {
+    expect(state.search).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { query: "gemini" },
+    });
+  });
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    // Safari ends the composition just before the Escape keydown.
+    await act(() => {
+      search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search
+        .element()
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { ...composition, bubbles: true, cancelable: true }),
+        );
+    });
+    await expect.element(search).toHaveValue("gemini");
+    await expect.element(dialog).toHaveAttribute("data-open");
+  }
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).toHaveValue("");
+  await expect.element(search).toHaveFocus();
+  await expect.element(search).toHaveAttribute("type", "text");
+  expect(state.search).toHaveBeenLastCalledWith({
+    environmentId,
+    input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
+  });
+  await expect.element(dialog).toHaveAttribute("data-open");
+
+  await userEvent.fill(search, "   ");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).toHaveValue("");
+  await expect.element(search).toHaveFocus();
+  // Holding Escape repeats the keydown, which must not also close the dialog.
+  await act(() => {
+    search.element().dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await expect.element(dialog).toHaveAttribute("data-open");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(dialog).not.toBeInTheDocument();
 });
