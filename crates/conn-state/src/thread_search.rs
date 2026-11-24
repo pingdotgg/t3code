@@ -427,6 +427,40 @@ pub struct SettledSearch {
     pub matches: Vec<Match>,
 }
 
+/// One environment's answer to a message search, or why it gave none.
+pub type EnvironmentSearchResult = Result<Vec<Match>, String>;
+
+/// The matches of every environment searched, as Conn merges them (`useThreadSearch` asks each
+/// connected environment): an environment that fails is left out while another answers, and the
+/// whole search fails only when every environment failed. A thread found by more than one
+/// environment keeps its first match per snippet, in the order the answers are given.
+///
+/// # Errors
+/// Returns the first error when every environment failed (or none was searched).
+pub fn merge_environment_matches(
+    answers: Vec<EnvironmentSearchResult>,
+) -> Result<Vec<Match>, String> {
+    let mut merged: Vec<Match> = Vec::new();
+    let mut first_error: Option<String> = None;
+    let mut answered = false;
+    for answer in answers {
+        match answer {
+            Ok(matches) => {
+                answered = true;
+                merged.extend(matches);
+            }
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if answered {
+        Ok(merged)
+    } else {
+        Err(first_error.unwrap_or_else(|| "no environment to search".to_owned()))
+    }
+}
+
 /// `visibleThreadSearch`: the new results once they arrive, else the last ones while the query
 /// only refines or widens theirs, so rows do not blink out and back on every key.
 #[must_use]
@@ -694,5 +728,39 @@ mod tests {
             merge_results(&keys(&["t1", "t2"]), &keys(&["m1", "t2", "m2"])),
             ["t1", "t2", "m1", "m2"]
         );
+    }
+
+    #[test]
+    fn environments_answer_together_and_one_failing_does_not_fail_the_search() {
+        let found = |thread: &str| -> Match {
+            conn_contract::from_json(serde_json::json!({
+                "threadId": thread,
+                "projectId": "p",
+                "source": "user",
+                "snippet": "stalled orbit threads",
+                "messageCreatedAt": "2026-11-23T09:00:00.000Z"
+            }))
+            .expect("a match decodes")
+        };
+        let both =
+            merge_environment_matches(vec![Ok(vec![found("t-nick")]), Ok(vec![found("t-mini")])])
+                .expect("answered");
+        assert_eq!(
+            both.iter()
+                .map(|m| m.thread_id.as_str())
+                .collect::<Vec<_>>(),
+            ["t-nick", "t-mini"]
+        );
+        let one_down = merge_environment_matches(vec![
+            Ok(vec![found("t-nick")]),
+            Err("mini unreachable".to_owned()),
+        ])
+        .expect("one answered");
+        assert_eq!(one_down.len(), 1);
+        assert_eq!(
+            merge_environment_matches(vec![Err("a".to_owned()), Err("b".to_owned())]),
+            Err("a".to_owned())
+        );
+        assert!(merge_environment_matches(vec![]).is_err());
     }
 }

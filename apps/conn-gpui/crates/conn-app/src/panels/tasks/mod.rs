@@ -201,6 +201,8 @@ pub(crate) struct TasksPanel {
     insights_scroll: ScrollHandle,
     lanes_scroll: ScrollHandle,
     detail_scroll: ScrollHandle,
+    /// Whether the last detail frame had its bottom spacing (see `detail::bottom_padding`).
+    detail_padded: Cell<bool>,
     now_ms: i64,
     _subscriptions: Vec<Subscription>,
 }
@@ -265,6 +267,7 @@ impl TasksPanel {
             insights_scroll: ScrollHandle::new(),
             lanes_scroll: ScrollHandle::new(),
             detail_scroll: ScrollHandle::new(),
+            detail_padded: Cell::new(false),
             now_ms: now_epoch_ms(),
             _subscriptions: vec![search_sub],
         };
@@ -709,6 +712,7 @@ impl Render for TasksPanel {
                     self.list_title_for(task_id),
                     self.detail_notice.as_deref(),
                     &self.detail_scroll,
+                    &self.detail_padded,
                     callbacks,
                 )
             } else {

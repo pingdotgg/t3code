@@ -51,7 +51,7 @@ pub use conn_contract::{
 
 use crate::timeline::{
     TurnCheckpointFile, UserInputAnswer, UserInputOption, UserInputQuestion,
-    format_subagent_display_title, proposed_plan_title, subagent_detail,
+    format_subagent_display_title, proposed_plan_title, subagent_detail_markdown,
 };
 
 const WORKSPACE_PREPARATION_INPUT: &str = "Preparing workspace";
@@ -370,6 +370,54 @@ impl ApprovalDetails {
             options: item.options.clone(),
         }
     }
+}
+
+/// A pending approval of a child thread, as its parent's chat shows it (`ChildThreadApproval`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChildApproval {
+    /// The child thread; `runtime-request.respond` goes to it.
+    pub thread_id: String,
+    pub title: String,
+    pub request_id: String,
+    /// What the card shows as the command: the prompt, else the request kind
+    /// (`approval.detail || approval.requestKind`).
+    pub detail: String,
+    pub details: ApprovalDetails,
+    /// See [`PendingRequest::answerable`].
+    pub answerable: bool,
+}
+
+/// The pending approvals of `children`, from each child's own thread state, in child order
+/// (`childThreadApprovalsAtom`). A child whose thread has not synchronized yet adds none.
+#[must_use]
+pub fn child_approvals(
+    children: &[crate::shell::ChildApprovalThread],
+    threads: &HashMap<String, ThreadState>,
+) -> Vec<ChildApproval> {
+    let mut approvals = Vec::new();
+    for child in children {
+        let Some(thread) = threads.get(&child.id) else {
+            continue;
+        };
+        for approval in thread.pending_approvals() {
+            let Some(details) = thread.approval_details(&approval.entry_id) else {
+                continue;
+            };
+            let detail = details
+                .prompt
+                .clone()
+                .unwrap_or_else(|| request_kind_label(details.request_kind).to_owned());
+            approvals.push(ChildApproval {
+                thread_id: child.id.clone(),
+                title: child.title.clone(),
+                request_id: approval.request_id,
+                detail,
+                details: details.clone(),
+                answerable: approval.answerable,
+            });
+        }
+    }
+    approvals
 }
 
 /// Where an assistant message or a question sits in its run (`assistantMessageIdsBeforeQuestion`).
@@ -1842,7 +1890,8 @@ fn map_dynamic_tool(item: DynamicToolItem) -> Option<TimelineEntry> {
 fn map_subagent(item: SubagentItem) -> Option<TimelineEntry> {
     let title =
         format_subagent_display_title(non_empty(item.title).as_deref().unwrap_or("Subagent"));
-    let summary = subagent_detail(
+    // The card renders the Markdown; clients that cannot flatten it with `plain_subagent_detail`.
+    let summary = subagent_detail_markdown(
         item.status,
         item.progress.as_deref(),
         item.result.as_deref(),
