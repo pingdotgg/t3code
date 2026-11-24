@@ -2079,7 +2079,7 @@ it.effect("stopping the parent stops its task there", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("thread.stop enqueues delegated-tasks.stop for remote-only delegated tasks", () =>
+it.effect("the parent's Stop queues stopping a task that runs only there", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
