@@ -1,6 +1,13 @@
 const assert = require("node:assert/strict");
 const { execFileSync, spawnSync } = require("node:child_process");
-const { mkdtempSync, readFileSync, rmSync } = require("node:fs");
+const {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { test } = require("node:test");
@@ -51,7 +58,10 @@ for (const path of mobileWorkflows) {
   test(`${path}: no job that installs or builds can push to the repository`, () => {
     for (const [name, block] of Object.entries(jobs(path))) {
       if (/^ {4}uses: /m.test(block)) continue;
-      const writes = /contents: write|record-build-tag|create-github-app-token/.test(block);
+      const writes = /contents: write|write-all|record-build-tag|create-github-app-token/.test(
+        block,
+      );
+      assert.match(block, /^ {4}permissions:\n/m, `${name} declares its permissions`);
       assert.ok(!(writes && runsProjectCode(block)), `${name} holds a write token and runs code`);
     }
   });
@@ -87,7 +97,7 @@ const recordScript = read("actions/record-build-tag/action.yml")
   .replace(/^ {8}/gm, "")
   .replace(/^remote=.*$/m, 'remote="$TEST_REMOTE"');
 
-function recordTag(commitOf) {
+function recordTag(commitOf, failedFetches = 0) {
   const directory = mkdtempSync(join(tmpdir(), "t3-record-tag-"));
   const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
   try {
@@ -117,11 +127,25 @@ function recordTag(commitOf) {
     shas.elsewhere = commit("not on main");
     git(work, "push", "--quiet", remote, "HEAD:refs/heads/other");
     git(work, "checkout", "--quiet", "main");
+    // The first fetches fail, and the waits between attempts are skipped.
+    const bin = join(directory, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/bash\nif [ "$1" = fetch ] && [ "$(wc -l < "$FETCHES")" -lt "$FAILED_FETCHES" ]; then echo x >> "$FETCHES"; exit 1; fi\nexec "$REAL_GIT" "$@"\n`,
+    );
+    writeFileSync(join(bin, "sleep"), "#!/bin/bash\n");
+    chmodSync(join(bin, "git"), 0o755);
+    chmodSync(join(bin, "sleep"), 0o755);
+    writeFileSync(join(directory, "fetches"), "");
     const result = spawnSync("bash", ["-c", recordScript], {
       cwd: work,
       encoding: "utf8",
       env: {
-        PATH: process.env.PATH,
+        PATH: `${bin}:${process.env.PATH}`,
+        REAL_GIT: execFileSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
+        FETCHES: join(directory, "fetches"),
+        FAILED_FETCHES: String(failedFetches),
         HOME: directory,
         TEST_REMOTE: remote,
         GITHUB_REF: "refs/heads/main",
@@ -141,6 +165,9 @@ function recordTag(commitOf) {
 test("the build record tags the named commit only when it is on the workflow's ref", () => {
   const onRef = recordTag((shas) => shas.first);
   assert.deepEqual([onRef.status, onRef.tagged], [0, onRef.shas.first]);
+  const retried = recordTag((shas) => shas.first, 2);
+  assert.deepEqual([retried.status, retried.tagged], [0, retried.shas.first]);
+  assert.equal(recordTag((shas) => shas.first, 3).status, 1);
   const head = recordTag(() => "");
   assert.deepEqual([head.status, head.tagged], [0, head.shas.head]);
   for (const commitOf of [(shas) => shas.elsewhere, () => "main", () => "0".repeat(40)]) {
@@ -200,15 +227,15 @@ const consume = new (Object.getPrototypeOf(async () => {}).constructor)(
   consumeScript,
 );
 
-async function runConsume(permission, removeStatus) {
+async function runConsume(permission, removeStatus, removed = []) {
   const outputs = {};
-  const removed = [];
   await consume(
     {
       rest: {
         repos: {
           async getCollaboratorPermissionLevel({ username }) {
             assert.equal(username, "labeler");
+            if (permission === undefined) throw Object.assign(new Error("denied"), { status: 403 });
             return { data: { permission } };
           },
         },
@@ -248,6 +275,12 @@ for (const [permission, consumed] of [
     });
   });
 }
+
+test("a fork preview label is removed even when the access lookup fails", async () => {
+  const removed = [];
+  await assert.rejects(runConsume(undefined, undefined, removed), { status: 403 });
+  assert.deepEqual(removed, ["deploy"]);
+});
 
 test("a fork preview label removed before the run builds nothing", async () => {
   assert.deepEqual(await runConsume("admin", 404), { outputs: { consumed: "false" }, removed: [] });
