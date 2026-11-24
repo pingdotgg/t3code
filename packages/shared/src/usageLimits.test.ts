@@ -1149,6 +1149,52 @@ describe("pools", () => {
       "env-a:hub:a",
       "env-a:hub:b",
     ]);
+
+    // Changing reset order must preserve the rounded percentages for the same readings.
+    for (const { readings, used, left } of [
+      { readings: [94, 94.3, 97.9, 99.8], used: 97, left: 4 },
+      { readings: [70, 87, 85.50000000000001, 1e-30, 1e-30], used: 49, left: 51 },
+    ]) {
+      const resetTimes = readings.map((_, index) => `2026-09-03T1${3 + index}:00:00.000Z`);
+      for (const order of [resetTimes, [...resetTimes].reverse()]) {
+        const [pooled] = collectLimitPools(
+          readings.map((usedPercent, index) => ({
+            key: `pooled-${index}`,
+            driver: claude,
+            displayName: `Pooled ${index}`,
+            email: undefined,
+            plan: undefined,
+            accentColor: undefined,
+            environments: [],
+            sourceLabel: null,
+            redeem: null,
+            limits: { checkedAt, windows: [{ ...window, usedPercent, resetsAt: order[index] }] },
+          })),
+          now,
+        );
+        expect(pooled?.windows[0]).toMatchObject({ usedPercent: used, remainingPercent: left });
+      }
+    }
+    // A real mean just past the tie keeps its precision: 96.5000000001% used leaves 3%.
+    const [weighted] = collectLimitPools(
+      [
+        { plan: "Max", usedPercent: 96.5 },
+        { plan: "Ultra", usedPercent: 96.500000000125 },
+      ].map(({ plan, usedPercent }, index) => ({
+        key: `weighted-${index}`,
+        driver: claude,
+        displayName: `Weighted ${index}`,
+        email: undefined,
+        plan,
+        accentColor: undefined,
+        environments: [],
+        sourceLabel: null,
+        redeem: null,
+        limits: { checkedAt, windows: [{ ...window, usedPercent }] },
+      })),
+      now,
+    );
+    expect(weighted?.windows[0]?.remainingPercent).toBe(3);
   });
 });
 
