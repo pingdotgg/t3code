@@ -537,6 +537,11 @@ uint64_t uniffi_conn_ffi_fn_method_offlinereader_recent(uint64_t ptr, RustBuffer
 uint64_t uniffi_conn_ffi_fn_method_offlinereader_saved_shell(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_OFFLINEREADER_SERVER_BEFORE
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_OFFLINEREADER_SERVER_BEFORE
+uint64_t uniffi_conn_ffi_fn_method_offlinereader_server_before(uint64_t ptr, RustBuffer thread, RustBuffer anchor, RustBuffer continuation, RustBuffer snapshot_cursor
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_ORBITCORE
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_ORBITCORE
 uint64_t uniffi_conn_ffi_fn_clone_orbitcore(uint64_t handle, RustCallStatus *_Nonnull out_status
@@ -1287,6 +1292,12 @@ uint16_t uniffi_conn_ffi_checksum_method_offlinereader_recent(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_OFFLINEREADER_SAVED_SHELL
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_OFFLINEREADER_SAVED_SHELL
 uint16_t uniffi_conn_ffi_checksum_method_offlinereader_saved_shell(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_OFFLINEREADER_SERVER_BEFORE
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_OFFLINEREADER_SERVER_BEFORE
+uint16_t uniffi_conn_ffi_checksum_method_offlinereader_server_before(void
     
 );
 #endif

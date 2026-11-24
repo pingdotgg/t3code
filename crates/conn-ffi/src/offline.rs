@@ -231,6 +231,44 @@ impl OfflineReader {
         let page = self.connection.fetch_thread_window(&thread, &id).await?;
         let mut state = ThreadState::new(thread);
         state.prepend_history_page(page);
+        let mut snapshot = build_thread_snapshot(&state, None);
+        snapshot.server_page = true;
+        Ok(snapshot)
+    }
+
+    pub async fn server_before(
+        &self,
+        thread: String,
+        anchor: String,
+        continuation: Option<String>,
+        snapshot_cursor: Option<String>,
+    ) -> Result<FfiThreadSnapshot, FfiError> {
+        let mut state = ThreadState::new(&thread);
+        let page = if let Some(cursor) = continuation {
+            self.connection
+                .fetch_thread_history_page(&thread, &cursor)
+                .await?
+        } else {
+            let cursor = match snapshot_cursor {
+                Some(cursor) => Some(cursor),
+                None => self
+                    .db
+                    .outline(&self.env, &thread)
+                    .await
+                    .map_err(read_error)?
+                    .map(|json| serde_json::from_str::<SavedOutline>(&json))
+                    .transpose()
+                    .map_err(read_error)?
+                    .and_then(|saved| saved.stamp.cursor),
+            };
+            let Some(cursor) = cursor else {
+                return Ok(build_thread_snapshot(&state, None));
+            };
+            self.connection
+                .fetch_history_before_message(&thread, &cursor, &anchor)
+                .await?
+        };
+        state.prepend_history_page(page);
         Ok(build_thread_snapshot(&state, None))
     }
 

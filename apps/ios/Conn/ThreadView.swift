@@ -20,6 +20,10 @@ struct ThreadView: View {
     @State private var historyNotice: String?
     @State private var scrollTarget: String?
     @State private var historyRequest = UUID()
+    @State private var visibleRow: String?
+    @State private var paging = false
+    @State private var pageExhausted = false
+    @State private var userScrolling = false
     @State private var stickToBottom = true
     @State private var settled: Bool
     @State private var showingRename = false
@@ -224,6 +228,8 @@ struct ThreadView: View {
 
     private func latest() {
         historyRequest = UUID()
+        paging = false
+        pageExhausted = false
         readingWindow = nil
         historyNotice = nil
         stickToBottom = true
@@ -231,32 +237,65 @@ struct ThreadView: View {
     }
 
     private func readHistory(prompt: String? = nil) {
-        guard let reader = store.offlineReader else { return }
+        guard let reader = store.offlineReader, var current = snapshot else { return }
+        if prompt == nil && (paging || pageExhausted) { return }
         let request = UUID()
         historyRequest = request
-        let first = snapshot?.entries.first(where: {
-            switch $0 { case .user, .assistant: true; default: false }
-        })?.entryId
+        paging = true
         let online = store.status == .connected
         Task {
+            defer { if request == historyRequest { paging = false } }
+            defer { if request == historyRequest { paging = false } }
             do {
-                let window: FfiThreadSnapshot
                 if let prompt {
-                    window = try await reader.promptWindow(thread: threadId, id: prompt, online: online)
-                } else if let first {
-                    window = try await reader.before(thread: threadId, id: first)
+                    let window = try await reader.promptWindow(thread: threadId, id: prompt, online: online)
+                    guard request == historyRequest, store.offlineReader === reader,
+                          store.openThreadId == threadId else { return }
+                    pageExhausted = window.serverPage && window.historyCursor == nil
+                    stickToBottom = false
+                    readingWindow = window
+                    scrollTarget = "e:" + prompt
                 } else {
-                    window = try await reader.recent(thread: threadId)
-                }
-                guard request == historyRequest, store.openThreadId == threadId else { return }
-                guard !window.entries.isEmpty else {
-                    historyNotice = "No older saved messages."
-                    return
+                    guard let first = current.entries.first(where: {
+                        switch $0 { case .user, .assistant: true; default: false }
+                    })?.entryId ?? current.entries.first?.entryId else { return }
+                    var older: [FfiTimelineEntry] = []
+                    if !current.serverPage {
+                        older = try await reader.before(thread: threadId, id: first).entries
+                    }
+                    if older.isEmpty {
+                        guard online else {
+                            if request == historyRequest { historyNotice = "Reconnect to load earlier messages." }
+                            return
+                        }
+                        var visited = Set<String>()
+                        repeat {
+                            guard request == historyRequest, store.offlineReader === reader,
+                                  store.openThreadId == threadId else { return }
+                            if current.serverPage && current.historyCursor == nil { break }
+                            let atLiveBoundary = store.openThread?.entries.first?.entryId == first
+                            let cursor = current.serverPage ? current.historyCursor
+                                : (atLiveBoundary ? store.openThread?.historyCursor : nil)
+                            if let cursor, !visited.insert(cursor).inserted { break }
+                            let page = try await reader.serverBefore(
+                                thread: threadId, anchor: first, continuation: cursor,
+                                snapshotCursor: store.openThread?.historyCursor
+                            )
+                            older = page.entries
+                            current.serverPage = true
+                            current.historyCursor = page.historyCursor
+                            current.workGroups.insert(contentsOf: page.workGroups, at: 0)
+                        } while older.isEmpty
+                    }
+                    guard request == historyRequest, store.offlineReader === reader,
+                          store.openThreadId == threadId else { return }
+                    var ids = Set(current.entries.map(\.entryId))
+                    current.entries.insert(contentsOf: older.filter { ids.insert($0.entryId).inserted }, at: 0)
+                    pageExhausted = current.serverPage && current.historyCursor == nil
+                    stickToBottom = false
+                    readingWindow = current
                 }
                 historyNotice = nil
-                stickToBottom = false
-                readingWindow = window
-                scrollTarget = "e:" + (prompt ?? window.entries.last!.entryId)
             } catch {
                 guard request == historyRequest else { return }
                 historyNotice = error.localizedDescription
@@ -283,8 +322,9 @@ struct ThreadView: View {
                     }
 
                     if let snapshot {
-                        if !snapshot.entries.isEmpty, store.offlineReader != nil {
+                        if !snapshot.entries.isEmpty, store.offlineReader != nil, !pageExhausted {
                             Button("Earlier messages") { readHistory() }
+                                .disabled(paging)
                                 .font(.kitDetail)
                         }
                         if snapshot.entries.isEmpty {
@@ -334,12 +374,26 @@ struct ThreadView: View {
                         .frame(height: 1)
                         .id("timeline-bottom")
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, Kit.contentInset)
                 .padding(.top, Kit.Space.m)
                 .padding(.bottom, Kit.Space.l)
             }
             .background(theme.background.ignoresSafeArea())
             .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .scrollPosition(id: $visibleRow, anchor: .top)
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { userScrolling = true }
+                if phase == .idle || phase == .animating { userScrolling = false }
+            }
+            .onScrollGeometryChange(for: Int.self) { geometry in
+                Int(min(160, geometry.contentOffset.y + geometry.contentInsets.top))
+            } action: { previous, offset in
+                if userScrolling && offset < previous && !paging {
+                    userScrolling = false
+                    readHistory()
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .onScrollGeometryChange(for: Bool.self) { geo in
                 let maxOffset = max(0, geo.contentSize.height - geo.containerSize.height)

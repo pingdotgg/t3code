@@ -1934,6 +1934,8 @@ public protocol OfflineReaderProtocol: AnyObject, Sendable {
     
     func savedShell() async  -> FfiShellSnapshot?
     
+    func serverBefore(thread: String, anchor: String, continuation: String?, snapshotCursor: String?) async throws  -> FfiThreadSnapshot
+    
 }
 open class OfflineReader: OfflineReaderProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -2066,6 +2068,22 @@ open func savedShell()async  -> FfiShellSnapshot?  {
             liftFunc: FfiConverterOptionTypeFfiShellSnapshot.lift,
             errorHandler: nil
             
+        )
+}
+    
+open func serverBefore(thread: String, anchor: String, continuation: String?, snapshotCursor: String?)async throws  -> FfiThreadSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_server_before(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(thread),FfiConverterString.lower(anchor),FfiConverterOptionString.lower(continuation),FfiConverterOptionString.lower(snapshotCursor)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiThreadSnapshot_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
         )
 }
     
@@ -7858,6 +7876,8 @@ public func FfiConverterTypeFfiThemeTokens_lower(_ value: FfiThemeTokens) -> Rus
  * Point-in-time snapshot of one subscribed thread emitted to [`crate::CoreListener::on_thread`].
  */
 public struct FfiThreadSnapshot: Equatable, Hashable {
+    public var historyCursor: String?
+    public var serverPage: Bool
     public var threadId: String
     public var title: String?
     public var branch: String?
@@ -7881,7 +7901,7 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool, 
+    public init(historyCursor: String?, serverPage: Bool, threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool, 
         /**
          * Approvals still waiting for an answer, in timeline order; the card above the composer
          * shows the first (Conn mobile's `activePendingApproval`).
@@ -7890,6 +7910,8 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
          * The question the panel above the composer asks; `entries` leaves its row out, since the
          * panel shows it (Conn mobile's `feedWithoutOpenQuestionRow`).
          */pendingQuestion: FfiPendingQuestion?) {
+        self.historyCursor = historyCursor
+        self.serverPage = serverPage
         self.threadId = threadId
         self.title = title
         self.branch = branch
@@ -7920,6 +7942,8 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiThreadSnapshot {
         return
             try FfiThreadSnapshot(
+                historyCursor: FfiConverterOptionString.read(from: &buf), 
+                serverPage: FfiConverterBool.read(from: &buf), 
                 threadId: FfiConverterString.read(from: &buf), 
                 title: FfiConverterOptionString.read(from: &buf), 
                 branch: FfiConverterOptionString.read(from: &buf), 
@@ -7936,6 +7960,8 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: FfiThreadSnapshot, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.historyCursor, into: &buf)
+        FfiConverterBool.write(value.serverPage, into: &buf)
         FfiConverterString.write(value.threadId, into: &buf)
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterOptionString.write(value.branch, into: &buf)
@@ -14072,6 +14098,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_offlinereader_saved_shell() != 26240) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_server_before() != 34035) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_orbitcore_bound_profile() != 29553) {
