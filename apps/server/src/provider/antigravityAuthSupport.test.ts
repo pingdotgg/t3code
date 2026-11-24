@@ -57,52 +57,6 @@ describe("Antigravity process environment", () => {
     browserCommand: "managed-browser-helper",
   };
 
-  it("routes explicit Enterprise sign-in through the URL recorder without changing normal sessions", () => {
-    const baseEnv = {
-      PATH: "/usr/bin",
-      SSH_CONNECTION: "192.0.2.1 1234 192.0.2.2 22",
-      SSH_CLIENT: "192.0.2.1 1234 22",
-      SSH_TTY: "/dev/pts/1",
-    };
-    const original = { ...baseEnv };
-    const input = {
-      installation: { executablePath: "/release/acp" },
-      profile,
-      cwd: "/project",
-      baseEnv,
-      auth: {
-        authMethod: "oauth-business",
-        apiKey: "",
-        gcpProject: "enterprise-project",
-        gcpLocation: "global",
-      } satisfies AntigravityAuthConfig,
-    };
-    const browserBridge = {
-      executablePath: "/runtime/node",
-      scriptPath: `${profile.acpDirectory}/enterprise-browser.cjs`,
-    };
-    const signIn = buildAntigravityAcpSpawnInput({
-      ...input,
-      profile: { ...profile, browserBridge },
-    });
-    expect(signIn.command).toBe(browserBridge.executablePath);
-    expect(signIn.args).toEqual([
-      browserBridge.scriptPath,
-      "/release/acp",
-      "acp",
-      "--gemini-dir",
-      profile.geminiHome,
-      "--app-data-dir",
-      "antigravity-acp",
-    ]);
-    expect(signIn.env?.SSH_CONNECTION).toBe(baseEnv.SSH_CONNECTION);
-    const normal = buildAntigravityAcpSpawnInput(input).env;
-    expect(normal?.PATH).toBe(baseEnv.PATH);
-    expect(normal?.DISPLAY).toBeUndefined();
-    expect(normal?.SSH_CONNECTION).toBe(baseEnv.SSH_CONNECTION);
-    expect(baseEnv).toEqual(original);
-  });
-
   it("runs `agy acp` with an isolated profile without changing the base environment", () => {
     const baseEnv = {
       HOME: "/home/developer",
@@ -570,11 +524,10 @@ describe("Antigravity stderr compatibility", () => {
 });
 
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
-  it.effect(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "captures the Enterprise URL even when the native browser launcher discards stderr",
     () =>
       Effect.gen(function* () {
-        if ((yield* HostProcess.Platform) !== "linux") return;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

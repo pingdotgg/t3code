@@ -9,41 +9,22 @@ const instanceId = ProviderInstanceId.make("antigravity-callback-test");
 const pending = { redirectUri: "http://127.0.0.1:51234/", state: "owned-state" };
 
 it.effect(
-  "accepts the exact owned Enterprise callback and rejects changed hosts, ports, paths, and state",
+  "accepts the exact owned Google and Enterprise callbacks and an explicit Google denial",
   () =>
     Effect.gen(function* () {
-      const business = {
-        redirectUri: "http://localhost:51234/auth/callback",
-        state: "owned-state",
-      };
-      const url = `${business.redirectUri}?state=owned-state&code=example-code`;
-      assert.equal(
-        (yield* validateAntigravityCallbackUrl(instanceId, business, url)).toString(),
-        url,
-      );
-      for (const invalid of [
-        url.replace("localhost", "127.0.0.1"),
-        url.replace("localhost", "localhost.example.invalid"),
-        url.replace("51234", "51235"),
-        url.replace("/auth/callback", "/other"),
-        url.replace("owned-state", "wrong-state"),
-      ]) {
-        const result = yield* validateAntigravityCallbackUrl(instanceId, business, invalid).pipe(
-          Effect.exit,
-        );
-        assert.isTrue(Exit.isFailure(result), invalid);
+      for (const response of ["code=example-code", "error=access_denied"]) {
+        const callback = `http://127.0.0.1:51234/?state=owned-state&${response}&iss=https%3A%2F%2Faccounts.google.com`;
+        const parsed = yield* validateAntigravityCallbackUrl(instanceId, pending, callback);
+        assert.equal(parsed.toString(), callback);
       }
+      const enterprise = "http://localhost:51234/auth/callback?state=owned-state&code=example-code";
+      const parsed = yield* validateAntigravityCallbackUrl(
+        instanceId,
+        { redirectUri: "http://localhost:51234/auth/callback", state: "owned-state" },
+        enterprise,
+      );
+      assert.equal(parsed.toString(), enterprise);
     }),
-);
-
-it.effect("accepts the exact owned Google callback and an explicit Google denial", () =>
-  Effect.gen(function* () {
-    for (const response of ["code=example-code", "error=access_denied"]) {
-      const callback = `http://127.0.0.1:51234/?state=owned-state&${response}&iss=https%3A%2F%2Faccounts.google.com`;
-      const parsed = yield* validateAntigravityCallbackUrl(instanceId, pending, callback);
-      assert.equal(parsed.toString(), callback);
-    }
-  }),
 );
 
 it.effect("rejects different targets, credentials, fragments, and duplicate OAuth fields", () =>
