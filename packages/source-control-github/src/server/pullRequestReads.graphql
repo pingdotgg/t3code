@@ -381,8 +381,8 @@ query PullRequestNodeId($owner: String!, $name: String!, $number: Int!) {
 }
 
 # Where a client-given subject actually hangs: the pull request itself, or the pull request an
-# issue comment, a review comment, or a review belongs to. Read before a mutation reaches it, so a
-# subject named for one pull request cannot write on another's behalf.
+# issue comment, a review comment, a review, or a review thread belongs to. Read before a mutation
+# reaches it, so a subject named for one pull request cannot write on another's behalf.
 query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjectId: ID!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -396,7 +396,7 @@ query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjec
         id
       }
     }
-    # Aliased apart: an issue comment's pull request is nullable, the other two are not.
+    # Aliased apart: an issue comment's pull request is nullable, the other three are not.
     ... on PullRequestReviewComment {
       reviewCommentPullRequest: pullRequest {
         id
@@ -404,6 +404,11 @@ query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjec
     }
     ... on PullRequestReview {
       reviewPullRequest: pullRequest {
+        id
+      }
+    }
+    ... on PullRequestReviewThread {
+      threadPullRequest: pullRequest {
         id
       }
     }
