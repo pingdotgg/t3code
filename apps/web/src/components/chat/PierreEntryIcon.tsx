@@ -81,11 +81,13 @@ export const PierreEntryIcon = memo(function PierreEntryIcon(props: {
 
   const colors = ICON_COLORS[icon.token ?? "default"] ?? ICON_COLORS.default;
   return (
+    // Firefox maps a selection ending over the <use> to the sprite's <symbol> and collapses
+    // the reader's selection there; unselectable, it snaps to the neighbouring text instead.
     <svg
       aria-hidden="true"
       data-pierre-icon={icon.name}
       data-icon-token={icon.token}
-      className={cn("size-4 shrink-0", props.className)}
+      className={cn("size-4 shrink-0 select-none", props.className)}
       style={{ color: colors?.[props.theme === "light" ? 0 : 1] }}
       viewBox="0 0 16 16"
     >
