@@ -2168,6 +2168,61 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("thread resume replays a deleted thread's deletion and nothing recorded before it", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-10-13T00:00:00.000Z";
+    const threadId = ThreadId.make("thread:deleted-resume");
+    const insert = (version: number, type: string, payload: object) => sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`deleted-resume:${version}`}, 'thread', ${threadId}, ${version}, ${type},
+        ${now}, 'server', ${JSON.stringify(payload)}, '{}', 2
+      )
+    `;
+    const detached = { providerSessionId: "session:deleted-resume", detachedAt: now };
+    yield* insert(0, "provider-session.detached", detached);
+    yield* insert(1, "provider-session.detached", detached);
+    yield* insert(2, "thread.deleted", {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: "project:deleted-resume",
+      title: "Deleted",
+      providerInstanceId: "codex",
+      modelSelection: { instanceId: "codex", model: "default" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: now,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+    });
+
+    const items = yield* subscribeOrchestrationV2Thread({ threadId, afterSequence: 0 }).pipe(
+      Effect.flatMap(Stream.runCollect),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        streamStoredEventsFrom: () => Stream.empty,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+    );
+    assert.deepEqual(
+      Array.from(items).map((item) => item.kind === "event" && item.event.type),
+      ["thread.deleted"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 // A prune pass can delete replayed rows after the boundary check; the read must not be trusted.
 it.effect.each(["thread", "shell"] as const)(
   "%s resume loads a snapshot when pruning advances during the replay read",
