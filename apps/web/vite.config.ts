@@ -140,8 +140,6 @@ const browserTestProject = {
     include: ["src/**/*.browser.test.{ts,tsx}"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
-    // Limit parallel browser pages on smaller CI runners to avoid Chromium OOM disconnects.
-    ...(isCi ? { maxWorkers: 2 } : {}),
     setupFiles: ["./test/browserSetup.ts"],
     api: { port: browserTestApiPort, strictPort: false },
     browser: {
@@ -447,6 +445,8 @@ export default defineConfig(({ command }) => {
     },
     worker: { format: "es" },
     test: {
+      // Limit parallel workers on smaller CI runners to avoid Chromium OOM disconnects.
+      ...(isCi ? { maxWorkers: 2 } : {}),
       projects: [
         defineProject(unitTestProject),
         defineProject(browserTestProject),
