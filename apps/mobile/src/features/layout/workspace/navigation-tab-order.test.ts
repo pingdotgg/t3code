@@ -49,11 +49,15 @@ describe("navigation tab order", () => {
   });
 
   it("shows every real section without overflow and keeps Settings selected during editing", () => {
-    expect(visibleNavigationTabs()).toEqual(NAVIGATION_TAB_ORDER);
-    expect(overflowNavigationTabs()).toEqual([]);
+    // Pull requests and issues share a place, so the bar is always given one of them as hidden.
+    const absent = ["issues"];
+    expect(visibleNavigationTabs(undefined, absent)).toEqual(
+      NAVIGATION_TAB_ORDER.filter((tab) => tab !== "issues"),
+    );
+    expect(overflowNavigationTabs(undefined, absent)).toEqual([]);
     expect(selectedNavigationTab(undefined, "threads", true)).toBe("settings");
-    expect(selectedNavigationTab(undefined, "usage", false)).toBe("usage");
-    expect(selectedNavigationTab(undefined, "usage", false, [], 2)).toBe("settings");
+    expect(selectedNavigationTab(undefined, "usage", false, absent)).toBe("usage");
+    expect(selectedNavigationTab(undefined, "usage", false, absent, 2)).toBe("settings");
   });
 
   it("removes hidden sections from navigation and restores their saved positions", () => {
