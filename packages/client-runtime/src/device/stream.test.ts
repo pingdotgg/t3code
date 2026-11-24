@@ -574,6 +574,24 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("falls back to MJPEG when iOS H.264 keeps arriving but the decoder shows no frame", async () => {
+    const { client, events, videoBodies, decoders } = recoveryFixture("ios", false);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    videoBodies[0]!.enqueue(
+      new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [2])]),
+    );
+    for (let second = 0; second < 16 && events.onMjpegFallback.mock.calls.length === 0; second++) {
+      if (events.onStatus.mock.calls.some(([status]) => status === "error")) break;
+      videoBodies.at(-1)!.enqueue(new Uint8Array(envelope(3, [3])));
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(decoders[0]!.decode).toHaveBeenCalled();
+    expect(events.onMjpegFallback).toHaveBeenCalled();
+    expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+    client.stop();
+  });
+
   it("ignores an old AVCC response rejected after a new attempt is connected", async () => {
     const { client, fetch, events } = recoveryFixture("ios", false);
     let resolveResponse!: (response: Response) => void;
