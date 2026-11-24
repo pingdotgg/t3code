@@ -10244,7 +10244,7 @@
   "cbf6a6bbc17e75e1": "Muestra un aviso cuando otro hilo termina, falla o necesita una respuesta o aprobación mientras la app está en primer plano.",
   "83ca942c7163904f": "Combina los repositorios coincidentes de distintos entornos.",
   "609da998ca13521e": "Orden de los proyectos en el selector de la barra lateral y en la paleta de comandos.",
-  "bb7847ebf0df5ac1": "Agrupa los hilos activos y en seguimiento en la sección En curso y ordena Activos por actividad reciente. Si está desactivado, tú ordenas Activos y las respuestas no mueven los hilos. La barra lateral simple (en Experimentos) no tiene sección En curso.",
+  "bb7847ebf0df5ac1": "Agrupa los hilos en ejecución y en seguimiento en la sección En curso y ordena Activos por actividad reciente. Si está desactivado, tú ordenas Activos y las respuestas no mueven los hilos. La barra lateral simple (en Experimentos) no tiene sección En curso.",
   "e815f49e5abedcfd": "Pregunta antes de desfijar un hilo de la sección de fijados.",
   "41210f99adeeba78": "Pide un segundo clic en la acción de archivar antes de archivar un hilo.",
   "84f3d2cefc8d2a74": "Pregunta antes de eliminar un hilo y su historial de chat.",
