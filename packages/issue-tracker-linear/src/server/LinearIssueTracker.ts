@@ -123,7 +123,7 @@ const CONTENT_BY_EMOJI = new Map(
 
 /** `ENG-123`, or null for anything that is not a Linear identifier. */
 function parseIdentifier(key: string): string | null {
-  return /^[A-Za-z][A-Za-z0-9]*-[1-9]\d*$/.test(key.trim()) ? key.trim().toUpperCase() : null;
+  return /^[A-Za-z0-9]+-[1-9]\d*$/.test(key.trim()) ? key.trim().toUpperCase() : null;
 }
 
 function toState(state: LinearApi.LinearWorkflowState): IssueState {
@@ -436,7 +436,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         const reference =
           input.query === undefined
             ? null
-            : /^(?:([A-Za-z][A-Za-z0-9]*)-|#)?(\d+)$/.exec(input.query.trim());
+            : /^(?:([A-Za-z0-9]+)-|#)?(\d+)$/.exec(input.query.trim());
         const number =
           reference !== null && (reference[1] === undefined || reference[1].toUpperCase() === team)
             ? Number(reference[2])
