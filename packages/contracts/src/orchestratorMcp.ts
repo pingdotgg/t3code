@@ -856,7 +856,7 @@ export const OrchestratorMcpRequestSecretInput = Schema.Struct({
   }),
   fields: Schema.optional(RequestSecretFields).annotate({
     description:
-      'Values only the user has, in one card, e.g. email + password, with delivery "file". Returns `files` by name. Saves only with every field filled: leave out a value that may not be needed rather than marking it optional or asking for "none".',
+      'Values only the user has, in one card, e.g. email + password, with delivery "file". All required; omit any that may not apply.',
   }),
   value: Schema.optional(PastedSecretValue).annotate({
     description: "Pasted in this thread; no card.",
