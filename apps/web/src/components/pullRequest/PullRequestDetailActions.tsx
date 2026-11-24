@@ -5,7 +5,7 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
-import { Branch, T, msg, useGT, useMessages } from "gt-react";
+import { Branch, T, useGT } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
@@ -101,7 +101,6 @@ export function PullRequestCheckoutMenu({
   term: ChangeRequestTermKind;
 }) {
   const gt = useGT();
-  const m = useMessages();
   const [subscribeBranch, setSubscribeBranch] = useState<ReturnType<
     typeof createCheckoutBranchSubscription
   > | null>(null);
@@ -164,9 +163,9 @@ export function PullRequestCheckoutMenu({
             </span>
             <span className="text-xs text-muted-foreground">
               {worktreeBranchAlreadyCheckedOut ? (
-                m(msg("Checked out here"))
+                <T>Checked out here</T>
               ) : checkingBranch ? (
-                m(msg("Checking…"))
+                <T>Checking…</T>
               ) : (
                 <T>Its own folder and thread. Nothing you have open moves.</T>
               )}

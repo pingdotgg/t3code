@@ -6814,6 +6814,7 @@
   "853a77d42f86c918": "Checked out, but the thread stayed where it was",
   "0746dfa692f895cc": "The checkout is ready on `{branch}`. Point a thread at it from the branch picker, then ask again.",
   "88db70a96177d202": "Checked out here",
+  "c9a052ee6afb40d4": "Checked out here",
   "baa66fde3613022b": "Checked out",
   "10feb68552356a08": "This repository is on the {term, select, mr {merge request} cr {change request} other {pull request}}'s branch, with a thread open on it.",
   "c0298c6b34aa5de1": "The {term, select, mr {merge request} cr {change request} other {pull request}} is in its own worktree, with a thread open on it.",

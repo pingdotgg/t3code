@@ -6807,6 +6807,7 @@
   "853a77d42f86c918": "Checkout hecho, pero el hilo se quedó donde estaba",
   "0746dfa692f895cc": "El checkout está listo en `{branch}`. Apunta un hilo a él desde el selector de ramas y vuelve a preguntar.",
   "88db70a96177d202": "Checkout hecho aquí",
+  "c9a052ee6afb40d4": "Checkout hecho aquí",
   "baa66fde3613022b": "Checkout hecho",
   "10feb68552356a08": "Este repositorio está en la rama de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}, con un hilo abierto en ella.",
   "c0298c6b34aa5de1": "La {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} está en su propio worktree, con un hilo abierto en ella.",

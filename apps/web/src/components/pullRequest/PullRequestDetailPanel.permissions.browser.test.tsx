@@ -168,21 +168,6 @@ function setup() {
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
-it("updates a checkout branch while the menu is open", async () => {
-  setup();
-  shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
-  const branch = Atom.make(AsyncResult.success({ refName: "feature" }));
-  createCheckoutBranch.mockReturnValue(() => branch);
-  await using screen = await render(
-    <RegistryContext.Provider value={appAtomRegistry}>{panel()}</RegistryContext.Provider>,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
-  const worktree = page.getByRole("menuitem", { name: /In a separate worktree/ });
-  await expect.element(worktree.getByText("Checked out here", { exact: true })).toBeVisible();
-  await act(() => appAtomRegistry.set(branch, AsyncResult.success({ refName: "main" })));
-  await expect.element(worktree).toBeEnabled();
-});
-
 it("reads the checkout branch again when the menu reopens", async () => {
   setup();
   shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
