@@ -189,6 +189,7 @@ pub(super) fn render_title_header(
         let group = SharedString::from("pr-title-row");
         let mut row = h_flex()
             .id("pr-title-display")
+            .a11y_group("panel.pull-request.title", "Pull request title")
             .group(group.clone())
             .flex_1()
             .min_w_0()
@@ -593,6 +594,7 @@ fn render_actions_menu(
 
     let mut list = v_flex()
         .id("pr-actions-menu-popup")
+        .a11y_group("panel.pull-request.actions-menu", "Pull request actions")
         .min_w(px(220.0))
         .max_w(px(280.0))
         .p(px(4.0))
@@ -1347,6 +1349,7 @@ pub(super) fn render_header_body(
             });
             let mut chip = h_flex()
                 .id(SharedString::from(format!("pr-reviewer-{idx}")))
+                .a11y_group(format!("panel.pull-request.reviewer.{idx}"), "Reviewer")
                 .items_center()
                 .gap(px(4.0))
                 .px(px(6.0))
@@ -1415,6 +1418,7 @@ pub(super) fn render_header_body(
             let (bg, label_fg) = label_chip_colors(tokens, label.color.as_deref());
             let chip = div()
                 .id(SharedString::from(format!("pr-label-{idx}")))
+                .a11y_group(format!("panel.pull-request.label.{idx}"), "Label")
                 .h(px(22.0))
                 .max_w(px(192.0))
                 .px(px(8.0))

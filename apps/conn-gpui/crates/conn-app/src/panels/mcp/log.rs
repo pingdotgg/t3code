@@ -1,5 +1,6 @@
 //! The Log tab of the MCP panel (Conn `McpPanel.tsx` `LogTab` / `LogRow`).
 
+use crate::a11y::ConnA11yExt as _;
 use conn_desktop::mcp::store::McpLogEntry;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -38,6 +39,7 @@ impl McpPanel {
 
         let mut list = v_flex()
             .id("mcp-log-scroll")
+            .a11y_group("panel.mcp.log", "MCP log")
             .track_scroll(&self.log_scroll)
             .flex_1()
             .min_h_0()
@@ -88,6 +90,7 @@ impl McpPanel {
 
             let mut row_button = h_flex()
                 .id(SharedString::from(format!("mcp-log-row-{entry_id}")))
+                .a11y_group(format!("panel.mcp.log-row.{entry_id}"), "MCP log entry")
                 .w_full()
                 .min_w_0()
                 .items_start()

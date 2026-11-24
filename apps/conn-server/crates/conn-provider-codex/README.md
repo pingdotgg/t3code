@@ -18,7 +18,7 @@ mapping.
 | `mapper::subagents` | Subagents: `collabAgentToolCall`, `subAgentActivity`, child threads and turns |
 | `session`  | `Session`: one native thread per session, a driver task, the 50/400 ms text flushes |
 | `text_generation` | `Provider::generate_text`: `codex mcp list`, then `codex exec` (`CodexTextGeneration.ts`) |
-| `status`   | The status probe and the `ServerProvider` entry (`checkCodexProviderStatus`), with the model catalog from T3's manifest (`model_catalog.json`, generated) |
+| `status`   | The status probe and the `ServerProvider` entry (`checkCodexProviderStatus`), with the model catalog from T3's manifest: the one the server accepted last (`conn_provider::LiveManifest`), else the bundled one (`model_catalog.json`, generated) |
 
 Ids, line framing and the process supervisor come from `conn-provider-support`.
 

@@ -99,6 +99,8 @@ async fn run(scenario: &Value) -> Result<(), String> {
             state_dir: state.into(),
             attachments_dir: Some(attachments),
             self_command: Some("/conn-server".into()),
+            model_manifest: Default::default(),
+            status_notifier: Default::default(),
         },
         Some(&entry),
     );

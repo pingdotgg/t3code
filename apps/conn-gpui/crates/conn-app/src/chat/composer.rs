@@ -17,23 +17,26 @@ mod drafts;
 mod footer;
 mod menus;
 mod model_picker;
+mod popovers;
 mod stash;
 
 pub(crate) use self::actions::{FollowUpBehavior, SendDispatch};
 pub(crate) use self::branch_picker::{BranchAction, BranchContext};
 pub(crate) use self::context_meter::ContextWindowSnapshot;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::TestSupportExt as _;
 
 use conn_client::Connection;
 use conn_contract::rpc::projects::search_entries;
-use conn_contract::rpc::server::get_config;
-use conn_contract::{ChatAttachment, ProjectSearchEntriesInput, ServerProbePayload};
+use conn_contract::{ChatAttachment, ProjectSearchEntriesInput};
 use conn_desktop::operator::{DictationStart, DictationWait, OperatorClient};
+use conn_state::providers::ServerConfigState;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{
     Enter, Escape, InputEvent, InputState, MoveDown, MoveUp, Paste, Textarea, TextareaState,
@@ -57,7 +60,7 @@ use self::menus::{
     ComposerTrigger, ComposerTriggerKind, FileMentionEntry, SkillEntry, detect_trigger,
     filter_skills, filter_slash_commands, render_command_menu, replace_trigger,
 };
-use self::model_picker::{ModelCatalog, ModelOption, ModelPickerView, render_model_picker};
+use self::model_picker::{ModelOption, ModelPickerView, render_model_picker};
 use self::stash::{PromptStash, render_stash_badge, render_stash_menu};
 use super::color::{hsla, hsla_alpha};
 use super::composer_state::{
@@ -75,9 +78,10 @@ pub(super) const COMPOSER_MAX_LINES: usize = 8;
 
 /// Composer card corner radius matching Conn's `rounded-2xl` (`16px`).
 const COMPOSER_RADIUS_PX: f32 = 16.0;
-/// Bottom breathing room below the composer card when the context strip is hidden
-/// (`ChatView.tsx:4067` `sm:h-[1.25rem]`).
-const COMPOSER_BOTTOM_SPACER_PX: f32 = 20.0;
+/// Bottom gap below the composer card when the context strip is hidden: the card's bottom
+/// lines up with the bottom of the sidebar's last line (Conn's `sm:h-[1.25rem]` was 4px lower).
+const COMPOSER_BOTTOM_SPACER_PX: f32 =
+    crate::sidebar::thread_list::SIDEBAR_LAST_LINE_BOTTOM_INSET_PX;
 /// Symmetric vertical margin around the `22px` bottom context strip (`9px` top + `9px` bottom)
 /// so the strip sits visually balanced between the composer card and the bottom of the chat card.
 const CONTEXT_STRIP_VERTICAL_MARGIN_PX: f32 = 9.0;
@@ -192,7 +196,8 @@ pub(crate) enum ComposerEvent {
     Branch(BranchAction),
     SlashCommand(String),
     /// `server.getConfig` loaded; carries its `scratchWorkspaceRoot`.
-    ScratchWorkspaceRoot(Option<String>),
+    /// `Open provider setup` for an instance (the picker's notice, Conn's `onOpenProviderSetup`).
+    OpenProviderSetup(String),
 }
 
 /// What the pending question's panel reads from the composer.
@@ -240,20 +245,30 @@ pub(crate) struct Composer {
     preparing_worktree: bool,
     context_window: Option<ContextWindowSnapshot>,
     context_meter_open: bool,
+    /// Hover and pin state of the meter popover, and its pending open or close timer.
+    meter: context_meter::MeterHover,
+    meter_timer: Option<gpui_kit::Task<()>>,
     footer_permissions_open: bool,
     picker_permissions_open: bool,
     strip_permissions_open: bool,
     permission_preview: Option<&'static str>,
     implement_menu_open: bool,
+    /// Popovers open at the last render, to tell which opened since (`popovers.rs`).
+    seen_popovers: Vec<popovers::Popover>,
     stash: PromptStash,
     /// The host draws the stash badge in its own banner dock.
     stash_docked: bool,
     branch: branch_picker::BranchUi,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
-    catalog: ModelCatalog,
-    catalog_loading: bool,
-    catalog_error: Option<String>,
+    /// The live `subscribeServerConfig` projection, shared with the app.
+    config: Arc<ServerConfigState>,
+    /// The catalog as the thread's project sees it: that project's instance overrides applied.
+    catalog: conn_state::providers::ModelCatalog,
+    /// The project whose provider overrides apply (`providerInstanceEntriesFor(projectId)`).
+    project_id: Option<String>,
+    /// A `modelCatalogOnly` refresh is in flight (Conn single-flights it).
+    catalog_refresh_in_flight: bool,
     selected_instance_id: Option<String>,
     selected_driver: Option<String>,
     selected_model: String,
@@ -277,6 +292,8 @@ pub(crate) struct Composer {
     /// Placeholder last pushed into the textarea.
     applied_placeholder: &'static str,
     next_attachment_id: u64,
+    /// Thumbnails of staged images, by `PendingAttachment::local_id`.
+    attachment_previews: HashMap<u64, Arc<gpui_kit::Image>>,
     editing_queued: Option<EditingQueuedRun>,
     dictation: DictationState,
     dictation_error: Option<String>,
@@ -308,8 +325,7 @@ impl EventEmitter<ComposerEvent> for Composer {}
 impl Composer {
     /// Creates a new [`Composer`] entity styled with `tokens`.
     ///
-    /// When `connection` is present, immediately fetches the provider/model catalog
-    /// via `server.getConfig`.
+    /// The provider/model catalog arrives from the app's `subscribeServerConfig` stream.
     pub(crate) fn new(
         tokens: Tokens,
         connection: Option<Connection>,
@@ -371,7 +387,7 @@ impl Composer {
             );
 
         let branch = branch_picker::BranchUi::new(window, cx);
-        let mut composer = Self {
+        Self {
             tokens,
             connection,
             workspace_root: None,
@@ -395,19 +411,23 @@ impl Composer {
             preparing_worktree: false,
             context_window: None,
             context_meter_open: false,
+            meter: context_meter::MeterHover::default(),
+            meter_timer: None,
             footer_permissions_open: false,
             picker_permissions_open: false,
             strip_permissions_open: false,
             permission_preview: None,
             implement_menu_open: false,
+            seen_popovers: Vec::new(),
             stash: PromptStash::default(),
             stash_docked: false,
             branch,
             textarea,
             model_search_input,
-            catalog: ModelCatalog::default(),
-            catalog_loading: false,
-            catalog_error: None,
+            config: Arc::new(ServerConfigState::new()),
+            catalog: conn_state::providers::ModelCatalog::default(),
+            project_id: None,
+            catalog_refresh_in_flight: false,
             selected_instance_id: None,
             selected_driver: None,
             selected_model: "Default model".to_owned(),
@@ -427,17 +447,14 @@ impl Composer {
             history_position: None,
             applied_placeholder: COMPOSER_PLACEHOLDER,
             next_attachment_id: 1,
+            attachment_previews: HashMap::new(),
             editing_queued: None,
             dictation: DictationState::Idle,
             dictation_error: None,
             next_dictation_seq: 1,
             submit_after_dictation: false,
             _subscriptions: vec![textarea_sub, search_sub],
-        };
-        if composer.connection.is_some() {
-            composer.refresh_providers(cx);
         }
-        composer
     }
 
     /// Replaces active theme tokens.
@@ -449,16 +466,15 @@ impl Composer {
         cx.notify();
     }
 
-    /// Updates the server connection and fetches the provider catalog via `server.getConfig`.
+    /// Updates the server connection. The catalog follows the app's config stream.
     pub(crate) fn set_connection(
         &mut self,
         connection: Option<Connection>,
         cx: &mut Context<'_, Self>,
     ) {
         self.connection = connection;
-        if self.connection.is_some() {
-            self.refresh_providers(cx);
-        }
+        self.catalog_refresh_in_flight = false;
+        cx.notify();
     }
 
     /// Sets the workspace root used for `@` file mention searches (`projects.searchEntries`).
@@ -644,6 +660,19 @@ impl Composer {
             input.focus(window, cx);
         });
         self.on_draft_changed(cx);
+    }
+
+    /// Adds a file mention (`[name](path)`) at the end of the draft, with a space around it, and
+    /// focuses the composer (`insertTextAtEnd` in web Conn's "Add to chat").
+    pub(crate) fn insert_mention(
+        &mut self,
+        mention: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let current = self.textarea.read(cx).value().to_string();
+        let next = crate::panels::file_path::append_mention(&current, mention);
+        self.set_draft_text(next, window, cx);
     }
 
     /// Shows the draft for `key` (a thread or the new-thread draft), parking the current one.
@@ -882,48 +911,102 @@ impl Composer {
         cx.notify();
     }
 
-    /// Fetches the provider/model list via `server.getConfig`.
-    pub(crate) fn refresh_providers(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(conn) = self.connection.clone() else {
+    /// Takes the app's latest server config: the provider catalog the picker, the footer and
+    /// the `$` menu read. An unset model follows the catalog's default.
+    pub(crate) fn set_server_config(
+        &mut self,
+        config: Arc<ServerConfigState>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.config = config;
+        self.refresh_catalog(cx);
+    }
+
+    /// The project whose provider overrides apply (`projectSettingsOverrides`).
+    pub(crate) fn set_project_id(
+        &mut self,
+        project_id: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.project_id != project_id {
+            self.project_id = project_id;
+            self.refresh_catalog(cx);
+        }
+    }
+
+    /// The provider catalog this composer reads.
+    pub(crate) fn catalog(&self) -> &conn_state::providers::ModelCatalog {
+        &self.catalog
+    }
+
+    /// Re-reads the catalog. An unset model follows the catalog's default.
+    fn refresh_catalog(&mut self, cx: &mut Context<'_, Self>) {
+        if self.config.catalog() != &self.catalog {
+            self.catalog = self.config.catalog().clone();
+        }
+        if (self.selected_instance_id.is_none() || self.selected_model == "Default model")
+            && let Some(default_opt) = self.catalog.default_model().cloned()
+        {
+            self.selected_instance_id = Some(default_opt.instance_id);
+            self.selected_driver = Some(default_opt.driver);
+            self.selected_model = default_opt.slug;
+        }
+        cx.notify();
+    }
+
+    /// A model picker opened: ask the server for newly released models
+    /// (`ProviderModelPicker.tsx` `refreshModelCatalog`). The config stream carries the result.
+    /// Only a server that advertises `modelCatalogRefresh` is asked: an older one drops the
+    /// field and probes every provider.
+    fn refresh_model_catalog(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.catalog_loading = true;
-        self.catalog_error = None;
-        cx.notify();
-
+        if !self.config.supports_model_catalog_refresh() || self.catalog_refresh_in_flight {
+            return;
+        }
+        self.catalog_refresh_in_flight = true;
         cx.spawn(async move |this, cx| {
-            let res = conn
-                .call::<get_config::Payload, get_config::Success>(
-                    "server.getConfig",
-                    &ServerProbePayload {},
-                )
+            let payload = conn_client::commands::refresh_providers_payload(
+                conn_client::commands::ProviderRefresh::ModelCatalog,
+            );
+            // A failed refresh leaves the catalog as it is; the picker reports nothing, as in Conn.
+            let _ = connection
+                .call::<_, serde_json::Value>("server.refreshProviders", &payload)
                 .await;
-            let _ = this.update(cx, |composer, cx| {
-                composer.catalog_loading = false;
-                match res {
-                    Ok(config) => {
-                        cx.emit(ComposerEvent::ScratchWorkspaceRoot(
-                            config.scratch_workspace_root.clone(),
-                        ));
-                        composer.catalog = ModelCatalog::from_server_config(&config);
-                        composer.catalog_error = None;
-                        if (composer.selected_instance_id.is_none()
-                            || composer.selected_model == "Default model")
-                            && let Some(default_opt) = composer.catalog.default_model().cloned()
-                        {
-                            composer.selected_instance_id = Some(default_opt.instance_id);
-                            composer.selected_driver = Some(default_opt.driver);
-                            composer.selected_model = default_opt.slug;
-                        }
-                    }
-                    Err(err) => {
-                        composer.catalog_error = Some(err.to_string());
-                    }
-                }
-                cx.notify();
-            });
+            let _ = this.update(cx, |composer, _| composer.catalog_refresh_in_flight = false);
         })
         .detach();
+    }
+
+    /// The picker's star (`useToggleEnvironmentModelFavorite`): sends the wanted state, so two
+    /// clients adding a favorite do not cancel each other. The settings stream brings it back.
+    pub(super) fn toggle_model_favorite(
+        &mut self,
+        instance_id: String,
+        slug: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let favorite = !self.catalog.preferences.is_favorite(&instance_id, &slug);
+        let request = conn_state::model_preferences::set_model_favorites_request(
+            &instance_id,
+            &[(slug, favorite)],
+        );
+        cx.spawn(async move |_, _| {
+            // A failed write leaves the star as the server has it.
+            let _ = connection.call_json("server.updateSettings", request).await;
+        })
+        .detach();
+    }
+
+    /// `Open provider setup` for `instance_id`: the host opens Settings on its Providers page.
+    pub(super) fn open_provider_setup(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
+        self.model_picker_open = false;
+        cx.emit(ComposerEvent::OpenProviderSetup(instance_id));
+        cx.notify();
     }
 
     /// Toggles the floating model picker popup.
@@ -936,15 +1019,15 @@ impl Composer {
             self.footer_permissions_open = false;
             self.strip_permissions_open = false;
             self.stash.menu_open = false;
-            self.picker_provider_filter = self.selected_instance_id.clone();
+            self.picker_provider_filter = self
+                .catalog
+                .initial_picker_tab(self.selected_instance_id.as_deref());
             self.picker_highlighted_index = 0;
             self.model_search_input.update(cx, |input, cx| {
                 input.set_value("", window, cx);
                 input.focus(window, cx);
             });
-            if self.catalog.providers.is_empty() && !self.catalog_loading {
-                self.refresh_providers(cx);
-            }
+            self.refresh_model_catalog(cx);
         }
         cx.notify();
     }
@@ -980,6 +1063,11 @@ impl Composer {
         if changed {
             cx.notify();
         }
+    }
+
+    /// True while the model picker is open (its search field owns `⌘Z`).
+    pub(super) fn model_picker_is_open(&self) -> bool {
+        self.model_picker_open
     }
 
     /// True while any composer popup, menu, or drawer is open.
@@ -1074,6 +1162,9 @@ impl Composer {
         let local_id = self.next_attachment_id;
         self.next_attachment_id = self.next_attachment_id.wrapping_add(1);
         let size_bytes = bytes.len();
+        if let Some(image) = super::attachment_thumb::preview_image(&mime_type, bytes.clone()) {
+            self.attachment_previews.insert(local_id, image);
+        }
         self.attachments.push(PendingAttachment {
             local_id,
             name: name.clone(),
@@ -1408,6 +1499,7 @@ impl Composer {
     fn remove_attachment(&mut self, local_id: u64, cx: &mut Context<'_, Self>) {
         let before = self.attachments.len();
         self.attachments.retain(|a| a.local_id != local_id);
+        self.attachment_previews.remove(&local_id);
         if self.attachments.len() != before {
             cx.notify();
         }
@@ -1755,6 +1847,13 @@ impl Composer {
             .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
     }
 
+    /// The provider instance the composer sends with (`selectedProviderEntry`).
+    pub(crate) fn selected_provider_instance(&self) -> Option<&str> {
+        self.selected_model_option()
+            .map(|model| model.instance_id.as_str())
+            .or(self.selected_instance_id.as_deref())
+    }
+
     /// The selected provider's catalog group.
     fn selected_provider_group(&self) -> Option<&model_picker::ProviderGroup> {
         let instance = self
@@ -1923,15 +2022,23 @@ impl Composer {
         model: String,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(opt) = self.catalog.find_model(Some(&instance_id), &model) {
+        let picked = self.catalog.find_model(Some(&instance_id), &model);
+        if let Some(opt) = picked {
             self.selected_driver = Some(opt.driver.clone());
         }
+        // Switching model or provider keeps only the options the new model offers, so a Codex
+        // service tier or an effort the new model lacks does not carry over (Nick, #333).
+        let carried = picked.and_then(|opt| {
+            self.selected_options
+                .as_ref()
+                .and_then(|options| opt.supported_options(options))
+        });
         let same_model = self.selected_instance_id.as_deref() == Some(instance_id.as_str())
             && self.selected_model == model;
         self.selected_instance_id = Some(instance_id.clone());
         self.selected_model = model.clone();
         if !same_model {
-            self.selected_options = None;
+            self.selected_options = carried;
         }
         // Docked: the popup stays open so the effort column can take the next pick.
         cx.emit(ComposerEvent::ModelSelected {
@@ -2214,7 +2321,7 @@ impl Composer {
                     .gap(px(4.0))
                     .h(px(22.0))
                     .px(px(6.0))
-                    .rounded(px(6.0))
+                    .rounded_full()
                     .cursor_pointer()
                     .text_color(if open { fg } else { muted })
                     .when(open, |el| el.bg(hover_bg))
@@ -2289,6 +2396,51 @@ impl Composer {
             .into_any_element()
     }
 
+    /// `Open provider settings`: the footer's stand-in for the model controls while no provider
+    /// is usable (`ComposerControlsBar.tsx:254-269`). Without an instance to set up it only says
+    /// `No provider available`.
+    fn render_provider_unavailable(
+        &self,
+        setup_instance: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let tokens = self.tokens.clone();
+        let fg = hsla(tokens.foreground);
+        let muted = hsla(tokens.muted_foreground);
+        let hover = hsla(tokens.shell_highlight);
+        let label = if setup_instance.is_some() {
+            "Open provider settings"
+        } else {
+            "No provider available"
+        };
+        let base = div()
+            .id("composer-provider-unavailable")
+            .a11y_button("composer.provider-unavailable", label)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .h(px(FOOTER_CONTROL_HEIGHT_PX))
+            .px(px(8.0))
+            .rounded_full()
+            .text_size(px(13.0))
+            .line_height(px(20.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(muted)
+            .child(icons::icon(icons::ERROR_CIRCLE, 16.0, muted))
+            .child(label);
+        match setup_instance {
+            Some(instance_id) => base
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover).text_color(fg))
+                .on_click(cx.listener(move |composer, _, _, cx| {
+                    composer.open_provider_setup(instance_id.clone(), cx);
+                }))
+                .into_any_element(),
+            None => base.opacity(0.5).into_any_element(),
+        }
+    }
+
     /// Permission modes the selected provider supports.
     fn runtime_mode_options(&self) -> Vec<footer::RuntimeModeOption> {
         compatible_runtime_modes(
@@ -2300,10 +2452,16 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // One popover at a time: opening one closes the others (Nick, #323).
+        self.keep_one_popover(cx);
+        // `noProviderAvailable` (`ChatComposer.tsx:934-945`): no instance is usable for this
+        // composer. Until the first config arrives the catalog is merely unknown.
+        let provider_selection = self
+            .catalog
+            .resolve_selection(&[self.selected_instance_id.as_deref()]);
         let provider_unavailable = self.connection.is_some()
-            && !self.catalog_loading
-            && self.catalog_error.is_none()
-            && self.catalog.providers.is_empty();
+            && self.config.is_loaded()
+            && provider_selection.none_available;
         let placeholder = composer_placeholder(&self.pending_request, provider_unavailable);
         if self.applied_placeholder != placeholder {
             self.applied_placeholder = placeholder;
@@ -2412,7 +2570,7 @@ impl Render for Composer {
             .h(px(FOOTER_CONTROL_HEIGHT_PX))
             .pl(px(8.0))
             .pr(px(6.0))
-            .rounded(px(8.0))
+            .rounded_full()
             .cursor_pointer()
             .text_size(px(13.0))
             .line_height(px(20.0))
@@ -2563,6 +2721,7 @@ impl Render for Composer {
             DictationState::Idle => self.dictation_error.as_ref().map(|err| {
                 div()
                     .id("chat-composer-dictation-err")
+                    .a11y_group("composer.dictation-error", "Dictation error")
                     .max_w(px(180.0))
                     .truncate()
                     .cursor_pointer()
@@ -2597,6 +2756,7 @@ impl Render for Composer {
             card = card.child(
                 div()
                     .id("chat-composer-editing-queued-bar")
+                    .a11y_group("composer.editing-queued", "Editing queued message")
                     .flex()
                     .flex_row()
                     .items_center()
@@ -2727,6 +2887,20 @@ impl Render for Composer {
             }
             for att in &self.attachments {
                 let local_id = att.local_id;
+                if let Some(image) = self.attachment_previews.get(&local_id).cloned() {
+                    strip = strip.child(super::attachment_thumb::staged_image_chip(
+                        local_id,
+                        &att.name,
+                        image,
+                        matches!(att.status, AttachmentUploadStatus::Uploading),
+                        matches!(att.status, AttachmentUploadStatus::Error(_)),
+                        &tokens,
+                        cx.listener(move |composer, _, _, cx| {
+                            composer.remove_attachment(local_id, cx);
+                        }),
+                    ));
+                    continue;
+                }
                 let file_icon = crate::file_icons::file_icon(&att.name);
                 let icon_color = file_icon
                     .color
@@ -2741,6 +2915,7 @@ impl Render for Composer {
                 strip = strip.child(
                     div()
                         .id(SharedString::from(format!("composer-att-{local_id}")))
+                        .a11y_group(format!("composer.attachment.{local_id}"), "Attachment")
                         .flex()
                         .flex_row()
                         .items_center()
@@ -2853,9 +3028,17 @@ impl Render for Composer {
                             .justify_end()
                             .gap(px(4.0))
                             .min_w_0()
-                            .child(model_trigger)
-                            .when_some(permissions_chip, |el, chip| el.child(chip))
-                            .when_some(mode_toggle, |el, toggle| el.child(toggle))
+                            .when(!provider_unavailable, |el| {
+                                el.child(model_trigger)
+                                    .when_some(permissions_chip, |el, chip| el.child(chip))
+                                    .when_some(mode_toggle, |el, toggle| el.child(toggle))
+                            })
+                            .when(provider_unavailable, |el| {
+                                el.child(self.render_provider_unavailable(
+                                    provider_selection.setup_instance.clone(),
+                                    cx,
+                                ))
+                            })
                             .when_some(context_meter, |el, meter| el.child(meter))
                             .when_some(dictation_badge, |el, badge| el.child(badge))
                             .child(mic_btn)
@@ -2873,6 +3056,12 @@ impl Render for Composer {
                     composer.attach_paths(dropped.paths().to_vec(), window, cx);
                 }),
             )
+            .on_drop(cx.listener(
+                |composer, dropped: &crate::panels::file_path::FileMentionDrag, window, cx| {
+                    let mention = crate::panels::file_path::mention(&dropped.path);
+                    composer.insert_mention(&mention, window, cx);
+                },
+            ))
             .capture_action(cx.listener(|composer, _: &Paste, window, cx| {
                 if composer.try_paste_attachments(window, cx) {
                     cx.stop_propagation();
@@ -3035,8 +3224,7 @@ impl Render for Composer {
             let popup = render_model_picker(
                 &ModelPickerView {
                     catalog: &self.catalog,
-                    loading: self.catalog_loading,
-                    error: self.catalog_error.as_deref(),
+                    loading: !self.config.is_loaded(),
                     active_instance_id: self.selected_instance_id.as_deref(),
                     active_model: &self.selected_model,
                     selected_provider: self.picker_provider_filter.as_deref(),
@@ -3075,11 +3263,13 @@ impl Render for Composer {
 ///
 /// Mirrors Conn's `--shell-composer` (`var(--card)` in light, lifted surface in dark)
 /// and `--chat-composer-outline` (`8%` black/white hairline via `shell_inner_border`).
-fn composer_surface_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) {
+pub(crate) fn composer_surface_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) {
     let bg = match tokens.appearance {
         Appearance::Light => hsla(tokens.card),
         Appearance::Dark => hsla(tokens.shell_field),
     };
+    // Web Conn's glass is 80% over a 12px backdrop blur. GPUI has no per-element backdrop blur
+    // (gpui-kit#3598), so the card stays opaque until it lands (Nick, 2026-11-23).
     (bg, hsla(tokens.shell_inner_border))
 }
 

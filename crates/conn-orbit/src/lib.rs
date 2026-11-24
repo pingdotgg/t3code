@@ -31,11 +31,13 @@ pub mod fleet;
 pub mod format;
 pub mod gateway;
 pub mod insights;
+pub mod linked;
 pub mod profile;
 pub mod projects;
 pub mod realtime;
 pub mod tasks;
 pub mod thread_start;
+pub mod workspace_editor;
 
 pub use client::{
     OrbitErrorReason, OrbitTasksClient, TasksError, TasksErrorReason, TasksInvalidation,

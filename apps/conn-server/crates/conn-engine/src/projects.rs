@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::commands::{self, CommandError, Effect, is_live};
 use crate::engine::{Inner, project_id};
@@ -101,15 +102,6 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                     format!("`{project_id}` cannot be a project id."),
                 ));
             }
-            if tx
-                .project_any(&project_id)?
-                .is_some_and(|p| p["deletedAt"].is_null())
-            {
-                return Err(ProjectFailure::planned(
-                    "ProjectConflictError",
-                    format!("Project {project_id} already exists."),
-                ));
-            }
             let raw = input["workspaceRoot"].as_str().unwrap_or_default().trim();
             if raw.is_empty() {
                 return Err(ProjectFailure::tagged(
@@ -119,15 +111,8 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
             }
             let normalized = normalize_workspace_root(raw);
             let root = normalized.as_str();
-            if tx
-                .project_by_root(root)?
-                .is_some_and(|p| p["deletedAt"].is_null())
-            {
-                return Err(ProjectFailure::planned(
-                    "ProjectConflictError",
-                    format!("Another project already uses {root}."),
-                ));
-            }
+            // T3 checks the folder before it plans (`ProjectService.create`): a missing one
+            // is a retryable refusal, never a recorded conflict.
             let path = Path::new(root);
             if !path.is_dir() {
                 if input["createWorkspaceRootIfMissing"] == true {
@@ -144,6 +129,24 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                         format!("{root} is not a folder."),
                     ));
                 }
+            }
+            if tx
+                .project_any(&project_id)?
+                .is_some_and(|p| p["deletedAt"].is_null())
+            {
+                return Err(ProjectFailure::planned(
+                    "ProjectConflictError",
+                    format!("Project {project_id} already exists."),
+                ));
+            }
+            if tx
+                .project_by_root(root)?
+                .is_some_and(|p| p["deletedAt"].is_null())
+            {
+                return Err(ProjectFailure::planned(
+                    "ProjectConflictError",
+                    format!("Another project already uses {root}."),
+                ));
             }
             let title = input["title"].as_str().unwrap_or_default().trim();
             let mut project = new_project(&project_id, title, root, &now);
@@ -212,7 +215,9 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
             }
             if let Some(icon) = input["projectIcon"].as_object()
                 && icon.get("kind") == Some(&json!("monogram"))
-                && icon["text"].as_str().is_some_and(|t| t.chars().count() > 2)
+                && icon["text"]
+                    .as_str()
+                    .is_some_and(|t| t.graphemes(true).count() > 2)
             {
                 return Err(ProjectFailure::planned(
                     "ProjectInvalidError",

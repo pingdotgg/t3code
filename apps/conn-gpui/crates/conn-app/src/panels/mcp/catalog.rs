@@ -2,6 +2,7 @@
 //! item list beside an Overview / Playground detail pane with schema-driven forms and
 //! Result / JSON response rendering.
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher as _};
@@ -575,6 +576,7 @@ impl McpPanel {
 
         let mut list = v_flex()
             .id(SharedString::from(format!("mcp-list-{noun}")))
+            .a11y_group(format!("panel.mcp.list.{noun}"), format!("MCP {noun} list"))
             .flex_1()
             .min_h_0()
             .w_full()
@@ -627,6 +629,7 @@ impl McpPanel {
             list = list.child(
                 h_flex()
                     .id(SharedString::from(format!("mcp-{noun}-item-{}", item.id)))
+                    .a11y_button(format!("panel.mcp.{noun}.{}", item.id), item.id.clone())
                     .h(px(28.0))
                     .w_full()
                     .items_center()
@@ -748,6 +751,7 @@ impl McpPanel {
             }
             let mut overview = v_flex()
                 .id("mcp-overview-scroll")
+                .a11y_group("panel.mcp.overview", "MCP overview")
                 .flex_1()
                 .min_h_0()
                 .w_full()
@@ -782,6 +786,7 @@ impl McpPanel {
         let run_hover = to_hsla(tokens.shell_highlight);
         let mut run_btn = h_flex()
             .id(SharedString::from(format!("mcp-run-{}", spec.call_key)))
+            .a11y_button(format!("panel.mcp.run.{}", spec.call_key), "Run")
             .flex_shrink_0()
             .h(px(24.0))
             .px(px(7.0))
@@ -848,6 +853,7 @@ impl McpPanel {
 
         let form_pane = v_flex()
             .id("mcp-playground-form-scroll")
+            .a11y_group("panel.mcp.playground-form", "MCP playground form")
             .w_full()
             .max_h(relative(0.5))
             .flex_shrink_0()
@@ -1335,6 +1341,7 @@ impl McpPanel {
             .child(
                 div()
                     .id(SharedString::from(format!("mcp-result-scroll-{call_key}")))
+                    .a11y_group(format!("panel.mcp.result.{call_key}"), "MCP result")
                     .flex_1()
                     .min_h_0()
                     .w_full()

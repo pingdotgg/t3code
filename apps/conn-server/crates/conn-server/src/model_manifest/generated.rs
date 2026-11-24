@@ -7,6 +7,8 @@
 pub const MODEL_MANIFEST_URL: &str = "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
 /// `MANIFEST_TTL_MS`: a fetch counts this long.
 pub(super) const MANIFEST_TTL_MS: i64 = 3600000;
+/// `MANIFEST_ON_DEMAND_TTL_MS`: an opened model picker refetches a manifest older than this.
+pub(super) const MANIFEST_ON_DEMAND_TTL_MS: i64 = 300000;
 /// `MANIFEST_RETRY_MS`: a failed fetch holds off the next one this long.
 pub(super) const MANIFEST_RETRY_MS: i64 = 300000;
 /// `FETCH_TIMEOUT_MS`.

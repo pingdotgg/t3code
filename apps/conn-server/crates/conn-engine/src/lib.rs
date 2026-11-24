@@ -25,6 +25,7 @@ mod calls;
 mod checkpoint;
 mod clock;
 mod commands;
+pub use commands::{completed_without_result, provider_stop_reason_id};
 mod engine;
 mod feedback;
 mod guard;
@@ -180,6 +181,13 @@ pub trait EngineHost: Send + Sync {
         self.provider_instance_enabled(project_id, instance_id)
     }
 
+    /// Reloads settings whose last load failed in a way that may have passed, before work is
+    /// admitted against them (T3 keeps a failed settings load for no time). Off the runtime
+    /// thread when it reads files.
+    fn refresh_settings(&self) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
     /// `responseStreamingMode` of `project_id` (`resolveProjectSettings`): how streamed
     /// assistant text is stored. The default is T3's default, `paragraph`.
     fn response_streaming_mode(&self, _project_id: Option<&str>) -> ResponseStreamingMode {
@@ -291,11 +299,20 @@ pub struct ProvisionedWorktree {
     pub branch: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThreadClose {
     Archived,
     Deleted,
-    Settled,
+    /// A settlement: the thread was not settled before. `settled_at` is the committed
+    /// `settledAt`, which names this settlement.
+    Settled {
+        settled_at: String,
+    },
+    /// A settle of a thread that already was, which keeps its `settledAt`: its terminals close
+    /// again, but the settlement's one-time cleanup (the settle script) does not run again.
+    SettledAgain {
+        settled_at: String,
+    },
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
@@ -501,6 +518,12 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Err(
             "Tasks in linked environments are not supported.".into(),
         )))
+    }
+
+    /// The thread's subagent rows alone (`getThreadRecords(threadId, ["subagents"])`), for a
+    /// follower that must not load the thread's whole history.
+    fn subagent_rows(&self, _thread_id: &str) -> BoxFuture<'_, Result<Vec<Value>, String>> {
+        Box::pin(std::future::ready(Ok(vec![])))
     }
 
     /// `(parentThreadId, taskId)` of each remote task a follower still owes something, at most

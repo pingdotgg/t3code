@@ -46,7 +46,7 @@ pub(super) enum HostConfigScreen {
     Simlock(SimlockHostForm),
 }
 
-/// Saved host lists fetched via `server.getConfig`.
+/// Saved host lists from the live server config's settings.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SavedHostConfigs {
     pub(super) ssh_hosts: Vec<SshDeviceHostConfig>,
@@ -634,6 +634,7 @@ pub(super) fn render_host_config(
         .child(
             div()
                 .id("device-hosts-scroll")
+                .a11y_group("panel.device.hosts", "Device hosts")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()

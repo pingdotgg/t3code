@@ -237,6 +237,7 @@ run 2 120 "codex instructions --check" \
   node crates/conn-provider-codex/tools/gen-instructions.mjs --check
 run 1 900 "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs
 run 2 120 "codex model catalog --check" node crates/conn-provider-codex/tools/gen-model-catalog.mjs --check
+run 2 120 "antigravity model catalog --check" node crates/conn-provider-acp/tools/gen-model-catalog.mjs --check
 # Codex's status entry: T3's checkCodexProviderStatus and ours against stub CLIs (no CLI,
 # no model; about 45 s, two scenarios wait out the 20 s probe limit).
 run 3 180 "codex probe conformance" node crates/conn-provider-codex/tools/probe-conformance/run.mjs

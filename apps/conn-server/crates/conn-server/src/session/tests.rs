@@ -97,10 +97,7 @@ async fn settle() {
 }
 
 fn options() -> SessionOptions {
-    SessionOptions {
-        idle_timeout: Duration::from_secs(3600),
-        ..SessionOptions::default()
-    }
+    SessionOptions::default()
 }
 
 /// A stream handler fed one value at a time by a producer, which records how far it got
@@ -306,20 +303,69 @@ async fn interrupt_ends_the_stream_and_drops_its_items() {
     );
 }
 
+/// Counts the table's disconnect hook, which releases a connection's server-side state.
+fn count_disconnects(table: &mut MethodTable) -> Arc<AtomicUsize> {
+    let count = Arc::new(AtomicUsize::new(0));
+    let hook = count.clone();
+    table.on_disconnect(move |_| {
+        hook.fetch_add(1, Ordering::SeqCst);
+    });
+    count
+}
+
 #[tokio::test(start_paused = true)]
 async fn disconnect_stops_every_stream() {
     let mut table = MethodTable::new();
+    let disconnects = count_disconnects(&mut table);
     let producer = Producer::default();
     producer.register(&mut table, "orchestration.subscribeShell", usize::MAX - 1);
     let dropped = producer.on_drop();
     let mut client = Client::connect(table, options());
     client.request(1, "orchestration.subscribeShell", json!({}));
     assert_eq!(chunks(&client.frames().await, 1).len(), 8);
+    // A read error (a reset, or keepalive probes that went unanswered) reads as `Closed`.
     let _ = client.to_server.send(Incoming::Closed);
     dropped.await.expect("the handler's stream was dropped");
     let produced = producer.produced.load(Ordering::SeqCst);
     settle().await;
     assert_eq!(producer.produced.load(Ordering::SeqCst), produced);
+    assert_eq!(
+        disconnects.load(Ordering::SeqCst),
+        1,
+        "disconnect hook ran once"
+    );
+}
+
+/// A peer that vanished without a close: the socket stays readable-silent, and the first
+/// write that fails ends the session, as a failed write ends T3's.
+#[tokio::test(start_paused = true)]
+async fn a_dead_peer_is_cleaned_up_on_a_failed_write() {
+    let mut table = MethodTable::new();
+    let disconnects = count_disconnects(&mut table);
+    let producer = Producer::default();
+    producer.register(&mut table, "orchestration.subscribeShell", usize::MAX - 1);
+    let dropped = producer.on_drop();
+    let (to_server, incoming) = mpsc::unbounded_channel();
+    let (sent, from_server) = mpsc::unbounded_channel();
+    tokio::spawn(run(
+        TestSocket { incoming, sent },
+        Arc::new(table),
+        options(),
+    ));
+    drop(from_server);
+    let _ = to_server.send(Incoming::Text(
+        json!({"_tag": "Request", "id": 1, "tag": "orchestration.subscribeShell", "payload": {}, "headers": []})
+            .to_string(),
+    ));
+    dropped.await.expect("the handler's stream was dropped");
+    settle().await;
+    assert_eq!(
+        disconnects.load(Ordering::SeqCst),
+        1,
+        "disconnect hook ran once"
+    );
+    // The client never closed its side: the session ended on the write alone.
+    assert!(to_server.is_closed(), "the session dropped the socket");
 }
 
 #[tokio::test(start_paused = true)]
@@ -479,24 +525,22 @@ async fn joins_client_parts_and_closes_on_oversized_messages() {
     assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_TOO_LARGE)]);
 }
 
+/// A laptop that sleeps sends nothing; on wake its queued ping arrives. The T3 server never
+/// closes a socket for silence (`RpcServer` only answers `Ping`), so neither may we.
 #[tokio::test(start_paused = true)]
-async fn idle_connections_close() {
-    let mut client = Client::connect(
-        MethodTable::new(),
-        SessionOptions {
-            idle_timeout: Duration::from_secs(60),
-            ..SessionOptions::default()
-        },
-    );
-    tokio::time::sleep(Duration::from_secs(30)).await;
+async fn a_suspended_client_stays_connected() {
+    let mut client = Client::connect(MethodTable::new(), SessionOptions::default());
     client.send(json!({"_tag": "Ping"}));
-    tokio::time::sleep(Duration::from_secs(45)).await;
     assert_eq!(
         client.drain().await,
         vec![Sent::Text(r#"{"_tag":"Pong"}"#.into())]
     );
-    tokio::time::sleep(Duration::from_secs(20)).await;
-    assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_GOING_AWAY)]);
+    tokio::time::sleep(Duration::from_secs(10 * 60)).await;
+    client.send(json!({"_tag": "Ping"}));
+    assert_eq!(
+        client.drain().await,
+        vec![Sent::Text(r#"{"_tag":"Pong"}"#.into())]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -648,4 +692,20 @@ async fn a_gate_close_ends_an_idle_session() {
     settle().await;
     gate.close();
     assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_POLICY)]);
+}
+
+/// Accepted sockets get TCP keepalive, so the kernel reaps a peer that vanished on a silent
+/// socket, which no write would ever notice.
+#[tokio::test]
+async fn accepted_sockets_get_keepalive() {
+    use rustix::net::sockopt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (stream, _) = listener.accept().await.unwrap();
+    keep_alive(&stream);
+    assert!(sockopt::socket_keepalive(&stream).unwrap(), "keepalive on");
+    assert_eq!(sockopt::tcp_keepidle(&stream).unwrap(), KEEPALIVE_IDLE);
+    assert_eq!(sockopt::tcp_keepintvl(&stream).unwrap(), KEEPALIVE_INTERVAL);
+    assert_eq!(sockopt::tcp_keepcnt(&stream).unwrap(), KEEPALIVE_PROBES);
 }

@@ -192,7 +192,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
                 }
                 Out::Write(line) => replay.writes.push(serde_json::from_str(&line).unwrap()),
                 Out::Skipped(kind) => replay.skipped.push(kind),
-                Out::TailOutput { .. } | Out::StopTail { .. } => {}
+                Out::TailOutput { .. } | Out::StopTail { .. } | Out::StopTask { .. } => {}
             }
         }
     }
@@ -550,6 +550,44 @@ fn plan_dialog_and_withdrawn_requests() {
     ));
 }
 
+/// A downloaded catalog that moves `sonnet` to a new model: a child thread launched for
+/// `sonnet`, by the `Agent` input or by the child's own assistant frame, records the turn's
+/// catalog slug, not the bundled one (`canonicalClaudeSubagentModel(modelCatalog, …)`).
+#[test]
+fn subagent_models_resolve_through_the_turns_catalog() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    mapper.set_catalog(vec![
+        json!({"slug": "claude-sonnet-9", "aliases": ["sonnet"]}),
+    ]);
+    mapper.begin_turn(
+        &turn_input(1, &provider_thread("n1"), "x", "full-access"),
+        "bypassPermissions",
+    );
+    let frames = [
+        json!({"type": "assistant", "uuid": "r1", "message": {"id": "m_root",
+            "model": "claude-sonnet-4-6", "content": [{"type": "tool_use", "id": "toolu_a",
+            "name": "Agent", "input": {"description": "a", "prompt": "a", "model": "sonnet"}}]}}),
+        json!({"type": "system", "subtype": "task_started", "task_id": "t1",
+            "tool_use_id": "toolu_a", "description": "a"}),
+        json!({"type": "assistant", "parent_tool_use_id": "toolu_b", "uuid": "u2",
+            "message": {"id": "m_b", "model": "sonnet", "content": [{"type": "text", "text": "b"}]}}),
+        json!({"type": "system", "subtype": "task_started", "task_id": "t2",
+            "tool_use_id": "toolu_b", "description": "b"}),
+    ];
+    let mut models = Vec::new();
+    for frame in frames {
+        for out in mapper.handle(Inbound::from_value(frame)) {
+            if let Out::Event(event) = out {
+                let event = serde_json::to_value(&event).unwrap();
+                if event["type"] == "app_thread.created" {
+                    models.push(event["appThread"]["modelSelection"]["model"].clone());
+                }
+            }
+        }
+    }
+    assert_eq!(models, [json!("claude-sonnet-9"), json!("claude-sonnet-9")]);
+}
+
 #[test]
 fn subagent_compaction_and_retry_frames_decode_without_failing() {
     let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
@@ -578,7 +616,10 @@ fn subagent_compaction_and_retry_frames_decode_without_failing() {
                     kinds.push(serde_json::to_value(&event).unwrap()["type"].clone())
                 }
                 Out::Skipped(kind) => kinds.push(json!(format!("skip:{kind}"))),
-                Out::Write(_) | Out::TailOutput { .. } | Out::StopTail { .. } => {}
+                Out::Write(_)
+                | Out::TailOutput { .. }
+                | Out::StopTail { .. }
+                | Out::StopTask { .. } => {}
             }
         }
     }
@@ -905,4 +946,135 @@ fn a_retired_process_cannot_stop_or_settle_a_replacements_workflow() {
     );
     assert!(mapper.workflow_stop(&thread, "new", true));
     assert!(mapper.turn_active());
+}
+
+/// `ClaudeAdapterV2.test.ts` "stops the run's live workflow after root result api_error,
+/// continuation=true, pending Stop=…": Claude reports the live workflow's `task_started`
+/// again for a wake; the continuation then owns it, so its failed root stops it. Both frame
+/// orders: the restart while the root is idle (T3's case), and inside the open continuation.
+#[test]
+fn a_failed_continuation_stops_the_workflow_it_took_over() {
+    let started = json!({"type":"system", "subtype":"task_started", "task_id":"wf1",
+        "tool_use_id":"run1", "task_type":"local_workflow", "workflow_name":"Review",
+        "description":"Review", "prompt":"workflow()"});
+    let result = |is_error: bool, text: &str| {
+        json!({"type":"result", "subtype":"success", "is_error":is_error,
+            "terminal_reason": if is_error { "api_error" } else { "completed" },
+            "result":text, "duration_ms":1, "duration_api_ms":1, "num_turns":1, "usage":{},
+            "modelUsage":{}, "total_cost_usd":0})
+    };
+    let wake_start = json!({"type":"assistant", "parent_tool_use_id":null, "uuid":"wake-1",
+        "message":{"id":"m-wake", "content":[{"type":"text","text":"Checking the workflow."}]}});
+    for (restart_inside, pending_stop) in [(false, false), (false, true), (true, false)] {
+        let case = format!("restart_inside={restart_inside} pending_stop={pending_stop}");
+        let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+        let thread = provider_thread("continuation-workflow");
+        mapper.begin_turn(
+            &turn_input(1, &thread, "workflow", "full-access"),
+            "default",
+        );
+        mapper.handle(Inbound::from_value(started.clone()));
+        mapper.handle(Inbound::from_value(result(false, "Launched.")));
+        assert!(mapper.has_pending_background_work(), "{case}");
+        let thread_json = serde_json::to_value(&thread).unwrap();
+        if pending_stop {
+            assert!(mapper.workflow_stop(&thread_json, "wf1", true), "{case}");
+        }
+        let mut frames = vec![started.clone(), result(true, "Root turn ended.")];
+        if restart_inside {
+            frames.insert(0, wake_start.clone());
+        }
+        let mut outs = Vec::new();
+        for frame in frames {
+            let step = mapper.handle(Inbound::from_value(frame));
+            let wake = step
+                .iter()
+                .any(|o| matches!(o, Out::Event(ProviderEvent::ContinuationRequested(_))));
+            outs.extend(step);
+            if wake {
+                outs.extend(
+                    mapper
+                        .begin_continuation(&turn_input(2, &thread, "", "full-access"), "default"),
+                );
+            }
+        }
+        let stops: Vec<&str> = outs
+            .iter()
+            .filter_map(|o| match o {
+                Out::StopTask { task_id } => Some(task_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stops, ["wf1"], "{case}");
+        let events: Vec<Value> = outs
+            .iter()
+            .filter_map(|o| match o {
+                Out::Event(event) => Some(serde_json::to_value(event).unwrap()),
+                _ => None,
+            })
+            .collect();
+        let turn = events
+            .iter()
+            .rev()
+            .find(|e| e["type"] == "provider_turn.updated")
+            .unwrap();
+        assert_eq!(turn["providerTurn"]["status"], "failed", "{case}");
+        assert_eq!(turn["providerTurn"]["runAttemptId"], "attempt-2", "{case}");
+        let workflow = events
+            .iter()
+            .rev()
+            .find(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == "wf1")
+            .unwrap();
+        assert_eq!(workflow["subagent"]["status"], "failed", "{case}");
+        assert_eq!(workflow["subagent"]["runId"], "run-attempt-2", "{case}");
+        assert!(!mapper.has_pending_background_work(), "{case}");
+        assert!(!mapper.workflow_stop(&thread_json, "wf1", true), "{case}");
+    }
+}
+
+/// While the root is idle, Claude restarts a running workflow and then reports it done.
+/// The continuation that the completion asks for must not replay the superseded start and
+/// reopen the finished workflow.
+#[test]
+fn an_idle_restart_then_completion_leaves_the_workflow_finished() {
+    let started = json!({"type":"system", "subtype":"task_started", "task_id":"wf1",
+        "tool_use_id":"run1", "task_type":"local_workflow", "workflow_name":"Review",
+        "description":"Review", "prompt":"workflow()"});
+    let completed = json!({"type":"system", "subtype":"task_notification", "task_id":"wf1",
+        "tool_use_id":"run1", "status":"completed", "summary":"Reviewed."});
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("idle-restart-workflow");
+    mapper.begin_turn(
+        &turn_input(1, &thread, "workflow", "full-access"),
+        "default",
+    );
+    mapper.handle(Inbound::from_value(started.clone()));
+    mapper.handle(Inbound::from_value(
+        json!({"type":"result", "subtype":"success",
+        "is_error":false, "result":"Launched.", "duration_ms":1, "duration_api_ms":1,
+        "num_turns":1, "usage":{}, "modelUsage":{}, "total_cost_usd":0}),
+    ));
+    let mut outs = Vec::new();
+    for frame in [started, completed] {
+        let step = mapper.handle(Inbound::from_value(frame));
+        let wake = step
+            .iter()
+            .any(|o| matches!(o, Out::Event(ProviderEvent::ContinuationRequested(_))));
+        outs.extend(step);
+        if wake {
+            outs.extend(
+                mapper.begin_continuation(&turn_input(2, &thread, "", "full-access"), "default"),
+            );
+        }
+    }
+    let last = outs
+        .iter()
+        .filter_map(|o| match o {
+            Out::Event(event) => Some(serde_json::to_value(event).unwrap()),
+            _ => None,
+        })
+        .rfind(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == "wf1")
+        .unwrap();
+    assert_eq!(last["subagent"]["status"], "completed");
+    assert!(!mapper.has_pending_background_work());
 }

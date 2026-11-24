@@ -23,7 +23,7 @@ use conn_wire::{
     decode_client_message, encode_server_frame, error_defect, frame_parts,
 };
 use serde_json::Value;
-use tokio::{sync::mpsc, task::AbortHandle, time::Instant};
+use tokio::{net::TcpStream, sync::mpsc, task::AbortHandle};
 
 use crate::table::{CallContext, Failure, Handler, ItemStream, MethodTable, not_supported_exit};
 
@@ -33,11 +33,30 @@ const OUTBOX: usize = 16;
 const MAX_CHUNK_VALUES: usize = 64;
 
 pub const CLOSE_NORMAL: u16 = 1000;
-pub const CLOSE_GOING_AWAY: u16 = 1001;
 pub const CLOSE_TOO_LARGE: u16 = 1009;
 /// The managed gate closed: the caller's grant was fenced, its token expired, or managed
 /// authority was lost.
 pub const CLOSE_POLICY: u16 = 1008;
+
+/// TCP keepalive on an accepted socket: the first probe after this much silence, then
+/// [`KEEPALIVE_PROBES`] probes [`KEEPALIVE_INTERVAL`] apart. A vanished peer is reaped after
+/// about 15 minutes, the time Linux takes to give up on an unanswered write (`tcp_retries2`),
+/// so a sleeping laptop survives no shorter here than when the server writes to it.
+pub const KEEPALIVE_IDLE: Duration = Duration::from_secs(10 * 60);
+pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+pub const KEEPALIVE_PROBES: u32 = 5;
+
+/// Turns on TCP keepalive for an accepted socket. The T3 server has no server-side liveness,
+/// so a peer gone without a FIN holds its session until a write fails; with no writes,
+/// forever. Here every session holds subscriptions and tasks, so the kernel must reap it.
+/// Failure only loses the probes, so it is ignored.
+pub fn keep_alive(stream: &TcpStream) {
+    use rustix::net::sockopt;
+    let _ = sockopt::set_socket_keepalive(stream, true);
+    let _ = sockopt::set_tcp_keepidle(stream, KEEPALIVE_IDLE);
+    let _ = sockopt::set_tcp_keepintvl(stream, KEEPALIVE_INTERVAL);
+    let _ = sockopt::set_tcp_keepcnt(stream, KEEPALIVE_PROBES);
+}
 
 /// What a gate allows now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,8 +177,6 @@ pub struct SessionOptions {
     pub frame_parts: bool,
     /// Largest client message accepted, joined from parts or whole.
     pub max_message_bytes: usize,
-    /// Close a connection that sends nothing for this long. Conn pings every 5 s.
-    pub idle_timeout: Duration,
     /// Passed to every handler.
     pub context: CallContext,
     /// Checked before every dispatch and every frame; its close ends the session.
@@ -171,7 +188,6 @@ impl Default for SessionOptions {
         Self {
             frame_parts: false,
             max_message_bytes: 16 * 1024 * 1024,
-            idle_timeout: Duration::from_secs(60),
             context: CallContext::default(),
             gate: None,
         }
@@ -268,8 +284,14 @@ fn next_connection_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Runs one connection until the client leaves, ends with `Eof`, or goes idle. Every call
-/// gets `options.context` with this connection's id.
+/// Runs one connection until the client leaves or ends with `Eof`. Every call gets
+/// `options.context` with this connection's id.
+///
+/// Silence never closes it, as with the T3 server: the client pings and decides when the
+/// server is gone (`RpcClient` `makePinger`), the server only answers. A laptop that wakes from
+/// sleep sends its queued ping into a socket that is still open. A peer that is gone ends the
+/// session through the transport, and [`keep_alive`] bounds how long the kernel takes to see
+/// that on a silent socket.
 pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: SessionOptions) {
     let context = CallContext {
         connection_id: next_connection_id(),
@@ -286,8 +308,6 @@ pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: 
     let mut calls = Calls::default();
     let mut joiner = frame_parts::Joiner::new(options.max_message_bytes);
     let mut ended = false;
-    let idle = tokio::time::sleep(options.idle_timeout);
-    tokio::pin!(idle);
     let gate = options.gate.clone();
     let gate_closed = match &gate {
         Some(gate) => gate.0.closed(),
@@ -322,7 +342,6 @@ pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: 
                 }
             }
             incoming = socket.recv() => {
-                idle.as_mut().reset(Instant::now() + options.idle_timeout);
                 let text = match incoming {
                     Incoming::Text(text) => text,
                     Incoming::TooLarge => {
@@ -387,10 +406,6 @@ pub async fn run<T: Transport>(mut socket: T, table: Arc<MethodTable>, options: 
                         return;
                     }
                 }
-            }
-            _ = &mut idle => {
-                end(&mut socket, CLOSE_GOING_AWAY, "idle", gate.as_ref()).await;
-                return;
             }
             () = &mut gate_closed => {
                 revoke(&mut socket).await;

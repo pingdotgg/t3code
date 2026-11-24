@@ -12,5 +12,6 @@ pub(crate) mod host;
 )]
 mod loader;
 mod loader_support;
+mod toolbar_hooks;
 
 pub(crate) mod view;

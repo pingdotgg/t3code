@@ -2,6 +2,7 @@
 //! the scrollable result rows grid (`RowsGrid`), the table column structure list
 //! (`StructureList`), and the connection error alert.
 
+use crate::a11y::ConnA11yExt as _;
 use conn_desktop::database::DatabaseColumn;
 use conn_desktop::database::api::{
     ConnectionSource, DatabaseQueryResult, PanelConnection, connection_target,
@@ -54,6 +55,7 @@ pub(crate) fn render_connection_menu(
 
     let mut list = v_flex()
         .id("db-connection-menu")
+        .a11y_group("panel.database.connection-menu", "Connections")
         .min_w(px(160.0))
         .max_w(px(360.0))
         .p(px(4.0))
@@ -74,6 +76,10 @@ pub(crate) fn render_connection_menu(
             list = list.child(
                 h_flex()
                     .id(SharedString::from(format!("db-conn-item-{id}")))
+                    .a11y_button(
+                        format!("panel.database.connection.{id}"),
+                        "Database connection",
+                    )
                     .w_full()
                     .min_h(px(28.0))
                     .px(px(8.0))
@@ -312,6 +318,10 @@ pub(crate) fn render_rows_grid(tokens: &Tokens, result: &DatabaseQueryResult) ->
     for (row_index, row) in result.rows.iter().enumerate() {
         let mut line = h_flex()
             .id(SharedString::from(format!("db-row-{row_index}")))
+            .a11y_group(
+                format!("panel.database.row.{row_index}"),
+                format!("Result row {}", row_index + 1),
+            )
             .w_full()
             .min_w(px(total_width))
             .items_center()

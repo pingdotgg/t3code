@@ -23,6 +23,9 @@ rusqlite.workspace = true
 # The server's zone for a command time without one, as T3's `DateTime.make` reads it
 # (`src/time.rs`); already in the server binary through conn-features.
 jiff.workspace = true
+# A monogram counts graphemes, as T3's `Intl.Segmenter` (`src/projects.rs`); already in the
+# server binary through conn-files' nucleo-matcher.
+unicode-segmentation = "1.13"
 
 [features]
 # A scripted provider for the client check (`examples/export_turn.rs`).

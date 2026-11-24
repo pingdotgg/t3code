@@ -2,6 +2,7 @@
 //! effects to run after the commit. To support a new command, add one function and one line
 //! in [`handler`].
 
+use conn_support::ids::join_id;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -694,6 +695,10 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     // A scheduled run's message names its task; the client's timeline marks it.
     if let Some(task) = &c.scheduled_task_id {
         message["scheduledTaskId"] = json!(task);
+        // An unpinned scheduled run follows the thread's selection (`Orchestrator.ts`).
+        if c.model_selection.is_none() {
+            message["followsThreadSelection"] = json!(true);
+        }
     }
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
@@ -1044,6 +1049,20 @@ pub(crate) fn start_next_queued(
     if !tx.queue_enabled(thread["projectId"].as_str(), instance) {
         hold_queue(tx, thread_id)?;
         return Ok(None);
+    }
+    // The thread moves to the run's selection as it starts, so a run queued behind it that
+    // follows the thread takes the same one (`startNextQueuedRun`).
+    if run["modelSelection"] != thread["modelSelection"] {
+        let event = if run["providerInstanceId"] == thread["providerInstanceId"] {
+            "thread.model-selection-updated"
+        } else {
+            "thread.provider-switched"
+        };
+        let mut moved = thread.clone();
+        moved["providerInstanceId"] = run["providerInstanceId"].clone();
+        moved["modelSelection"] = run["modelSelection"].clone();
+        moved["updatedAt"] = json!(tx.now());
+        tx.append(Draft::new(thread_id, event, moved).payload_instance())?;
     }
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
@@ -1588,13 +1607,77 @@ pub(crate) fn mark_stop_unresponsive(
     Ok(())
 }
 
+/// The id of a run's provider stop reason notice (T3's `runSignalTurnItem`).
+pub fn provider_stop_reason_id(run_id: &str) -> String {
+    join_id(
+        "turn-item",
+        &["run", run_id, "signal", "provider-stop-reason"],
+    )
+}
+
+/// `subagentResultForRun`'s result for a completed child with no answer, with the hook's
+/// reason when a hook stopped it.
+pub fn completed_without_result(stop_reason: Option<&str>) -> String {
+    let text = "Child task completed without an assistant result.";
+    stop_reason.map_or_else(|| text.to_owned(), |reason| format!("{text}\n\n{reason}"))
+}
+
+/// `PROVIDER_STOP_REASON_SIGNAL`: Codex reports a turn a hook stopped as completed; the run
+/// keeps the hook's reason as a warning (`RunExecutionService`). Its id is T3's
+/// `runSignalTurnItem`, which `subagentProjection.ts` looks up.
+pub(crate) fn write_provider_stop_reason(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+    reason: &str,
+) -> StoreResult<()> {
+    let Some(run) = tx.entity(thread_id, "runs", run_id)? else {
+        return Ok(());
+    };
+    let Some(root) = run["rootNodeId"].as_str() else {
+        return Ok(());
+    };
+    let provider_turn = tx
+        .entity(thread_id, "nodes", root)?
+        .map(|node| node["providerTurnId"].clone())
+        .unwrap_or(Value::Null);
+    let now = tx.now().to_owned();
+    let item = json!({
+        "id": provider_stop_reason_id(run_id),
+        "threadId": thread_id,
+        "runId": run_id,
+        "nodeId": root,
+        "providerThreadId": run["providerThreadId"],
+        "providerTurnId": provider_turn,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": run["ordinal"].as_u64().unwrap_or(0) * 100 + 98,
+        "status": "completed",
+        "title": "Stopped by the provider",
+        "startedAt": now,
+        "completedAt": now,
+        "updatedAt": now,
+        "type": "system_notice",
+        "level": "warning",
+        "message": reason,
+    });
+    tx.append(
+        Draft::new(thread_id, "turn-item.updated", item)
+            .run(Some(run_id))
+            .node(Some(root)),
+    )?;
+    Ok(())
+}
+
 /// `makeInterruptResultTurnItem`: the Stop result of a run that ended interrupted. Its message
-/// is `reason`, else the Stop request's, else "Stopped by the provider". Written once.
+/// is `reason` (Force stop), else the Stop request's, else the provider's `fallback`, else
+/// "Stopped by the provider" (`RunExecutionService`). Written once.
 pub(crate) fn write_interrupt_result(
     tx: &mut Tx<'_>,
     thread_id: &str,
     run: &Value,
     reason: Option<&str>,
+    fallback: Option<&str>,
 ) -> StoreResult<()> {
     let (Some(run_id), Some(root)) = (run["id"].as_str(), run["rootNodeId"].as_str()) else {
         return Ok(());
@@ -1611,6 +1694,7 @@ pub(crate) fn write_interrupt_result(
                 .as_ref()
                 .and_then(|r| r["message"].as_str().map(str::to_owned))
         })
+        .or_else(|| fallback.map(str::to_owned))
         .unwrap_or_else(|| "Stopped by the provider".to_owned());
     let provider_turn = tx
         .entity(thread_id, "nodes", root)?
@@ -2215,6 +2299,7 @@ pub(crate) fn finish_run(
         status,
         status,
         failure,
+        None,
         IdleWrite::WhileActive,
     )
     .map(drop)
@@ -2233,8 +2318,13 @@ pub(crate) enum IdleWrite {
 
 /// Ends a run's items with `status`, and the run and its root node with `persisted`: a
 /// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
-/// `completedAt` (`RunExecutionService.ts`). Returns whether it ended the run: `false` when
-/// the run is gone or already ended.
+/// `completedAt` (`RunExecutionService.ts`). An interrupted run's Stop result falls back to the
+/// provider's `stop_reason`. Returns whether it ended the run: `false` when the run is gone or
+/// already ended.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "T3's turn terminal (status, failure, reason) plus how the run persists"
+)]
 pub(crate) fn finish_run_as(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -2242,6 +2332,7 @@ pub(crate) fn finish_run_as(
     status: &str,
     persisted: &str,
     failure: Option<Value>,
+    stop_reason: Option<&str>,
     idle: IdleWrite,
 ) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
@@ -2252,7 +2343,7 @@ pub(crate) fn finish_run_as(
     }
     crate::secret_requests::cancel_pending(tx, thread_id, run_id)?;
     if status == "interrupted" {
-        write_interrupt_result(tx, thread_id, &run, None)?;
+        write_interrupt_result(tx, thread_id, &run, None, stop_reason)?;
     }
     let now = tx.now().to_owned();
     let root = run["rootNodeId"].as_str().map(str::to_owned);
@@ -2474,7 +2565,30 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "Thread {thread_id} is still running and cannot be settled."
         ));
     }
+    // T3 settles past a queued message the server or a schedule sent, never a user's own, and
+    // cancels those automatic runs so a later resume never starts them.
+    let mut automatic_runs = vec![];
+    for run in queued_runs(tx, &thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let message = tx.entity(&thread_id, "messages", message_id)?;
+        let automatic = message.as_ref().is_some_and(|m| {
+            m["createdBy"] != "user" || !is_null(m, "scheduledTaskId") || is_automatic(m)
+        });
+        if !automatic {
+            return reject(format!(
+                "Thread {thread_id} has a queued message. Send it or remove it from the queue before settling."
+            ));
+        }
+        automatic_runs.push(run["id"].as_str().unwrap_or_default().to_owned());
+    }
+    for run_id in automatic_runs {
+        finish_run(tx, &thread_id, &run_id, "cancelled", None)?;
+    }
     let settled_at = command["settledAt"].clone();
+    let current = live_thread(tx, &thread_id)?;
+    let again = current["settledOverride"] == "settled"
+        && !is_null(&current, "settledAt")
+        && is_null(&current, "pinnedAt");
     thread_patch(tx, &command, "thread.settled", |t, now| {
         let already =
             t["settledOverride"] == "settled" && !is_null(t, "settledAt") && is_null(t, "pinnedAt");
@@ -2504,9 +2618,17 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         Ok(())
     })?;
+    let settled_at = live_thread(tx, &thread_id)?["settledAt"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     Ok(vec![Effect::ThreadClosed {
         thread_id,
-        reason: crate::ThreadClose::Settled,
+        reason: if again {
+            crate::ThreadClose::SettledAgain { settled_at }
+        } else {
+            crate::ThreadClose::Settled { settled_at }
+        },
     }])
 }
 
@@ -2596,20 +2718,24 @@ fn follows_current_conversation(message: &Value) -> bool {
     let buffered = message["createdBy"] == "agent"
         && message["creationSource"] == "provider"
         && !is_null(message, "notification")
-        && is_null(message, "delegatedCompletion");
-    !is_null(message, "delegatedCompletion")
+        && !is_delegated_completion(message);
+    is_delegated_completion(message)
         || message["followsThreadSelection"] == true
         || (message["notification"]["source"]["kind"] == "monitor" && !buffered)
 }
 
-/// A message the server queued by itself: a notification or a delegated-task completion. This
-/// engine marks its completion wakes by their id (`families::deliver`).
-fn is_automatic(message: &Value) -> bool {
-    !is_null(message, "notification")
-        || !is_null(message, "delegatedCompletion")
+/// A delegated-task completion. This engine marks its completion wakes by their id
+/// (`families::deliver`).
+pub(crate) fn is_delegated_completion(message: &Value) -> bool {
+    !is_null(message, "delegatedCompletion")
         || message["id"]
             .as_str()
             .is_some_and(|id| id.starts_with("message:delegated-completion:"))
+}
+
+/// A message the server queued by itself: a notification or a delegated-task completion.
+fn is_automatic(message: &Value) -> bool {
+    !is_null(message, "notification") || is_delegated_completion(message)
 }
 
 fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {

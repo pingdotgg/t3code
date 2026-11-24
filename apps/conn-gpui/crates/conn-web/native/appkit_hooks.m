@@ -5,6 +5,8 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <objc/runtime.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 // CEF's message pump traps unless NSApp conforms to CefAppProtocol.
 // GPUI owns the NSApplication subclass, so we attach the protocol and
@@ -105,6 +107,48 @@ void conn_cef_start_message_loop(void) {
 const char *conn_main_bundle_identifier(void) {
   NSString *identifier = [[NSBundle mainBundle] bundleIdentifier];
   return identifier ? identifier.UTF8String : NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Context-menu actions: the general pasteboard and the default URL handler.
+// ---------------------------------------------------------------------------
+
+bool conn_web_pasteboard_set_string(const char *utf8) {
+  if (!utf8) {
+    return false;
+  }
+  @autoreleasepool {
+    NSString *text = [NSString stringWithUTF8String:utf8];
+    if (!text) {
+      return false;
+    }
+    NSPasteboard *board = [NSPasteboard generalPasteboard];
+    [board clearContents];
+    return [board setString:text forType:NSPasteboardTypeString];
+  }
+}
+
+bool conn_web_pasteboard_set_png(const uint8_t *bytes, size_t length) {
+  if (!bytes || length == 0) {
+    return false;
+  }
+  @autoreleasepool {
+    NSData *data = [NSData dataWithBytes:bytes length:length];
+    NSPasteboard *board = [NSPasteboard generalPasteboard];
+    [board clearContents];
+    return [board setData:data forType:NSPasteboardTypePNG];
+  }
+}
+
+bool conn_web_open_url(const char *utf8) {
+  if (!utf8) {
+    return false;
+  }
+  @autoreleasepool {
+    NSString *text = [NSString stringWithUTF8String:utf8];
+    NSURL *url = text ? [NSURL URLWithString:text] : nil;
+    return url ? [[NSWorkspace sharedWorkspace] openURL:url] : false;
+  }
 }
 
 // ---------------------------------------------------------------------------

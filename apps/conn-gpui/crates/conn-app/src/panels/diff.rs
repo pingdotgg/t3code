@@ -558,6 +558,7 @@ impl DiffPanel {
             let pop_div = to_hsla(self.tokens.glass_divider);
             let mut menu = v_flex()
                 .id("diff-scope-menu")
+                .a11y_group("panel.diff.scope-menu", "Diff scope")
                 .absolute()
                 .top_full()
                 .left_0()
@@ -655,6 +656,10 @@ impl DiffPanel {
                         menu = menu.child(
                             h_flex()
                                 .id(SharedString::from(format!("diff-scope-commit-{short_sha}")))
+                                .a11y_button(
+                                    format!("panel.diff.scope-commit.{short_sha}"),
+                                    format!("Commit {short_sha}"),
+                                )
                                 .h(px(26.0))
                                 .px(px(8.0))
                                 .gap(px(6.0))
@@ -716,6 +721,7 @@ impl DiffPanel {
                 menu = menu.child(
                     h_flex()
                         .id("diff-scope-all")
+                        .a11y_button("panel.diff.scope-all", "All changes")
                         .h(px(26.0))
                         .px(px(8.0))
                         .gap(px(6.0))
@@ -758,6 +764,10 @@ impl DiffPanel {
                     menu = menu.child(
                         h_flex()
                             .id(SharedString::from(format!("diff-scope-turn-{turn}")))
+                            .a11y_button(
+                                format!("panel.diff.scope-turn.{turn}"),
+                                format!("Turn {turn}"),
+                            )
                             .h(px(26.0))
                             .px(px(8.0))
                             .gap(px(6.0))
@@ -840,6 +850,7 @@ impl DiffPanel {
                 let pop_border = to_hsla(self.tokens.shell_inner_border);
                 let mut menu = v_flex()
                     .id("diff-base-ref-menu")
+                    .a11y_group("panel.diff.base-ref-menu", "Base branch")
                     .absolute()
                     .top_full()
                     .left_0()
@@ -860,6 +871,7 @@ impl DiffPanel {
                 menu = menu.child(
                     h_flex()
                         .id("diff-base-ref-auto")
+                        .a11y_button("panel.diff.base-ref-auto", "Automatic base branch")
                         .h(px(26.0))
                         .px(px(8.0))
                         .gap(px(6.0))
@@ -893,6 +905,10 @@ impl DiffPanel {
                     menu = menu.child(
                         h_flex()
                             .id(SharedString::from(format!("diff-base-ref-{ref_name}")))
+                            .a11y_button(
+                                format!("panel.diff.base-ref.{ref_name}"),
+                                ref_name.to_string(),
+                            )
                             .h(px(26.0))
                             .px(px(8.0))
                             .gap(px(6.0))
@@ -1040,6 +1056,10 @@ impl DiffPanel {
                             .child(
                                 div()
                                     .id("diff-mode-toggle-btn")
+                                    .a11y_button(
+                                        "panel.diff.mode-toggle",
+                                        "Toggle split or unified diff",
+                                    )
                                     .size(px(TOOLBAR_BTN_SIZE_PX))
                                     .rounded(px(9999.0))
                                     .flex()
@@ -1069,6 +1089,7 @@ impl DiffPanel {
                             .child(
                                 div()
                                     .id("diff-wrap-btn")
+                                    .a11y_button("panel.diff.wrap", "Toggle line wrap")
                                     .size(px(TOOLBAR_BTN_SIZE_PX))
                                     .rounded(px(9999.0))
                                     .flex()
@@ -1093,6 +1114,7 @@ impl DiffPanel {
                             .child(
                                 div()
                                     .id("diff-tree-toggle-btn")
+                                    .a11y_button("panel.diff.tree-toggle", "Toggle file tree")
                                     .size(px(TOOLBAR_BTN_SIZE_PX))
                                     .rounded(px(9999.0))
                                     .flex()
@@ -1128,6 +1150,7 @@ impl DiffPanel {
 
         let mut list = v_flex()
             .id("diff-files-scroll")
+            .a11y_group("panel.diff.files", "Changed files")
             .w(px(self.file_list_width))
             .h_full()
             .flex_shrink_0()
@@ -1144,6 +1167,7 @@ impl DiffPanel {
                 .unwrap_or(muted);
             let row = h_flex()
                 .id(SharedString::from(format!("diff-file-{idx}")))
+                .a11y_button(format!("panel.diff.file.{idx}"), file.display_path.clone())
                 .mx(px(2.0))
                 .h(px(ROW_HEIGHT_PX))
                 .px(px(8.0))
@@ -1295,6 +1319,7 @@ impl DiffPanel {
 
         let mut scroll = v_flex()
             .id("diff-body-scroll")
+            .a11y_group("panel.diff.body", "Diff content")
             .flex_1()
             .min_h_0()
             .w_full()
@@ -1598,6 +1623,7 @@ impl Render for DiffPanel {
                 if self.file_tree_open {
                     let split_handle = div()
                         .id("diff-split-handle")
+                        .a11y_group("panel.diff.split-handle", "Resize diff panes")
                         .absolute()
                         .top_0()
                         .bottom_0()

@@ -12,7 +12,7 @@
 
 use std::{
     net::SocketAddr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 
 use conn_engine::Engine;
@@ -46,6 +46,9 @@ pub use worktrees::WorktreeConfig;
 
 /// What the service needs from the server around it.
 pub struct McpConfig {
+    /// Where the server listens. Every credential carries `/mcp` at this address, so bind
+    /// the listener before the service exists.
+    pub listen_address: SocketAddr,
     pub preview: Option<conn_preview::tabs::Preview>,
     pub engine: Arc<dyn Engine>,
     /// The same attachment store used by client RPC and HTTP uploads.
@@ -166,6 +169,17 @@ impl std::fmt::Debug for McpConfig {
 }
 
 pub const DEFAULT_HOSTED_APP_URL: &str = "https://app.t3.codes";
+
+/// `/mcp` at the listen address. An unspecified address (`0.0.0.0`) becomes loopback: agents
+/// run on this machine.
+fn endpoint(address: SocketAddr) -> String {
+    let host = match address.ip() {
+        ip if ip.is_unspecified() => "127.0.0.1".to_owned(),
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+        std::net::IpAddr::V4(ip) => ip.to_string(),
+    };
+    format!("http://{host}:{}/mcp", address.port())
+}
 
 /// Who calls. The route authenticates; the service only reads this.
 #[derive(Clone, Debug, PartialEq)]
@@ -309,14 +323,14 @@ pub struct McpService {
     exposure: Mutex<exposure::Exposure>,
     /// Threads whose own agent asked to settle them when the active run completes.
     settling: Mutex<std::collections::HashSet<String>>,
-    endpoint: OnceLock<String>,
+    endpoint: String,
     upload_owners: Mutex<tools::attachments::UploadOwners>,
     handoffs: Mutex<std::collections::HashSet<String>>,
     /// Whether each calling thread's project is on a forge (`forgeOfThread`): read per request,
     /// kept a minute, at most 1,000 threads.
     forges: Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
     /// Followers of tasks that run in linked environments.
-    remote: remote_tasks::Followers,
+    remote: Arc<remote_tasks::Followers>,
 }
 
 impl std::fmt::Debug for McpService {
@@ -343,39 +357,92 @@ impl McpService {
         Ok(())
     }
 
+    /// The live thread, while the settlement named by `settled_at` (its committed `settledAt`)
+    /// is still its own: not undone, replaced by a later one, or deleted since.
+    async fn settled_thread(&self, thread_id: &str, settled_at: &str) -> Option<Value> {
+        let projection = self
+            .config
+            .engine
+            .get_thread_projection(thread_id.into())
+            .await
+            .ok()?;
+        let thread = &projection["thread"];
+        (thread["deletedAt"].is_null()
+            && thread["settledOverride"] == "settled"
+            && thread["settledAt"] == settled_at)
+            .then(|| thread.clone())
+    }
+
+    /// Whether `settled_at` still names the thread's settlement (`cleanUpSettledThread`'s
+    /// first check, before it closes terminals).
+    pub async fn is_current_settlement(&self, thread_id: &str, settled_at: &str) -> bool {
+        self.settled_thread(thread_id, settled_at).await.is_some()
+    }
+
+    /// `cleanUpSettledThread` after `closeOnSettle` (`ThreadSettlementService.ts:700`): a live
+    /// thread still in the settlement named by `settled_at` runs its project's `runOnSettle`
+    /// script in its own worktree. The host calls it once per settlement, on the engine's
+    /// transition to settled. Shared checkouts are skipped: a root checkout, and a delegate in
+    /// its parent's worktree. Returns the started script, if one started.
+    pub async fn run_settle_script(&self, thread_id: &str, settled_at: &str) -> Option<Value> {
+        let config = self.config.worktrees.as_ref()?;
+        let engine = &self.config.engine;
+        let thread = self.settled_thread(thread_id, settled_at).await?;
+        let path = thread["worktreePath"].as_str()?.to_owned();
+        let probe = std::path::PathBuf::from(&path);
+        if !tokio::task::spawn_blocking(move || probe.exists())
+            .await
+            .ok()?
+        {
+            return None;
+        }
+        // Read again after the worktree I/O: only the same live settlement runs a script.
+        let thread = self.settled_thread(thread_id, settled_at).await?;
+        if thread["lineage"]["relationshipToParent"] == "subagent"
+            && let Some(parent) = thread["lineage"]["parentThreadId"].as_str()
+            && let Ok(parent) = engine.get_thread_projection(parent.into()).await
+            && parent["thread"]["worktreePath"] == path.as_str()
+        {
+            return None;
+        }
+        let shell = engine.shell_snapshot().await.ok()?;
+        let project = shell["projects"]
+            .as_array()?
+            .iter()
+            .find(|p| p["id"] == thread["projectId"] && p["deletedAt"].is_null())?
+            .clone();
+        let run = tools::worktree::run_project_script(
+            config,
+            thread_id,
+            &project,
+            &path,
+            tools::worktree::ScriptTrigger::Settle,
+        )
+        .await;
+        match run {
+            Ok(started) if started["status"] == "started" => Some(started),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("settle script for {thread_id}: {error}");
+                None
+            }
+        }
+    }
+
     pub fn new(config: McpConfig) -> Arc<Self> {
+        let endpoint = endpoint(config.listen_address);
         Arc::new(Self {
             config,
             credentials: Mutex::new(credentials::Credentials::default()),
             sessions: Mutex::new(sessions::Sessions::default()),
             exposure: Mutex::new(exposure::Exposure::default()),
             settling: Mutex::new(std::collections::HashSet::new()),
-            endpoint: OnceLock::new(),
+            endpoint,
             upload_owners: Mutex::new(tools::attachments::UploadOwners::default()),
             handoffs: Mutex::new(std::collections::HashSet::new()),
             forges: Mutex::new(std::collections::HashMap::new()),
-            remote: remote_tasks::Followers::default(),
+            remote: Arc::default(),
         })
-    }
-
-    /// Records where `/mcp` answers. An unspecified address (`0.0.0.0`) becomes loopback:
-    /// agents run on this machine.
-    pub fn set_listen_address(&self, address: SocketAddr) {
-        let host = match address.ip() {
-            ip if ip.is_unspecified() => "127.0.0.1".to_owned(),
-            std::net::IpAddr::V6(ip) => format!("[{ip}]"),
-            std::net::IpAddr::V4(ip) => ip.to_string(),
-        };
-        let _ = self
-            .endpoint
-            .set(format!("http://{host}:{}/mcp", address.port()));
-    }
-
-    pub fn endpoint(&self) -> String {
-        self.endpoint
-            .get()
-            .cloned()
-            .unwrap_or_else(|| "http://127.0.0.1/mcp".to_owned())
     }
 
     /// A fresh credential for one provider session of a thread. The provider passes the
@@ -385,7 +452,7 @@ impl McpService {
         McpServerEntry {
             thread_id: caller.thread_id,
             provider_session_id: caller.provider_session_id,
-            url: self.endpoint(),
+            url: self.endpoint.clone(),
             authorization: format!("Bearer {token}"),
         }
     }

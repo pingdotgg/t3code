@@ -859,7 +859,10 @@ impl PumpState {
                     }
                 }
             }
-            ClientEvent::PanelRequest(_) | ClientEvent::Annotations { .. } => {}
+            // The iPhone app does not subscribe to the server config yet.
+            ClientEvent::PanelRequest(_)
+            | ClientEvent::Annotations { .. }
+            | ClientEvent::ServerConfig(_) => {}
         }
     }
 

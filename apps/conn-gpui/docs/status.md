@@ -1,6 +1,6 @@
 # Status
 
-**State:** Phases 1–5 + right-panel parity surfaces (Files, Diff, Terminal, Browser/CEF, API, Database, MCP, Tasks, Pull Request, Linked Items, Device live streaming) integrated, passing `scripts/check.sh` + `--features automation` + `--features cef` clippy + live `conn-server` tests, and **side-by-side visually verified in `nick-vm` via VMPal against `Conn.app`** in both T3 Code Light and Dark Ocean.
+**State:** Phases 1–5 + right-panel parity surfaces (Files, Diff, Terminal, Browser/CEF, API, Database, MCP, Tasks, Pull Request, Linked Items, Device live streaming) integrated, passing `scripts/check.sh` + `--features automation` clippy + live `conn-server` tests, and **side-by-side visually verified in `nick-vm` via VMPal against `Conn.app`** in both T3 Code Light and Dark Ocean.
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -20,6 +20,10 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 | 5 | Side-by-side visual parity audit against Conn Electron (Dark Ocean + Light) | Done (with limits below) | `.shots/final/{dark-ocean,t3-code-light}-{chat,files,diff,terminal,browser,settings,palette}.png` vs `.shots/ref/` and design-spec metrics |
 
 ## Known decisions & open notes
+
+- **Workspace editor, and three row pins (2026-11-23, Nick's pins #328, #325, #326, #316).** The rail `+` is `New workspace` and opens web's workspace editor (name, colour, icon or image, projects under their machines plus Orbit projects); `Edit…` on a tile's right-click menu opens it for that workspace; a created workspace is selected and the sidebar shows only the threads of its projects, kept between launches (`active-workspace.json`) and pushed through the existing Orbit profile workspace sync. The machine icon is off the rows (the hover and details cards still name the environment, now with the machine's icon; web draws it at the end of the row's meta line, Nick asked for it off), the linked-issue badge moved from the row to the hover card, and the settle button highlights only its icon on hover (`text-muted-foreground hover:text-foreground`). **How web treats non-Orbit projects:** it does not tell them apart. Its editor lists every project of every connected environment (`availableProjects`), and Orbit projects do not exist in the web client at all; a workspace keeps `<environmentId>:<projectId>` refs or logical `projectKeys`. GPUI adds an `Orbit projects` section kept by slug, matched by `workspace_matches_project` against any machine's folder or title of that name. **Slice 2 (not built):** an Orbit-only picker (list only `OrbitProject`s, store `project_id`s in the profile, show non-Orbit environment projects only as an explicit `On this host` group), threads bound to an Orbit project (the thread carries an Orbit project id; creating one in a workspace picks its Orbit project and the Instance or host that runs it, and `thread.create` takes that target), and ungrouped threads running on the host directly (`nick`, `mini`) as the one non-Orbit case. That needs the Orbit Gateway to hold the project binding per thread (a Gateway field or a `conn-server` thread metadata key), the new-thread flow to choose project and host, and a migration for existing threads (match their workspace folder to an Orbit project slug).
+
+- **Linked environments in the thread list (2026-11-23, Nick: "same state in Conn GPUI as in the current Conn"; `docs/scope.md` §2.1).** The sidebar lists the threads of every Orbit environment, not only the connected one: `conn_orbit::linked` plans which servers to connect (Nodes paired automatically, saved Instances reconnected, unsaved Instances left alone, asleep Instances skipped), `conn_client::environments::EnvironmentSet` holds one connection each and tags their events, `conn_state::environments` merges the shells (and `project_group_labels_across_environments` groups projects across them), and `conn-app/src/app/linked.rs` wires it in (threads open, send and subscribe on their own environment's connection; rows carry the machine icon). Unit-tested in the three crates. **Closed on 2026-11-23 (Nick: "close the remaining gaps"):** each linked environment's last shell is saved and listed while it is asleep or offline (`conn-desktop/src/orbit/linked_store.rs`, `LinkedShellSnapshot`); the Settled shelf pages every environment on its own cut (`ShellState::extend_with_environment`, `LinkedShells::next_older_page`); message search asks every connected environment (`merge_environment_matches`); the composer and right panel read the open thread's own environment's catalog (`ConnApp::active_server_config`); scratch-project threads name their machine on the meta line; Settings › Connections lists the linked environments with Conn's per-environment switch and a link switch on each Orbit Instance. **Still different from Conn:** (1) Conn's own saved pairings are not imported: they live in its Chromium IndexedDB (Snappy-compressed LevelDB with V8-serialized values, tokens in the same records, locked while Conn runs), which GPUI does not read. Nick links each Instance he uses once in Settings › Connections › Orbit Instances (wake it first if it sleeps); from then on it is paired, saved and listed like a Node. (2) An environment's older settled threads are not cached: a cached-only environment lists the threads of its last snapshot, and its Settled shelf pages again once it connects. (3) The Linux machine icon falls back to the server glyph (the icon set has none).
 
 - **Moved into the `nckrtl/conn` monorepo (2026-11-22):** `conn-gpui` now lives at `apps/conn-gpui`, imported with full history from the standalone repo frozen at `a6511ce`. `conn-wire`/`conn-contract` are path dependencies on `../conn-server/crates/`, `.refs/conn` is gone (Conn's web, desktop and mobile sources are in the same checkout), and root fmt, lint and CI job detection skip `apps/conn-gpui` like `apps/conn-server`.
 - **Monorepo Layer 3 `nick-vm` parity verification, visual fixes & `ContextWindowSnapshot` wiring (2026-11-22 — verified side-by-side against `Conn.app` in `nick-vm`):**
@@ -89,15 +93,16 @@ scripts/automate.py '{"cmd":"theme","id":"t3-code-light"}' '{"cmd":"screenshot",
 scripts/run-app.sh stop; scripts/dev-server.sh stop
 ```
 
-With the CEF browser:
+The embedded CEF browser is always compiled in; CEF itself downloads on first use into
+`~/Library/Application Support/conn-gpui/cef/`.
 
 ```sh
-CARGO_FLAGS="--features cef" scripts/run-app.sh
+scripts/run-app.sh
 scripts/automate.py '{"cmd":"browse","url":"http://127.0.0.1:8765/"}' '{"cmd":"browser-state"}'
-CARGO_TARGET_DIR=target-cef cargo run -p conn-web --example cef_smoke --features cef -- http://127.0.0.1:8765/
+cargo run -p conn-web --example cef_smoke -- http://127.0.0.1:8765/
 ```
 
-CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-app --all-targets --features conn-web/cef,conn-app/cef,conn-app/automation -- -D warnings`.
+Lint check: `cargo clippy -p conn-web -p conn-app --all-targets --features conn-app/automation -- -D warnings`.
 
 - Auth: `conn-server auth session issue --token-only` writes a bearer to `/tmp/conn-gpui-dev/bearer`; the app reads `CONN_GPUI_SERVER` + `CONN_GPUI_TOKEN_FILE` (or `CONN_GPUI_PAIRING_URL`). Without them it shows a demo fixture.
 - Claude turns: the dev server uses a private copy of `apps/conn-server/helpers/sdk-host` with npm deps in `/tmp/conn-gpui-dev/sdk-host`; seed threads with `conn-server thread start <project> "<msg>" --provider claudeAgent --model haiku --wait --state-dir /tmp/conn-gpui-dev/state`.
@@ -111,6 +116,8 @@ CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-ap
 - Diff lines no longer wrap; narrower line-number gutter and file list.
 - Settings frame flattened onto the sidebar color: GPUI cannot blur in-window content, so the translucent frame let the chat show through.
 - Open overlays (Settings, palette) now receive token updates on every theme switch.
+
+- **Laravel debug bar (2026-11-23):** the php-data-bridge toolbar under the browser page and the API response is ported (`panels/laravel_toolbar/`, logic in `conn-desktop/src/laravel_toolbar/`, native header capture in `conn-web/src/mac/toolbar_hooks.rs`). Proof: `cargo test -p conn-desktop` (191) and `cargo test -p conn-app` (416, incl. headless renders of all 8 panels). Not yet looked at in a live window. Open: no progressive blur behind the flyout, application log is a 3 s tail (no Reverb stream), host flag set at load start not before the page's first script, in-page (pushState) navigation does not move the feed's document URL. See `docs/parity/panels.md`.
 
 ## Known limitations
 
