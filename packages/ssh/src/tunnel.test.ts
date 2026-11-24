@@ -1821,7 +1821,7 @@ const canBind = (port) =>
       for (const version of versions) {
         const runtimeDir = `${home}/.t3/runtime/versions/${version}`;
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
-        // The runner script runs with HOME alone in its environment, so it has no PATH to find node on.
+        // The runner gets only HOME, so `node` would resolve on sh's default PATH, which may not have it.
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
           `#!/bin/sh\nexec '${process.execPath}' '${fakeT3}' '${version}' "$@"\n`,
