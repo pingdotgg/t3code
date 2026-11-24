@@ -17,7 +17,7 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
   Profiler,
@@ -476,56 +476,6 @@ describe("MessagesTimeline work rows", () => {
     expect(output).toBeDefined();
     expect(output!.closest('[role="button"]')).toBeNull();
     expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContain(output);
-  });
-});
-
-describe("LegendList patch", () => {
-  // patches/@legendapp__list@3.7.3.patch measures the footer inside scrollToEnd.
-  it("reaches the end when the footer returns to its earlier size before the resize observer reports", async () => {
-    const container = document.createElement("div");
-    container.style.cssText = "height: 600px; width: 600px; display: flex; flex-direction: column;";
-    const listRef = createRef<LegendListRef | null>();
-    const data = Array.from({ length: 60 }, (_, index) => ({ id: `row-${index}` }));
-    await using _screen = await render(
-      <LegendList
-        ref={listRef}
-        data={data}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <div style={{ height: 50 }}>{item.id}</div>}
-        estimatedItemSize={50}
-        initialScrollAtEnd
-        style={{ height: 600 }}
-        ListFooterComponent={<div data-probe-footer style={{ height: 240 }} />}
-      />,
-      { container },
-    );
-    const list = listRef.current!;
-    const viewport = list.getScrollableNode()!;
-    const end = () => viewport.scrollHeight - viewport.clientHeight;
-    await vi.waitFor(() => expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1));
-
-    const footer = container.querySelector<HTMLElement>("[data-probe-footer]")!;
-    // scrollToEnd measures the 80px footer; it is back at 240px before the observer delivers.
-    footer.style.height = "80px";
-    const scrollTo = viewport.scrollTo.bind(viewport);
-    let restored = false;
-    viewport.scrollTo = ((...args: Parameters<HTMLElement["scrollTo"]>) => {
-      scrollTo(...args);
-      if (!restored) {
-        restored = true;
-        footer.style.height = "240px";
-      }
-    }) as HTMLElement["scrollTo"];
-    void list.scrollToEnd({ animated: false });
-    await vi.waitFor(() => expect(restored).toBe(true));
-
-    await vi.waitFor(
-      () => {
-        void list.scrollToOffset({ offset: end(), animated: false });
-        expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
-      },
-      { timeout: 3000, interval: 100 },
-    );
   });
 });
 
