@@ -29,7 +29,7 @@ const importAll =
 
 describe("importPastedComposerText", () => {
   it("pastes a copied thread link back as the chip it was copied from", () => {
-    const target = threadChipCopyTarget(thread, "Fix the login flow");
+    const target = threadChipCopyTarget(thread, "Fix the login flow", "http://192.168.1.5:3773");
     const imported: Array<ComposerContextClipboardFragment> = [];
     const text = importPastedComposerText(
       clipboard({
@@ -51,7 +51,7 @@ describe("importPastedComposerText", () => {
   });
 
   it("keeps the link when the composer cannot take the thread", () => {
-    const pasted = "https://app.t3.codes/threads/env-1/thread-1";
+    const pasted = "t3code://threads/env-1/thread-1";
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );

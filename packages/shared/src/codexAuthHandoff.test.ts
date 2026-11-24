@@ -23,7 +23,7 @@ const authorizationUrl = () => {
 };
 const input = {
   authorizationUrl: authorizationUrl(),
-  returnUrl: "https://app.t3.codes/welcome#agents:remote-environment",
+  returnUrl: "http://localhost:3773/welcome#agents:remote-environment",
   environmentId: EnvironmentId.make("remote-environment"),
   instanceId: ProviderInstanceId.make("work-codex"),
   flowId: "flow-one",
@@ -31,7 +31,7 @@ const input = {
 const callbackUrl = `http://127.0.0.1:54213/auth/callback?state=${"a".repeat(43)}&code=one-time-code&client_id=oaiapp_test`;
 
 describe("Codex desktop handoff", () => {
-  it("keeps the hosted return route, account, and environment with the code in a fragment", () => {
+  it("keeps the web return route, account, and environment with the code in a fragment", () => {
     expect(readCodexAuthHandoff(codexAuthHandoffUrl(input), false)).toEqual(input);
     const delivery = codexAuthDeliveryUrl(input, callbackUrl);
     expect(new URL(delivery).search).toBe("");

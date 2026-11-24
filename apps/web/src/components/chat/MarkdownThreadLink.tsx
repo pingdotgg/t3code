@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useGT, useMessages } from "gt-react";
 import { MessagesSquareIcon } from "lucide-react";
 import {
-  formatHostedThreadLink,
+  formatShareableThreadLink,
   guessThreadLinkRef,
   threadLinkCandidates,
   type ThreadLink,
@@ -11,7 +11,7 @@ import {
 import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
 import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
 
-import { configuredHostedAppUrl } from "../../hostedPairing";
+import { useShareableOrigin } from "../../state/shareableOrigin";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
@@ -85,6 +85,7 @@ export function MarkdownThreadLink(props: {
     : null;
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
+  const linkOrigin = useShareableOrigin((resolved?.ref ?? writtenRef).environmentId);
   if (linked && linkedLabel !== undefined) {
     const knownTitle = props.label ?? written?.title ?? null;
     const title = knownTitle ?? gt("Thread on {label}", { label: linkedLabel });
@@ -138,7 +139,7 @@ export function MarkdownThreadLink(props: {
     <ThreadContextChip
       record={{ ...ref, title }}
       projectId={resolved?.metadata.projectId ?? null}
-      copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
+      copyMarkdown={formatShareableThreadLink(ref, title, linkOrigin)}
     />
   );
 }
