@@ -60,6 +60,10 @@ const COLLISION_PADDING_PX: f32 = 8.0;
 const CARD_RADIUS_PX: f32 = 8.0;
 /// `p-3`.
 const CARD_PADDING_PX: f32 = 12.0;
+/// Top padding: a little tighter than the sides (Nick, 2026-11-24).
+const CARD_PADDING_TOP_PX: f32 = 10.0;
+/// The same gap between the header, the title and the author row.
+const ROW_GAP_PX: f32 = 10.0;
 /// `text-2xs` (`0.6875rem`) and its line height.
 const REPO_FONT_PX: f32 = 11.0;
 const REPO_LINE_PX: f32 = 16.0;
@@ -646,7 +650,13 @@ pub(super) fn estimated_card_height(title: &str) -> f32 {
         reason = "a title has a few lines at most"
     )]
     let lines = lines as f32;
-    2.0 + 2.0 * CARD_PADDING_PX + REPO_LINE_PX + 4.0 + lines * TITLE_LINE_PX + 8.0 + AUTHOR_LINE_PX
+    2.0 + CARD_PADDING_TOP_PX
+        + CARD_PADDING_PX
+        + REPO_LINE_PX
+        + ROW_GAP_PX
+        + lines * TITLE_LINE_PX
+        + ROW_GAP_PX
+        + AUTHOR_LINE_PX
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -885,7 +895,7 @@ fn card_element(
             "chat.link-preview.title",
             model.title.clone(),
         )
-        .mt(px(4.0))
+        .mt(px(ROW_GAP_PX))
         .text_size(px(TITLE_FONT_PX))
         .line_height(px(TITLE_LINE_PX))
         .font_weight(FontWeight::MEDIUM)
@@ -896,7 +906,7 @@ fn card_element(
     let mut author = div()
         .id("chat-link-preview-author")
         .a11y_group("chat.link-preview.author", format!("Author {author_name}"))
-        .mt(px(8.0))
+        .mt(px(ROW_GAP_PX))
         .flex()
         .flex_row()
         .items_center()
@@ -929,6 +939,7 @@ fn card_element(
         .w(px(width))
         .rounded(px(CARD_RADIUS_PX))
         .p(px(CARD_PADDING_PX))
+        .pt(px(CARD_PADDING_TOP_PX))
         .bg(hsla(tokens.popover))
         .text_color(hsla(tokens.popover_foreground))
         .border_1()
