@@ -101,6 +101,26 @@ describe("published theme files", () => {
     );
   });
 
+  it("preserves a stock secondary palette after a rename", () => {
+    const [original] = publishedThemeDefinitions([
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+        variants: { light: {} },
+      },
+    ]);
+    if (!original) throw new Error("Expected a published theme");
+
+    const saved = environmentThemeFile({ ...original, label: "Night sky" }, original);
+    const [reloaded] = publishedThemeDefinitions([{ id: original.id, ...saved }]);
+    if (!reloaded) throw new Error("Expected a published theme");
+    expect(saved.variants).toEqual({ light: {} });
+    expect(getThemeModes(reloaded)).toEqual(getThemeModes(original));
+  });
+
   it("keeps a sparse secondary palette sparse through a rename", () => {
     const file = {
       id: "nightfall",

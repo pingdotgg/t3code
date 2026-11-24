@@ -192,6 +192,8 @@ export const themeServerEditableEnvironmentIdAtom = Atom.make((get) => {
   const environmentId = get(localEnvironmentIdAtom);
   if (
     environmentId === null ||
+    get(environmentConnectionsAtom).get(environmentId)?.connection.phase !== "connected" ||
+    get(themeServerEnvironmentThemesAtom) === null ||
     get(themeServerConfigAtom)?.environment.capabilities.environmentThemeEditing !== true
   ) {
     return null;

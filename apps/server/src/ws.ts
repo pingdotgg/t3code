@@ -3608,7 +3608,12 @@ export const layerWsRpc = (
                       Stream.map((themes) => ({
                         version: 1 as const,
                         type: "environmentThemesUpdated" as const,
-                        payload: { themes },
+                        payload: {
+                          themes: themes.map((theme) => ({
+                            ...theme,
+                            revision: EnvironmentTheme.environmentThemeRevision(theme),
+                          })),
+                        },
                       })),
                     )
                   : Stream.empty;

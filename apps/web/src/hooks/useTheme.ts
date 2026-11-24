@@ -613,6 +613,27 @@ function setThemeHalf(appearance: ThemeAppearance, themeId: string | null): bool
   return true;
 }
 
+export function clearRemovedThemeSelection(themeId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    // The server event may already have made this id unresolvable.
+    const base = readThemePreferenceRaw();
+    const halves = readStoredThemeHalvesRaw();
+    if (base === themeId) writeThemePreference(readAppearanceModePreference(base));
+    for (const appearance of ["light", "dark"] as const) {
+      if (halves[appearance] === themeId && !setThemeHalf(appearance, null)) return false;
+    }
+    if (base === themeId) {
+      applyTheme(getStored(), { suppressTransitions: true });
+      emitChange();
+    }
+    return true;
+  } catch (cause) {
+    console.error("Failed to clear the removed theme selection.", safeErrorLogAttributes(cause));
+    return false;
+  }
+}
+
 function clearThemeHalves(): boolean {
   if (typeof window === "undefined") return false;
   try {

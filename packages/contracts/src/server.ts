@@ -663,9 +663,12 @@ const environmentThemeFields = {
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
 export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 
+const EnvironmentThemeRevision = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  revision: Schema.optional(EnvironmentThemeRevision),
   /** Revision of the image file published beside the theme; absent without one. */
   background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
@@ -680,6 +683,7 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
 
 export const EnvironmentThemeSaveInput = Schema.Struct({
   themeId: EnvironmentThemeId,
+  expectedRevision: EnvironmentThemeRevision,
   theme: EnvironmentThemeFile,
 });
 export type EnvironmentThemeSaveInput = typeof EnvironmentThemeSaveInput.Type;

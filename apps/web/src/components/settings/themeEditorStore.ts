@@ -4,7 +4,7 @@ import { create } from "zustand";
 import {
   getThemeDefinition,
   type ThemeAppearance,
-  type ThemeDefinition,
+  type PublishedThemeDefinition,
   type ThemeHalves,
   type ThemePreference,
 } from "../../themePalette";
@@ -14,7 +14,10 @@ export type ThemeEditorSessionInput = {
   seedThemeId: string | null;
   seedName: string | null;
   initialAppearance: ThemeAppearance;
-  published?: { environmentId: EnvironmentId; theme: ThemeDefinition };
+  published?: {
+    environmentId: EnvironmentId;
+    theme: PublishedThemeDefinition;
+  };
 };
 
 export type ThemeEditorSession = ThemeEditorSessionInput & {

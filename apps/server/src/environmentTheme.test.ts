@@ -657,6 +657,33 @@ describe("environment theme", () => {
     );
   });
 
+  it.effect("refuses an edit based on a theme an agent has since republished", () =>
+    withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const [original] = yield* themes.current;
+        assert.ok(original);
+        const expectedRevision = EnvironmentTheme.environmentThemeRevision(original);
+        const updated = { ...NIGHTFALL_THEME, css: ".look { color: red; }" };
+        yield* themes.apply({ themeId: "look", theme: updated });
+        const refused = yield* themes
+          .save({ themeId: "look", expectedRevision, theme: { ...original, name: "Renamed" } })
+          .pipe(Effect.flip);
+        assert.match(refused.message, /changed since you opened the editor/);
+        const [current] = yield* themes.current;
+        assert.ok(current);
+        assert.equal(current.css, updated.css);
+        yield* themes.save({
+          themeId: "look",
+          expectedRevision: EnvironmentTheme.environmentThemeRevision(current),
+          theme: { ...updated, name: "Renamed" },
+        });
+        assert.deepEqual(yield* themes.current, [{ id: "look", ...updated, name: "Renamed" }]);
+      }),
+    ),
+  );
+
   it.effect("saves an edit to a published theme without making it the default", () => {
     const selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [];
     return withEnvironmentThemes(

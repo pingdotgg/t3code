@@ -14,15 +14,17 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { useRef, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
-import {
-  readAppearanceModePreference,
-  readThemeHalvesRaw,
-  readThemePreferenceRaw,
-} from "../../hooks/useTheme";
+import { clearRemovedThemeSelection, readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
-import { serverEnvironment, themeServerEditableEnvironmentIdAtom } from "../../state/server";
+import {
+  serverEnvironment,
+  themeServerEditableEnvironmentIdAtom,
+  themeServerEnvironmentThemesAtom,
+} from "../../state/server";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  environmentThemeDefinition,
   getCustomThemes,
   getThemeDefinition,
   singleAppearanceOf,
@@ -677,24 +679,20 @@ export function ThemeLibrary({
         );
         return;
       }
-    }
-    let base = getThemeDefinition(theme)?.id ?? "";
-    let fallback = appearanceMode;
-    if (removesPublished) {
-      try {
-        // The server update can arrive before the RPC completes and make the stored id unresolved.
-        base = readThemePreferenceRaw() ?? "system";
-        fallback = readAppearanceModePreference(base);
-      } catch {
+      if (removalConfirmation.current === confirmation) changeRemovalOpen(false);
+      const themeId = themeRemovalTarget.theme.id;
+      if (
+        !getCustomThemes().some(({ id }) => id === themeId) &&
+        !clearRemovedThemeSelection(themeId)
+      ) {
         notifyThemeSaveFailure();
-        return;
       }
-      if (getCustomThemes().some(({ id }) => removedIds.has(id))) removedIds.clear();
+      return;
     }
-    const removesBase = removedIds.has(base);
+    const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
     // Read the current raw halves before persistTheme clears them.
     const storedHalves = readThemeHalvesRaw();
-    if (removesBase && !persistTheme(fallback)) return;
+    if (removesBase && !persistTheme(appearanceMode)) return;
     for (const appearance of ["light", "dark"] as const) {
       const half = storedHalves[appearance];
       if (half === undefined) continue;
@@ -704,13 +702,11 @@ export function ThemeLibrary({
         return;
       }
     }
-    if (!removesPublished) {
-      try {
-        removeCustomThemes([...removedIds]);
-      } catch {
-        notifyThemeRemovalFailure();
-        return;
-      }
+    try {
+      removeCustomThemes([...removedIds]);
+    } catch {
+      notifyThemeRemovalFailure();
+      return;
     }
     if (removalConfirmation.current === confirmation) changeRemovalOpen(false);
   };
@@ -911,17 +907,26 @@ export function ThemeLibrary({
               {...(editableEnvironmentId === null
                 ? {}
                 : {
-                    onEdit: () =>
+                    onEdit: () => {
+                      const liveEnvironmentId = appAtomRegistry.get(
+                        themeServerEditableEnvironmentIdAtom,
+                      );
+                      if (liveEnvironmentId !== editableEnvironmentId) return;
+                      const liveTheme = appAtomRegistry
+                        .get(themeServerEnvironmentThemesAtom)
+                        ?.find(({ id }) => id === environmentTheme.id);
+                      if (!liveTheme?.revision) return;
                       openThemeEditor({
                         editingThemeId: null,
                         published: {
                           environmentId: editableEnvironmentId,
-                          theme: environmentTheme,
+                          theme: environmentThemeDefinition(liveTheme),
                         },
                         seedThemeId: null,
                         seedName: null,
                         initialAppearance,
-                      }),
+                      });
+                    },
                     onRemove: () => handleRemoveTheme(environmentTheme, [environmentTheme], true),
                   })}
               onUse={() => {

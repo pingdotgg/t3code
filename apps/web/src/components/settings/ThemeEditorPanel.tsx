@@ -21,6 +21,7 @@ import {
   getThemeModes,
   installCustomTheme,
   isThemeColor,
+  isThemeLabel,
   parseThemeFile,
   removeCustomTheme,
   themeIdFromName,
@@ -792,7 +793,7 @@ export function ThemeEditorPanel({
       setError(gt("Name your theme first."));
       return;
     }
-    if (onSaveToEnvironment && name.trim().length > ENVIRONMENT_THEME_NAME_MAX_LENGTH) {
+    if (onSaveToEnvironment && !isThemeLabel(name)) {
       setError(
         gt("A published theme name can be at most {max} characters.", {
           max: ENVIRONMENT_THEME_NAME_MAX_LENGTH,
@@ -879,6 +880,7 @@ export function ThemeEditorPanel({
         };
         if (onSaveToEnvironment) {
           setIsSavingToEnvironment(true);
+          setIsInspecting(false);
           void onSaveToEnvironment(editedTheme).then(
             (saved) => {
               setIsSavingToEnvironment(false);
@@ -1271,6 +1273,7 @@ export function ThemeEditorPanel({
                   isInspecting ? gt("Cancel inspecting app colors") : gt("Inspect app colors")
                 }
                 aria-pressed={isInspecting}
+                disabled={isSavingToEnvironment}
                 size="xs"
                 variant={isInspecting ? "secondary" : "ghost"}
                 onClick={() => {
@@ -1310,7 +1313,11 @@ export function ThemeEditorPanel({
 
       {isMinimized ? null : (
         <>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5">
+          <div
+            aria-busy={isSavingToEnvironment}
+            className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5"
+            inert={isSavingToEnvironment}
+          >
             {renderNameField()}
             {error ? (
               <p aria-live="polite" className="text-sm text-destructive">

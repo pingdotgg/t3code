@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -12,6 +13,7 @@ import {
   environmentThemeFileHasColors,
   THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
 import {
@@ -140,6 +142,7 @@ export class EnvironmentThemeService extends Context.Service<
     /** Publishes `theme` under `themeId`, replacing a file already there, without selecting it. */
     readonly save: (input: {
       readonly themeId: string;
+      readonly expectedRevision?: string;
       readonly theme: EnvironmentThemeFile;
     }) => Effect.Effect<void, EnvironmentThemeRefusedError>;
 
@@ -305,6 +308,15 @@ export const readPublishedThemes = Effect.fn(function* (
   if (listedFileMissing) yield* onPathMissing;
   return themes;
 });
+
+export function environmentThemeRevision({
+  id: _id,
+  background: _background,
+  revision: _revision,
+  ...file
+}: EnvironmentTheme): string {
+  return NodeCrypto.createHash("sha256").update(stableStringify(file)).digest("hex");
+}
 
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
@@ -499,25 +511,36 @@ const make = Effect.gen(function* () {
   });
 
   const requirePublished = Effect.fnUntraced(function* (themeId: string) {
-    const known = (yield* refresh).themes.map(({ id }) => id);
-    if (!known.includes(themeId)) {
+    const themes = (yield* refresh).themes;
+    const publishedTheme = themes.find(({ id }) => id === themeId);
+    if (!publishedTheme) {
       return yield* new EnvironmentThemeRefusedError({
         themeId,
         problem: "is not a published theme.",
-        known,
+        known: themes.map(({ id }) => id),
       });
     }
+    return publishedTheme;
   });
 
   const save: EnvironmentThemeService["Service"]["save"] = Effect.fn(
     "EnvironmentThemeService.save",
-  )(function* ({ themeId, theme }) {
+  )(function* ({ themeId, expectedRevision, theme }) {
     if (!isEnvironmentThemeId(themeId)) {
       return yield* new EnvironmentThemeRefusedError({ themeId, problem: INVALID_ID });
     }
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        yield* requirePublished(themeId);
+        const current = yield* requirePublished(themeId);
+        if (
+          expectedRevision !== undefined &&
+          expectedRevision !== environmentThemeRevision(current)
+        ) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: "changed since you opened the editor. Reopen it before saving.",
+          });
+        }
         // A saved edit is kept, so the effect that would undo it is dropped.
         yield* publish(themeId, theme).pipe(Effect.asVoid);
       }),

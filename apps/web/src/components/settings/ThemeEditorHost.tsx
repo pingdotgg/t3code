@@ -44,10 +44,15 @@ export function ThemeEditorHost() {
   });
 
   const handleSaveToEnvironment = async (edited: ThemeDefinition) => {
-    if (!published || editableEnvironmentId !== published.environmentId) return false;
+    if (!published?.theme.publishedRevision || editableEnvironmentId !== published.environmentId)
+      return false;
     const result = await saveEnvironmentTheme({
       environmentId: published.environmentId,
-      input: { themeId: edited.id, theme: environmentThemeFile(edited, published.theme) },
+      input: {
+        themeId: edited.id,
+        expectedRevision: published.theme.publishedRevision,
+        theme: environmentThemeFile(edited, published.theme),
+      },
     });
     if (result._tag === "Success") return true;
     const error = Option.getOrNull(Cause.findErrorOption(result.cause));

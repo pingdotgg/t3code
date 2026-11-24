@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import {
+  ENVIRONMENT_THEME_NAME_MAX_LENGTH,
   THEME_CSS_MAX_LENGTH,
   type EnvironmentTheme,
   type EnvironmentThemeFile,
@@ -126,8 +127,12 @@ function isThemeId(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
 }
 
-function isThemeLabel(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 48;
+export function isThemeLabel(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.trim().length <= ENVIRONMENT_THEME_NAME_MAX_LENGTH
+  );
 }
 
 function isThemeCss(value: unknown): value is string {
@@ -180,7 +185,7 @@ function parseStoredThemeVariants(
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
-function parseStoredTheme(value: unknown): ThemeDefinition | null {
+function parseStoredTheme(value: unknown): PublishedThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
   if (!isThemeLabel(value.label) || !isThemeAppearance(value.appearance)) return null;
@@ -198,6 +203,16 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(isRecord(value.publishedSeeds) &&
+    isThemeColor(value.publishedSeeds.canvas) &&
+    isThemeColor(value.publishedSeeds.accent)
+      ? {
+          publishedSeeds: {
+            canvas: value.publishedSeeds.canvas,
+            accent: value.publishedSeeds.accent,
+          },
+        }
+      : {}),
     ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
   };
 }
@@ -275,11 +290,12 @@ function publishedThemeColors(
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
-type PublishedThemeDefinition = ThemeDefinition & {
+export type PublishedThemeDefinition = ThemeDefinition & {
+  readonly publishedRevision?: string;
   readonly publishedSeeds?: { readonly canvas: string; readonly accent: string };
 };
 
-function environmentThemeDefinition(theme: EnvironmentTheme): PublishedThemeDefinition {
+export function environmentThemeDefinition(theme: EnvironmentTheme): PublishedThemeDefinition {
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   for (const [variantAppearance, variantColors] of Object.entries(theme.variants ?? {})) {
     if (variantAppearance === theme.appearance) continue;
@@ -293,6 +309,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): PublishedThemeDefi
   return {
     id: theme.id,
     label: theme.name,
+    ...(theme.revision ? { publishedRevision: theme.revision } : {}),
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
@@ -334,12 +351,10 @@ export function environmentThemeFile(
     : { colors: theme.colors };
   // Variants are read over their appearance's stock defaults, so only roles that differ
   // are written and the rest keep following those defaults.
-  const variantEntries = Object.entries(theme.variants ?? {}).flatMap(([appearance, colors]) => {
+  const variantEntries = Object.entries(theme.variants ?? {}).map(([appearance, colors]) => {
     const stock = getDefaultThemeColors(appearance as ThemeAppearance);
     const changed = THEME_COLOR_ROLES.filter((role) => colors[role] !== stock[role]);
-    return changed.length > 0
-      ? [[appearance, Object.fromEntries(changed.map((role) => [role, colors[role]]))] as const]
-      : [];
+    return [appearance, Object.fromEntries(changed.map((role) => [role, colors[role]]))] as const;
   });
   const variants = variantEntries.length > 0 ? Object.fromEntries(variantEntries) : undefined;
   return {

@@ -232,6 +232,31 @@ describe("ThemeEditorPanel", () => {
     }
   });
 
+  it("pauses draft editing while a published save is pending", async () => {
+    const pendingSave = Promise.withResolvers<boolean>();
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={() => {}}
+        onSaved={() => true}
+        onSaveToEnvironment={() => pendingSave.promise}
+        editingTheme={publishedThemeDefinitions([LOOK])[0]!}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    const name = screen.getByRole("textbox", { name: "Theme name" });
+    await userEvent.fill(name, "Draft");
+    const save = screen.getByRole("button", { name: "Save changes" });
+    await userEvent.click(save);
+    await expect.element(save).toBeDisabled();
+    await expect.element(name).not.toBeInTheDocument();
+
+    pendingSave.resolve(false);
+    await expect.element(name).toHaveValue("Draft");
+    await expect.element(save).toBeEnabled();
+  });
+
   it("keeps its left edge when resized after the window shrank", async () => {
     await using view = await renderPanel();
     dragHeader(view.panel, 700, 40);
