@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import { getTableName, type SQL, type Table } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import * as Mac from "effect/crypto/Mac";
@@ -8,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as RelayConfiguration from "../Config.ts";
@@ -27,15 +27,7 @@ const config = {
   managedEndpointNamespace: undefined,
 } as unknown as RelayConfiguration.RelayConfiguration["Service"];
 
-// Svix compares the signed timestamp with the system clock, so pin both to one epoch.
 const SIGNED_AT_SECONDS = 1_800_000_000;
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(SIGNED_AT_SECONDS * 1_000);
-});
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 const clerkRequest = Effect.fn(function* (
   event: unknown,
@@ -70,6 +62,7 @@ describe("Clerk webhook", () => {
         Effect.map((response) => response.status),
       );
     return Effect.gen(function* () {
+      yield* TestClock.setTime(SIGNED_AT_SECONDS * 1_000);
       const userDeleted = { type: "user.deleted", data: { id: "user_1", deleted: true } };
       expect(
         yield* respond(

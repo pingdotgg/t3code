@@ -1,11 +1,14 @@
-import { verifyWebhook } from "@clerk/backend/webhooks";
 import { RelayApi } from "@t3tools/contracts/relay";
 import { eq, inArray } from "drizzle-orm";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Base64 from "effect/encoding/Base64";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -148,11 +151,49 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(AccountDeletion, make);
 
-class ClerkWebhookUnverified extends Schema.TaggedError<ClerkWebhookUnverified>()(
-  "ClerkWebhookUnverified",
-  { cause: Schema.Defect() },
-) {}
+// Svix, which signs Clerk webhooks, rejects timestamps more than five minutes off.
+const SVIX_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 
+/** Verifies Svix's `v1` HMAC-SHA256 signature over `<id>.<timestamp>.<body>`. */
+const verifyClerkSignature = Effect.fn("relay.account_deletion.verify_clerk_signature")(
+  function* (
+    signingSecret: Redacted.Redacted<string>,
+    headers: HttpServerRequest.HttpServerRequest["headers"],
+    body: string,
+  ) {
+    const id = headers["svix-id"];
+    const timestamp = headers["svix-timestamp"];
+    const signatures = headers["svix-signature"];
+    if (!id || !timestamp || !signatures) return false;
+    const signedAtSeconds = Number(timestamp);
+    const nowSeconds = (yield* Clock.currentTimeMillis) / 1_000;
+    if (
+      !Number.isInteger(signedAtSeconds) ||
+      Math.abs(nowSeconds - signedAtSeconds) > SVIX_TIMESTAMP_TOLERANCE_SECONDS
+    ) {
+      return false;
+    }
+    const keyBytes = Base64.decode(Redacted.value(signingSecret).replace(/^whsec_/, ""));
+    if (Result.isFailure(keyBytes)) return false;
+    const mac = yield* Mac.Mac;
+    const key = yield* Mac.key(Mac.hmacSha256, keyBytes.success);
+    const signed = new TextEncoder().encode(`${id}.${timestamp}.${body}`);
+    // The header lists space-separated `<version>,<base64 tag>` entries, one per active secret.
+    for (const entry of signatures.split(" ")) {
+      const [version, encoded] = entry.split(",");
+      if (version !== "v1" || encoded === undefined) continue;
+      const tag = Base64.decode(encoded);
+      if (Result.isSuccess(tag) && (yield* mac.verify(key, tag.success, signed))) return true;
+    }
+    return false;
+  },
+  Effect.orElseSucceed(() => false),
+);
+
+const ClerkEvent = Schema.fromJsonString(
+  Schema.Struct({ type: Schema.String, data: Schema.Unknown }),
+);
+const decodeClerkEvent = Schema.decodeUnknownEffect(ClerkEvent);
 const ClerkDeletedUser = Schema.Struct({ id: Schema.String.check(Schema.isNonEmpty()) });
 const decodeClerkDeletedUser = Schema.decodeUnknownEffect(ClerkDeletedUser);
 
@@ -168,21 +209,13 @@ export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhoo
   if (body === null) {
     return HttpServerResponse.empty({ status: 400 });
   }
-  const event = yield* Effect.tryPromise({
-    try: () =>
-      verifyWebhook(
-        new Request("https://relay.invalid/v1/webhooks/clerk", {
-          method: "POST",
-          headers: request.headers,
-          body,
-        }),
-        { signingSecret: Redacted.value(signingSecret) },
-      ),
-    catch: (cause) => new ClerkWebhookUnverified({ cause }),
-  }).pipe(Effect.option);
-  if (event._tag === "None") {
+  if (!(yield* verifyClerkSignature(signingSecret, request.headers, body))) {
     yield* Effect.annotateCurrentSpan({ "relay.clerk_webhook.rejected": true });
     return HttpServerResponse.empty({ status: 401 });
+  }
+  const event = yield* decodeClerkEvent(body).pipe(Effect.option);
+  if (event._tag === "None") {
+    return HttpServerResponse.empty({ status: 400 });
   }
   yield* Effect.annotateCurrentSpan({ "relay.clerk_webhook.type": event.value.type });
   if (event.value.type !== "user.deleted") {
@@ -210,10 +243,12 @@ export const layerApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const config = yield* RelayConfiguration.RelayConfiguration;
     const accounts = yield* AccountDeletion;
+    const mac = yield* Mac.Mac;
     return handlers.handleRaw("clerk", ({ request }) =>
       handleClerkWebhook(request).pipe(
         Effect.provideService(RelayConfiguration.RelayConfiguration, config),
         Effect.provideService(AccountDeletion, accounts),
+        Effect.provideService(Mac.Mac, mac),
       ),
     );
   }),
