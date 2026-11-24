@@ -639,6 +639,43 @@ it("keeps the number written on each ordered list item only when enabled", () =>
   ).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
 
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)("an agent reply shows the numbers written on two adjacent lists (%s)", (_, plugins) => {
+  type Node = {
+    tagName?: string;
+    properties?: { start?: unknown; value?: unknown };
+    children?: Node[];
+  };
+  const shown = (node: Node, list: { next: number } = { next: 1 }): number[] => {
+    if (node.tagName === "ol") list = { next: Number(node.properties?.start ?? 1) };
+    if (node.tagName === "li") {
+      const value =
+        node.properties?.value === undefined ? list.next : Number(node.properties.value);
+      list.next = value + 1;
+      return [value, ...(node.children ?? []).flatMap((child) => shown(child))];
+    }
+    return (node.children ?? []).flatMap((child) => shown(child, list));
+  };
+  const processor = unified().use(remarkParse).use(plugins).use(remarkRehype);
+  const markdown = [
+    "**How to make tea:**",
+    "",
+    "1. Boil the water.",
+    "2. Put the tea bag in the cup.",
+    "3. Pour the water and wait 3 minutes.",
+    "",
+    "1. Get a coffee recipe instead.",
+    "2. Get an iced tea version.",
+    "3. Get a milk tea version.",
+  ].join("\n");
+
+  expect(shown(processor.runSync(processor.parse(markdown), markdown) as Node)).toEqual([
+    1, 2, 3, 1, 2, 3,
+  ]);
+});
+
 type ShownNode = {
   type: string;
   tagName?: string;
