@@ -873,22 +873,6 @@ export function PullRequestDetailPanel({
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
   const checkoutRoot =
     acting?.workspaceRoot ?? detail?.workspaceRoot ?? project?.workspaceRoot ?? null;
-  const sameRepositoryHead =
-    context === "page" &&
-    detail !== null &&
-    detail.headRepositoryNameWithOwner === detail.repository
-      ? detail.headBranch
-      : null;
-  const checkoutStatus = useEnvironmentQuery(
-    checkoutRoot === null || sameRepositoryHead === null
-      ? null
-      : vcsEnvironment.status({
-          environmentId: actingEnvironmentId,
-          input: { cwd: checkoutRoot },
-        }),
-  );
-  const worktreeBranchAlreadyCheckedOut =
-    sameRepositoryHead !== null && checkoutStatus.data?.refName === sameRepositoryHead;
   const canOperateThread = useEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope);
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
@@ -1546,7 +1530,11 @@ export function PullRequestDetailPanel({
         handoff={handoff}
         checkoutRoot={checkoutRoot}
         canPrepareWorktree={canPrepareWorktree}
-        worktreeBranchAlreadyCheckedOut={worktreeBranchAlreadyCheckedOut}
+        sameRepositoryHead={
+          detail !== null && detail.headRepositoryNameWithOwner === detail.repository
+            ? detail.headBranch
+            : null
+        }
         canCheckoutHere={prepareThread.isAllowed}
         onCheckout={startCheckout}
         pickableEnvironments={pickableEnvironments}

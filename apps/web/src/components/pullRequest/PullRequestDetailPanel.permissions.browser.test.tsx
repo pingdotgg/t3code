@@ -15,7 +15,11 @@ import { act, fakeTimers, render } from "../../../test/render";
 const { command, permissions, reads, shown } = vi.hoisted(() => ({
   command: vi.fn(),
   permissions: { checkout: true, operate: true },
-  reads: { diff: [] as unknown[], currentBranch: null as string | null },
+  reads: {
+    diff: [] as unknown[],
+    currentBranch: null as string | null | undefined,
+    branchReads: 0,
+  },
   shown: { detail: null as PullRequestDetailView | null },
 }));
 
@@ -76,11 +80,17 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
 vi.mock(import("~/state/vcs"), async (original) => {
   const actual = await original();
   const { AsyncResult, Atom } = await import("effect/reactivity");
+  const branch = Atom.family((refName: string | null | undefined) =>
+    Atom.make(refName === undefined ? AsyncResult.initial(true) : AsyncResult.success({ refName })),
+  );
   return {
     ...actual,
     vcsEnvironment: {
       ...actual.vcsEnvironment,
-      status: (() => Atom.make(AsyncResult.success({ refName: reads.currentBranch }))) as never,
+      branch: (() => {
+        reads.branchReads++;
+        return branch(reads.currentBranch);
+      }) as never,
     },
   };
 });
@@ -165,6 +175,7 @@ function setup() {
   permissions.operate = true;
   reads.diff = [];
   reads.currentBranch = null;
+  reads.branchReads = 0;
   shown.detail = detail;
   command.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -192,6 +203,20 @@ it.each([
     await expect.element(page.getByRole("menuitem", { name: /In this repository/ })).toBeEnabled();
   },
 );
+
+it("waits for the local branch only after the checkout menu opens", async () => {
+  setup();
+  shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
+  reads.currentBranch = undefined;
+  await using screen = await render(panel());
+  expect(reads.branchReads).toBe(0);
+  await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
+  await expect
+    .element(page.getByRole("menuitem", { name: /In a separate worktree/ }))
+    .toBeDisabled();
+  expect(reads.branchReads).toBeGreaterThan(0);
+  await expect.element(page.getByRole("menuitem", { name: /In this repository/ })).toBeEnabled();
+});
 
 it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
   "disables conflict checkout when the connection loses %s",
