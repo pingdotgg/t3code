@@ -743,7 +743,11 @@ describe("WebRTC device streams", () => {
   });
 
   it("streams an iOS simulator over WebRTC instead of MJPEG when WebCodecs is missing", async () => {
-    const { client, events, fetch, peers, videos, present, image } = setup("ios");
+    // T3 Code's own device hub reports "http" and still answers WebRTC offers.
+    const { client, events, fetch, peers, videos, present, image } = setup("ios", {
+      transport: "http",
+      h264Fps: 60,
+    });
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
@@ -761,11 +765,19 @@ describe("WebRTC device streams", () => {
     client.stop();
   });
 
-  it("keeps MJPEG for an iOS simulator without WebCodecs when serve-sim does not advertise WebRTC", async () => {
-    const { client, events, peers, image } = setup("ios", null);
+  it("drops to MJPEG at once when serve-sim refuses the iOS WebRTC offer", async () => {
+    const { client, events, fetch, peers, image } = setup("ios", null);
+    fetch.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.includes("/webrtc/offer")
+          ? new Response(null, { status: 404 })
+          : Response.json({ serial: "sim" }),
+      ),
+    );
     client.start();
     await vi.advanceTimersByTimeAsync(0);
-    expect(peers).toHaveLength(0);
+    expect(peers).toHaveLength(1);
+    expect(peers[0]?.close).toHaveBeenCalled();
     expect(events.onMjpegFallback).toHaveBeenCalledWith(mjpegUrl);
     expect(image.src).toBe(mjpegUrl);
     client.stop();
@@ -782,7 +794,9 @@ describe("WebRTC device streams", () => {
     await vi.advanceTimersByTimeAsync(0);
     peers[0]!.connectionState = "failed";
     peers[0]!.onconnectionstatechange?.();
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(events.onMjpegFallback).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(events.onMjpegFallback).toHaveBeenCalledWith(mjpegUrl);
     expect(image.src).toBe(mjpegUrl);
     expect(peers.every((peer) => peer.close.mock.calls.length > 0)).toBe(true);
@@ -802,8 +816,8 @@ describe("WebRTC device streams", () => {
     client.stop();
   });
 
-  it("gives MJPEG its full first-frame window after a WebRTC probe times out", async () => {
-    const { client, events, fetch, image } = setup("ios");
+  it("gives WebRTC and then MJPEG a full window each after the probe times out", async () => {
+    const { client, events, fetch, peers, image } = setup("ios");
     fetch.mockImplementation((url: string, init?: RequestInit) =>
       url.includes("/api?")
         ? new Promise<Response>((_resolve, reject) =>
@@ -815,6 +829,10 @@ describe("WebRTC device streams", () => {
     );
     client.start();
     await vi.advanceTimersByTimeAsync(5_000);
+    expect(peers).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(events.onMjpegFallback).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(events.onMjpegFallback).toHaveBeenCalledWith(mjpegUrl);
     await vi.advanceTimersByTimeAsync(14_000);
     expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
