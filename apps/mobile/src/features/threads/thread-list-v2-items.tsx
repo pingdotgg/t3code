@@ -34,8 +34,10 @@ import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
@@ -57,7 +59,9 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useEnvironmentScope } from "../../state/session";
+import { environmentCatalog } from "../../connection/catalog";
+import { environmentPresentations } from "../../state/presentation";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -86,6 +90,9 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
+  resolveThreadListV2ConnectionIssue,
+  resolveThreadListV2LockedReason,
+  THREAD_LIST_V2_CONNECTION_ISSUE_LABEL,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
   type ThreadListV2Status,
@@ -96,6 +103,17 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+
+// A string, so rows re-render only when the issue changes, not on every catalog update.
+const environmentConnectionIssueAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    resolveThreadListV2ConnectionIssue(
+      get(environmentPresentations.presentationAtom(environmentId))?.connection ?? null,
+      AsyncResult.getOrElse(get(environmentCatalog.stateAtom(environmentId)), () => null)
+        ?.lastFailure ?? null,
+    ),
+  ),
+);
 
 interface StatusLabel {
   // Null when the icon and timer carry the status on their own.
@@ -930,7 +948,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
-  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const operateAccess = useEnvironmentScopeAccess(
+    thread.environmentId,
+    AuthOrchestrationOperateScope,
+  );
+  const canOperateThread = operateAccess === "granted";
+  const connectionIssue = useAtomValue(environmentConnectionIssueAtom(thread.environmentId));
+  const connectionLabel =
+    connectionIssue === null ? null : m(THREAD_LIST_V2_CONNECTION_ISSUE_LABEL[connectionIssue]);
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
   const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
@@ -1360,8 +1385,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
+  const lockedMenuTitle =
+    operateAccess === "granted"
+      ? ""
+      : resolveThreadListV2LockedReason(
+          {
+            access: operateAccess,
+            connectionIssue,
+            environmentLabel: props.environmentLabel ?? null,
+          },
+          m,
+        );
   const swipeAccessibilityHint = !canOperateThread
-    ? gt("Opens the thread")
+    ? gt("Opens the thread. {reason}", { reason: lockedMenuTitle })
     : secondaryAction === null
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
@@ -1504,7 +1540,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       ) : null}
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
+        {(rawStatus === "failed" || rawStatus === "limited") &&
+        thread.runtime?.lastError &&
+        // A host that dropped explains the row better than its last run's error.
+        connectionLabel === null ? (
           <Text
             className={cn(
               "flex-1 text-xs",
@@ -1518,9 +1557,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.runtime.lastError}
           </Text>
-        ) : props.environmentLabel ? (
+        ) : props.environmentLabel || connectionLabel ? (
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
+            {props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
                 kind={props.environmentMachine}
                 size={machineIconSize}
@@ -1531,17 +1570,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 }
               />
             ) : null}
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {props.environmentLabel}
-            </Text>
+            {props.environmentLabel ? (
+              <Text
+                className={cn(
+                  "shrink text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {props.environmentLabel}
+                {connectionLabel ? "  · " : null}
+              </Text>
+            ) : null}
+            {connectionLabel ? (
+              // A sibling, not nested, so a long environment name truncates before the status does.
+              <Text
+                className={cn(
+                  "max-w-full shrink-0 text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : "text-warning-foreground",
+                )}
+                numberOfLines={1}
+              >
+                {connectionLabel}
+              </Text>
+            ) : null}
           </View>
         ) : (
           <View className="flex-1" />
@@ -1738,6 +1794,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {connectionLabel ? (
+            <Text
+              className={cn(
+                "text-xs",
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : "text-warning-foreground",
+              )}
+              numberOfLines={1}
+            >
+              {connectionLabel}
+            </Text>
+          ) : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
@@ -1757,7 +1826,30 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   if (!canOperateThread)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={rowAppearance.swipeContainerStyle}>
+        <Menu
+          accessibilityLabel={rowAccessibilityLabel}
+          title={lockedMenuTitle}
+          actions={[
+            ...(Platform.OS === "android"
+              ? [{ id: "locked-reason", title: gt("Why are actions unavailable?") }]
+              : []),
+            { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
+          ]}
+          onPressAction={(event) => {
+            if (event.nativeEvent.event === "locked-reason") {
+              Dialog.alert(gt("Thread actions unavailable"), lockedMenuTitle);
+            } else {
+              handleMenuAction(event);
+            }
+          }}
+          shouldOpenOnLongPress
+        >
+          {rowContent(() => {})}
+        </Menu>
+      </View>
+    );
 
   return (
     <View collapsable={false}>
