@@ -1273,6 +1273,57 @@ describe("providerMaintenanceRunner", () => {
       }),
   );
 
+  // npm moves the working package and its bin shims aside before it downloads
+  // the new version; a forced kill then (taskkill /F on Windows) leaves no CLI.
+  it.effect("does not force-kill an npm global update still running at the timeout", () =>
+    Effect.gen(function* () {
+      const kills: Array<string> = [];
+      const spawned = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Deferred.succeed(spawned, undefined).pipe(
+          Effect.as(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Deferred.await(exit),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.sync(() => kills.push("kill")),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const { registry } = yield* makeRegistry(baseOpenCodeProvider);
+        const updater = yield* makeTestRunner(registry);
+        yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+        yield* Deferred.await(spawned);
+        yield* TestClock.adjust("31 minutes");
+
+        assert.deepStrictEqual(
+          kills,
+          [],
+          "the update timeout force-killed npm while it was replacing the installed CLI",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("9.9.9"),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+      );
+    }),
+  );
+
   it.effect("resolves npm to a .cmd shim from the provider's PATH on win32", () => {
     const captured: Array<{
       readonly command: string;
