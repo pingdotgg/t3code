@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { chatMarkdownImageSource } from "@t3tools/shared/markdownHast";
 import { useAtomValue } from "@effect/atom-react";
+import { Link } from "@tanstack/react-router";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
@@ -404,6 +405,14 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
     titleClassName: "text-red-600 dark:text-red-400",
   },
 };
+
+function parseWorkflowRunLink(href: string | undefined) {
+  if (!href?.startsWith("/workflows?")) return null;
+  const { searchParams } = new URL(href, "https://example.invalid");
+  const env = searchParams.get("env");
+  const run = searchParams.get("run");
+  return env && run ? { env, run } : null;
+}
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
@@ -1323,6 +1332,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
         renderContextReference({ ...contextReference, label, leading, trailing })
       ) : (
         <span>{label}</span>
+      );
+    }
+    const workflowRun = parseWorkflowRunLink(href);
+    if (workflowRun) {
+      return (
+        <Link
+          to="/workflows"
+          search={workflowRun}
+          className={props.className}
+          data-markdown-image-link={!hastHasText(node) || undefined}
+        >
+          <MarkdownLinkContext value>{children}</MarkdownLinkContext>
+        </Link>
       );
     }
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
