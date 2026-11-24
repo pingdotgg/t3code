@@ -446,6 +446,25 @@ export function McpAppFrame(props: {
   }
 
   const fullscreen = displayMode === "fullscreen";
+  if (!fullscreen && (navigatedAway || (src === null && asset._tag === "Failure"))) {
+    return (
+      <p
+        style={{ minHeight: height }}
+        className="flex items-center justify-center py-2 text-muted-foreground text-xs"
+      >
+        {navigatedAway ? (
+          <T>
+            The <Var>{app.server}</Var> app left its page and was stopped
+          </T>
+        ) : (
+          <T>
+            Unable to load the <Var>{app.server}</Var> app
+          </T>
+        )}
+      </p>
+    );
+  }
+
   return (
     // Preserve inline row height during fullscreen to prevent timeline jumps.
     <div style={{ height }}>
