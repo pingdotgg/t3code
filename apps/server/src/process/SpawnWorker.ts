@@ -457,7 +457,7 @@ class SpawnWorker {
     if (this.pool.platform === "win32" && child.pid !== undefined) {
       this.pool.killTree(child.pid, () => {});
     } else if (!this.#terminated) {
-      this.worker.postMessage({ type: "kill", id: child.id, signal: "SIGKILL" });
+      this.worker.postMessage({ type: "kill", id: child.id, signal: "SIGKILL" }, undefined);
     }
   }
 
