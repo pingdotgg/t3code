@@ -133,6 +133,8 @@ enum BrowserOverlayEvent {
 pub(crate) enum BrowserTabEvent {
     /// The tab's title (page title or host) changed.
     TitleChanged,
+    /// The page's committed address changed: typed, a link, a redirect, back or forward.
+    AddressChanged,
     /// The page opened a link in a new tab (`target=_blank`, Cmd-click, middle click).
     OpenTab(NewTabRequest),
 }
@@ -206,6 +208,8 @@ pub(crate) struct BrowserPanel {
     user_load: bool,
     /// The tab title last reported with [`BrowserTabEvent::TitleChanged`].
     reported_title: String,
+    /// The address last reported with [`BrowserTabEvent::AddressChanged`].
+    reported_url: String,
     /// `__connAnnotationsChanged` calls, CEF view or not, so tests can count them.
     #[cfg(test)]
     annotation_scripts: Cell<usize>,
@@ -323,6 +327,7 @@ impl BrowserPanel {
             context_menu: None,
             user_load: false,
             reported_title: String::new(),
+            reported_url: String::new(),
             #[cfg(test)]
             annotation_scripts: Cell::new(0),
             load_injection_pending: false,
@@ -386,13 +391,26 @@ impl BrowserPanel {
         }
     }
 
-    /// Tells the host when the tab title changed. Cheap enough to run on every frame.
+    /// Tells the host when the tab title or the committed address changed. Cheap enough to run
+    /// on every frame.
     fn report_title(&mut self, cx: &mut Context<'_, Self>) {
         let title = self.tab_title();
         if title != self.reported_title {
             self.reported_title = title;
             cx.emit(BrowserTabEvent::TitleChanged);
         }
+        let url = self.current_url();
+        if url != self.reported_url {
+            self.reported_url = url;
+            cx.emit(BrowserTabEvent::AddressChanged);
+        }
+    }
+
+    /// A page the view committed while no frame ran, as the CEF view reports one in tests.
+    #[cfg(test)]
+    pub(crate) fn commit_url_for_test(&mut self, url: &str, cx: &mut Context<'_, Self>) {
+        self.url = url.to_owned();
+        self.report_title(cx);
     }
 
     pub(crate) fn set_connection(
@@ -2515,6 +2533,7 @@ impl Render for BrowserPanel {
             self.url_input.update(cx, |input, cx| {
                 input.set_value(address_text(&current_url), window, cx);
             });
+            self.report_title(cx);
         }
 
         let field_bg = to_hsla(self.tokens.shell_field);

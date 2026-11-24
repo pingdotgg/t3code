@@ -13,7 +13,8 @@ pub const RIGHT_PANEL_MAX_WIDTH: f32 = 1200.0;
 pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 600.0;
 
 /// Top-level right-panel surfaces matching Conn desktop (`RightPanelTabs.tsx`, `rightPanelStore.ts`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RightPanelTab {
     Files,
     Diff,

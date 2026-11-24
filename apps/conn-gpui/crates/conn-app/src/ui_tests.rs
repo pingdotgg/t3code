@@ -3602,7 +3602,12 @@ fn browser_tabs_keep_their_pages_per_thread(cx: &mut TestAppContext) {
     assert!(page_b.upgrade().is_some(), "a hidden thread keeps its page");
 
     // What a delete made here does once the server took it.
-    cx.update(|cx| app.update(cx, |app, cx| app.release_thread_panel("thread-other", cx)));
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            let owner = app.panel_owner_for_test("thread-other");
+            app.release_thread_panel(&owner, cx)
+        })
+    });
     frames(cx);
     assert!(
         page_b.upgrade().is_none(),
@@ -4052,32 +4057,827 @@ fn parked_browsers_beyond_the_cap_close_least_recently_shown_first(cx: &mut Test
     assert!(pages[2..].iter().all(|(_, page)| page.upgrade().is_some()));
 }
 
-/// An agent's query for a thread the user is not looking at does not run and leaves nothing
-/// behind: it hears that it is not on its thread (`preparePanel`'s Database case).
+fn panel_request(value: serde_json::Value) -> conn_contract::AgentPanelRequest {
+    match from_json(value) {
+        Ok(request) => request,
+        Err(err) => panic!("AgentPanelRequest failed: {err}"),
+    }
+}
+
+/// A database the test never reaches: a SQLite file that does not exist.
+fn unreachable_database() -> conn_desktop::database::api::PanelConnection {
+    let mut connection = conn_desktop::database::api::new_connection(None);
+    connection.name = "test".to_owned();
+    connection.connection.driver = conn_desktop::database::DatabaseDriver::Sqlite;
+    connection.connection.database = "/nonexistent/conn-thread-panel-test.sqlite".to_owned();
+    connection
+}
+
+/// An agent's query for a thread the user is not looking at waits in that thread's Database
+/// editor (`openDatabaseQuery`). It lands only once that thread shows, its project's
+/// connections have loaded and one is chosen; an older Vault load answering late does not
+/// count. Running it needs the panel on screen, so the agent hears where the query is.
 #[gpui_kit::test]
-fn a_background_database_query_is_refused(cx: &mut TestAppContext) {
+fn a_background_database_query_waits_for_its_thread_and_connections(cx: &mut TestAppContext) {
     let (window, app) = mount_two_thread_app(cx);
     cx.update(|cx| app.update(cx, |app, cx| app.select_thread("thread-selected", cx)));
     render_frames(cx, window);
-    let request: conn_contract::AgentPanelRequest = match from_json(json!({
-        "requestId": "req-sql",
-        "threadId": "thread-other",
-        "panel": "database",
-        "sql": "select 2",
-        "focusWindow": false,
-    })) {
-        Ok(request) => request,
-        Err(err) => panic!("AgentPanelRequest failed: {err}"),
+    let ask = |run: bool| {
+        panel_request(json!({
+            "requestId": "req-sql",
+            "threadId": "thread-other",
+            "panel": "database",
+            "sql": "select 2",
+            "run": run,
+            "focusWindow": true,
+        }))
     };
-    let error =
-        cx.update(|cx| app.update(cx, |app, _| app.prepare_background_panel_for_test(&request)));
-    assert_eq!(error.as_deref(), Some("not on thread"));
+    let shown = cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.prepare_background_panel_for_test(&ask(false), cx)
+        })
+    });
+    assert_eq!(shown, None);
+    let ran = cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.prepare_background_panel_for_test(&ask(true), cx)
+        })
+    });
+    assert_eq!(
+        ran.as_deref(),
+        Some("not on thread The query is in its Database panel.")
+    );
+    let database = cx.update(|cx| {
+        app.read(cx)
+            .right_panel_for_test()
+            .read(cx)
+            .database_for_test()
+    });
+    let other = cx.update(|cx| app.read(cx).panel_owner_for_test("thread-other"));
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            app.layout().selected_thread_id.as_deref(),
+            Some("thread-selected"),
+            "an agent never switches threads"
+        );
+        assert!(app.right_panel_tabs().tabs().is_empty());
+        assert_eq!(
+            database.read(cx).pending_sql_for_test(&other).as_deref(),
+            Some("select 2")
+        );
+    });
+
+    // Two Vault loads overlap, as a Refresh while the first still runs.
+    let (first, second) = cx.update(|cx| {
+        database.update(cx, |db, _| {
+            (
+                db.begin_vault_load_for_test(),
+                db.begin_vault_load_for_test(),
+            )
+        })
+    });
     cx.update(|cx| app.update(cx, |app, cx| app.select_thread("thread-other", cx)));
     render_frames(cx, window);
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert!(app.layout().right_panel_open);
+        assert_eq!(
+            app.right_panel_tabs().active(),
+            Some(&conn_state::PanelSurface::Kind(
+                conn_state::RightPanelTab::Database
+            ))
+        );
+    });
+    let waiting =
+        |cx: &mut TestAppContext| cx.update(|cx| database.read(cx).pending_sql_for_test(&other));
+    assert!(waiting(cx).is_some(), "the connections are still loading");
+    cx.update(|cx| {
+        database.update(cx, |db, cx| {
+            db.finish_vault_load_for_test(first, vec![unreachable_database()], cx)
+        })
+    });
     assert!(
-        cx.update(|cx| app.read(cx).right_panel_tabs().tabs().is_empty()),
-        "no Database tab waits for it"
+        waiting(cx).is_some(),
+        "the older load's answer does not count"
     );
+    cx.update(|cx| {
+        database.update(cx, |db, cx| {
+            db.finish_vault_load_for_test(second, vec![unreachable_database()], cx)
+        })
+    });
+    assert_eq!(waiting(cx), None);
+    assert_eq!(
+        cx.update(|cx| database.read(cx).sql_for_test()).as_deref(),
+        Some("select 2"),
+        "the query is in the chosen connection's editor"
+    );
+}
+
+/// Each thread keeps its own right panel: tabs, open state, maximize, terminal drawer and
+/// width. They survive switching threads, and a restart through the saved file.
+#[gpui_kit::test]
+fn each_thread_keeps_its_whole_right_panel_across_switches_and_restarts(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-thread-panels-{}",
+        crate::commands::new_thread_id()
+    ));
+    let path = dir.join("thread-panels.json");
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.learn_primary_environment_for_test("env-a", cx);
+            app.select_thread("thread-selected", cx);
+            app.add_right_panel_tab(conn_state::RightPanelTab::Diff, cx);
+            app.toggle_right_panel_maximized(cx);
+            app.set_drawer_and_width_for_test(true, 820.0);
+        })
+    });
+    render_frames(cx, window);
+    cx.update(|cx| app.update(cx, |app, cx| app.select_thread("thread-other", cx)));
+    render_frames(cx, window);
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert!(!app.layout().right_panel_open && app.right_panel_tabs().tabs().is_empty());
+        assert_eq!(
+            app.right_panel_state_for_test(),
+            (false, false, 820.0),
+            "a thread never shown takes the width it finds"
+        );
+    });
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.add_right_panel_tab(conn_state::RightPanelTab::Files, cx);
+            app.set_drawer_and_width_for_test(false, 640.0);
+            app.select_thread("thread-selected", cx);
+        })
+    });
+    let diff = conn_state::PanelSurface::Kind(conn_state::RightPanelTab::Diff);
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert!(app.layout().right_panel_open);
+        assert_eq!(app.right_panel_tabs().active(), Some(&diff));
+        assert_eq!(app.right_panel_state_for_test(), (true, true, 820.0));
+    });
+    cx.update(|cx| app.update(cx, |app, cx| app.save_thread_panels_for_test(cx)));
+    cx.run_until_parked();
+    assert!(path.exists());
+
+    // A restart: a new window reads the file.
+    let (_, restarted) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        restarted.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.learn_primary_environment_for_test("env-a", cx);
+            app.select_thread("thread-other", cx);
+        })
+    });
+    cx.update(|cx| {
+        let app = restarted.read(cx);
+        assert!(app.layout().right_panel_open);
+        assert_eq!(
+            app.right_panel_tabs().tabs(),
+            [conn_state::PanelSurface::Kind(
+                conn_state::RightPanelTab::Files
+            )]
+        );
+        assert_eq!(app.right_panel_state_for_test(), (false, false, 640.0));
+    });
+    cx.update(|cx| restarted.update(cx, |app, cx| app.select_thread("thread-selected", cx)));
+    cx.update(|cx| {
+        let app = restarted.read(cx);
+        assert_eq!(app.right_panel_tabs().active(), Some(&diff));
+        assert_eq!(app.right_panel_state_for_test(), (true, true, 820.0));
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An agent on a linked environment reaches its own thread's panel (linked connections now
+/// deliver every panel request) through the dispatch every request takes: on the thread the
+/// user is looking at it opens there; on another thread it waits there. Neither switches.
+#[gpui_kit::test]
+fn a_linked_environments_agent_drives_its_own_threads_panel(cx: &mut TestAppContext) {
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell("/work/mini", "Mini diagnostics"),
+                cx,
+            );
+            app.select_thread("thread-selected", cx);
+        })
+    });
+    render_frames(cx, window);
+    let linked_thread = cx.update(|cx| {
+        app.read(cx)
+            .shell()
+            .threads
+            .iter()
+            .find(|t| t.title == "Mini diagnostics")
+            .map(|t| t.id.clone())
+            .expect("the linked thread is listed")
+    });
+    let request = |panel: &str| {
+        panel_request(json!({
+            "requestId": format!("req-{panel}"),
+            "threadId": linked_thread,
+            "panel": panel,
+            "focusWindow": true,
+        }))
+    };
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            drop(app.dispatch_agent_panel_request_for_test(request("diff"), Some("mini"), cx))
+        })
+    });
+    render_frames(cx, window);
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            app.layout().selected_thread_id.as_deref(),
+            Some("thread-selected")
+        );
+        assert!(
+            app.right_panel_tabs().tabs().is_empty(),
+            "the shown thread's panel is untouched"
+        );
+    });
+    cx.update(|cx| app.update(cx, |app, cx| app.select_thread(linked_thread.clone(), cx)));
+    render_frames(cx, window);
+    let files = conn_state::PanelSurface::Kind(conn_state::RightPanelTab::Files);
+    let diff = conn_state::PanelSurface::Kind(conn_state::RightPanelTab::Diff);
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert!(app.layout().right_panel_open);
+        assert_eq!(
+            app.right_panel_tabs().tabs(),
+            std::slice::from_ref(&diff),
+            "it waited here"
+        );
+    });
+    // On the shown linked thread it opens at once.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            drop(app.dispatch_agent_panel_request_for_test(request("files"), Some("mini"), cx))
+        })
+    });
+    render_frames(cx, window);
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert_eq!(app.right_panel_tabs().active(), Some(&files));
+        assert_eq!(
+            app.layout().selected_thread_id.as_deref(),
+            Some(linked_thread.as_str())
+        );
+    });
+}
+
+/// Two environments hold thread id `T` (`a_thread_id_two_environments_hold_belongs_to_the_first`
+/// in conn-state's `environments.rs`): the sidebar lists the primary's `T`. A linked agent's
+/// request for its own `T`, even `run: true` SQL while the primary `T` shows, never reaches the
+/// primary `T`'s panel or its Database editor; the same request from the primary does.
+#[gpui_kit::test]
+fn a_linked_agent_never_drives_the_primary_thread_with_the_same_id(cx: &mut TestAppContext) {
+    let (window, app) = mount_two_thread_app(cx);
+    let mut mini = linked_mini_shell("/work/mini", "Mini's copy");
+    mini.threads[0].id = "thread-selected".to_owned();
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.add_linked_shell_for_test("mini", "mini", mini, cx);
+            app.learn_primary_environment_for_test("nick", cx);
+            app.select_thread("thread-selected", cx);
+        })
+    });
+    render_frames(cx, window);
+    let primary = cx.update(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            app.shell()
+                .threads
+                .iter()
+                .filter(|t| t.id == "thread-selected")
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Selected kitchen-sink thread"],
+            "the primary's T is the one listed"
+        );
+        app.panel_owner_for_test("thread-selected")
+    });
+    let linked = conn_state::PanelOwner::new("mini", "thread-selected");
+    assert_ne!(primary, linked);
+    let database = cx.update(|cx| {
+        app.read(cx)
+            .right_panel_for_test()
+            .read(cx)
+            .database_for_test()
+    });
+    let ask = |id: &str| {
+        panel_request(json!({
+            "requestId": id,
+            "threadId": "thread-selected",
+            "panel": "database",
+            "sql": "select secret",
+            "run": true,
+            "focusWindow": true,
+        }))
+    };
+    let mut answer = cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.dispatch_agent_panel_request_for_test(ask("from-mini"), Some("mini"), cx)
+        })
+    });
+    render_frames(cx, window);
+    let response = answer.try_recv().expect("the dispatch answered");
+    assert!(!response.panel.ok);
+    assert!(response.panel.database.is_none(), "nothing ran");
+    assert!(
+        response
+            .panel
+            .error
+            .as_deref()
+            .is_some_and(|e| e.ends_with("The query is in its Database panel.")),
+        "{:?}",
+        response.panel.error
+    );
+    cx.update(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.right_panel_tabs().tabs().is_empty() && !app.layout().right_panel_open,
+            "the primary T's panel is untouched"
+        );
+        let db = database.read(cx);
+        assert_eq!(db.pending_sql_for_test(&primary), None);
+        assert_eq!(
+            db.pending_sql_for_test(&linked).as_deref(),
+            Some("select secret"),
+            "it waits in the linked T's own editor"
+        );
+    });
+
+    // The primary's agent drives its own T at once.
+    let request = panel_request(json!({
+        "requestId": "from-primary",
+        "threadId": "thread-selected",
+        "panel": "diff",
+        "focusWindow": true,
+    }));
+    let mut answer = cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.dispatch_agent_panel_request_for_test(request, None, cx)
+        })
+    });
+    render_frames(cx, window);
+    assert!(answer.try_recv().expect("answered").panel.ok);
+    cx.update(|cx| {
+        assert_eq!(
+            app.read(cx).right_panel_tabs().active(),
+            Some(&conn_state::PanelSurface::Kind(
+                conn_state::RightPanelTab::Diff
+            ))
+        );
+    });
+}
+
+/// Past the cap of waiting queries, a new thread's query is refused with a reason; the queries
+/// already accepted all stay.
+#[gpui_kit::test]
+fn the_thirty_third_waiting_query_is_refused_and_the_first_kept(cx: &mut TestAppContext) {
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.learn_primary_environment_for_test("nick", cx);
+            app.select_thread("thread-selected", cx)
+        })
+    });
+    render_frames(cx, window);
+    let ask = |thread: String| {
+        panel_request(json!({
+            "requestId": format!("req-{thread}"),
+            "threadId": thread,
+            "panel": "database",
+            "sql": format!("select '{thread}'"),
+            "focusWindow": false,
+        }))
+    };
+    let mut answers = Vec::new();
+    for index in 0..33 {
+        let rx = cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.dispatch_agent_panel_request_for_test(ask(format!("t{index}")), None, cx)
+            })
+        });
+        render_frames(cx, window);
+        answers.push(rx);
+    }
+    let outcomes: Vec<_> = answers
+        .iter_mut()
+        .map(|rx| rx.try_recv().expect("answered").panel)
+        .collect();
+    assert!(outcomes[..32].iter().all(|panel| panel.ok));
+    let refused = &outcomes[32];
+    assert!(!refused.ok);
+    assert_eq!(
+        refused.error.as_deref(),
+        Some(crate::panels::TOO_MANY_PENDING_QUERIES)
+    );
+    let (first, last) = cx.update(|cx| {
+        let app = app.read(cx);
+        (
+            app.panel_owner_for_test("t0"),
+            app.panel_owner_for_test("t32"),
+        )
+    });
+    cx.update(|cx| {
+        let database = app
+            .read(cx)
+            .right_panel_for_test()
+            .read(cx)
+            .database_for_test();
+        let db = database.read(cx);
+        assert_eq!(
+            db.pending_sql_for_test(&first).as_deref(),
+            Some("select 't0'")
+        );
+        assert_eq!(db.pending_sql_for_test(&last), None);
+    });
+}
+
+/// A browser tab's address is saved when its page navigates, not only on panel actions, so a
+/// restart reopens the page the tab was on. Saves wait for a pause and write off the UI
+/// thread: a burst of navigations is one write.
+#[gpui_kit::test]
+fn a_browser_tab_reopens_on_the_page_it_navigated_to(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-thread-panels-{}",
+        crate::commands::new_thread_id()
+    ));
+    let path = dir.join("thread-panels.json");
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.learn_primary_environment_for_test("env-a", cx);
+            app.select_thread("thread-selected", cx);
+            app.open_browser_tab("https://first.example/".into(), false, cx);
+        })
+    });
+    render_frames(cx, window);
+    let settle = |cx: &mut TestAppContext, ms: u64| {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(ms));
+        cx.run_until_parked();
+    };
+    settle(cx, 1_000);
+    let writes =
+        |cx: &mut TestAppContext| cx.update(|cx| app.read(cx).thread_panel_writes_for_test());
+    let before = writes(cx);
+    assert!(before >= 1, "opening the tab was saved");
+    let id = cx.update(|cx| {
+        app.read(cx)
+            .right_panel_tabs()
+            .last_browser()
+            .expect("a browser tab")
+    });
+    let page = cx
+        .update(|cx| app.read(cx).browser_weak_for_test(id, cx))
+        .and_then(|page| page.upgrade())
+        .expect("the tab's page");
+    // Links and redirects commit pages in quick succession; no panel action follows.
+    for step in 1..=5 {
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.commit_url_for_test(&format!("https://second.example/{step}"), cx)
+            })
+        });
+        settle(cx, 100);
+    }
+    assert_eq!(writes(cx), before, "nothing is written during the burst");
+    settle(cx, 600);
+    assert_eq!(writes(cx), before + 1, "one write after it");
+    let saved = std::fs::read_to_string(&path).expect("the layout was saved");
+    assert!(saved.contains("https://second.example/5"), "{saved}");
+
+    let (restart_window, restarted) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        restarted.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.learn_primary_environment_for_test("env-a", cx);
+            app.select_thread("thread-selected", cx);
+        })
+    });
+    render_frames(cx, restart_window);
+    let target = cx.update(|cx| {
+        let app = restarted.read(cx);
+        let id = app.right_panel_tabs().last_browser().expect("restored tab");
+        app.browser_target_for_test(id, cx)
+    });
+    assert_eq!(target.as_deref(), Some("https://second.example/5"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The primary's panels are keyed by the environment id it reported last, saved with the
+/// layout. At launch that id keys them at once; the same id confirmed changes nothing, another
+/// id is another server that starts fresh while the old one's panels stay saved.
+#[gpui_kit::test]
+fn the_primary_keeps_its_panels_by_its_last_environment_id(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-thread-panels-{}",
+        crate::commands::new_thread_id()
+    ));
+    let path = dir.join("thread-panels.json");
+    let diff = conn_state::PanelSurface::Kind(conn_state::RightPanelTab::Diff);
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.learn_primary_environment_for_test("env-a", cx);
+            app.select_thread("thread-selected", cx);
+            app.add_right_panel_tab(conn_state::RightPanelTab::Diff, cx);
+            app.save_thread_panels_for_test(cx);
+        })
+    });
+    cx.run_until_parked();
+
+    // A relaunch: the panels show from the saved id before any snapshot.
+    let relaunch = |cx: &mut TestAppContext| {
+        let (window, app) = mount_two_thread_app(cx);
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.set_thread_panels_path_for_test(path.clone(), cx);
+                app.select_thread("thread-selected", cx);
+            })
+        });
+        render_frames(cx, window);
+        app
+    };
+    let tabs = |cx: &mut TestAppContext, app: &Entity<ConnApp>| {
+        cx.update(|cx| app.read(cx).right_panel_tabs().tabs().to_vec())
+    };
+    let same = relaunch(cx);
+    assert_eq!(
+        tabs(cx, &same),
+        std::slice::from_ref(&diff),
+        "from the saved id"
+    );
+    cx.update(|cx| {
+        same.update(cx, |app, cx| {
+            app.learn_primary_environment_for_test("env-a", cx)
+        })
+    });
+    assert_eq!(
+        tabs(cx, &same),
+        std::slice::from_ref(&diff),
+        "confirming it changes nothing"
+    );
+
+    let other = relaunch(cx);
+    cx.update(|cx| {
+        other.update(cx, |app, cx| {
+            app.learn_primary_environment_for_test("env-b", cx);
+            app.save_thread_panels_for_test(cx);
+        })
+    });
+    cx.run_until_parked();
+    assert!(tabs(cx, &other).is_empty(), "another server starts fresh");
+    let saved = std::fs::read_to_string(&path).expect("saved");
+    assert!(
+        saved.contains("\"primaryEnvironment\":\"env-b\""),
+        "{saved}"
+    );
+    assert!(
+        saved.contains("\"environment\":\"env-a\""),
+        "the old server's panels stay saved under its id: {saved}"
+    );
+    let _ = window;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An agent's request for the primary is refused, with a reason to retry, until the server
+/// confirmed its environment id on this connection: before the first snapshot, and again after
+/// a reconnect until the next one. It is never filed under the id from before.
+#[gpui_kit::test]
+fn the_primarys_agent_requests_wait_for_the_server_to_say_who_it_is(cx: &mut TestAppContext) {
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| app.update(cx, |app, cx| app.select_thread("thread-selected", cx)));
+    render_frames(cx, window);
+    let ask = |id: &str| {
+        panel_request(json!({
+            "requestId": id,
+            "threadId": "thread-other",
+            "panel": "database",
+            "sql": "select 1",
+            "focusWindow": false,
+        }))
+    };
+    let send = |cx: &mut TestAppContext, id: &str| {
+        let mut rx = cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.dispatch_agent_panel_request_for_test(ask(id), None, cx)
+            })
+        });
+        render_frames(cx, window);
+        rx.try_recv().expect("answered").panel
+    };
+    let database = cx.update(|cx| {
+        app.read(cx)
+            .right_panel_for_test()
+            .read(cx)
+            .database_for_test()
+    });
+    let waiting = |cx: &mut TestAppContext, environment: &str| {
+        cx.update(|cx| {
+            database
+                .read(cx)
+                .pending_sql_for_test(&conn_state::PanelOwner::new(environment, "thread-other"))
+        })
+    };
+
+    let early = send(cx, "before-snapshot");
+    assert!(!early.ok);
+    assert_eq!(early.error.as_deref(), Some(crate::app::PRIMARY_NOT_READY));
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.learn_primary_environment_for_test("env-a", cx)
+        })
+    });
+    assert!(send(cx, "confirmed").ok);
+    assert_eq!(waiting(cx, "env-a").as_deref(), Some("select 1"));
+
+    // A reconnect reaches server B; until B's snapshot, nothing is filed under A.
+    cx.update(|cx| app.update(cx, |app, cx| app.primary_disconnected_for_test(cx)));
+    let after = send(cx, "after-reconnect");
+    assert_eq!(after.error.as_deref(), Some(crate::app::PRIMARY_NOT_READY));
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.learn_primary_environment_for_test("env-b", cx)
+        })
+    });
+    let filed = send(cx, "on-b");
+    assert!(filed.ok);
+    assert_eq!(waiting(cx, "env-b").as_deref(), Some("select 1"));
+    cx.update(|cx| {
+        assert_eq!(
+            app.read(cx).panel_owner_for_test("thread-other"),
+            conn_state::PanelOwner::new("env-b", "thread-other")
+        );
+    });
+}
+
+/// A `thread-panels.json` of another format (an earlier build's) is set aside once as `.bak`,
+/// and the panels start empty.
+#[gpui_kit::test]
+fn an_old_layout_file_is_set_aside_and_panels_start_empty(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-thread-panels-{}",
+        crate::commands::new_thread_id()
+    ));
+    std::fs::create_dir_all(&dir).expect("a temp folder");
+    let path = dir.join("thread-panels.json");
+    let old = r#"{"threads":[{"owner":"thread-selected","open":true,"tabs":[{"kind":"panel","tab":"files"}],"active":0}]}"#;
+    std::fs::write(&path, old).expect("the old file");
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.select_thread("thread-selected", cx);
+        })
+    });
+    render_frames(cx, window);
+    assert!(cx.update(|cx| app.read(cx).right_panel_tabs().tabs().is_empty()));
+    assert!(!path.exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("thread-panels.json.bak"))
+            .as_deref()
+            .ok(),
+        Some(old)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Quitting while a write is in flight loses nothing: the write finishes, and the layout
+/// changed since is written after it.
+#[gpui_kit::test]
+fn quitting_during_a_write_leaves_the_final_layout_on_disk(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!(
+        "conn-thread-panels-{}",
+        crate::commands::new_thread_id()
+    ));
+    let path = dir.join("thread-panels.json");
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_panels_path_for_test(path.clone(), cx);
+            app.learn_primary_environment_for_test("env-a", cx);
+            app.select_thread("thread-selected", cx);
+            app.add_right_panel_tab(conn_state::RightPanelTab::Diff, cx);
+            app.save_thread_panels_for_test(cx);
+            assert!(app.thread_panel_write_in_flight_for_test());
+            // A change lands while that write runs.
+            app.add_right_panel_tab(conn_state::RightPanelTab::Files, cx);
+        })
+    });
+    let _ = window;
+    cx.quit();
+    let saved = std::fs::read_to_string(&path).expect("written before quitting");
+    let saved = conn_state::SavedThreadPanels::from_json(&saved).expect("this format");
+    let tabs: Vec<_> = saved.threads[0].tabs.clone();
+    assert_eq!(
+        tabs,
+        [
+            conn_state::SavedSurface::Panel {
+                tab: conn_state::RightPanelTab::Diff
+            },
+            conn_state::SavedSurface::Panel {
+                tab: conn_state::RightPanelTab::Files
+            },
+        ],
+        "the final layout"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A linked thread's project is on another machine. When this Mac has a checkout with a
+/// `.env` at the same path, that is not the thread's database: the panel offers no `.env`
+/// connection for it, and an agent's SQL with no connection chosen for that environment is
+/// refused, never run against the local database.
+#[gpui_kit::test]
+fn a_linked_threads_sql_never_uses_this_macs_env(cx: &mut TestAppContext) {
+    let root = std::env::temp_dir().join(format!(
+        "conn-linked-env-{}",
+        crate::commands::new_thread_id()
+    ));
+    std::fs::create_dir_all(&root).expect("a temp checkout");
+    std::fs::write(
+        root.join(".env"),
+        "DB_CONNECTION=sqlite\nDB_DATABASE=/nonexistent/local-only.sqlite\n",
+    )
+    .expect("a local .env");
+    let root_text = root.to_string_lossy().into_owned();
+    let (window, app) = mount_two_thread_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.add_linked_shell_for_test(
+                "mini",
+                "mini",
+                linked_mini_shell(&root_text, "Mini database work"),
+                cx,
+            );
+            app.select_thread("thread-mini", cx);
+        })
+    });
+    render_frames(cx, window);
+    let database = cx.update(|cx| {
+        app.read(cx)
+            .right_panel_for_test()
+            .read(cx)
+            .database_for_test()
+    });
+    assert!(
+        !cx.update(|cx| database.read(cx).offers_env_connection_for_test()),
+        "no connection from this Mac's .env"
+    );
+    let mut answer = cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.dispatch_agent_panel_request_for_test(
+                panel_request(json!({
+                    "requestId": "linked-sql",
+                    "threadId": "thread-mini",
+                    "panel": "database",
+                    "sql": "select * from users",
+                    "run": true,
+                    "focusWindow": false,
+                })),
+                Some("mini"),
+                cx,
+            )
+        })
+    });
+    render_frames(cx, window);
+    let response = answer.try_recv().expect("answered").panel;
+    assert!(!response.ok);
+    assert!(response.database.is_none(), "nothing ran");
+    assert_eq!(
+        response.error.as_deref(),
+        Some(crate::panels::NO_LINKED_CONNECTION)
+    );
+    assert_eq!(
+        cx.update(|cx| database.read(cx).sql_for_test()),
+        None,
+        "no connection is chosen"
+    );
+
+    // The same checkout for a thread on this Mac offers its .env, so the fixture is a real one.
+    cx.update(|cx| {
+        database.update(cx, |db, cx| {
+            db.set_linked_environment(None);
+            db.set_project(Some("proj-mini".into()), Some(root_text.clone()), cx);
+        })
+    });
+    assert!(cx.update(|cx| database.read(cx).offers_env_connection_for_test()));
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// Switching to a thread whose panel is closed, with its browser tab selected, runs no

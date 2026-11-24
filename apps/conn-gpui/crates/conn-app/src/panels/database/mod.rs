@@ -3,6 +3,7 @@
 //! read-only SQL executed natively via [`conn_desktop::database::DatabaseRunner`].
 
 mod form;
+mod pending;
 mod store;
 mod views;
 
@@ -23,6 +24,9 @@ use gpui_kit::{
 };
 
 use self::form::{ConnectionFormState, outline_sm_button};
+use self::pending::PendingQueries;
+#[cfg(test)]
+pub(crate) use self::pending::TOO_MANY_PENDING as TOO_MANY_PENDING_QUERIES;
 use self::store::{
     DatabaseStore, active_connection, filter_tables, finalize_draft, format_result_summary,
     load_env_connection, load_store, project_connections, save_store,
@@ -48,6 +52,9 @@ const SQL_EDITOR_MIN_HEIGHT_PX: f32 = 96.0;
 /// Placeholder shown in the SQL editor (`DatabasePanel.tsx`).
 const SQL_PLACEHOLDER: &str = "select * from users limit 100";
 const PILL_RADIUS_PX: f32 = 9999.0;
+/// An agent on a linked thread asked for SQL with no connection chosen for that environment.
+pub(crate) const NO_LINKED_CONNECTION: &str =
+    "No database connection for this environment; pick one in the Database panel.";
 
 #[derive(Debug, Clone)]
 struct KeyedLoad<T> {
@@ -75,7 +82,14 @@ struct PickedTable {
 pub(crate) struct DatabasePanel {
     tokens: Tokens,
     project_key: Option<String>,
+    /// The linked environment the shown thread runs on; `None` for the primary. A linked
+    /// thread's project is on another machine: this Mac's `.env` at the same path is not its
+    /// database, so it gets no `.env` default, only a connection chosen for it.
+    linked_environment: Option<String>,
     workspace_root: Option<String>,
+    /// The shown thread's panel: a query handed to it waits in `pending` until it can land.
+    owner: Option<conn_state::PanelOwner>,
+    pending: PendingQueries,
     store: DatabaseStore,
     runner: DatabaseRunner,
     env_connection: Option<PanelConnection>,
@@ -149,7 +163,10 @@ impl DatabasePanel {
         Self {
             tokens,
             project_key: None,
+            linked_environment: None,
             workspace_root: None,
+            owner: None,
+            pending: PendingQueries::default(),
             store: load_store(),
             runner: DatabaseRunner::new(),
             env_connection: None,
@@ -188,12 +205,17 @@ impl DatabasePanel {
         workspace_root: Option<String>,
         cx: &mut Context<'_, Self>,
     ) {
+        // A linked project keeps its connections apart from a primary one with the same id.
+        let project_key = project_key.map(|key| match &self.linked_environment {
+            Some(environment) => format!("{environment}/{key}"),
+            None => key,
+        });
         if self.project_key == project_key && self.workspace_root == workspace_root {
             return;
         }
         self.project_key = project_key;
         self.workspace_root = workspace_root;
-        self.env_connection = load_env_connection(self.workspace_root.as_deref());
+        self.env_connection = self.local_env_connection();
         self.editing = None;
         self.menu_open = false;
         self.filter.clear();
@@ -205,6 +227,96 @@ impl DatabasePanel {
         self.columns_load = None;
         self.load_vault_databases(false, cx);
         self.ensure_tables_loaded(cx);
+        self.deliver_pending(cx);
+        cx.notify();
+    }
+
+    /// The shown thread's panel. Its waiting query lands on the next [`Self::deliver_pending`],
+    /// once the caller has also set that thread's project.
+    pub(crate) fn set_owner(&mut self, owner: Option<conn_state::PanelOwner>) {
+        self.owner = owner;
+    }
+
+    /// Queues `sql` for `owner`'s editor (`openDatabaseQuery`). It lands when that thread shows
+    /// with its project's connections loaded and one chosen, on whichever path gets there first.
+    /// Refused, with the reason, when too many threads already have one waiting.
+    pub(crate) fn queue_sql(
+        &mut self,
+        owner: &conn_state::PanelOwner,
+        sql: String,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(), String> {
+        self.pending.queue(owner, sql).map_err(str::to_owned)?;
+        self.deliver_pending(cx);
+        Ok(())
+    }
+
+    /// Drops a deleted thread's waiting query.
+    pub(crate) fn forget_owner(&mut self, owner: &conn_state::PanelOwner) {
+        self.pending.forget(owner);
+    }
+
+    /// Puts the shown thread's waiting query in the editor of the chosen connection, if the
+    /// connections have loaded and one is chosen (`takePending`).
+    pub(crate) fn deliver_pending(&mut self, cx: &mut Context<'_, Self>) {
+        let has_connection = self.project_key.is_some() && self.selected_connection().is_some();
+        if let Some(sql) = self.pending.take(self.owner.as_ref(), has_connection) {
+            self.set_agent_sql(sql, cx);
+        }
+    }
+
+    /// The editor's SQL for the chosen connection, if one is chosen.
+    #[cfg(test)]
+    pub(crate) fn sql_for_test(&self) -> Option<String> {
+        self.selected_connection()
+            .map(|connection| self.current_sql(&connection.id))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_sql_for_test(&self, owner: &conn_state::PanelOwner) -> Option<String> {
+        self.pending.waiting(owner).map(str::to_owned)
+    }
+
+    /// A Vault load that tests answer with [`Self::finish_vault_load_for_test`].
+    #[cfg(test)]
+    pub(crate) fn begin_vault_load_for_test(&mut self) -> u64 {
+        self.pending.begin_vault_load()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn finish_vault_load_for_test(
+        &mut self,
+        token: u64,
+        connections: Vec<PanelConnection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.apply_vault_outcome(token, Ok(connections), cx);
+    }
+
+    /// The answer of Vault load `token`; an older load's answer is dropped.
+    fn apply_vault_outcome(
+        &mut self,
+        token: u64,
+        outcome: Result<Vec<PanelConnection>, (VaultErrorKind, String)>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.pending.finish_vault_load(token) {
+            return;
+        }
+        match outcome {
+            Ok(connections) => {
+                self.vault_connections = connections;
+                self.vault_status = None;
+                self.vault_error = None;
+            }
+            Err((kind, message)) => {
+                self.vault_connections.clear();
+                self.vault_status = Some(kind);
+                self.vault_error = Some(message);
+            }
+        }
+        self.ensure_tables_loaded(cx);
+        self.deliver_pending(cx);
         cx.notify();
     }
 
@@ -214,35 +326,23 @@ impl DatabasePanel {
         }
         let vault = self.runner.vault().clone();
         if !vault.is_installed() {
+            self.pending.end_vault_loads();
             self.vault_connections.clear();
             self.vault_status = Some(VaultErrorKind::Unavailable);
             self.vault_error = None;
+            self.deliver_pending(cx);
             return;
         }
+        let token = self.pending.begin_vault_load();
         let task = crate::live::RT.spawn(async move { vault.list_databases(allow_unlock).await });
         cx.spawn(async move |this, cx| {
-            let outcome = task.await;
+            let outcome = match task.await {
+                Ok(Ok(dbs)) => Ok(dbs.iter().map(panel_connection_from_vault).collect()),
+                Ok(Err(err)) => Err((err.kind, err.message)),
+                Err(join_err) => Err((VaultErrorKind::Error, join_err.to_string())),
+            };
             let _ = this.update(cx, |panel, cx| {
-                match outcome {
-                    Ok(Ok(dbs)) => {
-                        panel.vault_connections =
-                            dbs.iter().map(panel_connection_from_vault).collect();
-                        panel.vault_status = None;
-                        panel.vault_error = None;
-                    }
-                    Ok(Err(err)) => {
-                        panel.vault_connections.clear();
-                        panel.vault_status = Some(err.kind);
-                        panel.vault_error = Some(err.message);
-                    }
-                    Err(join_err) => {
-                        panel.vault_connections.clear();
-                        panel.vault_status = Some(VaultErrorKind::Error);
-                        panel.vault_error = Some(join_err.to_string());
-                    }
-                }
-                panel.ensure_tables_loaded(cx);
-                cx.notify();
+                panel.apply_vault_outcome(token, outcome, cx)
             });
         })
         .detach();
@@ -264,7 +364,32 @@ impl DatabasePanel {
             .project_key
             .as_deref()
             .and_then(|key| self.store.remembered_connection(key));
+        if self.linked_environment.is_some() {
+            // No default for a linked thread: only the connection picked for it.
+            return remembered.and_then(|id| connections.iter().find(|c| c.id == id).cloned());
+        }
         active_connection(&connections, remembered)
+    }
+
+    /// The project's `.env` connection, read from this Mac's checkout: only for the primary.
+    fn local_env_connection(&self) -> Option<PanelConnection> {
+        if self.linked_environment.is_some() {
+            return None;
+        }
+        load_env_connection(self.workspace_root.as_deref())
+    }
+
+    /// The shown thread's linked environment (`None`: the primary). Set before the project.
+    pub(crate) fn set_linked_environment(&mut self, environment: Option<String>) {
+        self.linked_environment = environment;
+    }
+
+    /// Whether the panel offers a connection from this Mac's `.env`.
+    #[cfg(test)]
+    pub(crate) fn offers_env_connection_for_test(&self) -> bool {
+        self.connections()
+            .iter()
+            .any(|c| c.source == ConnectionSource::Env)
     }
 
     fn current_sql(&self, connection_id: &str) -> String {
@@ -494,6 +619,7 @@ impl DatabasePanel {
                 Some(name) => {
                     format!("No database connection named \"{name}\". Connections: {names}.")
                 }
+                None if self.linked_environment.is_some() => NO_LINKED_CONNECTION.to_owned(),
                 None => format!(
                     "No database connection configured for this project. Connections: {names}."
                 ),
@@ -692,6 +818,7 @@ impl DatabasePanel {
         self.allow_unlock_next = id.starts_with("vault:");
         self.synced_sql = None;
         self.ensure_tables_loaded(cx);
+        self.deliver_pending(cx);
         cx.notify();
     }
 
@@ -762,6 +889,7 @@ impl DatabasePanel {
             save_store(&self.store);
         }
         self.synced_sql = None;
+        self.deliver_pending(cx);
         self.sync_inputs(window, cx);
         self.ensure_tables_loaded(cx);
         cx.notify();
@@ -769,7 +897,7 @@ impl DatabasePanel {
 
     fn refresh(&mut self, cx: &mut Context<'_, Self>) {
         self.reconnect_next = true;
-        self.env_connection = load_env_connection(self.workspace_root.as_deref());
+        self.env_connection = self.local_env_connection();
         self.load_vault_databases(false, cx);
         self.refresh_nonce = self.refresh_nonce.wrapping_add(1);
         self.tables_load = None;
@@ -786,6 +914,7 @@ impl DatabasePanel {
                 self.ensure_columns_loaded(&connection, &table, cx);
             }
         }
+        self.deliver_pending(cx);
         cx.notify();
     }
 

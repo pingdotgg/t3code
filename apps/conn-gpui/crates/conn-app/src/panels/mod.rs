@@ -47,6 +47,10 @@ use self::api::ApiPanel;
 use self::browser::{BrowserPanel, BrowserTabEvent};
 use self::color::to_hsla;
 use self::database::DatabasePanel;
+#[cfg(test)]
+pub(crate) use self::database::NO_LINKED_CONNECTION;
+#[cfg(test)]
+pub(crate) use self::database::TOO_MANY_PENDING_QUERIES;
 use self::device::DevicePanel;
 use self::diff::DiffPanel;
 use self::files::FilesPanel;
@@ -82,6 +86,8 @@ pub(crate) enum RightPanelEvent {
     },
     /// A browser tab's title changed, so the tab strip shows it.
     BrowserTitleChanged,
+    /// A browser tab committed a new address, so its thread's saved layout follows.
+    BrowserAddressChanged,
 }
 
 impl gpui_kit::EventEmitter<RightPanelEvent> for RightPanel {}
@@ -363,6 +369,7 @@ impl RightPanel {
         .detach();
         cx.subscribe(&browser, |_, _, event: &BrowserTabEvent, cx| match event {
             BrowserTabEvent::TitleChanged => cx.emit(RightPanelEvent::BrowserTitleChanged),
+            BrowserTabEvent::AddressChanged => cx.emit(RightPanelEvent::BrowserAddressChanged),
             BrowserTabEvent::OpenTab(request) => cx.emit(RightPanelEvent::OpenBrowserTab {
                 url: request.url.clone(),
                 background: request.background,
@@ -575,9 +582,57 @@ impl RightPanel {
         self.sync_surface_visibility(cx);
     }
 
-    pub fn set_database_sql(&mut self, sql: String, cx: &mut Context<'_, Self>) {
+    /// Hands `sql` to `owner`'s Database editor. It waits there until that thread shows with
+    /// its project's connections loaded (`openDatabaseQuery`). `Err` says why it was refused.
+    pub fn set_database_sql(
+        &mut self,
+        owner: &conn_state::PanelOwner,
+        sql: String,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(), String> {
         self.database
-            .update(cx, |panel, cx| panel.set_agent_sql(sql, cx));
+            .update(cx, |panel, cx| panel.queue_sql(owner, sql, cx))
+    }
+
+    /// The shown thread's panel owner, for what waits per thread (the Database query). Set it
+    /// before [`Self::set_context`], so a waiting query never lands in another project.
+    pub fn set_owner(&mut self, owner: Option<conn_state::PanelOwner>, cx: &mut Context<'_, Self>) {
+        self.database.update(cx, |p, _| p.set_owner(owner));
+    }
+
+    /// The shown thread's linked environment (`None`: the primary), before its project is set,
+    /// so a linked thread never gets this Mac's `.env` database.
+    pub fn set_linked_environment(
+        &mut self,
+        environment: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.database
+            .update(cx, |p, _| p.set_linked_environment(environment));
+    }
+
+    /// A deleted thread's waiting Database query goes with it.
+    pub fn forget_owner(&mut self, owner: &conn_state::PanelOwner, cx: &mut Context<'_, Self>) {
+        self.database
+            .update(cx, |panel, _| panel.forget_owner(owner));
+    }
+
+    /// The address browser tab `id` shows or will load, for saving the thread's layout.
+    pub fn browser_address(&self, id: BrowserTabId, cx: &App) -> Option<String> {
+        let url = match self.browser(id) {
+            Some(browser) => browser.read(cx).page_url(),
+            None => self
+                .pending_browser_urls
+                .iter()
+                .find(|(tab, _)| *tab == id)
+                .map(|(_, url)| url.clone())?,
+        };
+        (!url.is_empty()).then_some(url)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn database_for_test(&self) -> Entity<DatabasePanel> {
+        self.database.clone()
     }
 
     /// Runs an agent's read-only SQL query in the Database panel and resolves with its result.
@@ -745,6 +800,7 @@ impl RightPanel {
         }
         let root = self.workspace_root.clone();
         for_each_thread_panel(self, root, thread_id, thread_shell, cx);
+        self.database.update(cx, |p, cx| p.deliver_pending(cx));
         cx.notify();
     }
 

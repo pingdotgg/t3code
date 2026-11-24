@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use conn_client::{ClientEvent, Connection, ConnectionStatus, ServerConfig};
 use conn_state::{
-    LayoutState, PanelSurface, RightPanelTab, RightPanelTabs, ShellState, ThreadPanel,
+    LayoutState, PanelOwner, PanelSurface, RightPanelTab, RightPanelTabs, ShellState, ThreadPanel,
     ThreadPanels, ThreadState,
 };
 use conn_theme::{ShellGeometry, Tokens};
@@ -41,6 +41,7 @@ mod offline;
 mod rail_workspaces;
 mod sidebar_keys;
 mod sidebar_more;
+mod thread_panels;
 
 pub(crate) use self::sidebar_more::PressMode;
 
@@ -188,10 +189,50 @@ fn draft_workspace_strategy(draft: &DraftThreadState) -> serde_json::Value {
     }
 }
 
+/// Why an agent's panel request reached Conn before the primary server said who it is.
+pub(crate) const PRIMARY_NOT_READY: &str =
+    "Conn is still connecting to this server, so it did not open the panel. Try again in a moment.";
+
+/// The connection an agent's panel request came from.
+pub(super) enum PanelOrigin {
+    Primary,
+    Linked(String),
+}
+
+/// Where an agent's panel request is answered.
+pub(super) enum PanelReply {
+    /// `panels.respond` on the connection it came from.
+    Server(Connection),
+    #[cfg(test)]
+    Test(tokio::sync::oneshot::Sender<conn_contract::source::DesktopPanelResponse>),
+}
+
+impl PanelReply {
+    async fn send(self, response: conn_contract::source::DesktopPanelResponse) {
+        match self {
+            Self::Server(connection) => {
+                let _ = crate::live::RT
+                    .spawn(async move {
+                        let _ = connection
+                            .call::<conn_contract::source::DesktopPanelResponse, ()>(
+                                "panels.respond",
+                                &response,
+                            )
+                            .await;
+                    })
+                    .await;
+            }
+            #[cfg(test)]
+            Self::Test(tx) => {
+                let _ = tx.send(response);
+            }
+        }
+    }
+}
+
 struct FilesSubscription {
     thread: String,
     connection: Connection,
-    linked: bool,
 }
 
 /// Root view of the Conn native desktop shell.
@@ -272,6 +313,14 @@ pub(crate) struct ConnApp {
     /// The other threads' right panels; `right_panel_tabs` and `layout.right_panel_open` hold
     /// the shown thread's (`rightPanelStore.byThreadKey`).
     thread_panels: ThreadPanels,
+    /// Where every thread's panel is saved, and its pending and last writes.
+    panel_saves: thread_panels::PanelSaves,
+    /// The primary server's environment id: the one saved with the layout at launch, then the
+    /// one its config snapshot names. Panel owners on the primary use it.
+    primary_environment: Option<String>,
+    /// The connected primary confirmed `primary_environment` since it (re)connected. Until
+    /// then an agent's panel request is refused: its thread could be another server's.
+    primary_confirmed: bool,
     right_panel_add_menu_open: bool,
     right_panel_maximized: bool,
     /// The terminal drawer under the chat is open, and its height.
@@ -602,6 +651,10 @@ impl ConnApp {
                     app.open_browser_tab(url.clone(), *background, cx);
                 }
                 crate::panels::RightPanelEvent::BrowserTitleChanged => cx.notify(),
+                // A page navigates rarely; the save writes only when the layout changed.
+                crate::panels::RightPanelEvent::BrowserAddressChanged => {
+                    app.save_thread_panels(cx);
+                }
             },
         )
         .detach();
@@ -691,6 +744,9 @@ impl ConnApp {
             // No tab until one is picked: opening the panel shows the surface launcher.
             right_panel_tabs: RightPanelTabs::default(),
             thread_panels: ThreadPanels::default(),
+            panel_saves: thread_panels::PanelSaves::new(thread_panels::thread_panels_file_path()),
+            primary_environment: None,
+            primary_confirmed: false,
             right_panel_add_menu_open: false,
             right_panel_maximized: false,
             terminal_drawer_open: false,
@@ -743,6 +799,10 @@ impl ConnApp {
         app.restore_offline_shell();
         app.expire_offline(cx);
         app.restore_saved_drafts(cx);
+        app.restore_thread_panels(cx);
+        // The write in flight finishes, and the latest layout follows if it differs.
+        cx.on_app_quit(|app, cx| app.thread_panels_on_quit(cx))
+            .detach();
         app.sync_chat(cx);
         app.start_sidebar_clock(cx);
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
@@ -1116,7 +1176,6 @@ impl ConnApp {
             .and_then(|thread| {
                 Some(FilesSubscription {
                     connection: self.connection_for_thread(thread)?,
-                    linked: self.linked_environment_of_thread(thread).is_some(),
                     thread: thread.clone(),
                 })
             });
@@ -1131,18 +1190,14 @@ impl ConnApp {
                 .as_ref()
                 .is_some_and(|new| new.connection.same_connection(&old.connection))
         {
-            if old.linked {
-                old.connection.unsubscribe_panel_requests();
-            } else {
-                old.connection
-                    .subscribe_panel_requests(Some(self.device_name()));
-            }
+            old.connection
+                .subscribe_panel_requests(Some(self.device_name()));
         }
         if let Some(next) = &next {
             next.connection.subscribe_files_thread(
                 Some(self.device_name()),
                 Some(next.thread.clone()),
-                next.linked,
+                false,
             );
         }
         self.files_subscription = next;
@@ -1150,7 +1205,9 @@ impl ConnApp {
 
     /// Pushes the selected thread's timeline (or active draft state) into the chat view and right panel.
     fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
-        self.sync_panel_owner();
+        if self.sync_panel_owner() {
+            self.save_thread_panels(cx);
+        }
         self.refresh_selected_outline(cx);
         self.sync_chat_environment(cx);
         let child_approvals = self.sync_child_approvals();
@@ -1219,8 +1276,12 @@ impl ConnApp {
         let surface_visible = self.right_panel_surface_visible();
         let panel_root = root.clone();
         let environment_id = self.environment_id();
+        let panel_owner = self.thread_panels.owner().cloned();
+        let linked_environment = self.context_environment();
         self.right_panel.update(cx, |panel, cx| {
             panel.set_environment(environment_id, cx);
+            panel.set_owner(panel_owner, cx);
+            panel.set_linked_environment(linked_environment, cx);
             panel.set_context(project_id.clone(), panel_root, thread_id, shell_thread, cx);
             panel.show_surface(&surface, surface_visible, cx);
         });
@@ -1394,7 +1455,13 @@ impl ConnApp {
                 }
                 if matches!(status, ConnectionStatus::Connected) {
                     self.orbit.connecting_server_id = None;
-                } else if let Some(env) = self.server_url.as_deref() {
+                } else {
+                    // A reconnect may reach another server: its next snapshot confirms who.
+                    self.primary_confirmed = false;
+                }
+                if !matches!(status, ConnectionStatus::Connected)
+                    && let Some(env) = self.server_url.as_deref()
+                {
                     self.offline.disconnected(env);
                 }
                 self.status = Some(status);
@@ -1491,7 +1558,12 @@ impl ConnApp {
             ClientEvent::ServerConfig(event) => self.apply_server_config_event(*event, cx),
             ClientEvent::PanelRequest(request) => {
                 if let Some(connection) = self.connection.clone() {
-                    self.dispatch_agent_panel_request(request, connection, cx);
+                    self.dispatch_agent_panel_request(
+                        request,
+                        PanelOrigin::Primary,
+                        PanelReply::Server(connection),
+                        cx,
+                    );
                 }
             }
             ClientEvent::Annotations {
@@ -1530,6 +1602,9 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.record_primary_machine(&event);
+        if let conn_contract::ServerConfigStreamEvent::Snapshot(snapshot) = &event {
+            self.learn_primary_environment(snapshot.config.environment.environment_id.clone(), cx);
+        }
         let change = std::sync::Arc::make_mut(&mut self.server_config).apply(event);
         if change.config_changed {
             let root = self
@@ -2758,7 +2833,10 @@ impl ConnApp {
                             app.drafts.set_frozen_active(None);
                         }
                         app.drafts.forget(&draft_id);
-                        app.thread_panels.rename(&draft_id, final_thread_id.clone());
+                        let draft_owner = app.panel_owner_of_draft(&draft_id, &project_id);
+                        app.thread_panels
+                            .rename(&draft_owner, final_thread_id.clone());
+                        app.save_thread_panels(cx);
                         if was_open {
                             app.layout.selected_project_id = Some(project_id.clone());
                             app.layout.selected_thread_id = Some(final_thread_id.clone());
@@ -3428,6 +3506,7 @@ impl ConnApp {
         self.right_panel
             .update(cx, |panel, cx| panel.navigate_browser(id, url, cx));
         if background && self.layout.right_panel_open {
+            self.save_thread_panels(cx);
             cx.notify();
         } else {
             self.show_right_panel_surface(cx);
@@ -3792,8 +3871,6 @@ impl ConnApp {
             rail_workspaces::save_active_workspace(None);
         }
         self.reveal_open_row = true;
-        // Always reveal the chat column when selecting a thread in the sidebar.
-        self.right_panel_maximized = false;
         self.open_thread(thread_id);
         if project_id.is_some() {
             self.layout.selected_project_id = project_id;
@@ -3816,6 +3893,14 @@ impl ConnApp {
     pub(crate) fn toggle_right_panel(&mut self, cx: &mut Context<'_, Self>) {
         self.layout.right_panel_open = !self.layout.right_panel_open;
         self.sync_browser_visibility(cx);
+        self.save_thread_panels(cx);
+        cx.notify();
+    }
+
+    /// Fills the window with the right panel, or gives the chat its column back.
+    pub(crate) fn toggle_right_panel_maximized(&mut self, cx: &mut Context<'_, Self>) {
+        self.right_panel_maximized = !self.right_panel_maximized;
+        self.save_thread_panels(cx);
         cx.notify();
     }
 
@@ -3837,6 +3922,7 @@ impl ConnApp {
             self.seam_drag = None;
             window.focus(&self.focus_handle, cx);
         }
+        self.save_thread_panels(cx);
         cx.notify();
     }
 
@@ -3862,54 +3948,113 @@ impl ConnApp {
             .shows_surface_launcher(self.right_panel_tabs.tabs().len())
     }
 
-    /// Puts the shown thread's (or draft's) right panel in place. Panels are keyed by thread or
-    /// draft id alone: both are UUIDs, and a linked thread's environment can be learnt late. The panel it leaves keeps
-    /// its tabs, and its browsers keep their pages, until the thread shows again.
-    fn sync_panel_owner(&mut self) {
-        let owner = self
-            .layout
-            .selected_thread_id
-            .as_deref()
-            .or_else(|| self.draft.as_ref().map(|d| d.draft_id.as_str()))
-            .map(str::to_owned);
+    /// Puts the shown thread's (or draft's) right panel in place. Panels are keyed by environment
+    /// and thread or draft id: two environments can hold the same thread id. The panel it leaves
+    /// keeps its tabs, and its browsers keep their pages, until the thread shows again.
+    /// Its maximize state, terminal drawer and width go with it. `true` when the owner changed.
+    fn sync_panel_owner(&mut self) -> bool {
+        let owner = match (&self.layout.selected_thread_id, &self.draft) {
+            (Some(thread), _) => Some(self.panel_owner_of_thread(thread)),
+            (None, Some(draft)) => {
+                Some(self.panel_owner_of_draft(&draft.draft_id, &draft.project_id))
+            }
+            (None, None) => None,
+        };
         let mut panel = ThreadPanel {
             tabs: std::mem::take(&mut self.right_panel_tabs),
             open: self.layout.right_panel_open,
+            maximized: self.right_panel_maximized,
+            terminal_open: self.terminal_drawer_open,
+            width: Some(self.layout.right_panel_width),
         };
-        if self.thread_panels.switch(owner, &mut panel) {
+        let switched = self.thread_panels.switch(owner, &mut panel);
+        if switched {
             self.right_panel_add_menu_open = false;
+            self.seam_drag = None;
             self.layout.right_panel_tab = panel
                 .tabs
                 .active()
                 .map_or(RightPanelTab::Files, PanelSurface::kind);
+            if let Some(width) = panel.width {
+                self.layout.set_right_panel_width(width);
+            }
         }
         self.right_panel_tabs = panel.tabs;
         self.layout.right_panel_open = panel.open;
+        self.right_panel_maximized = panel.maximized;
+        self.terminal_drawer_open = panel.terminal_open;
+        switched
     }
 
     /// An agent's `panel_open` for a thread the user is not looking at: its tab waits in that
-    /// thread's panel (`preparePanel`), and nothing reaches the shown thread's panel. A query
-    /// or an MCP action does not run, and the agent hears why. Returns that, if so.
+    /// thread's panel (`preparePanel`), and nothing reaches the shown thread's panel. SQL waits
+    /// in that thread's Database editor (`openDatabaseQuery`). Running it, or an MCP action,
+    /// needs the panel on screen, so it does not run and the agent hears why. Returns that.
     fn prepare_background_panel(
         &mut self,
+        owner: &PanelOwner,
         request: &conn_contract::AgentPanelRequest,
         not_on_thread: &str,
+        cx: &mut Context<'_, Self>,
     ) -> Option<String> {
         use conn_contract::AgentPanelKind;
-        let acts = match request.panel {
-            AgentPanelKind::Mcp => request.mcp_server.is_some() || request.mcp_call.is_some(),
-            AgentPanelKind::Database => request.sql.is_some(),
-            _ => false,
-        };
-        if acts {
+        if request.panel == AgentPanelKind::Mcp
+            && (request.mcp_server.is_some() || request.mcp_call.is_some())
+        {
             return Some(not_on_thread.to_owned());
         }
+        let mut error = None;
+        if request.panel == AgentPanelKind::Database
+            && let Some(sql) = request.sql.clone()
+        {
+            if let Err(refused) = self
+                .right_panel
+                .update(cx, |panel, cx| panel.set_database_sql(owner, sql, cx))
+            {
+                return Some(refused);
+            }
+            if request.run == Some(true) {
+                error = Some(format!(
+                    "{not_on_thread} The query is in its Database panel."
+                ));
+            }
+        }
         self.thread_panels.prepare(
-            &request.thread_id,
+            owner,
             agent_panel_tab(request.panel),
             &mut self.right_panel_tabs,
         );
-        None
+        self.save_thread_panels(cx);
+        error
+    }
+
+    /// Whose panel an agent's request for `thread` from `origin` reaches. The primary's needs
+    /// its environment id confirmed by the server since it last connected: a request that
+    /// arrives before is refused, never filed under a guessed id.
+    fn request_owner(&self, origin: &PanelOrigin, thread: &str) -> Result<PanelOwner, String> {
+        match origin {
+            PanelOrigin::Linked(environment) => Ok(PanelOwner::new(environment.clone(), thread)),
+            PanelOrigin::Primary => match (&self.primary_environment, self.primary_confirmed) {
+                (Some(environment), true) => Ok(PanelOwner::new(environment.clone(), thread)),
+                _ => Err(PRIMARY_NOT_READY.to_owned()),
+            },
+        }
+    }
+
+    /// Whose right panel thread `thread` shows: the thread on its own environment.
+    fn panel_owner_of_thread(&self, thread: &str) -> PanelOwner {
+        let environment = self
+            .linked_environment_of_thread(thread)
+            .map_or_else(|| self.primary_panel_environment(), str::to_owned);
+        PanelOwner::new(environment, thread)
+    }
+
+    /// Whose right panel draft `draft` shows: the draft on its project's environment.
+    fn panel_owner_of_draft(&self, draft: &str, project_id: &str) -> PanelOwner {
+        let environment = self
+            .linked_environment_of_project(project_id)
+            .map_or_else(|| self.primary_panel_environment(), str::to_owned);
+        PanelOwner::new(environment, draft)
     }
 
     /// The shown thread's browser tab for the automation hook: the active one, else the one it
@@ -3925,18 +4070,22 @@ impl ConnApp {
     /// A thread deleted here takes its right panel and browsers with it. Shell events do not:
     /// `thread.removed` also means archived, and the thread can come back. The browser cap
     /// bounds what threads deleted elsewhere leave behind.
-    pub(crate) fn release_thread_panel(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+    pub(crate) fn release_thread_panel(&mut self, owner: &PanelOwner, cx: &mut Context<'_, Self>) {
         self.sync_panel_owner();
-        self.forget_thread_panel(thread_id, cx);
+        self.forget_thread_panel(owner, cx);
     }
 
-    /// A deleted thread's right panel goes with it, and so do its browsers.
-    fn forget_thread_panel(&mut self, owner: &str, cx: &mut Context<'_, Self>) {
-        for id in self.thread_panels.forget(owner) {
-            self.right_panel.update(cx, |panel, cx| {
+    /// A deleted thread's right panel goes with it, and so do its browsers, its waiting
+    /// Database query and its saved layout.
+    fn forget_thread_panel(&mut self, owner: &PanelOwner, cx: &mut Context<'_, Self>) {
+        let browsers = self.thread_panels.forget(owner);
+        self.right_panel.update(cx, |panel, cx| {
+            for id in browsers {
                 panel.close_surface(&PanelSurface::Browser(id), cx);
-            });
-        }
+            }
+            panel.forget_owner(owner, cx);
+        });
+        self.save_thread_panels(cx);
     }
 
     #[cfg(test)]
@@ -3975,17 +4124,62 @@ impl ConnApp {
         cx.notify();
     }
 
+    /// An agent's panel request from `environment` (`None`: the primary connection), through
+    /// the same dispatch as a connection's; the answer comes back on the receiver.
+    #[cfg(test)]
+    pub(crate) fn dispatch_agent_panel_request_for_test(
+        &self,
+        request: conn_contract::AgentPanelRequest,
+        environment: Option<&str>,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<conn_contract::source::DesktopPanelResponse> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let origin =
+            environment.map_or(PanelOrigin::Primary, |e| PanelOrigin::Linked(e.to_owned()));
+        let request = conn_contract::source::DesktopPanelRequest {
+            panel: request,
+            files_action: None,
+        };
+        self.dispatch_agent_panel_request(request, origin, PanelReply::Test(tx), cx);
+        rx
+    }
+
     #[cfg(test)]
     pub(crate) fn prepare_background_panel_for_test(
         &mut self,
         request: &conn_contract::AgentPanelRequest,
+        cx: &mut Context<'_, Self>,
     ) -> Option<String> {
-        self.prepare_background_panel(request, "not on thread")
+        let owner = self.panel_owner_of_thread(&request.thread_id);
+        self.prepare_background_panel(&owner, request, "not on thread", cx)
+    }
+
+    /// The panel owner of thread `thread`, as requests and the Database panel key it.
+    #[cfg(test)]
+    pub(crate) fn panel_owner_for_test(&self, thread: &str) -> PanelOwner {
+        self.panel_owner_of_thread(thread)
     }
 
     #[cfg(test)]
     pub(crate) fn right_panel_tabs(&self) -> &RightPanelTabs {
         &self.right_panel_tabs
+    }
+
+    /// Maximized, terminal drawer open, and the panel's width.
+    #[cfg(test)]
+    pub(crate) fn right_panel_state_for_test(&self) -> (bool, bool, f32) {
+        (
+            self.right_panel_maximized,
+            self.terminal_drawer_open,
+            self.layout.right_panel_width,
+        )
+    }
+
+    /// The drawer flag and width as a toggle and a seam drag leave them, without a shell.
+    #[cfg(test)]
+    pub(crate) fn set_drawer_and_width_for_test(&mut self, drawer: bool, width: f32) {
+        self.terminal_drawer_open = drawer;
+        self.layout.set_right_panel_width(width);
     }
 
     #[cfg(test)]
@@ -4083,6 +4277,7 @@ impl ConnApp {
         self.layout.right_panel_open = true;
         self.sync_chat(cx);
         self.sync_browser_visibility(cx);
+        self.save_thread_panels(cx);
         cx.notify();
     }
 
@@ -4131,10 +4326,12 @@ impl ConnApp {
             if self.layout.right_panel_open {
                 self.toggle_right_panel(cx);
             }
+            self.save_thread_panels(cx);
             cx.notify();
         } else if closed.activated.is_some() {
             self.show_right_panel_surface(cx);
         } else {
+            self.save_thread_panels(cx);
             cx.notify();
         }
     }
@@ -4151,6 +4348,7 @@ impl ConnApp {
             self.right_panel_maximized = false;
             self.sync_chat(cx);
             self.sync_browser_visibility(cx);
+            self.save_thread_panels(cx);
             cx.notify();
         } else {
             self.select_right_panel_tab(tab, cx);
@@ -5025,13 +5223,15 @@ impl ConnApp {
         self.forget_thread_undo(thread_id, &[ThreadUndoKind::Settle, ThreadUndoKind::Pin]);
         // The thread's unsent input goes with it (`clearComposerDraftForThread`).
         let deleted = thread_id.to_owned();
+        // Before the thread leaves the shell, which tells its environment.
+        let owner = self.panel_owner_of_thread(thread_id);
         self.dispatch_thread_command_then(
             "delete thread",
             crate::commands::delete_thread(thread_id),
             cx,
             move |app, cx| {
                 app.forget_thread_draft(&deleted, cx);
-                app.release_thread_panel(&deleted, cx);
+                app.release_thread_panel(&owner, cx);
             },
         );
     }
@@ -5593,6 +5793,8 @@ impl ConnApp {
                 && self.layout.right_panel_tab == RightPanelTab::Terminal);
         let chat_card = if drawer_visible {
             let terminal = self.right_panel.read(cx).terminal_entity();
+            // A thread shown again with its drawer open starts the shell here, as the tab does.
+            terminal.update(cx, |terminal, cx| terminal.ensure_started(cx));
             chat_card
                 .child(
                     div()
@@ -5839,10 +6041,7 @@ impl ConnApp {
                 on_toggle_maximize: {
                     let app = app.clone();
                     Rc::new(move |_, cx| {
-                        app.update(cx, |this, cx| {
-                            this.right_panel_maximized = !this.right_panel_maximized;
-                            cx.notify();
-                        });
+                        app.update(cx, |this, cx| this.toggle_right_panel_maximized(cx));
                     })
                 },
                 on_toggle_panel: {
@@ -6174,23 +6373,52 @@ impl ConnApp {
     /// Dispatches one agent panel request received on `conn-client`'s auto-resubscribed
     /// `panels.requests` stream (`panel_open`, `database_query`, `mcp_connect`, `mcp_call`) and
     /// replies via `panels.respond`.
-    fn dispatch_agent_panel_request(
+    ///
+    /// `origin` is the connection the request came from. It reaches only the panel whose owner
+    /// is that environment's `request.thread_id`, resolved when the request is handled: a
+    /// thread id another environment also holds is a different thread.
+    pub(super) fn dispatch_agent_panel_request(
         &self,
         request: conn_contract::source::DesktopPanelRequest,
-        conn_reply: Connection,
+        origin: PanelOrigin,
+        reply: PanelReply,
         cx: &mut Context<'_, Self>,
     ) {
         const NOT_ON_THREAD: &str = "The user is looking at another thread, so Conn did not run this. Ask them to open your thread, then try again.";
 
         let device_name = self.device_name();
         cx.spawn(async move |this, cx| {
+            let thread = request.panel.thread_id.clone();
+            let owner = this
+                .read_with(cx, |app, _| app.request_owner(&origin, &thread))
+                .map_err(|_| "Conn window closed.".to_owned())
+                .and_then(|owner| owner);
+            let owner = match owner {
+                Ok(owner) => owner,
+                Err(error) => {
+                    let response = conn_contract::source::DesktopPanelResponse {
+                        panel: conn_contract::AgentPanelResponse {
+                            request_id: request.panel.request_id,
+                            ok: false,
+                            device_name: Some(device_name),
+                            error: Some(error),
+                            database: None,
+                            mcp: None,
+                            mcp_call: None,
+                        },
+                        selection: None,
+                    };
+                    reply.send(response).await;
+                    return;
+                }
+            };
             let response = if let Some(action) = request.files_action {
-                Self::handle_files_action(this, request.panel, action, device_name, &conn_reply, cx)
-                    .await
+                Self::handle_files_action(this, request.panel, owner, action, device_name, cx).await
             } else {
                 let panel = Self::handle_agent_panel_request(
                     this,
                     request.panel,
+                    owner,
                     device_name,
                     NOT_ON_THREAD,
                     cx,
@@ -6201,16 +6429,7 @@ impl ConnApp {
                     selection: None,
                 }
             };
-            let _ = crate::live::RT
-                .spawn(async move {
-                    let _ = conn_reply
-                        .call::<conn_contract::source::DesktopPanelResponse, ()>(
-                            "panels.respond",
-                            &response,
-                        )
-                        .await;
-                })
-                .await;
+            reply.send(response).await;
         })
         .detach();
     }
@@ -6218,21 +6437,15 @@ impl ConnApp {
     async fn handle_files_action(
         this: gpui_kit::WeakEntity<Self>,
         request: conn_contract::AgentPanelRequest,
+        owner: PanelOwner,
         action: conn_contract::source::FilesAction,
         device: String,
-        origin: &Connection,
         cx: &mut gpui_kit::AsyncApp,
     ) -> conn_contract::source::DesktopPanelResponse {
         use conn_contract::source::FilesAction;
         let mut selection = None;
         let result = async {
-            let valid = |app: &Self| {
-                app.draft.is_none()
-                    && app
-                        .context_connection()
-                        .is_some_and(|c| c.same_connection(origin))
-                    && app.layout.selected_thread_id.as_deref() == Some(request.thread_id.as_str())
-            };
+            let valid = |app: &Self| app.thread_panels.owner() == Some(&owner);
             match action {
                 FilesAction::Selection => {
                     selection = this
@@ -6303,6 +6516,7 @@ impl ConnApp {
     async fn handle_agent_panel_request(
         this: gpui_kit::WeakEntity<Self>,
         request: conn_contract::AgentPanelRequest,
+        owner: PanelOwner,
         device_name: String,
         not_on_thread: &str,
         cx: &mut gpui_kit::AsyncApp,
@@ -6319,15 +6533,14 @@ impl ConnApp {
             mcp_call: None,
         };
 
+        // The shown panel is this environment's thread, not one with the same id elsewhere.
         let on_thread = this
-            .read_with(cx, |app, _| {
-                app.layout.selected_thread_id.as_deref() == Some(request.thread_id.as_str())
-            })
+            .read_with(cx, |app, _| app.thread_panels.owner() == Some(&owner))
             .unwrap_or(false);
 
         if !on_thread {
-            if let Ok(Some(error)) = this.update(cx, |app, _| {
-                app.prepare_background_panel(&request, not_on_thread)
+            if let Ok(Some(error)) = this.update(cx, |app, cx| {
+                app.prepare_background_panel(&owner, &request, not_on_thread, cx)
             }) {
                 resp.ok = false;
                 resp.error = Some(error);
@@ -6368,10 +6581,13 @@ impl ConnApp {
                             }
                         }
                     } else {
-                        let _ = this.update(cx, |app, cx| {
+                        if let Ok(Err(refused)) = this.update(cx, |app, cx| {
                             app.right_panel
-                                .update(cx, |panel, cx| panel.set_database_sql(sql, cx));
-                        });
+                                .update(cx, |panel, cx| panel.set_database_sql(&owner, sql, cx))
+                        }) {
+                            resp.ok = false;
+                            resp.error = Some(refused);
+                        }
                     }
                 }
             }
@@ -6688,6 +6904,7 @@ impl ConnApp {
     /// Right-panel tabs stay: they are not the server's, and the thread may come back.
     fn reset_environment_state(&mut self) {
         self.offline = offline::Offline::new();
+        self.primary_confirmed = false;
         self.reset_linked_environments();
         self.shell = ShellState::default();
         self.server_config = std::sync::Arc::default();
@@ -7691,6 +7908,7 @@ impl Render for ConnApp {
                                 let _ = up_entity.update(cx, |app, cx| {
                                     if let Some(drag) = app.seam_drag.take() {
                                         app.remember_seam_width(drag);
+                                        app.save_thread_panels(cx);
                                         cx.notify();
                                     }
                                 });

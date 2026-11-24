@@ -518,7 +518,8 @@ impl ConnApp {
         }
         for entry in expired {
             if let UndoEntry::Draft(DiscardedDraft::New { session, .. }) = entry {
-                self.forget_thread_panel(&session.draft_id, cx);
+                let owner = self.panel_owner_of_draft(&session.draft_id, &session.project_id);
+                self.forget_thread_panel(&owner, cx);
             }
         }
         cx.notify();
