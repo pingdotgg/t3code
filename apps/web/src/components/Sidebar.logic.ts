@@ -283,6 +283,32 @@ export function resolveSidebarDropTarget(
   return { section, pinnedOrder, activeOrder };
 }
 
+/**
+ * Boring mode: a drop within a project folder, as one move in the whole Active order.
+ * The moved thread lands next to its new folder neighbour, so other folders keep their order.
+ * Returns null when the target is not a thread of the same folder.
+ */
+export function resolveSidebarFolderDropTarget(input: {
+  readonly folderKeys: readonly string[];
+  readonly activeOrder: readonly string[];
+  readonly pinnedOrder: readonly string[];
+  readonly activeKey: string;
+  readonly overKey: string;
+}): SidebarDropTarget | null {
+  const { folderKeys, activeKey, overKey } = input;
+  const from = folderKeys.indexOf(activeKey);
+  const to = folderKeys.indexOf(overKey);
+  if (from === -1 || to === -1 || from === to) return null;
+  const folderOrder = folderKeys.filter((key) => key !== activeKey);
+  folderOrder.splice(to, 0, activeKey);
+  const activeOrder = input.activeOrder.filter((key) => key !== activeKey);
+  const next = folderOrder[to + 1];
+  const anchor = activeOrder.indexOf(next ?? folderOrder[to - 1]!);
+  if (anchor === -1) return null;
+  activeOrder.splice(next === undefined ? anchor + 1 : anchor, 0, activeKey);
+  return { section: "active", pinnedOrder: input.pinnedOrder, activeOrder };
+}
+
 type SidebarThreadDropPlan =
   | { readonly kind: "none" }
   | {

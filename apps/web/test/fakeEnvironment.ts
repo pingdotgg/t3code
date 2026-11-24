@@ -238,6 +238,8 @@ export interface FakeThread {
   readonly olderSettled?: true;
   readonly id: ThreadId;
   readonly title: string;
+  /** Defaults to the render project; others come from `extraProjects`. */
+  readonly projectId?: ProjectId;
   /** Defaults to GPT-5.4 on Codex. */
   readonly modelSelection?: ModelSelection;
   /** The first is the thread's active provider thread. */
@@ -323,7 +325,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
   const modelSelection = thread.modelSelection ?? MODEL;
   return {
     id: thread.id,
-    projectId: PROJECT_ID,
+    projectId: thread.projectId ?? PROJECT_ID,
     title: thread.title,
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
@@ -718,6 +720,23 @@ export function answerRpc(method: string, handler: (input: never) => unknown): D
 export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
   if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");
   await Effect.runPromise(Queue.offer(terminalMetadataSubscriber, event));
+}
+
+/** Delivers the thread's shell with `changes`, as the server does after a send or a finished run. */
+export async function emitThreadShell(
+  thread: FakeThread,
+  changes: Partial<OrchestrationV2ThreadShell>,
+): Promise<void> {
+  if (shellSubscriber === null) throw new Error("No shell subscription");
+  sequence += 1;
+  await Effect.runPromise(
+    Queue.offer(shellSubscriber, {
+      kind: "thread.updated",
+      sequence,
+      location: "active",
+      thread: { ...shellOf(thread), ...changes },
+    }),
+  );
 }
 
 /** Whether the app holds a live subscription to the thread, so events reach it. */

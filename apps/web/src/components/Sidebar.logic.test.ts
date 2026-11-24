@@ -26,6 +26,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  resolveSidebarFolderDropTarget,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1725,6 +1726,65 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("resolveSidebarFolderDropTarget", () => {
+  // Folder A holds a1..a3 and folder B holds b1..b2, interleaved in the Active order.
+  const activeOrder = ["a1", "b1", "a2", "b2", "a3"];
+  const folderA = ["a1", "a2", "a3"];
+  const drop = (activeKey: string, overKey: string, folderKeys = folderA) =>
+    resolveSidebarFolderDropTarget({
+      folderKeys,
+      activeOrder,
+      pinnedOrder: ["p1"],
+      activeKey,
+      overKey,
+    });
+
+  it("moves a thread next to its new folder neighbour and leaves other folders alone", () => {
+    expect(drop("a3", "a1")).toEqual({
+      section: "active",
+      pinnedOrder: ["p1"],
+      activeOrder: ["a3", "a1", "b1", "a2", "b2"],
+    });
+    expect(drop("a1", "a3")?.activeOrder).toEqual(["b1", "a2", "b2", "a3", "a1"]);
+    expect(drop("a1", "a2")?.activeOrder).toEqual(["b1", "a2", "b2", "a1", "a3"]);
+  });
+
+  it("refuses a drop on another folder's thread or on itself", () => {
+    expect(drop("a1", "b1")).toBeNull();
+    expect(drop("a1", "a1")).toBeNull();
+    expect(drop("b1", "a1")).toBeNull();
+  });
+
+  it("plans one key write that keeps the new order within the folder", () => {
+    // Unarranged rows carry implied keys, newest first.
+    const activeKeysById = new Map(
+      activeOrder.map((key, index) => [
+        key,
+        activeThreadSortKey({
+          createdAt: new Date(Date.UTC(2026, 2, 9, 10 - index)).toISOString(),
+        }),
+      ]),
+    );
+    const target = drop("a3", "a1")!;
+    const plan = planSidebarThreadDrop({
+      activeKey: "a3",
+      activeSection: "active",
+      target,
+      pinnedOrder: ["p1"],
+      pinnedKeysById: new Map(),
+      activeOrder,
+      activeKeysById,
+      activeReorderableKeys: new Set(activeOrder),
+    });
+    expect(plan.kind).toBe("move-active");
+    if (plan.kind !== "move-active") return;
+    expect(plan.unpin || plan.unsettle || plan.unsnooze).toBe(false);
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.assignments[0]!.id).toBe("a3");
+    expect(plan.assignments[0]!.orderKey < activeKeysById.get("a1")!).toBe(true);
   });
 });
 
