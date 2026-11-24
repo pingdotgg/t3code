@@ -1,16 +1,31 @@
 import { useAtomMount } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { createEnvironmentRpcCommand, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { connectionAtomRuntime } from "../../connection/runtime";
-import { subscribeDocumentReturn } from "../../lib/documentActivity";
+import {
+  getDocumentActivity,
+  subscribeDocumentActivity,
+  subscribeDocumentReturn,
+} from "../../lib/documentActivity";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useUiStateStore } from "../../uiStateStore";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+
+const isDocumentViewed = () => {
+  const activity = getDocumentActivity();
+  return activity.visible && activity.focused;
+};
+
+const documentViewedAtom = Atom.make((get) => {
+  get.addFinalizer(subscribeDocumentActivity(() => get.setSelf(isDocumentViewed())));
+  return isDocumentViewed();
+}).pipe(Atom.withLabel("document-viewed"));
 
 const threadVisitTracker = createThreadVisitTracker({
   threadShellAtom: environmentThreadShells.threadShellAtom,
@@ -18,6 +33,7 @@ const threadVisitTracker = createThreadVisitTracker({
   visit: threadEnvironment.visit,
   markLocalVisit: (ref, visitedAt) =>
     useUiStateStore.getState().markThreadVisited(scopedThreadKey(ref), visitedAt),
+  viewingAtom: documentViewedAtom,
 });
 
 const refreshCodexHistory = createEnvironmentRpcCommand(connectionAtomRuntime, {

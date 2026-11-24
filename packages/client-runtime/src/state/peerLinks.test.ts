@@ -18,9 +18,16 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { TestClock } from "effect/testing";
 
+import {
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { LinkedThreadView } from "../linkedThread.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { v2MessageRow, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { createPeerLinkEnvironmentAtoms, linkThroughRoutes } from "./peerLinks.ts";
@@ -190,4 +197,73 @@ describe("linkThroughRoutes", () => {
       },
     ]);
   });
+});
+
+describe("refreshNamesLacking", () => {
+  // regression: #41707 a link made outside this client stayed unknown while the names were read
+  it.effect("rereads fresh names that lack a wanted machine, once per miss", () =>
+    Effect.gen(function* () {
+      const target = new PrimaryConnectionTarget({
+        environmentId: id("via"),
+        label: "Via",
+        httpBaseUrl: "https://via.example.test",
+        wsBaseUrl: "wss://via.example.test",
+      });
+      let stored = [{ environmentId: id("known"), label: "Known" }];
+      let reads = 0;
+      const client = {
+        [WS_METHODS.peerLinksNames]: () =>
+          Effect.sync(() => {
+            reads += 1;
+            return { links: stored };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const session = { client } as unknown as RpcSession;
+      const supervisor = EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "connected",
+        }),
+        session: yield* SubscriptionRef.make(Option.some(session)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      } as unknown as EnvironmentSupervisor["Service"]);
+      const environment = EnvironmentRegistry.of({
+        run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        followStream: (_id, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry["Service"]);
+      const links = createPeerLinkEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environment)),
+      );
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const names = links.names({ environmentId: target.environmentId, input: {} });
+      registry.mount(names);
+      const settled = () =>
+        AtomRegistry.toStream(registry, names).pipe(
+          Stream.filter((result) => AsyncResult.isSuccess(result) && !result.waiting),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+      yield* settled();
+      expect(reads).toBe(1);
+
+      links.refreshNamesLacking(registry, target.environmentId, [id("known")]);
+      expect(reads).toBe(1);
+
+      // Linked from the CLI or another client inside the names' stale time: the server has it,
+      // this client was not told.
+      stored = [...stored, { environmentId: id("new"), label: "New" }];
+      links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
+      // A second reader meeting the same machine joins the read under way.
+      links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
+      const reread = yield* settled();
+      expect(reads).toBe(2);
+      expect(
+        AsyncResult.isSuccess(reread) && reread.value.links.map((link) => link.environmentId),
+      ).toEqual([id("known"), id("new")]);
+    }).pipe(Effect.scoped),
+  );
 });

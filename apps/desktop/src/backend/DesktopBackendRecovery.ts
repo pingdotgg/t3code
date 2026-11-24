@@ -14,13 +14,16 @@ import {
   loadMacProcessAuditToken,
   type MacProcessAuditToken,
 } from "./MacProcessAuditToken.ts";
+import { linuxProcessIdentity } from "./LinuxProcessIdentity.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 const directoryName = "t3code-backend-recovery";
 const maxRecordBytes = 512;
-// Darwin sys/fcntl.h. Node accepts these open flags but does not export them.
-const O_SHLOCK = 0x10;
-const O_EXLOCK = 0x20;
+const isDarwin = NodeProcess.platform === "darwin";
+// Darwin sys/fcntl.h. Node accepts these open flags but does not export them. Linux has no
+// open-time locks, so there a record is written under a temporary name and renamed into place.
+const O_SHLOCK = isDarwin ? 0x10 : 0;
+const O_EXLOCK = isDarwin ? 0x20 : 0;
 const observedFileName = /^[0-9a-f]{64}\.[0-9a-f-]{36}\.json$/;
 const scopePattern = /^[0-9a-f]{64}$/;
 const bootIdPattern = /^[0-9a-f-]{36}$/i;
@@ -144,7 +147,8 @@ async function recoverRecord(
   const ownsOrphan = () =>
     status(native, record.launcher) === "gone" &&
     status(native, record.backend) === "same" &&
-    native.parent(backendPid) === 1;
+    // macOS reparents orphans to launchd; Linux may pick a subreaper such as systemd --user.
+    native.parent(backendPid) !== auditTokenPid(record.launcher);
 
   if (status(native, record.backend) === "gone") return true;
   if (!ownsOrphan()) return false;
@@ -160,13 +164,17 @@ async function recoverRecord(
 }
 
 async function readBootId(): Promise<string> {
-  const { stdout } = await exec("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {
-    timeout: 1_000,
-  });
-  const bootId = stdout.trim();
-  if (!bootIdPattern.test(bootId)) throw new Error("Could not identify the current macOS boot");
+  const bootId = isDarwin
+    ? (
+        await exec("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], { timeout: 1_000 })
+      ).stdout.trim()
+    : (await NodeFSP.readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+  if (!bootIdPattern.test(bootId)) throw new Error("Could not identify the current boot");
   return bootId;
 }
+
+const loadProcessIdentity = (): Promise<MacProcessAuditToken> =>
+  isDarwin ? loadMacProcessAuditToken() : Promise.resolve(linuxProcessIdentity);
 
 // A first launch can precede creation of the state directory. Resolve existing
 // ancestors so a symlinked home keeps the same key after that directory appears.
@@ -190,12 +198,15 @@ export function make(input: {
   // Use Application Support even when the T3 home or the app lives on removable storage.
   const directory = NodePath.join(input.appDataDirectory, directoryName);
   const scope = async () => {
-    const [home, executable] = await Promise.all([
+    const appImage = isDarwin ? undefined : NodeProcess.env.APPIMAGE?.trim();
+    const [home, executable, installation] = await Promise.all([
       canonicalHome(input.stateDir),
       NodeFSP.realpath(NodeProcess.execPath),
+      // An AppImage runs from a new mount path each launch; its file path is the stable install.
+      appImage ? NodeFSP.realpath(appImage) : undefined,
     ]);
     const prefix = NodeCrypto.createHash("sha256")
-      .update(JSON.stringify([home, executable]))
+      .update(JSON.stringify([home, installation ?? executable]))
       .digest("hex");
     return { prefix, executable };
   };
@@ -211,7 +222,7 @@ export function make(input: {
     async track(backendPid: number): Promise<string | undefined> {
       try {
         const [native, bootId, { prefix, executable }] = await Promise.all([
-          loadMacProcessAuditToken(),
+          loadProcessIdentity(),
           readBootId(),
           scope(),
         ]);
@@ -232,10 +243,11 @@ export function make(input: {
         });
         await privateDirectory();
         const path = NodePath.join(directory, `${prefix}.${NodeCrypto.randomUUID()}.json`);
+        const writePath = isDarwin ? path : `${path}.partial`;
         // Take the lock at creation so recovery can distinguish a partial write from a crash.
         {
           await using file = await NodeFSP.open(
-            path,
+            writePath,
             NodeFS.constants.O_WRONLY |
               NodeFS.constants.O_CREAT |
               NodeFS.constants.O_EXCL |
@@ -246,6 +258,7 @@ export function make(input: {
             JSON.stringify({ version: 1, bootId, scope: prefix, launcher, backend }),
           );
         }
+        if (writePath !== path) await NodeFSP.rename(writePath, path);
         return path;
       } catch (error) {
         input.onError("record backend", error);
@@ -261,7 +274,7 @@ export function make(input: {
         );
         if (records.length === 0) return;
 
-        const [bootId, native] = await Promise.all([readBootId(), loadMacProcessAuditToken()]);
+        const [bootId, native] = await Promise.all([readBootId(), loadProcessIdentity()]);
         await Promise.all(
           records.map(async (name) => {
             const path = NodePath.join(directory, name);
