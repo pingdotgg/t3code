@@ -534,6 +534,26 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
+  // Once project settings are folded, actions resolve from Settings only, where the app's editor saves them.
+  const saveScripts = (projectId: ProjectId, scripts: ProjectCreateInput["scripts"]) =>
+    scripts === undefined
+      ? Effect.void
+      : serverSettings
+          .updateSettings({
+            projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } },
+          })
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(
+              (cause) =>
+                new ProjectOperationError({
+                  operation: "dispatch-project-command",
+                  projectId,
+                  cause,
+                }),
+            ),
+          );
+
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
       yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
@@ -557,6 +577,7 @@ export const make = Effect.gen(function* () {
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         trackedFolders,
       });
+      yield* saveScripts(input.projectId, input.scripts);
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -640,6 +661,7 @@ export const make = Effect.gen(function* () {
           return { ...command, trackedFolders };
         }),
       );
+      yield* saveScripts(input.projectId, input.scripts);
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
