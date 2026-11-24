@@ -223,7 +223,7 @@ export function ComposerEditor({
               : model
                 ? model.label
                 : token.type === "context"
-                  ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                  ? `${token.label}${token.gitRef || record ? "" : " · unavailable"}`
                   : token.type === "citation"
                     ? token.value
                     : basename(token.value).normalize("NFC"),

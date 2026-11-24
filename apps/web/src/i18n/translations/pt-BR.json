@@ -12866,5 +12866,8 @@
   "78ceb92a5b33a779": "Comando não executado",
   "440210447ea2814b": "Você não tem permissão para executar comandos aqui.",
   "bc84f52ae9af5493": "Envie uma mensagem primeiro; os comandos são executados em uma conversa existente.",
-  "50769d067d003ec9": "Não foi possível executar o comando."
+  "50769d067d003ec9": "Não foi possível executar o comando.",
+  "7a48724aadf54862": "Worktree {name}",
+  "eb40135573828cb9": "Open commit",
+  "c7e4f052c3d6c066": "Open files"
 }

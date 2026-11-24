@@ -255,6 +255,17 @@ export function ComposerEditor({
             onInertChipPress?.();
             return;
           }
+          const reference = collectComposerContextReferences(selection.source)[0];
+          if (reference?.gitRef) {
+            const { ref, cwd, worktreePath, commitSha } = reference.gitRef;
+            Dialog.alert(
+              reference.label,
+              [ref, worktreePath ?? cwd, worktreePath ? null : commitSha]
+                .filter(Boolean)
+                .join("\n"),
+            );
+            return;
+          }
           const path = composerMentionPath(selection.source, draft.context);
           if (path && onOpenMention) {
             onOpenMention(path);

@@ -817,7 +817,9 @@ it.effect.each(["an existing", "a new"] as const)(
 
         const refs = (yield* driver.listRefs({ cwd })).refs;
         const previous = refs.find((ref) => ref.name === initialBranch);
-        assert.isTrue(refs.find((ref) => ref.name === "feature/outside")?.current);
+        const current = refs.find((ref) => ref.name === "feature/outside");
+        assert.isTrue(current?.current);
+        assert.equal(current?.commitSha, yield* git(cwd, ["rev-parse", "HEAD"]));
         assert.isFalse(previous?.current);
         assert.isNull(previous?.worktreePath ?? null);
       }),

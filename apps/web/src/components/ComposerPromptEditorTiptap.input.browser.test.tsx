@@ -17,13 +17,16 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
-import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import {
+  composerGitRefItems,
+  formatComposerContextReference,
+} from "@t3tools/shared/composerContextReferences";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { cdp, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, fakeTimers, render } from "../../test/render";
@@ -145,6 +148,21 @@ async function mountEditor(...props: Parameters<typeof composer>) {
     },
   });
 }
+
+it("opens the details of a Git chip restored from the draft text", async () => {
+  const cwd = "C:\\projects\\branch (test)";
+  const [branch] = composerGitRefItems(
+    [{ name: "feature/search", isDefault: false, current: false, worktreePath: null }],
+    EnvironmentId.make("local"),
+    cwd,
+    { branch: "Branch", worktree: "Worktree" },
+  );
+  const text = `Compare ${branch!.reference} `;
+  await using screen = await mountEditor(text);
+  await screen.getByRole("button", { name: /refs\/heads\/feature\/search/ }).click();
+  await expect.element(page.getByRole("dialog").getByText(cwd, { exact: true })).toBeVisible();
+  expect(serializeEditorDoc(screen.editor.state.doc).value).toBe(text);
+});
 
 async function replaceDomText(editor: Editor, text: string, isComposing = false) {
   await act(async () => {

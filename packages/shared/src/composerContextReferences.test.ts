@@ -11,6 +11,7 @@ import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
+  composerGitRefItems,
   formatComposerContextHref,
   isImageReferencesOnly,
   parseComposerContextHref,
@@ -27,6 +28,49 @@ import {
 const ctx = (value: string) => value as ComposerContextId;
 
 describe("href codec", () => {
+  it("keeps branch and working-copy targets distinct through prompt serialization", () => {
+    const commitSha = "a".repeat(40);
+    const cwd = "C:\\projects\\demo (test)";
+    const worktreePath = "C:\\worktrees\\work & review";
+    const [branch, worktree] = composerGitRefItems(
+      [
+        {
+          name: "feature/search",
+          current: false,
+          isDefault: false,
+          commitSha,
+          worktreePath,
+        },
+      ],
+      EnvironmentId.make("local"),
+      cwd,
+      { branch: "Branch", worktree: "Worktree" },
+    );
+    expect(branch?.id).not.toBe(worktree?.id);
+    const text = `Compare ${branch!.reference} with ${worktree!.reference}.`;
+    const references = collectComposerContextReferences(text);
+    expect(references.map(({ gitRef }) => gitRef)).toEqual([
+      {
+        environmentId: "local",
+        ref: "refs/heads/feature/search",
+        cwd,
+        commitSha,
+        worktreePath: null,
+      },
+      {
+        environmentId: "local",
+        ref: "refs/heads/feature/search",
+        cwd,
+        commitSha: null,
+        worktreePath,
+      },
+    ]);
+    const prompt = projectComposerContextForProvider({ text, records: [] });
+    expect(prompt).toContain(commitSha);
+    expect(prompt).toContain(JSON.stringify(worktreePath));
+    expect(prompt).not.toMatch(/unavailable|t3-context:\/\//);
+  });
+
   it("round-trips kind and id", () => {
     const href = formatComposerContextHref("review-comment", ctx("ctx_1"));
     expect(href).toBe("t3-context://v1/review-comment/ctx_1");

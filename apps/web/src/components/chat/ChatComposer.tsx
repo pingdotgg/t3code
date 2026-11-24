@@ -2215,6 +2215,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
+    if (item.type === "git-ref") {
+      if (trigger.kind !== "path" || !composerMenuItemsRef.current.some(({ id }) => id === item.id))
+        return;
+      const replacement = `${item.reference} `;
+      const end = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      if (
+        applyPromptReplacement(trigger.rangeStart, end, replacement, {
+          expectedText: snapshot.value.slice(trigger.rangeStart, end),
+        })
+      ) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
     if (item.type === "thread") {
       if (trigger.kind !== "path") return;
       const shell = readThreadShell(item.thread);

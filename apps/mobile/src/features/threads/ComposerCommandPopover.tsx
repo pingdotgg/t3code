@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import type { composerGitRefItems } from "@t3tools/shared/composerContextReferences";
 import { msg, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
@@ -28,6 +29,7 @@ import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 export type ComposerCommandItem =
+  | ReturnType<typeof composerGitRefItems>[number]
   | {
       readonly id: string;
       readonly type: "pull-request";
@@ -131,6 +133,8 @@ const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName
 
 function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
+    case "git-ref":
+      return "arrow.triangle.branch";
     case "pull-request":
       return pullRequestStatus(item.pullRequest).icon;
     case "slash-command":

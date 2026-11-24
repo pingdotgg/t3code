@@ -12866,5 +12866,8 @@
   "78ceb92a5b33a779": "Befehl nicht ausgeführt",
   "440210447ea2814b": "Du hast hier keine Berechtigung, Befehle auszuführen.",
   "bc84f52ae9af5493": "Sende zuerst eine Nachricht; Befehle laufen in einem bestehenden Thread.",
-  "50769d067d003ec9": "Der Befehl konnte nicht ausgeführt werden."
+  "50769d067d003ec9": "Der Befehl konnte nicht ausgeführt werden.",
+  "7a48724aadf54862": "Worktree {name}",
+  "eb40135573828cb9": "Open commit",
+  "c7e4f052c3d6c066": "Open files"
 }

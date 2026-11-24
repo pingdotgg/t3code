@@ -12866,5 +12866,8 @@
   "78ceb92a5b33a779": "Commande non exécutée",
   "440210447ea2814b": "Vous n'avez pas l'autorisation d'exécuter des commandes ici.",
   "bc84f52ae9af5493": "Envoyez d'abord un message ; les commandes s'exécutent dans un fil existant.",
-  "50769d067d003ec9": "Impossible d'exécuter la commande."
+  "50769d067d003ec9": "Impossible d'exécuter la commande.",
+  "7a48724aadf54862": "Worktree {name}",
+  "eb40135573828cb9": "Open commit",
+  "c7e4f052c3d6c066": "Open files"
 }

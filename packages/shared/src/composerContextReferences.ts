@@ -8,6 +8,7 @@ import {
   type KnownComposerContextRecord,
   type ScopedThreadRef,
   type ThreadContextRecord,
+  type VcsRef,
 } from "@t3tools/contracts";
 
 import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
@@ -18,8 +19,12 @@ const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
 const CONTEXT_KIND_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 const CONTEXT_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i;
 const MAX_LINK_LABEL_LENGTH = 512;
+const MAX_GIT_REF_LINK_LENGTH = 8192;
+const GIT_REF_CONTEXT_PREFIX = `${COMPOSER_CONTEXT_HREF_PREFIX}git-ref/`;
 const CONTEXT_LINK = new RegExp(
-  String.raw`(!?)\[([^[\]\n]{0,${MAX_LINK_LABEL_LENGTH}})\]\((${COMPOSER_CONTEXT_HREF_PREFIX}[^\s)]{1,200})\)`,
+  String.raw`(!?)\[([^[\]\n]{0,${MAX_LINK_LABEL_LENGTH}})\]\(` +
+    String.raw`(${COMPOSER_CONTEXT_HREF_PREFIX}` +
+    String.raw`(?:git-ref/[^\s)]{1,${MAX_GIT_REF_LINK_LENGTH}}|[^\s)]{1,200}))\)`,
   "g",
 );
 
@@ -59,14 +64,80 @@ export function formatComposerContextHref(kind: ComposerContextKind, contextId: 
 
 export function parseComposerContextHref(
   href: string,
-): { kind: ComposerContextKind; contextId: ComposerContextId } | null {
+): { kind: ComposerContextKind; contextId: ComposerContextId; gitRef?: ComposerGitRef } | null {
   if (!href.startsWith(COMPOSER_CONTEXT_HREF_PREFIX)) return null;
+  if (href.startsWith(GIT_REF_CONTEXT_PREFIX)) {
+    const query = href.indexOf("?", GIT_REF_CONTEXT_PREFIX.length);
+    if (query === -1 || href.length > GIT_REF_CONTEXT_PREFIX.length + MAX_GIT_REF_LINK_LENGTH)
+      return null;
+    const contextId = href.slice(GIT_REF_CONTEXT_PREFIX.length, query);
+    if (!CONTEXT_ID_PATTERN.test(contextId)) return null;
+    const params = new URLSearchParams(href.slice(query + 1));
+    const environmentId = params.get("host");
+    const cwd = params.get("cwd");
+    const ref = params.get("ref");
+    const worktreePath = params.get("worktree");
+    const commitSha = params.get("commit");
+    if (
+      !environmentId ||
+      !cwd ||
+      !ref ||
+      !/^refs\/(?:heads|remotes)\/\S+$/u.test(ref) ||
+      (commitSha !== null && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(commitSha))
+    )
+      return null;
+    return {
+      kind: "git-ref",
+      contextId: contextId as ComposerContextId,
+      gitRef: { environmentId, cwd, ref, worktreePath, commitSha },
+    };
+  }
   const rest = href.slice(COMPOSER_CONTEXT_HREF_PREFIX.length);
   const parts = rest.split("/");
   if (parts.length !== 2) return null;
   const [kind, contextId] = parts as [string, string];
   if (!CONTEXT_KIND_PATTERN.test(kind) || !CONTEXT_ID_PATTERN.test(contextId)) return null;
   return { kind, contextId: contextId as ComposerContextId };
+}
+
+export interface ComposerGitRef {
+  readonly environmentId: string;
+  readonly cwd: string;
+  readonly ref: string;
+  readonly worktreePath: string | null;
+  readonly commitSha: string | null;
+}
+
+export function composerGitRefItems(
+  refs: ReadonlyArray<VcsRef>,
+  environmentId: EnvironmentId,
+  cwd: string,
+  labels: { branch: string; worktree: string },
+) {
+  return refs.flatMap((ref) =>
+    (ref.worktreePath ? [false, true] : [false]).map((worktree) => {
+      const gitRef: ComposerGitRef = {
+        environmentId,
+        cwd,
+        ref: `refs/${ref.isRemote ? "remotes" : "heads"}/${ref.name}`,
+        worktreePath: worktree ? ref.worktreePath : null,
+        commitSha: worktree ? null : (ref.commitSha ?? null),
+      };
+      const contextId = toKindScopedComposerContextId("git-ref", JSON.stringify(gitRef));
+      return {
+        type: "git-ref" as const,
+        id: contextId,
+        label: ref.name,
+        description: worktree ? labels.worktree : labels.branch,
+        reference: formatComposerContextReference({
+          kind: "git-ref",
+          contextId,
+          label: ref.name,
+          gitRef,
+        }),
+      };
+    }),
+  );
 }
 
 export function sanitizeComposerContextLabel(label: string, kind: ComposerContextKind): string {
@@ -139,8 +210,20 @@ export function formatComposerContextReference(reference: {
   kind: ComposerContextKind;
   contextId: ComposerContextId;
   label: string;
+  gitRef?: ComposerGitRef;
 }): string {
   const label = sanitizeComposerContextLabel(reference.label, reference.kind);
+  if (reference.kind === "git-ref" && reference.gitRef) {
+    const target = reference.gitRef;
+    const params = new URLSearchParams({
+      host: target.environmentId,
+      cwd: target.cwd,
+      ref: target.ref,
+    });
+    if (target.commitSha) params.set("commit", target.commitSha);
+    if (target.worktreePath) params.set("worktree", target.worktreePath);
+    return `[${label}](${GIT_REF_CONTEXT_PREFIX}${reference.contextId}?${params})`;
+  }
   const href = formatComposerContextHref(reference.kind, reference.contextId);
   return `${reference.kind === "image" ? "!" : ""}[${label}](${href})`;
 }
@@ -149,6 +232,7 @@ export interface ComposerContextReferenceOccurrence {
   kind: ComposerContextKind;
   contextId: ComposerContextId;
   label: string;
+  gitRef?: ComposerGitRef;
   image: boolean;
   source: string;
   start: number;
@@ -416,11 +500,15 @@ export function projectComposerContextForProvider(input: {
     if (seen.has(occurrence.contextId)) continue;
     seen.add(occurrence.contextId);
     const record = recordsById.get(occurrence.contextId);
-    const entry = formatEnvelopeEntry(
-      record?.kind ?? occurrence.kind,
-      occurrence.contextId,
-      record,
-    );
+    const entry = occurrence.gitRef
+      ? formatEnvelopeEntry("git-ref", occurrence.contextId, {
+          version: 1,
+          kind: "git-ref",
+          contextId: occurrence.contextId,
+          label: occurrence.label,
+          payload: occurrence.gitRef,
+        })
+      : formatEnvelopeEntry(record?.kind ?? occurrence.kind, occurrence.contextId, record);
     entries.push(entry);
   }
   if (entries.length === 0) return body;

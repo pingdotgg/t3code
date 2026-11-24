@@ -1,4 +1,5 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import type { composerGitRefItems } from "@t3tools/shared/composerContextReferences";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
   resolveProviderSkillSourceKind,
@@ -19,6 +20,7 @@ import {
 import {
   BlocksIcon,
   FolderIcon,
+  GitBranchIcon,
   MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
@@ -40,6 +42,7 @@ import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
+  | ReturnType<typeof composerGitRefItems>[number]
   | {
       id: string;
       type: "path";
@@ -252,6 +255,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
+      {props.item.type === "git-ref" ? <GitBranchIcon className="size-4 shrink-0" /> : null}
       {props.item.type === "environment" ? (
         <EnvironmentMachineIcon
           kind={props.item.machine}

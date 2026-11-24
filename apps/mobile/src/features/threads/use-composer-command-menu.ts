@@ -20,6 +20,7 @@ const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import {
+  composerGitRefItems,
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
@@ -62,8 +63,10 @@ import { useEffect, useState } from "react";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
 import {
+  useBranches,
   useComposerPathSearch,
   useComposerPullRequestSearch,
+  useDebouncedValue,
   useThreadSearch,
 } from "../../state/queries";
 import type { ModelOption } from "../../lib/modelOptions";
@@ -250,6 +253,8 @@ export function resolveComposerCommandSelection(input: {
   let replacement = "";
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
+  } else if (item.type === "git-ref") {
+    replacement = `${item.reference} `;
   } else if (item.type === "skill") {
     replacement = `$${item.skill.name} `;
   } else if (item.type === "slash-command") {
@@ -371,6 +376,17 @@ export function useComposerCommandMenu({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
+  });
+  const refQuery = trigger?.kind === "path" ? trigger.query.trim() : "";
+  const settledRefQuery = useDebouncedValue(refQuery, 180);
+  const refCwd =
+    refQuery && refQuery === settledRefQuery && refQuery.length <= 256 ? projectCwd : null;
+  const refs = useBranches({
+    environmentId,
+    cwd: refCwd,
+    query: refQuery,
+    limit: 8,
+    includeMatchingRemoteRefs: true,
   });
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
@@ -559,6 +575,12 @@ export function useComposerCommandMenu({
           ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
           : [];
       return [
+        ...(environmentId && refCwd && refs.data
+          ? composerGitRefItems(refs.data.refs, environmentId, refCwd, {
+              branch: gt("Branch"),
+              worktree: gt("Worktree"),
+            })
+          : []),
         ...threadItems,
         ...environmentItems,
         ...modelItems,
@@ -581,6 +603,11 @@ export function useComposerCommandMenu({
 
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
+    if (
+      item.type === "git-ref" &&
+      (trigger.kind !== "path" || !items.some(({ id }) => id === item.id))
+    )
+      return;
     if (item.type === "environment") {
       if (!ownerKey || trigger.kind !== "path") return;
       const record = environmentComposerContext(item.environmentId, item.label);
@@ -714,7 +741,9 @@ export function useComposerCommandMenu({
     items,
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "pull-request"
+        ? pullRequestSearch.isPending
+        : pathSearch.isPending || refs.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null

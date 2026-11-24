@@ -12875,5 +12875,8 @@
   "78ceb92a5b33a779": "Command not run",
   "440210447ea2814b": "You don't have permission to run commands here.",
   "bc84f52ae9af5493": "Send a message first; commands run in an existing thread.",
-  "50769d067d003ec9": "Could not run the command."
+  "50769d067d003ec9": "Could not run the command.",
+  "7a48724aadf54862": "Worktree {name}",
+  "eb40135573828cb9": "Open commit",
+  "c7e4f052c3d6c066": "Open files"
 }

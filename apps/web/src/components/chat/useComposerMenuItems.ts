@@ -1,4 +1,5 @@
 import { useGT, useMessages } from "gt-react";
+import { composerGitRefItems } from "@t3tools/shared/composerContextReferences";
 import {
   legacyThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -44,6 +45,7 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { vcsEnvironment } from "~/state/vcs";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
 import {
   matchesPullRequestQuery,
@@ -128,6 +130,18 @@ export function useComposerMenuItems({
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
+  const refQuery = isPathTrigger ? pathTriggerQuery.trim() : "";
+  const settledRefQuery = useDebouncedValue(refQuery, 180);
+  const refCwd = isPathTrigger && refQuery && refQuery === settledRefQuery ? gitCwd : null;
+  const refs = useEnvironmentQuery(
+    refCwd && refQuery.length <= 256
+      ? vcsEnvironment.listRefs({
+          environmentId,
+          input: { cwd: refCwd, query: refQuery, limit: 8, includeMatchingRemoteRefs: true },
+        })
+      : null,
+    messages,
+  );
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
@@ -215,6 +229,12 @@ export function useComposerMenuItems({
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
+        ...(refCwd && refs.data
+          ? composerGitRefItems(refs.data.refs, environmentId, refCwd, {
+              branch: gt("Branch"),
+              worktree: gt("Worktree"),
+            })
+          : []),
         ...matchComposerThreadItems(
           {
             shells: environmentThreadShells,
@@ -433,7 +453,7 @@ export function useComposerMenuItems({
     return [];
   })();
   const isLoading =
-    (composerTriggerKind === "path" && workspaceEntries.isPending) ||
+    (isPathTrigger && (workspaceEntries.isPending || refs.isPending)) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&

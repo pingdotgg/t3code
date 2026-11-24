@@ -12861,5 +12861,8 @@
   "78ceb92a5b33a779": "Comando no ejecutado",
   "440210447ea2814b": "No tienes permiso para ejecutar comandos aquí.",
   "bc84f52ae9af5493": "Envía primero un mensaje; los comandos se ejecutan en un hilo existente.",
-  "50769d067d003ec9": "No se pudo ejecutar el comando."
+  "50769d067d003ec9": "No se pudo ejecutar el comando.",
+  "7a48724aadf54862": "Worktree {name}",
+  "eb40135573828cb9": "Open commit",
+  "c7e4f052c3d6c066": "Open files"
 }
