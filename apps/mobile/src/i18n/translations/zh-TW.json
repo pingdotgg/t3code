@@ -818,7 +818,7 @@
   "21872f69ccbc711d": "正在啟動 {provider} MCP 伺服器",
   "fedaa29ff8815a77": "正在載入 {provider} hook",
   "57025ae4de5beb57": "正在載入 {provider} 規則和技能",
-  "1cbfbcad9f0d04fe": "正在恢復 {provider} 工作階段",
+  "1cbfbcad9f0d04fe": "正在接續 {provider} 工作階段",
   "4729a188600f1501": "正在連線 {provider}",
   "8c8977097681630f": "正在啟動 {provider}",
   "f1d27d127ab27ac6": "正在啟動",
