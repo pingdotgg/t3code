@@ -310,6 +310,8 @@ export const PullRequestCapabilities = Schema.Struct({
   edit: Schema.optional(PullRequestEditCapabilities),
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
+  /** Stack actions also arm and cancel auto-merge for a layer and the open layers below it. */
+  stackAutoMerge: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
   /** The host searches the repository's users, so composers can complete `@login`. */
   mentions: Schema.optional(Schema.Boolean),
@@ -916,6 +918,8 @@ export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft
 
 export const PullRequestSubmitReviewInput = Schema.Struct({
   ...PullRequestRef.fields,
+  /** Reviews refuse when the head commit is no longer this one. */
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   verdict: PullRequestReviewVerdict,
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),
