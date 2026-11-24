@@ -21,7 +21,10 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
-      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
+      readonly webRequest: {
+        readonly onBeforeRequest: ReturnType<typeof vi.fn>;
+        readonly onBeforeSendHeaders: ReturnType<typeof vi.fn>;
+      };
     }
   >(),
 }));
@@ -149,7 +152,7 @@ describe("BrowserSession", () => {
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
-        webRequest: { onBeforeSendHeaders: vi.fn() },
+        webRequest: { onBeforeRequest: vi.fn(), onBeforeSendHeaders: vi.fn() },
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -167,6 +170,34 @@ describe("BrowserSession", () => {
       assert.strictEqual(partition, "persist:t3code-preview-f051bb2c68cb7b2fe969");
       assert.strictEqual(first, second);
       assert.strictEqual(fromPartition.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("blocks YouTube in preview sessions but keeps YouTube Studio usable", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const onBeforeRequest = sessions.get(partition)?.webRequest.onBeforeRequest;
+      assert.strictEqual(onBeforeRequest?.mock.calls.length, 1);
+
+      const blocked = (url: string, resourceType = "mainFrame", pageUrl?: string) =>
+        BrowserSession.isBlockedYouTubeRequest({ url, resourceType, pageUrl });
+      assert.isTrue(blocked("https://www.youtube.com/watch?v=x"));
+      assert.isTrue(blocked("https://youtube.com/"));
+      assert.isTrue(blocked("https://youtu.be/x"));
+      assert.isTrue(blocked("https://www.youtube.com/embed/x", "subFrame", "https://example.com/"));
+      // A link out of Studio to the main site is still a YouTube tab.
+      assert.isTrue(
+        blocked("https://www.youtube.com/watch?v=x", "mainFrame", "https://studio.youtube.com/"),
+      );
+
+      assert.isFalse(blocked("https://studio.youtube.com/channel/x"));
+      assert.isFalse(blocked("https://accounts.youtube.com/accounts/SetSID"));
+      assert.isFalse(blocked("https://www.youtube.com/signin?next=%2Fstudio"));
+      assert.isFalse(
+        blocked("https://www.youtube.com/youtubei/v1/x", "xhr", "https://studio.youtube.com/"),
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -223,7 +254,7 @@ describe("BrowserSession", () => {
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
-          webRequest: { onBeforeSendHeaders: vi.fn() },
+          webRequest: { onBeforeRequest: vi.fn(), onBeforeSendHeaders: vi.fn() },
         };
         sessions.set(partition, browserSession);
         return browserSession;

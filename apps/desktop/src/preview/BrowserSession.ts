@@ -39,6 +39,58 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
 
+// The in-app browser is a work tool, so YouTube is blocked as a distraction.
+// Blocking at the session's network layer catches typed URLs, links,
+// redirects, popups and embedded players alike. In Chromium match patterns
+// `*.` also matches the bare domain.
+const YOUTUBE_URL_PATTERNS = [
+  "*://*.youtube.com/*",
+  "*://*.youtu.be/*",
+  "*://*.youtube-nocookie.com/*",
+];
+const YOUTUBE_STUDIO_HOST = "studio.youtube.com";
+// Google sign-in redirects through accounts.youtube.com to set cookies, even
+// when signing in to other Google sites.
+const ALLOWED_YOUTUBE_HOSTS: ReadonlySet<string> = new Set([
+  YOUTUBE_STUDIO_HOST,
+  "accounts.youtube.com",
+]);
+
+const hostOf = (rawUrl: string | undefined): string | null => {
+  if (!rawUrl) return null;
+  try {
+    return new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * YouTube Studio stays usable: its own pages, the `/signin` hop that hands a
+ * Studio login back to it, and everything a Studio page loads (API calls to
+ * www.youtube.com, video previews). Anything that would show YouTube itself
+ * in a tab or frame is blocked.
+ */
+export function isBlockedYouTubeRequest(request: {
+  readonly url: string;
+  readonly resourceType: string;
+  readonly pageUrl: string | undefined;
+}): boolean {
+  let url: URL;
+  try {
+    url = new URL(request.url);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  if (ALLOWED_YOUTUBE_HOSTS.has(host)) return false;
+  if (url.pathname === "/signin") return false;
+  if (request.resourceType !== "mainFrame" && hostOf(request.pageUrl) === YOUTUBE_STUDIO_HOST) {
+    return false;
+  }
+  return true;
+}
+
 const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "about:",
   "blob:",
@@ -679,6 +731,18 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               ? permissionDecisions[permission].get(permissionOrigin(requestingOrigin) ?? "") ===
                 true
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          );
+          browserSession.webRequest.onBeforeRequest(
+            { urls: YOUTUBE_URL_PATTERNS },
+            (details, callback) => {
+              callback({
+                cancel: isBlockedYouTubeRequest({
+                  url: details.url,
+                  resourceType: details.resourceType,
+                  pageUrl: details.webContents?.getURL(),
+                }),
+              });
+            },
           );
           browserSession.webRequest.onBeforeSendHeaders(
             { urls: TEAMS_URL_PATTERNS },
