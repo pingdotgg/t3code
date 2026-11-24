@@ -245,11 +245,20 @@ describe("WorkstreamStore", () => {
       });
       yield* store.addSuggestions(workstream.id, [{ title: "Quiz", task: "Write a quiz" }]);
       const { suggestions } = yield* store.asks(workstream.id);
-      assert.isFalse(yield* store.takeGrant(workstream.id));
+      const brief = { title: "Quiz", task: "Write a quiz" };
+      assert.isUndefined(yield* store.takeGrant(workstream.id, brief));
       const taken = yield* store.takeAsk(suggestions[0]!.id, "suggestion");
-      yield* store.addGrant(workstream.id, taken.title);
-      assert.isTrue(yield* store.takeGrant(workstream.id));
-      assert.isFalse(yield* store.takeGrant(workstream.id));
+      yield* store.addGrant(workstream.id, { title: taken.title, task: taken.task });
+      // An approval covers the thread it was given for, not the next one to start.
+      for (const other of [
+        { title: "Essay", task: "Write a quiz" },
+        { title: "Quiz", task: "Delete every note" },
+      ]) {
+        assert.isUndefined(yield* store.takeGrant(workstream.id, other));
+      }
+      const detailed = { title: " quiz", task: "Write a\nquiz of ten questions" };
+      assert.deepEqual(yield* store.takeGrant(workstream.id, detailed), brief);
+      assert.isUndefined(yield* store.takeGrant(workstream.id, detailed));
       const answeredTwice = yield* store
         .takeAsk(suggestions[0]!.id, "suggestion")
         .pipe(Effect.flip);

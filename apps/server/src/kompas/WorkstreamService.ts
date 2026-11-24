@@ -10,6 +10,7 @@ import {
   type WorkstreamThread,
   type WorkstreamThreadState,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import { KompasDatabase, kompasError, storageError } from "./KompasDatabase.ts";
 import { MemoryService, projectScope } from "./MemoryService.ts";
 import {
   type StoredWorkstream,
+  type ThreadBrief,
   type WorkstreamFields,
   WorkstreamStore,
 } from "./WorkstreamStore.ts";
@@ -50,8 +52,16 @@ export class WorkstreamService extends Context.Service<
       readonly id: string;
       readonly answer: string;
     }) => Effect.Effect<void, KompasError>;
-    /** Fails while the project's limits keep its coordinator from starting another thread. */
-    readonly claimThreadStart: (coordinatorThreadId: ThreadId) => Effect.Effect<void, KompasError>;
+    /**
+     * Runs `launch` for a coordinator's new thread, one at a time per project, so starts made
+     * together cannot pass its limit. Fails while the limit or a missing approval forbids it, and
+     * hands an approval back when the launch fails. Other threads launch freely.
+     */
+    readonly startThread: <A, E, R>(
+      coordinatorThreadId: ThreadId,
+      brief: ThreadBrief,
+      launch: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | KompasError, R>;
     /** Re-sends the snapshot when a project's thread changes state. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -82,6 +92,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launcher = yield* ThreadLaunchService.ThreadLaunchService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+
+  const starts = yield* KeyedLock.make<string>();
 
   // Threads whose events move a project's board, learned whenever the list is read.
   let followed: ReadonlySet<string> = new Set();
@@ -212,7 +224,10 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const suggestion = yield* store.takeAsk(input.id, "suggestion");
     if (!input.approve) return;
-    yield* store.addGrant(suggestion.workstreamId, suggestion.title);
+    yield* store.addGrant(suggestion.workstreamId, {
+      title: suggestion.title,
+      task: suggestion.task,
+    });
     yield* tellCoordinator(
       suggestion.workstreamId,
       `Start the thread "${suggestion.title}": ${suggestion.task}`,
@@ -226,11 +241,10 @@ const make = Effect.gen(function* () {
     yield* tellCoordinator(decision.workstreamId, `${decision.question} ${input.answer}`);
   });
 
-  const claimThreadStart: WorkstreamService["Service"]["claimThreadStart"] = Effect.fn(
-    "WorkstreamService.claimThreadStart",
-  )(function* (coordinatorThreadId) {
-    const workstream = yield* store.byCoordinator(coordinatorThreadId);
-    if (workstream === undefined) return;
+  const claim = Effect.fn("WorkstreamService.claim")(function* (
+    workstream: StoredWorkstream,
+    brief: ThreadBrief,
+  ) {
     const working = (yield* threadsOf(workstream)).filter(
       (thread) => thread.state === "working" || thread.state === "needs_input",
     );
@@ -240,12 +254,33 @@ const make = Effect.gen(function* () {
         `${working.length} of ${workstream.maxParallelThreads} threads are already working. Start this one when another finishes.`,
       );
     }
-    if (workstream.askBeforeStart && !(yield* store.takeGrant(workstream.id))) {
-      return yield* kompasError(
+    if (!workstream.askBeforeStart) return undefined;
+    return (
+      (yield* store.takeGrant(workstream.id, brief)) ??
+      (yield* kompasError(
         "limit",
-        "The user approves every thread in this project. Propose it with suggest_threads and end your turn.",
-      );
-    }
+        "The user approved no such thread. Propose it with suggest_threads and end your turn. For an approved one, pass its title and repeat its task word for word before anything you add.",
+      ))
+    );
+  });
+
+  const startThread = Effect.fn("WorkstreamService.startThread")(function* <A, E, R>(
+    coordinatorThreadId: ThreadId,
+    brief: ThreadBrief,
+    launch: Effect.Effect<A, E, R>,
+  ) {
+    const workstream = yield* store.byCoordinator(coordinatorThreadId);
+    if (workstream === undefined) return yield* launch;
+    return yield* starts.withLock(
+      workstream.id,
+      Effect.gen(function* () {
+        const grant = yield* claim(workstream, brief);
+        if (grant === undefined) return yield* launch;
+        return yield* launch.pipe(
+          Effect.onError(() => store.addGrant(workstream.id, grant).pipe(Effect.ignore)),
+        );
+      }),
+    );
   });
 
   const concerns = (event: OrchestrationV2DomainEvent) => {
@@ -286,7 +321,7 @@ const make = Effect.gen(function* () {
     remove,
     resolveSuggestion,
     answerDecision,
-    claimThreadStart,
+    startThread,
     start,
   });
 });

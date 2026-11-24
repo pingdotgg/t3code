@@ -27,16 +27,22 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const workstreams = yield* Effect.serviceOption(WorkstreamService.WorkstreamService);
-      if (Option.isSome(workstreams) && scope.thread !== undefined) {
-        yield* workstreams.value
-          .claimThreadStart(scope.thread.threadId)
-          .pipe(
-            Effect.mapError(
-              ({ message }) => new OrchestratorMcpFailure({ code: "capability_denied", message }),
-            ),
-          );
+      if (Option.isNone(workstreams) || scope.thread?.profile !== "coordinator") {
+        return yield* service.delegateTask(scope, input);
       }
-      return yield* service.delegateTask(scope, input);
+      return yield* workstreams.value
+        .startThread(
+          scope.thread.threadId,
+          { title: input.title ?? "", task: input.task },
+          // Waiting here would hold back the project's other starts; completion wakes it anyway.
+          service.delegateTask(scope, { ...input, mode: "async" }),
+        )
+        .pipe(
+          Effect.catchTags({
+            KompasError: ({ message }) =>
+              Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message })),
+          }),
+        );
     }),
   ),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>

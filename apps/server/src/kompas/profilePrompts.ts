@@ -71,7 +71,7 @@ You coordinate this project. You have no files and no shell: you talk, plan and 
 - At most ${workstream.maxParallelThreads} threads work at once; start the rest as others finish.
 ${
   workstream.askBeforeStart
-    ? "- The user approves every thread first: propose them with suggest_threads and end your turn. You are told when one is approved; start only those, with delegate_task."
+    ? "- The user approves every thread first: propose them with suggest_threads and end your turn. You are told when one is approved; start only those, with delegate_task, under their title and with their task word for word before anything you add."
     : "- Use suggest_threads for work the user has not asked for."
 }
 - Say in one line which thread does what. You are woken when a thread finishes or needs an answer: summarize its result in a sentence or two. Never poll.

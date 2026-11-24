@@ -37,6 +37,19 @@ const Ask = Schema.Struct({
   options: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+/** What a thread is started for. */
+export interface ThreadBrief {
+  readonly title: string;
+  readonly task: string;
+}
+
+const words = (text: string) => text.trim().replaceAll(/\s+/g, " ");
+
+/** Models reflow a brief and add detail after it; the approved words still have to open it. */
+const approves = (grant: ThreadBrief, brief: ThreadBrief) =>
+  words(grant.title).toLowerCase() === words(brief.title).toLowerCase() &&
+  words(brief.task).startsWith(words(grant.task));
+
 /** `suggestion` and `decision` wait for the user; a `grant` is an approved, not yet started thread. */
 type AskKind = "suggestion" | "decision" | "grant";
 
@@ -98,9 +111,15 @@ export class WorkstreamStore extends Context.Service<
       },
       KompasError
     >;
-    readonly addGrant: (workstreamId: string, title: string) => Effect.Effect<void, KompasError>;
-    /** True when an approval was waiting, which this start used up. */
-    readonly takeGrant: (workstreamId: string) => Effect.Effect<boolean, KompasError>;
+    readonly addGrant: (
+      workstreamId: string,
+      brief: ThreadBrief,
+    ) => Effect.Effect<void, KompasError>;
+    /** Uses up the approval of exactly this thread, if one is waiting. */
+    readonly takeGrant: (
+      workstreamId: string,
+      brief: ThreadBrief,
+    ) => Effect.Effect<ThreadBrief | undefined, KompasError>;
   }
 >()("t3/kompas/WorkstreamStore") {}
 
@@ -316,15 +335,26 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const takeGrant = Effect.fn("WorkstreamStore.takeGrant")(function* (workstreamId: string) {
-    const rows = yield* sql`
-      DELETE FROM kompas_workstream_asks WHERE ask_id = (
-        SELECT ask_id FROM kompas_workstream_asks
-        WHERE workstream_id = ${workstreamId} AND kind = 'grant' ORDER BY created_at LIMIT 1
-      ) RETURNING ask_id
-    `.pipe(Effect.mapError(storageError));
-    return rows.length > 0;
-  });
+  const takeGrant: WorkstreamStore["Service"]["takeGrant"] = Effect.fn("WorkstreamStore.takeGrant")(
+    function* (workstreamId, brief) {
+      const rows = yield* sql<AskRow>`
+      SELECT * FROM kompas_workstream_asks
+      WHERE workstream_id = ${workstreamId} AND kind = 'grant' ORDER BY created_at
+    `;
+      for (const row of rows) {
+        const ask = yield* decodeAsk(row.ask_json);
+        const grant = { title: ask.title ?? "", task: ask.task ?? "" };
+        if (!approves(grant, brief)) continue;
+        // Another start may have used it since it was read.
+        const taken = yield* sql`
+        DELETE FROM kompas_workstream_asks WHERE ask_id = ${row.ask_id} RETURNING ask_id
+      `;
+        if (taken.length > 0) return grant;
+      }
+      return undefined;
+    },
+    Effect.mapError(storageError),
+  );
 
   return WorkstreamStore.of({
     list,
@@ -348,8 +378,8 @@ const make = Effect.gen(function* () {
     ),
     asks,
     takeAsk,
-    addGrant: Effect.fn("WorkstreamStore.addGrant")((workstreamId, title) =>
-      addAsk(workstreamId, "grant", { title }),
+    addGrant: Effect.fn("WorkstreamStore.addGrant")((workstreamId, brief) =>
+      addAsk(workstreamId, "grant", brief),
     ),
     takeGrant,
   });
