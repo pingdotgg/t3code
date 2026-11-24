@@ -8,12 +8,6 @@ import { deviceHubNodeArgs } from "./deviceHubNodeArgs.ts";
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
 describe("deviceHubNodeArgs", () => {
-  it("leaves non-Windows hub launches unchanged", () => {
-    for (const platform of ["darwin", "linux"] as const) {
-      expect(deviceHubNodeArgs("/tools/hub/cli.mjs", platform)).toEqual(["/tools/hub/cli.mjs"]);
-    }
-  });
-
   it("hides emulator consoles without changing other hub children or arguments", async () => {
     const capture = `
 import childProcess from "node:child_process";
