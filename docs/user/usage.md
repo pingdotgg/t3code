@@ -8,7 +8,7 @@ On mobile, choose **Usage** in the workspace navigation.
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, and Cursor history
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, Muse Code, Devin, and Cursor history
 from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
@@ -30,6 +30,11 @@ While `settings.json` cannot be read, nothing is pruned.
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
+
+Devin usage appears once you add a Devin connection through the ACP Registry or a local `devin`
+command. It reads Devin's local session history under `~/.local/share/devin`, or under
+`XDG_DATA_HOME` when set.
+Devin's own SWE models have no public prices, so they count tokens but show as unpriced.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
 `CURSOR_API_KEY`. This includes headless T3 sessions and desktop usage across machines; the same

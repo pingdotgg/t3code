@@ -8,9 +8,10 @@ type UsageProviderPresentation = {
   readonly label: string;
   readonly color: string;
   readonly driverKind: ProviderDriverKind;
+  readonly acpRegistryAgentId?: string;
 };
 
-export const PROVIDER_PRESENTATION = {
+export const PROVIDER_PRESENTATION: Record<UsageProviderKind, UsageProviderPresentation> = {
   codex: {
     label: "Codex",
     color: "var(--contrast-foreground)",
@@ -47,7 +48,19 @@ export const PROVIDER_PRESENTATION = {
     color: "#0866ff",
     driverKind: ProviderDriverKind.make("muse"),
   },
-} satisfies Record<UsageProviderKind, UsageProviderPresentation>;
+  devin: {
+    label: "Devin",
+    color: "#c2569b",
+    driverKind: ProviderDriverKind.make("acpRegistry"),
+    acpRegistryAgentId: "devin",
+  },
+};
+
+// Limits are keyed by driver; one ACP Registry agent does not speak for every registry instance.
+export function usageLimitDriverKind(provider: UsageProviderKind): ProviderDriverKind | null {
+  const presentation = PROVIDER_PRESENTATION[provider];
+  return presentation.acpRegistryAgentId === undefined ? presentation.driverKind : null;
+}
 
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
 

@@ -1099,6 +1099,7 @@ function ProviderMark({
     <ProviderInstanceIcon
       driverKind={presentation.driverKind}
       displayName={presentation.label}
+      acpRegistryAgentId={presentation.acpRegistryAgentId}
       iconClassName={className}
     />
   );

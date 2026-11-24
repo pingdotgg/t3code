@@ -41,7 +41,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { formatResetsIn, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
-import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION, usageLimitDriverKind } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: {
@@ -56,10 +56,8 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
 };
 
 export function barColor(driver: ServerProvider["driver"]): string {
-  const presentation = Object.values(PROVIDER_PRESENTATION).find(
-    (entry) => entry.driverKind === driver,
-  );
-  return presentation?.color ?? "var(--foreground)";
+  const provider = PROVIDER_ORDER.find((entry) => usageLimitDriverKind(entry) === driver);
+  return provider === undefined ? "var(--foreground)" : PROVIDER_PRESENTATION[provider].color;
 }
 
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
@@ -400,7 +398,7 @@ export function UsageLimitsSection({
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const hiddenDrivers = new Set<ServerProvider["driver"]>(
-    [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
+    [...hiddenProviders].flatMap((provider) => usageLimitDriverKind(provider) ?? []),
   );
   const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
   const selected = new Map(

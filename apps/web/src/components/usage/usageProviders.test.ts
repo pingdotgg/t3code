@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { rankProvidersByMetric } from "./usageProviders";
+import { rankProvidersByMetric, usageLimitDriverKind } from "./usageProviders";
 
 describe("rankProvidersByMetric", () => {
   it("ranks by the selected metric, highest first", () => {
@@ -24,5 +24,13 @@ describe("rankProvidersByMetric", () => {
 
     expect(rankProvidersByMetric(providers, totals, "tokens")).toEqual(["grok", "claude", "codex"]);
     expect(providers).toEqual(["claude", "codex", "grok"]);
+  });
+});
+
+describe("usageLimitDriverKind", () => {
+  it("keeps one ACP Registry agent from standing in for every registry instance", () => {
+    expect(usageLimitDriverKind("codex")).toBe("codex");
+    expect(usageLimitDriverKind("claude")).toBe("claudeAgent");
+    expect(usageLimitDriverKind("devin")).toBeNull();
   });
 });
