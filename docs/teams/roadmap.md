@@ -90,7 +90,12 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 - **Team Projects:**
   - Assign a project to a Team during creation or in Project Settings.
   - New-thread environment picker on team projects: choose **local environment** or any **remote team environment** (including the default Team Server) permitted by the member's ACL.
-  - Sync locally executed team-project threads (metadata + transcript updates) into the Team Server's thread list so colleagues can view them while tool calls remain executed on the local machine.
+  - Sync locally executed team-project threads (metadata + transcript updates) into the Team Server's thread list so colleagues can view them while tool calls remain executed strictly on the owner's local machine (never executable by other members, even `owner`/`admin`).
+- **Inaccessible-Environment UX & Thread Notes (`team_thread_notes`):**
+  - Greyed-out composer + localized banner when viewing a thread on an inaccessible environment (another member's local machine or a restricted remote environment), offering **`Fork this thread`** and **`Leave a note`**.
+  - Inline Note Mode in composer creating immutable, hash-pinned **`Note from <pseudo>:`** timeline entries with owner notification.
+  - Owner inline controls (**`Accept`**, **`Edit`**, **`Reject`**, 1-click **`Accept & Send`**), preserving `original_body` when edited by the owner, allowing **empty prompts** when ≥1 note is accepted, and requiring an explicit **UI confirmation dialog** when accepting or editing a note authored by a `regular` member (`modo`+ skip the confirmation modal).
+  - Server-enforced explicit `acceptedNotes: [{ noteId, contentHash }]` turn dispatch + automatic timeline re-anchoring (`anchor_turn_id = newTurnId`) so a note arriving concurrently with a new prompt is ignored by the model and displayed after that turn.
 - **Team Environments & ACLs (`team_environments`):**
   - Team Server UI & RPCs to attach additional remote `t3server` environments.
   - Per-environment access rules (default: everyone on the team; configurable by role and/or member whitelist).

@@ -197,9 +197,53 @@ interface TeamView {
 
 - When a member starts a thread on a team-assigned project using their **local environment**, **the thread is synced into the Team Server's team thread list** (with its `creatorMemberId`, `viewId`, and mirrored transcript/status updates) so colleagues with access to that View can see it alongside remote threads.
 - The key difference between starting a thread on a **local environment** vs. a **remote team environment** is **where tool calls and agent execution run** (e.g., testing changes locally on a developer's laptop vs. running on a shared remote server).
-- **Local-environment execution boundary:**
+- **Absolute local-execution boundary:**
   - The local desktop server pushes thread metadata and transcript updates to the Team Server so the thread stays visible in the team thread list even when the developer's laptop goes offline (colleagues see the synced history in read-only mode while offline).
-  - Tool calls on a local-environment thread execute exclusively on the developer's local machine; colleagues never receive arbitrary code execution on another member's laptop. Posting/continuing a local-environment thread is either restricted to the local machine's owner or requires switching/forking the thread onto a shared team environment.
+  - Tool calls on a local-environment thread execute **exclusively** on the owner's local machine. **No other team member—not even `owner` or `admin`—can execute turns or tool calls on another member's local environment.**
+
+### Inaccessible environments, Thread Notes & Anti-Prompt-Injection Flow
+
+Whenever a member can read a team thread (via its View) **but cannot execute turns on its attached environment**—either because it runs on another member's **local environment** (blocked for everyone else, including `owner`/`admin`) or because it runs on a **remote team environment restricted by ACL**—the thread remains fully readable, with a unified safe collaboration UX:
+
+#### Colleague UX (no execution access)
+
+- The standard prompt composer is **disabled/greyed out**, with a highlighted localized (`team.*`) banner directly above it:
+  > _You cannot prompt this thread because it is attached to an environment you do not have access to (**\<environment label, e.g., Jean's local environment\>**). You can fork it or leave a note._
+  >
+  > `[ Fork this thread ]` `[ Leave a note ]`
+- **Fork this thread:** Opens a quick picker of environments the colleague _does_ have access to (their own local environment or an accessible team environment) and creates a new thread owned by them via T3 Code's portable context handoff, linked back to the source thread.
+- **Leave a note** _(available when the thread is unlocked for the actor and the View grants `postRule`)_:
+  - Switches the composer **in place** into Note Mode (no blocking modal) with a distinct visual accent and `Send note` / `Cancel` controls.
+  - Appears inline in the thread timeline at its chronological position as a distinct card labeled **`Note from <pseudo>:`** with a `Pending` status pill, and notifies the thread owner (Milestone 2).
+
+#### Security model (anti-prompt-injection & race-condition proof)
+
+1. **Author immutability + `contentHash` (no bait-and-switch):**
+   - A note's `body` is **immutable** for its author after creation (the author may only delete a `pending` note, never edit it).
+   - The server computes `original_content_hash` (SHA-256) at creation so an author can never swap benign text for a prompt injection while the owner is approving it.
+2. **Owner edit-before-use:**
+   - The thread owner / environment executor (e.g., Jean) **can edit a pending note** if they want to adjust part of it before sending it to the agent.
+   - The edit is stored separately (`edited_body`, `edited_content_hash`) while preserving `original_body` for audit transparency (displayed as `Note from Paul (edited by Jean):`).
+3. **Role-based confirmation friction (`regular` vs. `modo`+):**
+   - **Author is `regular`:** Because newly onboarded / `regular` members carry higher prompt-injection risk, **accepting the note or applying an edit requires an explicit UI confirmation dialog** displaying the exact full text that will be passed to the agent on the owner's environment.
+   - **Author is `modo`, `admin`, or `owner`:** Trusted roles skip the extra confirmation modal—accepting, editing, or using the 1-click **Accept & Send** action executes immediately.
+4. **Zero implicit model injection:**
+   - The orchestrator **never** pulls `pending` or `rejected` notes into the LLM prompt.
+   - Every turn dispatch explicitly passes `acceptedNotes: Array<{ noteId, contentHash }>` (matching `edited_content_hash ?? original_content_hash`), verified server-side / by the executor before building the model prompt.
+   - Accepted notes are clearly attributed in the prompt (`[Note from Paul (approved by Jean)]: ...`) and permanently bound to `included_in_turn_id`.
+   - Rejected notes remain visible in chronological order (muted/collapsed with a `Rejected` pill) and are never sent to the model.
+5. **Empty prompt allowed with accepted note(s):**
+   - When at least one note is `accepted` (and not yet consumed by a turn), the owner may submit an **empty prompt** (`""`) so a colleague's suggested prompt can be executed directly without adding redundant text.
+6. **Concurrent-arrival race condition (TOCTOU protection):**
+   - If Paul posts a note `N` milliseconds before Jean hits Send (so `N` is not in Jean's `acceptedNotes` payload):
+     - Jean's turn is **not** blocked with an error and **must ignore `N`** completely.
+     - The server atomically **re-anchors `N` after the new turn** (`anchor_turn_id = newTurnId`) so `N` appears chronologically _after_ Jean's turn in the history, still `pending` for Jean's next turn.
+   - Notes arriving while a turn is already running similarly anchor after the active turn (`anchor_turn_id = activeTurnId`) and never steer the active turn.
+
+#### Owner UX (fluid, minimal friction)
+
+- Pending note cards show inline actions directly in the timeline: **`Accept`**, **`Edit`**, **`Reject`**, plus a 1-click **`Accept & Send`** shortcut when the owner's composer is empty (subject to the confirmation dialog if the author is `regular`).
+- If the owner types a prompt while visible pending notes remain undecided, a compact 1-line bar appears above the composer (`1 pending note from Paul — decide before sending`) and disables Send until visible pending notes are resolved. Until Send is clicked, accepted/rejected states remain toggleable.
 
 ### Team Environments & per-environment ACLs
 
@@ -321,6 +365,7 @@ To avoid SQLite migration number collisions and `ALTER TABLE` conflicts with ups
 - `team_environments` (`id`, `team_id`, `environment_id`, `name`, `is_default`, `peer_link_id`, `access_roles_json`, `access_member_ids_json`, `created_at`, `updated_at`)
 - `team_providers` (`id`, `team_id`, `provider_instance_id`, `config_json`, `proxy_enabled`, `created_at`, `updated_at`)
 - `team_thread_follows` (`thread_id`, `member_id`, `created_at`)
+- `team_thread_notes` (`id`, `thread_id`, `team_id`, `author_member_id`, `original_body`, `original_content_hash`, `edited_body`, `edited_content_hash`, `status`, `anchor_turn_id`, `anchor_seq`, `included_in_turn_id`, `resolved_by_member_id`, `resolved_at`, `created_at`)
 
 ### Sidecar metadata tables (no `ALTER TABLE` on upstream tables)
 
@@ -371,3 +416,4 @@ The following decisions are locked in for implementation:
 3. **Local threads on team projects sync to the team thread list** — starting a team-project thread on a local environment syncs the thread into the Team Server's thread list; the distinction is where tool calls execute (local machine vs. remote team environment).
 4. **Phased GitHub authentication** — start with per-user encrypted fine-grained PATs (zero OAuth app setup for self-hosted teams), then add GitHub OAuth / GitHub App user-to-server tokens in a follow-up phase.
 5. **Default View posting policy** — the Default View allows all team members to read and post in each other's threads by default.
+6. **Local-environment isolation & Thread Notes** — no colleague (not even `owner`/`admin`) can execute on another member's local environment; colleagues can read, fork onto an accessible environment, or leave immutable **Notes** (`Note from <pseudo>:`). The owner must explicitly accept, edit (preserving `original_body`), or reject pending notes (with an explicit UI confirmation dialog when the note author is `regular`, while `modo`/`admin`/`owner` authors skip the extra modal), may send an empty prompt once a note is accepted, and any note arriving concurrently with a new turn is ignored by that turn and re-anchored after it.
