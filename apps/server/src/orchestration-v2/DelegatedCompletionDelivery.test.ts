@@ -2038,6 +2038,50 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
       assert.equal(afterLateResult.thread.settledOverride, "settled");
     }),
   );
+
+  it.effect("auto-settle waits for an open completion delivery that is not a message yet", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("auto-settle-open-delivery-parent");
+      const runId = RunId.make("auto-settle-open-delivery-origin");
+      const taskId = NodeId.make("auto-settle-open-delivery-task");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("auto-settle-open-delivery-project"),
+        runId,
+        rootNodeId: NodeId.make("auto-settle-open-delivery-root"),
+        taskId,
+        deliveryState: "claimed",
+        deliveryTaskIds: [taskId],
+        completionWake: "always",
+        parentRunStatus: "completed",
+        now,
+      });
+      const seeded = yield* orchestrator.getThreadProjection(threadId);
+      const delivery = seeded.runs[0]!.delegatedCompletion!.delivery!;
+      assert.isFalse(seeded.messages.some((message) => message.id === delivery.messageId));
+
+      // The sweep's snapshot is current: nothing changed on the thread since it was read.
+      yield* Effect.exit(
+        orchestrator.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("auto-settle-open-delivery-settle"),
+          threadId,
+          snapshotAt: seeded.thread.updatedAt,
+        }),
+      );
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(after.thread.settledOverride);
+      assert.equal(after.runs[0]?.delegatedCompletion?.disposition, "open");
+      assert.deepEqual(after.runs[0]?.delegatedCompletion?.delivery, delivery);
+      assert.equal(
+        after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+        "claimed",
+      );
+    }),
+  );
 });
 
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
