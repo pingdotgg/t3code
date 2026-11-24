@@ -4,6 +4,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
@@ -20,7 +21,6 @@ import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 import { readIsolatedLinuxBridges, resolveBoundEndpoints } from "./DirectEndpoints.ts";
-import * as FileSystem from "effect/FileSystem";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [

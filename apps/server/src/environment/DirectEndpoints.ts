@@ -113,7 +113,6 @@ export const readIsolatedLinuxBridges = Effect.fn("DirectEndpoints.readIsolatedL
     const exists = (path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false));
     const list = (path: string) =>
       fs.readDirectory(path).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    // Recursion inside this function's span; per-call spans would only add noise.
     const reachesHardware: (name: string, depth: number) => Effect.Effect<boolean> =
       Effect.fnUntraced(function* (name: string, depth: number) {
         if (yield* exists(`${root}/${name}/device`)) return true;
