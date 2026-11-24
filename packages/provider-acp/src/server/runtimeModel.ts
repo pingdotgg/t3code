@@ -1273,7 +1273,7 @@ export function withTrackedPermissionToolCall(
   tracked: AcpToolCallState | undefined,
 ): EffectAcpSchema.RequestPermissionRequest {
   if (tracked === undefined) return params;
-  const { title, kind, rawInput } = params.toolCall;
+  const { title, kind, rawInput, locations } = params.toolCall;
   return {
     ...params,
     toolCall: {
@@ -1286,8 +1286,19 @@ export function withTrackedPermissionToolCall(
       ...(rawInput === undefined && tracked.data.rawInput !== undefined
         ? { rawInput: tracked.data.rawInput }
         : {}),
+      ...(locations === undefined && Array.isArray(tracked.data.locations)
+        ? { locations: tracked.data.locations }
+        : {}),
     },
   };
+}
+
+function toolCallLocationPaths(toolCall: AcpToolCallState | undefined): ReadonlyArray<string> {
+  const locations = toolCall?.data.locations;
+  if (!Array.isArray(locations)) return [];
+  return locations.flatMap((location) =>
+    isRecord(location) && typeof location.path === "string" ? [location.path] : [],
+  );
 }
 
 export function parsePermissionRequest(
@@ -1307,11 +1318,13 @@ export function parsePermissionRequest(
     { fallbackStatus: "pending" },
   );
   const kind = normalizeToolKind(params.toolCall.kind) ?? "unknown";
+  // A file tool's title is generic ("Changed files"), so the prompt also lists the paths it names.
+  const summary = toolCall?.title ?? toolCall?.detail;
+  const paths = toolCallLocationPaths(toolCall).filter((path) => !summary?.includes(path));
   const detail =
     toolCall?.command ??
-    toolCall?.title ??
-    toolCall?.detail ??
-    (typeof params.sessionId === "string" ? `Session ${params.sessionId}` : undefined);
+    ([...(summary ? [summary] : []), ...paths].join("\n") ||
+      (typeof params.sessionId === "string" ? `Session ${params.sessionId}` : undefined));
   return {
     kind,
     ...(detail ? { detail } : {}),
