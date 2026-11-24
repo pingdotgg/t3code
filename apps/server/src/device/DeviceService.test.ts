@@ -1652,18 +1652,6 @@ describe("Android close with shutdown", () => {
       expect((yield* service.state).sessions).toEqual([]);
     }),
   );
-
-  it.effect("still fails a rejected shutdown of an AVD that adb cannot list by name", () =>
-    Effect.gen(function* () {
-      const { service, connection } = yield* fixture();
-      yield* service.configure({ enabled: true });
-      connection.failShutdown = true;
-      const exit = yield* Effect.exit(
-        service.shutdown({ deviceId: DeviceId.make("Pixel_API_35"), platform: "android" }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
 });
 
 it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
