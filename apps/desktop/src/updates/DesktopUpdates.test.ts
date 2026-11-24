@@ -716,6 +716,43 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("offers another download when the cached macOS update disappears before install", () => {
+    const archive = "/cache/pending/update.zip";
+    const cachedFiles = new Set([archive]);
+    let backendStops = 0;
+    const harness = makeHarness({
+      cachedFiles,
+      stopBackend: Effect.sync(() => {
+        backendStops += 1;
+      }),
+    });
+    const downloaded = { version: "1.2.4", downloadedFile: archive };
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* nextPublishedState(() => harness.emit("update-downloaded", downloaded));
+        cachedFiles.delete(archive);
+
+        yield* updates.install;
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.equal(state.availableVersion, downloaded.version);
+        assert.isNull(state.downloadedVersion);
+        assert.equal(state.errorContext, "download");
+        assert.equal(backendStops, 0);
+        assert.isEmpty(harness.installSteps);
+
+        assert.isTrue((yield* updates.download).completed);
+        cachedFiles.add(archive);
+        yield* nextPublishedState(() => harness.emit("update-downloaded", downloaded));
+        yield* updates.install;
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("marks the backend stop for an install as an update restart", () => {
     let markersAtStop: ReadonlyArray<string> = [];
     let inProgressAtStop: string | undefined;

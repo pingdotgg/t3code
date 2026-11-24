@@ -94,6 +94,9 @@ const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
 
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
+const decodeDownloadedUpdate = Schema.decodeUnknownEffect(
+  Schema.Struct({ version: Schema.String, downloadedFile: Schema.optional(Schema.String) }),
+);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -396,6 +399,7 @@ export const make = Effect.gen(function* () {
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
+  const downloadedArchiveRef = yield* Ref.make<{ version: string; path: string } | null>(null);
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
   >([]);
@@ -927,13 +931,29 @@ export const make = Effect.gen(function* () {
           return { accepted: false, completed: false, failed: false };
         }
 
-        yield* Ref.set(desktopState.quitting, true);
-        yield* Ref.set(installRunningBackendsRef, []);
-
         return yield* Effect.gen(function* () {
+          const { downloadedVersion } = yield* Ref.get(updateStateRef);
+          const archive = yield* Ref.get(downloadedArchiveRef);
+          if (
+            environment.platform === "darwin" &&
+            archive !== null &&
+            archive.version === downloadedVersion &&
+            !(yield* fileSystem.exists(archive.path))
+          ) {
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnDownloadFailure(
+                { ...current, downloadedVersion: null },
+                "The downloaded update was removed. Download it again to install.",
+              ),
+            );
+            yield* finishUpdateAction("install");
+            return { accepted: true, completed: false, failed: true };
+          }
+
+          yield* Ref.set(desktopState.quitting, true);
+          yield* Ref.set(installRunningBackendsRef, []);
           yield* writeUpdateRestartMarker;
           yield* writeUpdateInProgressMarker;
-          const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
           // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
@@ -1226,7 +1246,7 @@ export const make = Effect.gen(function* () {
   const handleUpdateDownloaded = Effect.fn("desktop.updates.handleUpdateDownloaded")(function* (
     raw: unknown,
   ) {
-    yield* decodeUpdateInfo(raw).pipe(
+    yield* decodeDownloadedUpdate(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
           const state = yield* Ref.get(updateStateRef);
@@ -1244,6 +1264,12 @@ export const make = Effect.gen(function* () {
             }
             return;
           }
+          yield* Ref.set(
+            downloadedArchiveRef,
+            info.downloadedFile === undefined
+              ? null
+              : { version: info.version, path: info.downloadedFile },
+          );
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),
