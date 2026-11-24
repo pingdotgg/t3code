@@ -199,22 +199,25 @@ describe("SpawnWorker", () => {
       });
       const exited = new Promise((resolve) => direct.once("exit", () => resolve(direct.killed)));
       expect(yield* Effect.promise(() => exited)).toBe(true);
-      // Windows has no process groups, so aborting a direct child must end what it started too.
+      // Windows has no process groups. Node ends a non-detached grandchild with its parent, but a
+      // detached one, like a CLI's background shell, outlives it unless the kill ends the tree.
       if (HostProcess.Platform.defaultValue() === "win32") {
-        const abort = new AbortController();
         const cli = SpawnWorker.spawnPiped(
           process.execPath,
           [
             "-e",
-            "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1e3)'],{stdio:'ignore'});process.stdout.write(String(c.pid));process.stdin.resume()",
+            "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1e3)'],{detached:true,stdio:'ignore'});process.stdout.write(String(c.pid));process.stdin.resume()",
           ],
-          { signal: abort.signal },
+          {},
         );
         const grandchild = yield* Effect.promise(
-          () => new Promise<number>((resolve) => cli.stdout.once("data", (pid) => resolve(Number(String(pid))))),
+          () =>
+            new Promise<number>((resolve) =>
+              cli.stdout.once("data", (pid) => resolve(Number(String(pid)))),
+            ),
         );
         const cliExited = new Promise((resolve) => cli.once("exit", resolve));
-        abort.abort();
+        cli.kill();
         yield* Effect.promise(() => cliExited);
         expect(() => process.kill(grandchild, 0)).toThrow();
       }
