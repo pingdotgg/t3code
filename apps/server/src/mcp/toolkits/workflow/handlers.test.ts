@@ -12,7 +12,13 @@ import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as WorkflowHandlers from "./handlers.ts";
 import { WorkflowToolkit } from "./tools.ts";
 
-const handlersWith = (workflows: Partial<Workflows.Workflows["Service"]>) =>
+const fullAccess = { sessionId: "session-1", label: "t3 CLI", access: "full-access" } as const;
+const supervised = { sessionId: "session-2", label: "Bot", access: "approval-required" } as const;
+
+const handlersWith = (
+  workflows: Partial<Workflows.Workflows["Service"]>,
+  scope: Partial<McpInvocationContext.McpInvocationScope> = {},
+) =>
   McpToolAccess.HandlersLayer.layer(WorkflowHandlers.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -22,9 +28,10 @@ const handlersWith = (workflows: Partial<Workflows.Workflows["Service"]>) =>
           environmentId: EnvironmentId.make("environment:workflow"),
           requestNamespace: "client:workflow",
           thread: undefined,
-          client: { sessionId: "session-1", label: "t3 CLI", access: "full-access" },
+          client: fullAccess,
           capabilities: new Set(["orchestration" as const]),
           issuedAt: 0,
+          ...scope,
         }),
         Layer.mock(Workflows.Workflows)(workflows),
       ),
@@ -98,5 +105,95 @@ it.effect("signal refuses a run destination mixed with a channel destination", (
     }
     expect(results.at(-1)).toEqual({ delivery: "delivered" });
     expect(delivered).toEqual([{ runId: "run-1", wait: "review" }]);
+  }),
+);
+
+const emptyRun = { run: undefined, steps: [], references: [] } as never;
+const call = (input: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    const toolkit = yield* WorkflowToolkit;
+    return yield* toolkit.handle("t3_workflow", input as never).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.map((parts) => parts.at(-1)?.result),
+    );
+  });
+
+const changes = [
+  { action: "start", workflow: "release", idempotencyKey: "trial" },
+  { action: "signal", runId: "run-1", wait: "review", value: { choice: "yes" } },
+  { action: "resume", runId: "run-1" },
+  { action: "cancel", runId: "run-1" },
+  { action: "store_set", key: "switch", value: true },
+  { action: "store_delete", key: "switch" },
+];
+
+it.effect("a caller below the broadest mode reads runs but does not start or change them", () =>
+  Effect.gen(function* () {
+    const reached: Array<string> = [];
+    const reach = (name: string) => () => Effect.sync(() => void reached.push(name));
+    const results = yield* Effect.forEach(
+      [...changes, { action: "list" }, { action: "questions" }],
+      call,
+    ).pipe(
+      Effect.provide(
+        handlersWith(
+          {
+            start: () => Effect.sync(() => (reached.push("start"), { runId: "run-1" })),
+            signal: () => Effect.sync(() => (reached.push("signal"), "delivered" as const)),
+            resume: reach("resume"),
+            cancel: reach("cancel"),
+            storeSet: reach("storeSet"),
+            storeDelete: reach("storeDelete"),
+            stored: () => Effect.succeed([]),
+            get: () => Effect.succeed(emptyRun),
+            list: () => Effect.succeed([]),
+            questions: Effect.succeed([]),
+          },
+          { client: supervised },
+        ),
+      ),
+    );
+    for (const result of results.slice(0, changes.length)) {
+      expect(result).toMatchObject({ code: "capability_denied" });
+    }
+    expect(reached).toEqual([]);
+    expect(results.slice(changes.length)).toEqual([{ runs: [] }, { questions: [] }]);
+  }),
+);
+
+it.effect("hook paths go only to a caller at the broadest mode", () =>
+  Effect.gen(function* () {
+    const hooks = [{ workflow: "release", name: "push", path: "/api/hooks/wf-release.push/token" }];
+    const read = (client: McpInvocationContext.McpClientCaller) =>
+      call({ action: "hooks" }).pipe(
+        Effect.provide(handlersWith({ hooks: Effect.succeed(hooks as never) }, { client })),
+      );
+    expect(yield* read(fullAccess)).toEqual({ hooks });
+    const refused = yield* read(supervised);
+    expect(refused).toMatchObject({ code: "capability_denied" });
+    expect(JSON.stringify(refused)).not.toContain("token");
+  }),
+);
+
+it.effect("under an administrator's ceiling, a caller at the ceiling starts runs", () =>
+  Effect.gen(function* () {
+    const start = { action: "start", workflow: "release", idempotencyKey: "trial" };
+    const workflows = {
+      start: () => Effect.succeed({ runId: "run-1" }),
+      get: () => Effect.succeed(emptyRun),
+    };
+    const narrowedTo = (runtimeMode: "auto" | "approval-required") => ({
+      runtimeModeCeiling: "auto" as const,
+      client: { ...fullAccess, narrowedTo: { runtimeMode, interactionMode: "default" as const } },
+    });
+    expect(
+      yield* call(start).pipe(Effect.provide(handlersWith(workflows, narrowedTo("auto")))),
+    ).not.toMatchObject({ code: "capability_denied" });
+    expect(
+      yield* call(start).pipe(
+        Effect.provide(handlersWith(workflows, narrowedTo("approval-required"))),
+      ),
+    ).toMatchObject({ code: "capability_denied" });
   }),
 );
