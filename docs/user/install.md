@@ -10,6 +10,10 @@ launch HYR Code and configure providers afterwards.
 
 ## Command line
 
+These installers and the `t3` package on npm come from upstream T3 Code. They
+install T3 Code's `t3` command, not a HYR Code build. To run a HYR Code server,
+build it from source (see [Intel Macs](#intel-macs) for the steps).
+
 ```bash
 curl -fsSL https://t3.codes/install.sh | sh
 ```
@@ -61,7 +65,7 @@ run a server there, build it from source with `vp`, which provides the Node vers
 ([Install vp](../operations/00_development.md#first-checkout)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
+git clone https://github.com/HYRMedia-LLC/t3code
 cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
@@ -71,15 +75,18 @@ update it with `git pull` and a rebuild.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
-or use a package manager:
+Download HYR Code for macOS (Apple silicon) from
+[GitHub Releases](https://github.com/HYRMedia-LLC/t3code/releases).
+
+The package managers and Linux downloads below install upstream T3 Code from
+[its releases](https://github.com/pingdotgg/t3code/releases), not HYR Code:
 
 | Platform           | Install                                                      |
 | ------------------ | ------------------------------------------------------------ |
 | Windows            | `winget install T3Tools.T3Code`                              |
 | Windows (Scoop)    | `scoop install extras/t3code`                                |
 | macOS              | `brew install --cask t3-code`                                |
-| Debian, Ubuntu     | `sudo apt install ./HYR-Code-*.deb`                          |
+| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb`                           |
 | Arch Linux         | `yay -S t3code-bin`                                          |
 | Arch Linux nightly | `yay -S t3code-nightly-bin`                                  |
 | Nix                | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code` |
@@ -92,11 +99,11 @@ architecture with `uname -m`: for `x86_64`, choose a file ending in
 `arm64.deb`.
 
 To launch an AppImage, open a terminal in its download folder. Replace
-`HYR-Code.AppImage` below with the exact filename you downloaded:
+`T3-Code.AppImage` below with the exact filename you downloaded:
 
 ```bash
-chmod +x ./HYR-Code.AppImage
-./HYR-Code.AppImage
+chmod +x ./T3-Code.AppImage
+./T3-Code.AppImage
 ```
 
 The `.deb` updates itself like the other desktop builds. It asks for your

@@ -14,7 +14,6 @@ We were inspired by the Codex desktop app, Conductor, Claude Desktop, and Cursor
 
 - Bring your own sub. Claude, Codex, and whatever else you already have installed.
 - Best in class remote. Run `t3 up` on any box and drive it from anywhere.
-- Best in class mobile app.
 - Truly 100% open source code (MIT). If we go the wrong direction, fork it under your own branding.
 
 Every harness feels nearly identical in here, so you can stop worrying about harnesses and focus on building :) [Install](./install.md)
@@ -25,37 +24,27 @@ Yes.
 
 ## How much does HYR Code cost?
 
-Nothing. There's no way to pay us to use HYR Code. You bring your own sub. The source code is free and open source (MIT). You still pay your provider like you already do. T3 Connect is free too, for now. Every account can connect up to 3 machines running HYR Code. Phones and browsers that connect to them do not count. Need more? Link a paid T3 Chat account. [More machines](#can-i-connect-more-than-3-machines-with-t3-connect) We don't want to charge for this, but if the bill gets unacceptable we may have to change course. If you hit limits or have issues, you can always fork the source code (under your own branding), self host, or use Tailscale. [Install](./install.md)
+Nothing. There's no way to pay us to use HYR Code. You bring your own sub. The source code is free and open source (MIT). You still pay your provider like you already do. [Install](./install.md)
 
 ## Can I fork or redistribute HYR Code?
 
 Yes, for the source code. The [MIT License](../../LICENSE) applies only to the source code, not to names, logos, or branding. HYR Code itself is an unofficial fork based on the T3 Code source code, and is not affiliated with or endorsed by T3 Tools, Inc. If you publish a fork, use your own branding and make it clear that your project is unofficial. See [TRADEMARK.md](../../TRADEMARK.md).
 
-## Can I connect more than 3 machines with T3 Connect?
-
-Yes. Link your T3 Chat account and T3 Connect raises your limit: up to 10 machines with T3 Chat Pro, or 100 with Premier. Open your account menu in HYR Code, go to **T3 Chat**, and select **Link T3 Chat**. Sign in to T3 Chat and approve. The free T3 Chat plan keeps the normal limit of 3. [More machines with T3 Chat](./remote-access.md#more-machines-with-t3-chat)
-
 ## Why is my Claude 5-hour limit draining so fast?
 
-It shouldn't anymore. HYR Code drives Claude through Anthropic's Agent SDK, and Anthropic's 5h meter used to charge Agent SDK usage about 1.7x more than using Claude Code directly. Weekly limits were never affected. Since v0.1.7, Claude in HYR Code drains your 5h limit at the same rate as Claude Code. Still seeing it? [Update HYR Code](./updating.md) on the machine that runs your agents. [My post on it](https://x.com/theo/status/2114166439813017873) · [Tracking issue](https://github.com/pingdotgg/t3code/issues/24649)
+It shouldn't anymore. HYR Code drives Claude through Anthropic's Agent SDK, and Anthropic's 5h meter used to charge Agent SDK usage about 1.7x more than using Claude Code directly. Weekly limits were never affected. Since v0.1.7, Claude in HYR Code drains your 5h limit at the same rate as Claude Code. Still seeing it? [Update HYR Code](./updating.md) on the machine that runs your agents. [Tracking issue](https://github.com/pingdotgg/t3code/issues/24649)
 
 ## How do I use HYR Code remotely?
 
-Your agents run wherever HYR Code runs: your desktop, a server, a VPS. You connect to it from anywhere. I do this constantly. Less than 5% of my prompts run on my laptop. Run `t3 up` on that machine and you get really good remote support. T3 Connect is the easy path. LAN pairing and Tailscale work too, and [app.t3.codes](https://app.t3.codes) is the web client. [Remote access](./remote-access.md)
+Your agents run wherever HYR Code runs: your desktop, a server, a VPS. Run `t3 up` on that machine, then connect over your local network or Tailscale. HYR Code release builds do not include T3 Connect. [Remote access](./remote-access.md)
 
 ## How do I use HYR Code on my phone?
 
-Get the [iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code) app, then connect it to your computer with T3 Connect or a pairing link. The phone is a remote. Your computer does the work and needs to stay on. [Mobile setup](./install.md#mobile-app) · [Remote access](./remote-access.md)
-
-## Why does T3 Connect keep disconnecting?
-
-T3 Connect is our built-in alternative to Tailscale for remote connections. If it keeps dropping, open **Settings > Environments**, find the machine, and select **Details**. The first part marked as failed is the cause. I will not be disappointed if you set up Tailscale as a fallback (I do this personally). [T3 Connect troubleshooting](./t3-connect-troubleshooting.md)
+HYR Code has no app store release. Open the web app from your phone over your local network or Tailscale. The phone is a remote. Your computer does the work and needs to stay on. [Remote access](./remote-access.md)
 
 ## Will I get banned for using my subscription?
 
-No. We work with all of the labs and HYR Code is within the TOS of Claude Code, Codex, and Google Antigravity. We worked directly with [SpaceXAI](https://x.com/SpaceXSI/status/2070195830192320600) to collaborate on the Grok Build and Cursor integrations. Everything else uses official ACP bindings.
-
-If it works in HYR Code, you can trust it is safe.
+HYR Code uses the same provider integrations as upstream T3 Code. The T3 Code team states that these integrations are within the terms of service of Claude Code, Codex, and Google Antigravity, and that they built the Grok Build and Cursor integrations with SpaceXAI. Everything else uses official ACP bindings. Check your provider's terms if you are unsure.
 
 ## Can I add a bunch of accounts for one provider?
 
@@ -73,7 +62,7 @@ No. HYR Code is a serious developer tool. Locally runnable models are not capabl
 
 ## Does my code go to T3 servers?
 
-No. Your code and prompts go from your machine to your provider (Anthropic, OpenAI, etc.), not to us. With T3 Connect, traffic rides a Cloudflare tunnel (`cloudflared` on your machine). Our relay sets up the link. It does not proxy your HTTP or WebSocket sessions. HYR Code does send basic product usage events (provider, model, token totals, that kind of thing). No prompts, no file contents. That is the same on Tailscale, LAN, or T3 Connect. Set `T3CODE_TELEMETRY_ENABLED=false` if you want it off. [Product usage data](./telemetry.md)
+No. Your code and prompts go from your machine to your provider (Anthropic, OpenAI, etc.), not to us or to T3. HYR Code release builds turn off product usage events, T3 Connect, and guest links. If you build from source without the release patch, the server sends basic product usage events (provider, model, token totals, no prompts or file contents) to T3 unless you set `T3CODE_TELEMETRY_ENABLED=false`. [Product usage data](./telemetry.md)
 
 ## Worktrees are eating my disk. How do I clean them up?
 

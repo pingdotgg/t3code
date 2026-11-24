@@ -27,7 +27,7 @@ export const organizationJsonLd = (): JsonLd => ({
   name: "HYR Media LLC",
   url: SITE_ORIGIN,
   logo: absoluteUrl("/apple-touch-icon.png"),
-  sameAs: ["https://github.com/pingdotgg"],
+  sameAs: ["https://github.com/HYRMedia-LLC"],
 });
 
 export const websiteJsonLd = (): JsonLd => ({

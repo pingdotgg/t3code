@@ -10,7 +10,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-export const MARKER = "Written by HYR Code: runs the desktop app's bundled t3 CLI.";
+export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 

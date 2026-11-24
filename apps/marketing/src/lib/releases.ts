@@ -1,4 +1,4 @@
-const REPO = "pingdotgg/t3code";
+const REPO = "HYRMedia-LLC/t3code";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 export const NIGHTLY_RELEASES_URL = `${RELEASES_URL}?q=nightly&expanded=true`;

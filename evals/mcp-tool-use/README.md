@@ -306,7 +306,7 @@ Both arms see the same world. Shell mocks apply to either arm's commands, so an 
 
 Some cases are capability cases rather than mistake cases:
 
-- `cli-rate-limited-read` and `cli-auth-missing` assume T3 is signed in through the HYR Code for GitHub app, whose quota and token are separate from `gh`'s.
+- `cli-rate-limited-read` and `cli-auth-missing` assume T3 is signed in through the T3 Code for GitHub app, whose quota and token are separate from `gh`'s.
 - The git.cafe cases come in two forms. The plain ones say nothing about the forge. The `-instructed` ones put "use cafe" in the project instructions, as a maintained AGENTS.md would.
 
 ### Results
