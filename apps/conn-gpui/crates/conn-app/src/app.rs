@@ -466,8 +466,15 @@ impl ConnApp {
                         .update(cx, |panel, cx| panel.set_turn_count(turn, cx));
                     app.select_right_panel_tab(RightPanelTab::Diff, cx);
                 }
-                crate::chat::ChatEvent::OpenThread(thread_id) => {
-                    app.select_thread(thread_id.clone(), cx);
+                crate::chat::ChatEvent::OpenThread {
+                    thread_id,
+                    environment_id,
+                } => {
+                    if let Some(environment) = environment_id {
+                        app.open_remote_child(environment, thread_id, cx);
+                    } else {
+                        app.select_thread(thread_id.clone(), cx);
+                    }
                 }
                 crate::chat::ChatEvent::ForkFromRun { run_id } => {
                     app.fork_selected_from_run(run_id, cx);
@@ -1337,7 +1344,7 @@ impl ConnApp {
                         .shell
                         .top_level_active_threads()
                         .next()
-                        .or_else(|| self.shell.threads.first())
+                        .or_else(|| self.shell.threads.iter().find(|t| self.shell.is_listed(t)))
                         .map(|first| (first.project_id.clone(), first.id.clone()));
                     if let Some((project_id, thread_id)) = initial {
                         self.layout.selected_project_id = Some(project_id);
@@ -1821,7 +1828,7 @@ impl ConnApp {
                 .shell
                 .top_level_active_threads()
                 .next()
-                .or_else(|| self.shell.threads.first())
+                .or_else(|| self.shell.threads.iter().find(|t| self.shell.is_listed(t)))
                 .map(|first| (first.project_id.clone(), first.id.clone()));
             if let Some((project_id, thread_id)) = initial {
                 self.layout.selected_project_id = Some(project_id);
