@@ -291,6 +291,59 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect.each([
+    { established: false, closedWith: { _tag: "ConnectionBlockedError", reason: "unsupported" } },
+    {
+      established: true,
+      closedWith: { _tag: "ConnectionTransientError", reason: "remote-unavailable" },
+    },
+  ])(
+    "ends the session when config fails to decode, after readiness=$established",
+    ({ established, closedWith }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* session.ready.pipe(Effect.exit, Effect.forkChild);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        if (established) {
+          yield* completeInitialConfig(socket);
+          yield* Fiber.join(ready);
+          yield* completeInitialConfig(socket, { ...ENCODED_SERVER_CONFIG, cwd: 42 });
+        } else {
+          yield* completeInitialConfig(socket, { ...ENCODED_SERVER_CONFIG, cwd: 42 });
+          expect(yield* Fiber.join(ready)).toMatchObject({
+            _tag: "Failure",
+            cause: { reasons: [{ _tag: "Fail", error: { reason: "unsupported" } }] },
+          });
+        }
+
+        expect(yield* Effect.flip(session.closed)).toMatchObject({ ...closedWith, hop: "server" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "fails readiness with the disconnect when the socket closes before its first config",
+    () =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(Effect.flip(session.ready));
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* awaitRequest(socket);
+        socket.close(1012, "service restart");
+
+        for (const error of [yield* Fiber.join(ready), yield* Effect.flip(session.closed)]) {
+          expect(error).toMatchObject({
+            _tag: "ConnectionTransientError",
+            reason: "transport",
+            detail: "Test environment disconnected.",
+          });
+        }
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -822,6 +875,33 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("closes the session when the server interrupts the config stream", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const request = yield* awaitRequest(socket);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: request.id,
+          exit: { _tag: "Failure", cause: [{ _tag: "Interrupt", fiberId: null }] },
+        }),
+      );
+
+      expect(yield* Fiber.join(closedFiber)).toMatchObject({
+        reason: "remote-unavailable",
+        detail: "Test environment config subscription ended.",
+      });
+    }),
+  );
+
   it.effect.each([{ failure: "defect" as const }, { failure: "typed" as const }])(
     "keeps durable config state alive after an owned $failure failure",
     ({ failure }) =>
@@ -999,7 +1079,8 @@ describe("RpcSessionFactory", () => {
       const error = yield* Fiber.join(readyFiber);
       expect(error).toMatchObject({
         reason: "configuration",
-        message: "Connected environment environment-2 does not match environment-1.",
+        message:
+          "This address now runs a different T3 Code install (environment-2, not environment-1). Remove this connection and add it again.",
       });
       expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
       expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");
@@ -1068,6 +1149,49 @@ describe("RpcSessionFactory", () => {
       yield* connectWith({ ...ENCODED_SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" });
       expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
       yield* connectWith(ENCODED_SERVER_CONFIG);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
+    }),
+  );
+
+  it.effect("refreshes the host clock when a liveness probe returns serverTime", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const ready = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        serverTime: "1970-01-01T01:00:00.000Z",
+      });
+      yield* Fiber.join(ready);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+      const legacyProbe = yield* Effect.forkChild(session.probe);
+      const legacyRequest = yield* awaitRequest(socket, 1);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: legacyRequest.id,
+          exit: { _tag: "Success", value: {} },
+        }),
+      );
+      yield* Fiber.join(legacyProbe);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+      const probe = yield* Effect.forkChild(session.probe);
+      const probeRequest = yield* awaitRequest(socket, 2);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: probeRequest.id,
+          exit: {
+            _tag: "Success",
+            value: { serverTime: "1970-01-01T00:00:00.000Z" },
+          },
+        }),
+      );
+      yield* Fiber.join(probe);
       expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
     }),
   );
