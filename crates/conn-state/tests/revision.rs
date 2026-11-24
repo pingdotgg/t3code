@@ -39,4 +39,11 @@ fn cache_overlap_preserves_live_body_revision_and_server_cursor() {
     let revision = state.revision;
     state.prepend_cached_messages(vec![notice("1", "already present")]);
     assert_eq!(state.revision, revision);
+    assert_eq!(state.history_prefix_len(), 1);
+    state.replace_cached_prefix(vec![notice("0", "corrected"), notice("1", "older")]);
+    assert_eq!(state.history_prefix_len(), 2);
+    assert_eq!(state.entries[2].id(), "2");
+    state.replace_cached_prefix(Vec::new());
+    assert_eq!(state.history_prefix_len(), 0);
+    assert_eq!(state.entries.len(), 1);
 }
