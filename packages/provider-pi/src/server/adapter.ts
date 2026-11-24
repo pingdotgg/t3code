@@ -3354,10 +3354,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         },
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
-        hasPendingBackgroundWorkForThread: (providerThread) =>
+        // An async pi-subagents run dies with the Pi process, so the session stays loaded for it.
+        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null || piAsyncRuns.size > 0),
+        hasPendingBackgroundWorkForThread: (providerThread, probe) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              (probe?.includeSubagents === true &&
+                [...piAsyncRuns.values()].some(
+                  (run) => run.turn.turnInput.providerThread.id === providerThread.id,
+                )),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;

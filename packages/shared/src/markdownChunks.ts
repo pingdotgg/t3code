@@ -23,6 +23,33 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
 
 // A tag name, not an autolink such as <https://example.com>.
 const HTML_BLOCK_START = /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)/;
+const closesAtBlankLine = (next: string) => next.trim() === "";
+
+// A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
+// each HTML block, so a cut waits until the ones an HTML block opened are closed.
+const WRAPPER_TAG = /<(\/?)(?:details|table)(?=[\s/>]|$)/gi;
+// An end tag that never comes, or back-to-back wrappers, must not make one huge piece.
+const WRAPPED_MAX_CHARS = 32 * 1024;
+
+function withoutComments(line: string): string {
+  let kept = "";
+  let at = 0;
+  for (let open = line.indexOf("<!--"); open !== -1; open = line.indexOf("<!--", at)) {
+    const close = line.indexOf("-->", open + 4);
+    if (close === -1) break;
+    kept += line.slice(at, open);
+    at = close + 3;
+  }
+  return kept + line.slice(at);
+}
+
+function openedWrappers(line: string): number {
+  let opened = 0;
+  for (const [, closing] of withoutComments(line).matchAll(WRAPPER_TAG)) {
+    opened += closing ? -1 : 1;
+  }
+  return opened;
+}
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
 function blockCloser(line: string): ((line: string) => boolean) | null {
@@ -44,7 +71,7 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
   // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
-  return HTML_BLOCK_START.test(line) ? (next) => next.trim() === "" : null;
+  return HTML_BLOCK_START.test(line) ? closesAtBlankLine : null;
 }
 
 export interface MarkdownChunk {
@@ -86,6 +113,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterDefinition = false;
   let afterHeading = false;
   let definitionChars = 0;
+  let openWrappers = 0;
   const flush = () => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
@@ -98,8 +126,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       let seen = 0;
       closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
     } else {
+      if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cut =
         chars >= targetChars &&
+        openWrappers === 0 &&
         (ATX_HEADING.test(line) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cut) flush();
@@ -114,6 +144,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         definitionChars += line.length + 1;
       }
     }
+    if (closes === closesAtBlankLine)
+      openWrappers = Math.max(0, openWrappers + openedWrappers(line));
     first = false;
     lines.push(line);
     chars += line.length + 1;

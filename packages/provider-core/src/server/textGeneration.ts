@@ -9,7 +9,7 @@ import type {
 import type * as Effect from "effect/Effect";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
-import type { ThreadTitleForkSource } from "./textGenerationPrompts.ts";
+import type { ChangeProducer, ThreadTitleForkSource } from "./textGenerationPrompts.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -37,6 +37,7 @@ export interface PrContentGenerationInput {
   diffPatch: string;
   changeRequestTemplate?: string | undefined;
   threadContext?: string | undefined;
+  producedBy?: ReadonlyArray<ChangeProducer> | undefined;
   policy?: TextGenerationPolicy | undefined;
   modelSelection: ModelSelection;
   projectId?: ProjectId | null | undefined;
