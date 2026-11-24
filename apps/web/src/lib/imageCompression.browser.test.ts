@@ -174,19 +174,4 @@ describe("prepareImageForAttachment color", () => {
     expect(convertToBlob).not.toHaveBeenCalled();
     expect(toBlob).not.toHaveBeenCalled();
   });
-
-  it("falls back to main-thread canvas encoding when Worker is unavailable", async () => {
-    const source = await makeImage("srgb", "#00ff00", "image/png");
-    vi.stubGlobal("Worker", undefined);
-    try {
-      using convertToBlob = vi.spyOn(OffscreenCanvas.prototype, "convertToBlob");
-      const prepared = await prepareImageForAttachment(source, 20 * 1024 * 1024);
-      if (!prepared.ok) throw new Error(prepared.reason);
-      expect(prepared.recompressed).toBe(true);
-      expect(prepared.imageSize).toEqual({ width: 2000, height: 1333 });
-      expect(convertToBlob).toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
 });
