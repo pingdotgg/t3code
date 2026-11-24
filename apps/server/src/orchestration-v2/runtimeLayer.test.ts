@@ -3599,6 +3599,72 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
+  it.effect("moves an idle thread to another project, but not a running one", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-move-thread");
+      const fromProjectId = ProjectId.make("runtime-layer-move-from");
+      const toProjectId = ProjectId.make("runtime-layer-move-to");
+      for (const projectId of [fromProjectId, toProjectId]) {
+        yield* seedProject({
+          projectId,
+          title: projectId,
+          workspaceRoot: `/workspace/${projectId}`,
+          defaultModelSelection: null,
+          createdAt: "2026-09-07T00:00:00.000Z",
+        });
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-move-create"),
+        threadId,
+        projectId: fromProjectId,
+        title: "Move me",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/move",
+        worktreePath: "/workspace/move-from-worktree",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-move-to"),
+        threadId,
+        projectId: toProjectId,
+      });
+      const moved = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      assert.deepInclude(moved, { projectId: toProjectId, branch: null, worktreePath: null });
+      const shell = yield* orchestrator.getShellSnapshot();
+      assert.equal(
+        shell.threads.find((candidate) => candidate.id === threadId)?.projectId,
+        toProjectId,
+      );
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-move-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-move-message"),
+        text: "Start a run.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const running = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-move-running"),
+          threadId,
+          projectId: fromProjectId,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(running, Orchestrator.OrchestratorDispatchError);
+    }),
+  );
+
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

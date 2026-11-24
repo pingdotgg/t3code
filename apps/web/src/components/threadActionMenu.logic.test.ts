@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  moveProjectMenuState,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -87,5 +91,32 @@ describe("buildThreadActionMenuItems", () => {
   it("disables only rename where no inline title editor exists", () => {
     const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
     expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
+  });
+
+  it("offers other projects, and only an idle top-level thread can move", () => {
+    const thread = {
+      environmentId: "env",
+      projectId: "a",
+      lineage: { relationshipToParent: null },
+    };
+    const projects = [
+      { environmentId: "env", id: "a", title: "A" },
+      { environmentId: "env", id: "b", title: "B" },
+      { environmentId: "env", id: "c", title: "C", archivedAt: "2026-01-01T00:00:00Z" },
+      { environmentId: "other", id: "d", title: "D" },
+      { environmentId: "env", id: "s", title: "scratch", isScratch: true as const },
+    ];
+    const state = moveProjectMenuState(thread, projects);
+    expect(state.moveProjectTargets.map((target) => target.id)).toEqual(["b", "s"]);
+    expect(state.canMoveProject).toBe(true);
+    expect(
+      moveProjectMenuState({ ...thread, lineage: { relationshipToParent: "subagent" } }, projects)
+        .canMoveProject,
+    ).toBe(false);
+    const move = buildThreadActionMenuItems({ ...baseState, ...state, isRunning: true }).find(
+      (item) => item.id === "move-project",
+    );
+    expect(move?.disabled).toBe(true);
+    expect(move?.children?.map((child) => child.id)).toEqual(["move-project:b", "move-project:s"]);
   });
 });
