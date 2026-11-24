@@ -77,15 +77,12 @@ export const layer: Layer.Layer<
       const context = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
         context;
-      // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
-      const stopped = run?.status === "interrupted" || run?.status === "cancelled";
+      // Runs settle before capture; `waiting` is a run persisted before captures ran after settling.
+      const settled =
+        run?.status === "completed" || run?.status === "interrupted" || run?.status === "cancelled";
 
       // A checkpoint on a settled run proves this at-least-once effect already committed.
-      if (
-        run !== undefined &&
-        run.checkpointId !== null &&
-        (run.status === "completed" || stopped)
-      ) {
+      if (run !== undefined && run.checkpointId !== null && settled) {
         return;
       }
       // Rollback uses the same lane and can precede a capture retry; preserve the restored workspace and discarded run.
@@ -95,7 +92,7 @@ export const layer: Layer.Layer<
 
       if (
         run === undefined ||
-        (run.status !== "waiting" && !stopped) ||
+        (run.status !== "waiting" && !settled) ||
         rootNode === undefined ||
         scope === undefined ||
         rootNode.checkpointScopeId !== scope.id ||
@@ -105,7 +102,7 @@ export const layer: Layer.Layer<
           threadId: input.threadId,
           runId: input.runId,
           scopeId: input.scopeId,
-          cause: "The persisted checkpoint capture target is incomplete or no longer waiting.",
+          cause: "The persisted checkpoint capture target is incomplete or was discarded.",
         });
       }
 
@@ -255,24 +252,30 @@ export const layer: Layer.Layer<
           if (currentRun === undefined || currentRun.activeAttemptId !== run.activeAttemptId) {
             return;
           }
-          const stoppedNow =
-            currentRun.status === "interrupted" || currentRun.status === "cancelled";
-          if (currentRun.status !== "waiting" && !stoppedNow) {
+          const legacyWaiting = currentRun.status === "waiting";
+          if (
+            !legacyWaiting &&
+            currentRun.status !== "completed" &&
+            currentRun.status !== "interrupted" &&
+            currentRun.status !== "cancelled"
+          ) {
             return;
           }
           // A Stop accepted once the provider's turn had ended stored only its request: the
-          // terminal already wrote `waiting`. That Stop still wins, and gets its result here.
-          const stopSignals = stoppedNow
-            ? []
-            : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
-                turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
-                turnItemRunIds: [run.id],
-              })).turnItems;
+          // terminal already wrote `completed` (or legacy `waiting`). That Stop still wins here.
+          const stopSignals =
+            !legacyWaiting && currentRun.status !== "completed"
+              ? []
+              : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
+                  turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+                  turnItemRunIds: [run.id],
+                })).turnItems;
           const stopRequest = stopSignals.some((item) => item.type === "run_interrupt_result")
             ? undefined
             : stopSignals.find((item) => item.type === "run_interrupt_request");
           const settledStatus =
             stopRequest === undefined ? ("completed" as const) : ("interrupted" as const);
+          const settlesRun = legacyWaiting || stopRequest !== undefined;
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
             currentRun;
@@ -371,16 +374,16 @@ export const layer: Layer.Layer<
                 nodeId: rootNode.id,
                 providerInstanceId: run.providerInstanceId,
                 occurredAt: capturedAt,
-                payload: stoppedNow
-                  ? { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id }
-                  : {
+                payload: settlesRun
+                  ? {
                       ...runWithoutDelegatedCompletion,
                       status: settledStatus,
                       completedAt: capturedAt,
                       checkpointId: checkpoint.id,
-                    },
+                    }
+                  : { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id },
               },
-              ...(stoppedNow
+              ...(!settlesRun
                 ? []
                 : [
                     {

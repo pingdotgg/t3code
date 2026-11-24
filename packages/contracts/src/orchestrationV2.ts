@@ -899,6 +899,10 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   ]),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** The thread's modes when this attempt's turn started. A later change reaches only the next turn. */
+  startedModes: Schema.optional(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
 });
 export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
 

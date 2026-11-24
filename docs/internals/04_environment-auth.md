@@ -8,8 +8,12 @@ model.
 ## Scoped sessions and delegation
 
 - **Narrowing only.** Pairing delegates a set of scopes. Exchanging a bootstrap credential can
-  narrow a grant, never widen it. Creating another pairing link requires both `access:write` and
-  every scope being delegated. Client labels and device metadata have no authorization role.
+  narrow a grant, never widen it. Client labels and device metadata have no authorization role.
+- **`access:write` hands out what the session holds and revokes anything.** Every route that
+  returns a credential to the caller requires `access:write` and every scope that credential
+  carries: a pairing link, an MCP sign-in approval, a link code from a linked environment, and a
+  guest link (which reads a thread). Revoking is not capped by the caller's scopes. Admitting a
+  T3 Connect device is not delegation; see [T3 Connect](./06_t3-connect.md).
 - **Why the default grant includes management scopes.** `terminal:operate` and
   `orchestration:operate` already grant OS-user execution (which can invoke `t3 auth session issue`),
   so withholding access or relay management from the default grant would not be a real boundary.
@@ -48,7 +52,8 @@ model.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather
-  than an MCP tool.
+  than an MCP tool. The same route mints a code that links another environment at a chosen access
+  level, and the linking side's RPC requires the caller to hold that level's scopes.
 
 ### Reusable dev credential
 
