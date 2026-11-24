@@ -129,6 +129,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --chat-content-max-width: 46rem;
+  --html-preview-max-width: var(--chat-content-max-width);
   --thread-details-panel-width: 17.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
@@ -980,6 +981,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     width: 100%;
     min-width: 0;
     max-width: var(--chat-content-max-width);
+  }
+
+  /* ChatCanvas sets these only while HTML previews run wider than the chat column. */
+  .html-preview-lane {
+    width: var(--html-preview-lane-width, auto);
+    margin-inline-start: var(--html-preview-lane-offset, 0px);
   }
 
   .messages-timeline-row-frame {
@@ -2364,6 +2371,16 @@ code {
 
 :root[data-chat-width="full"] {
   --chat-content-max-width: 100%;
+}
+
+/* HTML preview width setting. ChatCanvas measures this and never lays a
+   preview out narrower than the chat column. */
+:root[data-html-preview-width="wide"] {
+  --html-preview-max-width: 72rem;
+}
+
+:root[data-html-preview-width="full"] {
+  --html-preview-max-width: 100%;
 }
 
 :root[data-diff-color-scheme="blue-orange"] {
