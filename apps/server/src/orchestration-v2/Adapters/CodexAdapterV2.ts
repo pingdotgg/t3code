@@ -2518,6 +2518,39 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
+        // MCP servers Codex reports as starting, by native thread; its first model request waits on them.
+        const startingMcpServers = new Map<string, Set<string>>();
+        let resumingThreads = 0;
+        let reportedStartupPhase: string | undefined;
+        const reportStartupPhase = Effect.fn("CodexAdapterV2.reportStartupPhase")(function* () {
+          const phase =
+            resumingThreads > 0 ? "resume" : startingMcpServers.size > 0 ? "mcp" : undefined;
+          if (phase === reportedStartupPhase) return;
+          reportedStartupPhase = phase;
+          yield* emitProviderEvent({
+            type: "provider_session.updated",
+            driver: CODEX_PROVIDER,
+            providerSession: {
+              ...session,
+              ...(phase === undefined ? {} : { startupPhase: phase }),
+              updatedAt: yield* DateTime.now,
+            },
+          });
+        });
+        const reportingResume = <A, E, R>(resume: Effect.Effect<A, E, R>) =>
+          Effect.sync(() => {
+            resumingThreads += 1;
+          }).pipe(
+            Effect.andThen(reportStartupPhase()),
+            Effect.andThen(resume),
+            Effect.ensuring(
+              Effect.suspend(() => {
+                resumingThreads -= 1;
+                return reportStartupPhase();
+              }),
+            ),
+          );
+
         const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
         // Best effort: older Codex lacks thread/sample, and a sample fails once the user sends again.
         // Delegated threads share this session but have no one typing, so they never sample.
@@ -5305,6 +5338,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         yield* client.handleServerNotification("mcpServer/startupStatus/updated", (payload) =>
           Effect.gen(function* () {
             if (payload.threadId == null) return;
+            const starting = startingMcpServers.get(payload.threadId) ?? new Set<string>();
+            if (payload.status === "starting") starting.add(payload.name);
+            else starting.delete(payload.name);
+            if (starting.size === 0) startingMcpServers.delete(payload.threadId);
+            else startingMcpServers.set(payload.threadId, starting);
+            yield* reportStartupPhase();
             const failures =
               mcpStartupFailures.get(payload.threadId) ?? new Map<string, CodexMcpStartupFailure>();
             if (payload.status === "failed") {
@@ -8205,7 +8244,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          // Turn start republishes this record, so it carries the step MCP startup is still on.
+          get providerSession() {
+            return reportedStartupPhase === undefined
+              ? session
+              : { ...session, startupPhase: reportedStartupPhase };
+          },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
@@ -8325,7 +8369,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               rootProviderThreads.set(nativeThreadId, threadInput.providerThread);
               goalUpdatesHeld.add(nativeThreadId);
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(resume),
+                Effect.andThen(reportingResume(resume)),
                 withAppServerDeadline("thread/resume"),
                 Effect.flatMap(decodeCodexResumeMetadata),
                 // Stay registered: a lost or undecodable response may still have resumed the thread.

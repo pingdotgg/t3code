@@ -434,23 +434,61 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
     ).toBe("Starting");
+    // Before its session exists, the run still names its provider from the instances the client knows.
+    const unopened = deriveThreadActivityRun({ ...starting, providerSessions: [] }, [
+      { instanceId: openRun.providerInstanceId, driver: session.driver },
+    ]);
+    expect(unopened?.providerStartingLabel).toBe("Starting Claude");
+    expect(unopened?.providerStarting).toEqual({
+      instanceId: openRun.providerInstanceId,
+      driver: session.driver,
+    });
+
+    const providerTurnId = ProviderTurnId.make("provider-turn-starting");
+    const turnStarted = {
+      ...starting,
+      providerTurns: [
+        {
+          id: providerTurnId,
+          providerThreadId: ProviderThreadId.make("provider-thread-starting"),
+          nodeId: NodeId.make("node-starting"),
+          runAttemptId: attemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        },
+      ],
+    };
+    expect(deriveThreadActivityRun(turnStarted)?.providerStartingLabel).toBeUndefined();
+
+    // A provider can still be preparing after its turn opens; its phase shows until the first output.
+    const connecting = {
+      ...turnStarted,
+      providerSessions: [{ ...session, startupPhase: "connecting" }],
+    };
+    expect(deriveThreadActivityRun(connecting)?.providerStartingLabel).toBe("Connecting to Claude");
+    const reasoning = {
+      id: TurnItemId.make("first-output"),
+      threadId: v2Projection.thread.id,
+      runId: openRun.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "reasoning" as const,
+      status: "running" as const,
+      streaming: true,
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
     expect(
-      deriveThreadActivityRun({
-        ...starting,
-        providerTurns: [
-          {
-            id: ProviderTurnId.make("provider-turn-starting"),
-            providerThreadId: ProviderThreadId.make("provider-thread-starting"),
-            nodeId: NodeId.make("node-starting"),
-            runAttemptId: attemptId,
-            nativeTurnRef: null,
-            ordinal: 1,
-            status: "running",
-            startedAt: now,
-            completedAt: null,
-          },
-        ],
-      })?.providerStartingLabel,
+      deriveThreadActivityRun({ ...connecting, turnItems: [reasoning] })?.providerStartingLabel,
     ).toBeUndefined();
   });
 

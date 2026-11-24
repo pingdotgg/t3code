@@ -774,6 +774,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  /** Reports the step the CLI is on before the turn can start, such as `mcp`. */
+  readonly onStartupPhase?: (phase: string) => Effect.Effect<void>;
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -1858,6 +1860,7 @@ export const layerQueryRunner: Layer.Layer<
                       orElse: timedOut("initialize"),
                     }),
                   );
+                  if (input.onStartupPhase !== undefined) yield* input.onStartupPhase("mcp");
                   // Errors and mcp_status can echo headers; log only server names.
                   const failed = yield* Effect.tryPromise({
                     try: () => queryRuntime.setMcpServers(mcpServers),
@@ -6671,6 +6674,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return Queue.offer(events, event).pipe(Effect.asVoid);
         };
 
+        let reportedStartupPhase: string | undefined;
+        const reportStartupPhase = Effect.fn("ClaudeAdapterV2.reportStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (phase === reportedStartupPhase) return;
+          reportedStartupPhase = phase;
+          yield* emitProviderEvent({
+            type: "provider_session.updated",
+            driver: CLAUDE_PROVIDER,
+            providerSession: {
+              ...session,
+              ...(phase === undefined ? {} : { startupPhase: phase }),
+              updatedAt: yield* DateTime.now,
+            },
+          });
+        });
+        // Only a turn's first API request is startup; later ones are the model at work.
+        const requestedTurns = new WeakSet<ActiveClaudeTurnContext>();
+        let connectingTurn: ActiveClaudeTurnContext | undefined;
+
         const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
             nativeThreadId,
@@ -9764,6 +9787,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
               : requested;
           input.context.steersClosed = true;
+          if (connectingTurn === input.context) {
+            connectingTurn = undefined;
+            yield* reportStartupPhase(undefined);
+          }
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
             yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
@@ -11188,6 +11215,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.status === "requesting") ||
               (lifecycle?.state === "started" && lifecycle.uuid === context.promptUuid)
             ) {
+              if (
+                message.type === "system" &&
+                message.subtype === "status" &&
+                !requestedTurns.has(context)
+              ) {
+                requestedTurns.add(context);
+                connectingTurn = context;
+                yield* reportStartupPhase("connecting");
+              }
               const since = yield* DateTime.now;
               context.unansweredRequestSince = since;
               const previousWatch = context.unansweredRequestWatch;
@@ -11215,6 +11251,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               context.unansweredRequestSince = undefined;
               yield* clearUnansweredRequestWatch(context);
+              if (connectingTurn === context) {
+                connectingTurn = undefined;
+                yield* reportStartupPhase(undefined);
+              }
             }
           }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
@@ -13646,8 +13686,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   providerSessionId: input.providerSessionId,
                   options: queryOptions,
                   ...(turnInput.resume ? { resume: true } : {}),
+                  onStartupPhase: reportStartupPhase,
                 })
-                .pipe(Effect.map((querySession) => ({ program, querySession }))),
+                .pipe(
+                  Effect.map((querySession) => ({ program, querySession })),
+                  Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+                ),
             ),
           );
           // The SDK spawns the CLI per turn, so only the open waits for a provider update.

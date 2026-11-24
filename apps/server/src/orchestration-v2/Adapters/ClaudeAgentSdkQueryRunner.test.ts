@@ -495,6 +495,38 @@ it.effect("cancels a stalled registration without retrying or retaining its prom
   }).pipe(Effect.provide(realQueryRunner)),
 );
 
+it.effect("reports MCP startup after the CLI boots, while it registers the servers", () =>
+  Effect.gen(function* () {
+    const steps: Array<string> = [];
+    const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => {
+            steps.push("booted");
+            return {};
+          },
+          setMcpServers: async () => {
+            steps.push("registered");
+            return { added: ["t3-code"], removed: [], errors: {} };
+          },
+          close: vi.fn(),
+          [Symbol.asyncDispose]: async () => {},
+        }) as unknown as ClaudeSdk.Query,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+    const runner = yield* ClaudeAgentSdkQueryRunner;
+    const { resume, ...options } = resumedMcpQueryInput.options;
+    const session = yield* runner.open({
+      ...resumedMcpQueryInput,
+      options: { ...options, sessionId: resume },
+      onStartupPhase: (phase) => Effect.sync(() => steps.push(phase)),
+    });
+    yield* session.close;
+
+    assert.deepEqual(steps, ["booted", "mcp", "registered"]);
+  }).pipe(Effect.provide(realQueryRunner)),
+);
+
 it.effect("retries a fresh session once after MCP registration times out", () =>
   Effect.gen(function* () {
     const registrationStarted = Promise.withResolvers<void>();

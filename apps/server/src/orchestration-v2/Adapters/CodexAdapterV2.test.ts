@@ -4076,6 +4076,114 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("reports MCP servers Codex is still starting until they settle", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "mcp-startup-phase-thread";
+      const nativeTurnId = "mcp-startup-phase-turn";
+      const status = (name: string, value: "starting" | "ready" | "failed") =>
+        ({
+          type: "emit_inbound",
+          label: `mcp-${name}-${value}`,
+          frame: {
+            method: "mcpServer/startupStatus/updated",
+            params: {
+              threadId: nativeThreadId,
+              name,
+              status: value,
+              error: value === "failed" ? "boom" : null,
+              failureReason: null,
+            },
+          },
+        }) satisfies CodexReplay.CodexAppServerReplayEntry;
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId,
+        prompt: "use the tools",
+      });
+      // Recorded Codex reports `starting` while turn/start is in flight and `ready` after the turn runs.
+      const turnStart =
+        preamble.findIndex(
+          (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+        ) + 1;
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-mcp-startup-phase",
+        entries: [
+          ...preamble.slice(0, turnStart),
+          status("docs", "starting"),
+          status("search", "starting"),
+          ...preamble.slice(turnStart),
+          status("docs", "ready"),
+          status("search", "failed"),
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      let runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
+      // The turn start republishes the session record, so it must still carry the phase then.
+      const turnRunning = yield* Deferred.make<void>();
+      let phaseWhileRunning: string | undefined;
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+            ? Deferred.succeed(turnRunning, undefined)
+            : Effect.void,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "mcp-docs-ready"
+            ? Deferred.await(turnRunning).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    phaseWhileRunning = runtime?.providerSession.startupPhase;
+                  }),
+                ),
+              )
+            : Effect.void,
+      );
+      runtime = harness.runtime;
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-startup-phase-attempt"),
+          text: "use the tools",
+        }),
+      );
+      yield* harness.firstTerminal;
+      const updates = harness.events.flatMap((event) =>
+        event.type === "provider_session.updated"
+          ? [event.providerSession.startupPhase ?? null]
+          : event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+            ? ["turn running"]
+            : [],
+      );
+      // One report while any server starts, kept past turn/start, cleared once the last one settles.
+      assert.deepEqual(updates, ["mcp", "turn running", null]);
+      assert.equal(phaseWhileRunning, "mcp");
+      assert.isUndefined(harness.runtime.providerSession.startupPhase);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("stops asking for commands the user allowed for the session", () =>
     Effect.gen(function* () {
       const nativeThreadId = "session-approval-thread";
@@ -4879,9 +4987,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ],
       });
       const resumeThreadEnvs: Array<unknown> = [];
+      const startupPhases = yield* Queue.unbounded<string | null>();
       const harness = yield* makeCodexReplayHarness(
         transcript,
-        () => Effect.void,
+        (event) =>
+          event.type === "provider_session.updated"
+            ? Queue.offer(startupPhases, event.providerSession.startupPhase ?? null)
+            : Effect.void,
         (method, params) =>
           Effect.sync(() => {
             if (method === "thread/resume") resumeThreadEnvs.push(threadEnvOf(params));
@@ -4909,6 +5021,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(resumed.status, "idle");
       assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
       assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined, explicitThreadId]);
+      // Each resume is reported while Codex loads the thread, then cleared.
+      assert.deepEqual(Array.from(yield* Queue.takeN(startupPhases, 6)), [
+        "resume",
+        null,
+        "resume",
+        null,
+        "resume",
+        null,
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
