@@ -26,6 +26,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+import { forkRoleToSet } from "../../../orchestration-v2/ForkRoles.ts"; // fork: roles
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -426,6 +427,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
+          break;
+        // fork: roles
+        case "set_role":
+          command = { ...common, type: "thread.role.set", roleId: yield* forkRoleToSet(input) };
+          break;
+        case "clear_role": // fork: roles
+          command = { ...common, type: "thread.role.set", roleId: null };
           break;
         case "pin": {
           // Always send a key, as the client does: the reducer ignores it for a

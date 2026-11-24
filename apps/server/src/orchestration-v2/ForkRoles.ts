@@ -1,4 +1,9 @@
-import { ForkRoleId, type ForkRole, type ForkRolesListResult } from "@t3tools/contracts";
+import {
+  ForkRoleId,
+  OrchestratorMcpFailure,
+  type ForkRole,
+  type ForkRolesListResult,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -137,3 +142,21 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ForkRoles, make);
+
+/** The role `t3_thread_organize` sets, once its file is confirmed to exist. */
+export const forkRoleToSet = Effect.fn("ForkRoles.roleToSet")(function* (input: {
+  readonly roleId?: ForkRoleId | undefined;
+}) {
+  const { directory, roles } = yield* (yield* ForkRoles).list;
+  const invalid = (message: string) =>
+    new OrchestratorMcpFailure({ code: "invalid_request", message });
+  if (directory === null) {
+    return yield* invalid("No roles directory is set. Set it in Settings before assigning a role.");
+  }
+  const available = `Available roles: ${roles.map((role) => role.id).join(", ") || "none"}.`;
+  if (input.roleId === undefined) return yield* invalid(`set_role requires roleId. ${available}`);
+  if (!roles.some((role) => role.id === input.roleId)) {
+    return yield* invalid(`No role file ${input.roleId}.md in ${directory}. ${available}`);
+  }
+  return input.roleId;
+});
