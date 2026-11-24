@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { autoLevelSelection } from "@t3tools/shared/autoModel";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -39,6 +40,7 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -181,6 +183,14 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           runId,
           messageId: entry.messageId,
           originalText: entry.text,
+          // An Auto-routed pick opens as its Auto level, as in the picker.
+          modelSelection: autoLevelSelection(
+            entry.message?.followsThreadSelection
+              ? (appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(target))?.projection
+                  .thread.modelSelection ?? entry.run.modelSelection)
+              : entry.run.modelSelection,
+          ),
+          followsThreadSelection: entry.message?.followsThreadSelection === true,
           existingAttachments: entry.attachments,
           ...(entry.context ? { context: entry.context } : {}),
         },
