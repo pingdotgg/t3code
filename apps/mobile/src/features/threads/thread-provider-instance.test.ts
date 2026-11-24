@@ -208,20 +208,22 @@ describe("thread list reorder availability", () => {
                 : current.activeReorderEnvironmentIds,
           };
         };
-        // Unarranged Active rows have implied keys, so a move writes only the moved row
-        // and stays possible past an offline one; Pinned still has to rewrite both.
-        const isActive = section === "active";
-        const downWrites = () =>
-          createThreadMovePlanner(plannerInput())(movedId, "down")?.length ?? 0;
-        expect(downWrites()).toBe(isActive ? 1 : 2);
+        // Active rows sort by an implied key, so moving past an unarranged row writes only the mover.
+        const expectMoveDown = (neighborWritable: boolean) => {
+          const movable = section === "active" || neighborWritable;
+          expect(createThreadMovePlanner(plannerInput())(movedId, "down")?.length).toBe(
+            movable ? (section === "active" ? 1 : 2) : undefined,
+          );
+          expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(
+            movable,
+          );
+        };
+        expectMoveDown(true);
         const before = registry.get(environments);
 
         registry.set(connected, [onlineId]);
 
-        expect(downWrites()).toBe(isActive ? 1 : 0);
-        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(
-          isActive,
-        );
+        expectMoveDown(false);
         expect(registry.get(environments).pinningEnvironmentIds.has(offlineId)).toBe(true);
         expect(registry.get(environments).settlementEnvironmentIds.has(offlineId)).toBe(true);
         expect(registry.get(environments).providersByEnvironmentId.get(offlineId)).toBe(
@@ -267,7 +269,7 @@ describe("thread list reorder availability", () => {
         );
         expect(updated.pinReorderEnvironmentIds.has(offlineId)).toBe(false);
         expect(updated.activeReorderEnvironmentIds.has(offlineId)).toBe(false);
-        expect(downWrites()).toBe(isActive ? 1 : 0);
+        expectMoveDown(false);
 
         registry.set(
           configs,
@@ -291,18 +293,14 @@ describe("thread list reorder availability", () => {
 
         registry.set(connected, [onlineId, offlineId]);
 
-        expect(downWrites()).toBe(isActive ? 1 : 2);
-        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(true);
+        expectMoveDown(true);
         expect(registry.get(environments).snoozePresetsByEnvironmentId.get(offlineId)).toBe(
           updated.snoozePresetsByEnvironmentId.get(offlineId),
         );
 
         registry.set(configs, new Map([[onlineId, config]]));
 
-        expect(downWrites()).toBe(isActive ? 1 : 0);
-        expect(computeThreadMoveAvailability(plannerInput()).get(movedId)?.canMoveDown).toBe(
-          isActive,
-        );
+        expectMoveDown(false);
       } finally {
         registry.dispose();
       }
