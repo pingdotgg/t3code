@@ -204,6 +204,51 @@ it("leaves description checkboxes read-only without the right to edit it", async
   );
 });
 
+it("ticks a comment checkbox when canEdit is true and leaves it read-only when false", async () => {
+  setup();
+  const commentBody = "Use the checkbox below for a quick retry:\n\n- [ ] Trigger review";
+  const ticked = commentBody.replace("- [ ] Trigger review", "- [x] Trigger review");
+  const botComment = {
+    id: "c-bot",
+    kind: "issue-comment" as const,
+    author: { login: "coderabbitai", name: null, avatarUrl: null },
+    body: commentBody,
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  {
+    await using screen = await render({
+      ...detail,
+      body: "",
+      comments: [{ ...botComment, canEdit: true }],
+    });
+    const box = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(box.disabled).toBe(false);
+    await userEvent.click(box);
+    expect(state.update).toHaveBeenCalledWith({
+      environmentId: "environment",
+      input: expect.objectContaining({
+        number: 1,
+        commentId: "c-bot",
+        kind: "issue-comment",
+        body: ticked,
+      }),
+    });
+  }
+  {
+    await using screen = await render({
+      ...detail,
+      body: "",
+      comments: [{ ...botComment, canEdit: false }],
+    });
+    expect(
+      screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled,
+    ).toBe(true);
+  }
+});
+
 it("fixes an overview thread as its opening remark, since it has no line to attach", async () => {
   setup();
   const author = { login: "reviewer", name: null, avatarUrl: null };

@@ -52,6 +52,7 @@ import {
   type PullRequestTimelineThread,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
@@ -94,12 +95,14 @@ function TimelineBody({
   cwd,
   environmentId,
   threadRef,
+  onTaskListChange,
 }: {
   body: string;
   markdown: boolean;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
   return (
     <div className="mt-3">
@@ -109,6 +112,7 @@ function TimelineBody({
           cwd={cwd}
           environmentId={environmentId}
           threadRef={threadRef}
+          onTaskListChange={onTaskListChange}
         />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
@@ -374,6 +378,14 @@ function ConversationCard({
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
+            onTaskListChange={
+              editable !== null
+                ? ({ markerOffset, checked }) => {
+                    const nextBody = setMarkdownTaskChecked(editable.body, markerOffset, checked);
+                    if (nextBody !== editable.body) void save(nextBody);
+                  }
+                : undefined
+            }
           />
         </div>
       ) : null}

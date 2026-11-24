@@ -35,6 +35,7 @@ import {
 } from "./pullRequestDetail.logic";
 import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
@@ -414,6 +415,18 @@ export function ReviewThreadCard({
                       text={comment.body}
                       cwd={workspaceRoot}
                       environmentId={environmentId}
+                      onTaskListChange={
+                        canEditComment(comment)
+                          ? ({ markerOffset, checked }) => {
+                              const nextBody = setMarkdownTaskChecked(
+                                comment.body,
+                                markerOffset,
+                                checked,
+                              );
+                              if (nextBody !== comment.body) void saveEdit(comment.id, nextBody);
+                            }
+                          : undefined
+                      }
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton

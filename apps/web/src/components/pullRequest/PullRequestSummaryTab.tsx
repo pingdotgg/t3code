@@ -243,6 +243,14 @@ function CommentBody({
         cwd={editing.cwd}
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
+        onTaskListChange={
+          editing.canEdit(comment)
+            ? ({ markerOffset, checked }) => {
+                const nextBody = setMarkdownTaskChecked(comment.body, markerOffset, checked);
+                if (nextBody !== comment.body) void editing.onSave(comment, nextBody);
+              }
+            : undefined
+        }
       />
       {editing.canEdit(comment) ? (
         <PullRequestEditButton

@@ -725,7 +725,9 @@ interface RemarkFields {
 // Hidden (minimized) remarks are left out, as github.com collapses them: a maintainer marked them
 // spam, off-topic, or outdated, and they should not reach readers or agents.
 function toComments(raw: {
-  readonly comments: ReadonlyArray<RemarkFields & { readonly createdAt: string }>;
+  readonly comments: ReadonlyArray<
+    RemarkFields & { readonly createdAt: string; readonly viewerCanUpdate?: boolean | undefined }
+  >;
   readonly reviews: ReadonlyArray<
     RemarkFields & { readonly state: string; readonly submittedAt: string | null }
   >;
@@ -742,6 +744,7 @@ function toComments(raw: {
       url: trimmed(comment.url),
       path: null,
       reviewState: null,
+      ...(comment.viewerCanUpdate === undefined ? {} : { canEdit: comment.viewerCanUpdate }),
     }));
   // Bodiless COMMENTED reviews only hold line comments read separately.
   const reviews = raw.reviews.flatMap((review): ReadonlyArray<PullRequestComment> => {
@@ -1415,6 +1418,7 @@ function toThreadComment(comment: ThreadComment, viewer: string | null): PullReq
     editedAt: comment.lastEditedAt,
     url: trimmed(comment.url),
     ...(reviewUrl === null ? {} : { reviewUrl }),
+    ...(comment.viewerCanUpdate === undefined ? {} : { canEdit: comment.viewerCanUpdate }),
     reactions: toReactions(comment.reactionGroups, viewer),
   };
 }

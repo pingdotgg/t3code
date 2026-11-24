@@ -302,6 +302,7 @@ query PullRequestActivity(
           lastEditedAt
           url
           isMinimized
+          viewerCanUpdate
           author {
             login
             avatarUrl
