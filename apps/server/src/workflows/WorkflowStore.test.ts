@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import type * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
@@ -15,7 +17,11 @@ import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(
-  use: Effect.Effect<A, E, WorkflowStore.WorkflowStore | MilestoneHub.MilestoneHub>,
+  use: Effect.Effect<
+    A,
+    E,
+    WorkflowStore.WorkflowStore | MilestoneHub.MilestoneHub | SqlClient.SqlClient
+  >,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -29,7 +35,7 @@ const withStore = <A, E>(
       use,
       WorkflowStore.layer.pipe(
         Layer.provideMerge(Layer.merge(migrated, MilestoneHub.layer)),
-        Layer.provide(database),
+        Layer.provideMerge(database),
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
@@ -651,6 +657,39 @@ it.effect("prunes past the kept number when runs share a start time, and tells w
         "c",
         "d",
       ]);
+    }),
+  ),
+);
+
+it.effect("tells watchers of the deletions that committed when a later workflow's fails", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const sql = yield* SqlClient.SqlClient;
+      for (const [runId, workflow] of [
+        ["a1", "a"],
+        ["b1", "b"],
+      ] as const) {
+        yield* started(store, runId, workflow);
+        yield* store.runEnded(runId, "skipped", "only a ping", null);
+        yield* store.enginePruned(runId);
+      }
+      yield* sql`
+        CREATE TRIGGER refuse_b BEFORE DELETE ON workflow_runs WHEN OLD.workflow = 'b'
+        BEGIN SELECT RAISE(ABORT, 'refused'); END
+      `;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          const exit = yield* Effect.exit(store.pruneSkipped(0, 100));
+          assert.isTrue(Exit.isFailure(exit));
+          assert.equal(yield* PubSub.remaining(told), 1);
+        }),
+      );
+      assert.deepStrictEqual(
+        (yield* store.runs(undefined)).map((run) => run.run_id),
+        ["b1"],
+      );
     }),
   ),
 );

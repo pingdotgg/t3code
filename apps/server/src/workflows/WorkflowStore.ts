@@ -785,40 +785,46 @@ export const make = Effect.gen(function* () {
       `;
       let deleted = 0;
       let last: string | undefined;
-      for (const { workflow } of workflows) {
-        if (deleted >= limit) break;
-        // rowid breaks ties: a burst of runs can share one started_at across the boundary.
-        const [newest] =
-          kept === 0
-            ? [{ started_at: "\u{10FFFF}", id: 0 }]
-            : yield* sql<{ started_at: string; id: number }>`
-                SELECT started_at, rowid AS id FROM workflow_runs
-                WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
-                ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET ${kept - 1}
-              `;
-        if (newest === undefined) continue;
-        const ids = (yield* sql<{ run_id: string }>`
-          SELECT run_id FROM workflow_runs r
-          WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
-            AND (started_at, rowid) < (${newest.started_at}, ${newest.id})
-            AND ended_at IS NOT NULL AND engine_pruned_at IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM workflow_runs c WHERE c.parent_run_id = r.run_id)
-          ORDER BY started_at, rowid LIMIT ${limit - deleted}
-        `).map((row) => row.run_id);
-        if (ids.length === 0) continue;
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            yield* sql`DELETE FROM workflow_steps WHERE ${sql.in("run_id", ids)}`;
-            yield* sql`DELETE FROM workflow_marks WHERE ${sql.in("run_id", ids)}`;
-            yield* sql`DELETE FROM workflow_run_references WHERE ${sql.in("run_id", ids)}`;
-            yield* sql`DELETE FROM workflow_runs WHERE ${sql.in("run_id", ids)}`;
-          }),
-        );
-        deleted += ids.length;
-        last = ids.at(-1);
-      }
-      if (last !== undefined) yield* PubSub.publish(changes, last);
-      return deleted;
+      // Each batch commits on its own, so a later failure must not hide the earlier deletions.
+      return yield* Effect.gen(function* () {
+        for (const { workflow } of workflows) {
+          if (deleted >= limit) break;
+          // rowid breaks ties: a burst of runs can share one started_at across the boundary.
+          const [newest] =
+            kept === 0
+              ? [{ started_at: "\u{10FFFF}", id: 0 }]
+              : yield* sql<{ started_at: string; id: number }>`
+                  SELECT started_at, rowid AS id FROM workflow_runs
+                  WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
+                  ORDER BY started_at DESC, rowid DESC LIMIT 1 OFFSET ${kept - 1}
+                `;
+          if (newest === undefined) continue;
+          const ids = (yield* sql<{ run_id: string }>`
+            SELECT run_id FROM workflow_runs r
+            WHERE workflow = ${workflow} AND status = 'skipped' AND parent_run_id IS NULL
+              AND (started_at, rowid) < (${newest.started_at}, ${newest.id})
+              AND ended_at IS NOT NULL AND engine_pruned_at IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM workflow_runs c WHERE c.parent_run_id = r.run_id)
+            ORDER BY started_at, rowid LIMIT ${limit - deleted}
+          `).map((row) => row.run_id);
+          if (ids.length === 0) continue;
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DELETE FROM workflow_steps WHERE ${sql.in("run_id", ids)}`;
+              yield* sql`DELETE FROM workflow_marks WHERE ${sql.in("run_id", ids)}`;
+              yield* sql`DELETE FROM workflow_run_references WHERE ${sql.in("run_id", ids)}`;
+              yield* sql`DELETE FROM workflow_runs WHERE ${sql.in("run_id", ids)}`;
+            }),
+          );
+          deleted += ids.length;
+          last = ids.at(-1);
+        }
+        return deleted;
+      }).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => (last === undefined ? Effect.void : PubSub.publish(changes, last))),
+        ),
+      );
     }, Effect.orDie),
     orphans: sql<RunRow>`
       SELECT c.* FROM workflow_runs c
