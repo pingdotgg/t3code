@@ -149,6 +149,7 @@ fn panel(engine: Arc<Shell>, dir: &TestDir, endpoint: &str) -> Arc<Panel> {
         providers: conn_provider::ProviderSet::default(),
         text_generators: None,
         guide_runs: guide_writer::Runs::default(),
+        agent_ends: agent_ends::AgentEnds::default(),
     })
 }
 async fn call(table: &MethodTable, tag: &str, input: Value) -> Result<Value, Failure> {
@@ -2068,6 +2069,17 @@ fn observed_threads_evict_the_oldest_observation_and_keep_completion_together() 
 
 /// A stub GitHub whose pull request 7 has the checks and comments in `state`.
 async fn watched_api(state: Arc<Mutex<Value>>) -> (String, tokio::task::JoinHandle<()>) {
+    watched_api_held(state, None).await
+}
+
+/// A host read held at `entered` until the semaphore gives a permit.
+type HostHold = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Semaphore>);
+
+/// [`watched_api`] whose pull request reads wait on `hold`, as a slow host does.
+async fn watched_api_held(
+    state: Arc<Mutex<Value>>,
+    hold: Option<HostHold>,
+) -> (String, tokio::task::JoinHandle<()>) {
     use axum::{Json, Router, routing::get};
     let router = Router::new()
         .route("/user", get(|| async { Json(json!({"id": 12, "login": "nick"})) }))
@@ -2075,13 +2087,29 @@ async fn watched_api(state: Arc<Mutex<Value>>) -> (String, tokio::task::JoinHand
             "/graphql",
             axum::routing::post(move |Json(body): Json<Value>| {
                 let state = state.clone();
+                let hold = hold.clone();
                 async move {
                     let query = text(&body, "query");
+                    if let Some((entered, permits)) = hold
+                        && !query.contains("RoutingIdentityViewer")
+                    {
+                        entered.notify_one();
+                        permits.acquire().await.expect("permit").forget();
+                    }
                     let now = state.lock().expect("state").clone();
                     let mut pr: Value = serde_json::from_str(include_str!(
                         "../../../../conn-source-control/src/pull_requests/sample.json"
                     ))
                     .expect("sample");
+                    if now["merged"] == true {
+                        pr["state"] = json!("MERGED");
+                        pr["mergedAt"] = json!("2026-11-20T12:00:00Z");
+                        pr["mergeCommit"] = json!({"oid": "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9"});
+                        pr["mergedBy"] = json!({"__typename": "User", "login": "octocat"});
+                    }
+                    if now["unavailable"] == true {
+                        return Json(json!({"errors": [{"message": "Something went wrong"}]}));
+                    }
                     pr["headRefOid"] = now["head"].clone();
                     pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"] =
                         json!({"nodes": now["contexts"], "pageInfo": {"hasNextPage": false, "endCursor": null}});
@@ -2139,7 +2167,7 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
     };
     shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&watch)]);
     let panel = panel(shell.clone(), &dir, &base);
-    let mut watcher = watches::Watcher::new(panel);
+    let mut watcher = watches::Watcher::new(panel.clone());
 
     // The first read is the baseline: the watch remembers the head, nothing wakes.
     watcher.pass(None).await;
@@ -2196,16 +2224,332 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
         "a quiet pull request is left alone"
     );
 
-    // A merged pull request ends the watch without a wake.
-    {
-        let mut snapshot = shell.snapshot.lock().expect("snapshot");
-        snapshot["threads"][0]["pullRequests"][0]["snapshot"] = json!({"state": "merged"});
-    }
+    // Someone else merged it: one wake that names the merge, and the watch ends. A new loop,
+    // as a quiet pull request is read again only after `QUIET_REREAD_MS`.
+    state.lock().expect("state")["merged"] = json!(true);
+    let mut watcher = watches::Watcher::new(panel.clone());
     watcher.pass(None).await;
-    let ended = shell.syncs.lock().expect("syncs").pop().expect("end sync");
-    assert_eq!(ended["watch"], Value::Null);
-    assert!(ended.get("wake").is_none());
+    let merged = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("merge sync");
+    assert_eq!(merged["watch"], Value::Null);
+    assert_eq!(
+        merged["wake"]["text"],
+        format!(
+            "Pull request #7 (https://github.com/a/b/pull/7) was merged into {} by octocat as 3b2f958, so Conn stopped watching it.",
+            merged_base().as_str().unwrap_or_default()
+        )
+    );
+    assert_eq!(
+        merged["wake"]["notification"],
+        json!({"source": {"kind": "monitor"}, "outcome": "completed",
+            "summary": "#7: merged, stopped watching"})
+    );
+    // The engine cleared the watch: the next sweep sends nothing more.
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&Value::Null)]);
+    watcher.pass(None).await;
+    assert!(shell.syncs.lock().expect("syncs").is_empty());
+
+    // A merged link the host cannot read ends from its snapshot, with the wake.
+    {
+        state.lock().expect("state")["unavailable"] = json!(true);
+        let mut snapshot = shell.snapshot.lock().expect("snapshot");
+        snapshot["threads"] = json!([thread(&woke["watch"])]);
+        snapshot["threads"][0]["pullRequests"][0]["snapshot"] =
+            json!({"state": "merged", "baseBranch": "main"});
+    }
+    let mut cold = watches::Watcher::new(panel.clone());
+    cold.pass(None).await;
+    let from_snapshot = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("snapshot end");
+    assert_eq!(from_snapshot["watch"], Value::Null);
+    assert_eq!(
+        from_snapshot["wake"]["text"],
+        "Pull request #7 (https://github.com/a/b/pull/7) was merged into main, so Conn stopped watching it."
+    );
+    state.lock().expect("state")["unavailable"] = json!(false);
+
+    // The thread's own agent merged it: the read right after its command ends it quietly.
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&woke["watch"])]);
+    let closed = || {
+        conn_source_control::close_commands::closed_by("gh pr merge 7 --squash")
+            .expect("a close command")
+    };
+    let ends = &panel.agent_ends;
+    let mut own = watches::Watcher::new(panel.clone());
+    ends.command("t1", "cmd-1", closed(), None, None);
+    ends.command("t1", "cmd-1", closed(), None, Some(true));
+    own.read_after_agents().await;
+    let quiet = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("own merge sync");
+    assert_eq!(quiet["watch"], Value::Null);
+    assert!(quiet.get("wake").is_none(), "{quiet}");
+    // The agent's merge is forgotten once read: a later external end wakes again.
+    own.pass(None).await;
+    assert!(
+        shell
+            .syncs
+            .lock()
+            .expect("syncs")
+            .pop()
+            .is_some_and(|s| s.get("wake").is_some()),
+        "no agent command holds the watch any more"
+    );
+
+    // A merge command that failed ended nothing itself: the merge found after it wakes.
+    let mut failed = watches::Watcher::new(panel.clone());
+    ends.command("t1", "cmd-2", closed(), None, Some(false));
+    failed.read_after_agents().await;
+    let woken = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("failed merge sync");
+    assert!(woken.get("wake").is_some(), "{woken}");
+
+    // Gate finding 3: a merge through the MCP tool is the calling thread's own; an
+    // auto-merge that lands later still wakes.
+    let mcp = |phase: &str| {
+        json!({"threadId": "t1", "itemId": "mcp-merge:1", "host": "github.com",
+            "repository": "a/b", "numbers": [7], "phase": phase})
+    };
+    panel
+        .mcp_call("agentMerge", mcp("running"))
+        .await
+        .expect("running");
+    panel
+        .mcp_call("agentMerge", mcp("merged"))
+        .await
+        .expect("merged");
+    let mut tool = watches::Watcher::new(panel.clone());
+    tool.read_after_agents().await;
+    let quiet = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("tool merge sync");
+    assert!(quiet.get("wake").is_none(), "{quiet}");
+    tool.pass(None).await;
+    assert!(
+        shell
+            .syncs
+            .lock()
+            .expect("syncs")
+            .pop()
+            .is_some_and(|s| s.get("wake").is_some()),
+        "a later merge, as an auto-merge, wakes"
+    );
     task.abort();
+}
+
+/// The engine's command feed reaches the watch loop as T3's reactor reads it: a merge command
+/// owns its pull request while it runs, asks for one read when it ends (a failure reported as
+/// completed counts as failed and drops it), a run's end drops what still runs, and other
+/// commands are skipped.
+#[tokio::test]
+async fn agent_merge_commands_reach_the_watch_loop() {
+    let (feed, events) = tokio::sync::mpsc::channel(16);
+    let ends = agent_ends::AgentEnds::default();
+    let task = tokio::spawn(watches::agent_events(events, ends.clone()));
+    let item = |id: &str, input: &str, status: &str, output: &str| {
+        (
+            "t1".to_owned(),
+            json!({"type": "turn-item.updated", "payload": {"id": id,
+            "type": "command_execution", "input": input, "status": status, "output": output}}),
+        )
+    };
+    for event in [
+        item("ls", "ls -la", "completed", ""),
+        item("m1", "gh pr merge 7 --squash", "running", ""),
+        item("m1", "gh pr merge 7 --squash", "completed", "Merged"),
+        item("m1", "gh pr merge 7 --squash", "completed", "Merged"),
+        item(
+            "m2",
+            "gh pr merge 8",
+            "completed",
+            "not mergeable\n<exited with exit code 1>",
+        ),
+        item("m3", "gh pr close 9", "running", ""),
+        (
+            "t1".to_owned(),
+            json!({"type": "run.updated", "payload": {"status": "completed"}}),
+        ),
+    ] {
+        feed.send(event).await.expect("feed");
+    }
+    drop(feed);
+    task.await.expect("feed task");
+    let reads = ends.take_reads();
+    assert_eq!(
+        reads,
+        [("t1".to_owned(), vec!["m1".to_owned(), "m2".to_owned()])]
+    );
+    let repo = "github.com/a/b";
+    assert!(ends.ends("t1", repo, 7), "m1 waits for its read");
+    assert!(!ends.ends("t1", repo, 8), "a failed merge owns nothing");
+    assert!(
+        !ends.ends("t1", repo, 9),
+        "the run ended while m3 still ran"
+    );
+}
+
+/// Round-2 gate finding 7: the feed never waits on the loop. With no read taken, many ended
+/// merges still let a later command apply.
+#[tokio::test]
+async fn ended_merges_never_block_the_feed() {
+    let (feed, events) = tokio::sync::mpsc::channel(16);
+    let ends = agent_ends::AgentEnds::default();
+    let task = tokio::spawn(watches::agent_events(events, ends.clone()));
+    for i in 0..200 {
+        let event = json!({"type": "turn-item.updated", "payload": {"id": format!("m{i}"),
+            "type": "command_execution", "input": format!("gh pr merge {i}"),
+            "status": "completed", "output": "Merged"}});
+        feed.send(("t1".to_owned(), event)).await.expect("feed");
+    }
+    let running = json!({"type": "turn-item.updated", "payload": {"id": "late",
+        "type": "command_execution", "input": "gh pr merge 300", "status": "running"}});
+    feed.send(("t2".to_owned(), running)).await.expect("feed");
+    drop(feed);
+    task.await.expect("feed task");
+    assert!(ends.ends("t2", "github.com/a/b", 300));
+    assert_eq!(ends.take_reads()[0].1.len(), 200);
+}
+
+/// Pass-4 gate finding 4: the feed remembers every ended command for its whole life, as T3's
+/// `finished`, so a late update of the first of 1,025 merges is not taken for a new merge.
+#[tokio::test]
+async fn an_ended_merge_is_never_claimed_again() {
+    // Room for one event: a send returns once the feed has applied the event before it.
+    let (feed, events) = tokio::sync::mpsc::channel(1);
+    let ends = agent_ends::AgentEnds::default();
+    let task = tokio::spawn(watches::agent_events(events, ends.clone()));
+    let item = |id: String, input: String| {
+        let event = json!({"type": "turn-item.updated", "payload": {"id": id,
+            "type": "command_execution", "input": input, "status": "completed",
+            "output": "Merged"}});
+        ("t1".to_owned(), event)
+    };
+    for i in 0..1025 {
+        feed.send(item(format!("m{i}"), format!("gh pr merge {i}")))
+            .await
+            .expect("feed");
+    }
+    for _ in 0..2 {
+        feed.send(item("ls".into(), "ls".into()))
+            .await
+            .expect("feed");
+    }
+    for (thread, items) in ends.take_reads() {
+        ends.read_done(&thread, &items);
+    }
+    assert!(
+        !ends.ends("t1", "github.com/a/b", 0),
+        "released by its read"
+    );
+    feed.send(item("m0".into(), "gh pr merge 0".into()))
+        .await
+        .expect("feed");
+    drop(feed);
+    task.await.expect("feed task");
+    assert!(
+        !ends.ends("t1", "github.com/a/b", 0),
+        "a late update of an ended merge"
+    );
+    assert!(ends.take_reads().is_empty());
+}
+
+/// Gate finding 1: ownership changes apply while a host read is held, in both orders: an
+/// agent's merge that starts during a slow read keeps the end quiet, and a merge command that
+/// fails during it lets the end wake.
+#[tokio::test]
+async fn agent_merges_apply_during_a_held_host_read() {
+    for failed in [false, true] {
+        let dir = TestDir::new();
+        let shell = shell(&dir.0);
+        let state = Arc::new(Mutex::new(json!({
+            "head": "1111111111111111111111111111111111111111",
+            "contexts": [], "comments": [], "merged": true,
+        })));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let permits = Arc::new(tokio::sync::Semaphore::new(0));
+        let (base, api) = watched_api_held(state, Some((entered.clone(), permits.clone()))).await;
+        let started = "2026-11-16T00:00:00.000Z";
+        shell.snapshot.lock().expect("snapshot")["threads"] = json!([{"id": "t1",
+            "projectId": "p1", "title": "T", "settledAt": null, "settledOverride": null,
+            "lineage": {"relationshipToParent": null},
+            "pullRequests": [{"host": "github.com", "repository": "a/b", "number": 7,
+                "url": "https://github.com/a/b/pull/7", "source": "agent", "linkedAt": started,
+                "snapshot": null, "stack": null,
+                "watch": {"startedAt": started, "headSha": null, "failedChecks": [],
+                    "passed": false, "passedChecks": [], "conflicting": false,
+                    "remarksThrough": started, "remarkIds": [], "wakes": 0}}]}]);
+        let panel = panel(shell.clone(), &dir, &base);
+        let ends = panel.agent_ends.clone();
+        let merge = |status: &str, output: &str| {
+            (
+                "t1".to_owned(),
+                json!({"type": "turn-item.updated", "payload": {"id": "cmd",
+                    "type": "command_execution", "input": "gh pr merge 7", "status": status,
+                    "output": output}}),
+            )
+        };
+        if failed {
+            ends.command(
+                "t1",
+                "cmd",
+                conn_source_control::close_commands::closed_by("gh pr merge 7").expect("close"),
+                None,
+                None,
+            );
+        }
+        let mut watcher = watches::Watcher::new(panel.clone());
+        let sweep = tokio::spawn(async move {
+            watcher.pass(None).await;
+        });
+        entered.notified().await;
+        // The command feed runs while the host read is held.
+        let (feed, events) = tokio::sync::mpsc::channel(4);
+        let applied = tokio::spawn(watches::agent_events(events, ends.clone()));
+        let event = if failed {
+            merge("completed", "<exited with exit code 1>")
+        } else {
+            merge("running", "")
+        };
+        feed.send(event).await.expect("feed");
+        drop(feed);
+        applied.await.expect("feed task");
+        permits.add_permits(8);
+        sweep.await.expect("sweep");
+        let ended = shell.syncs.lock().expect("syncs").pop().expect("end sync");
+        assert_eq!(ended["watch"], Value::Null);
+        assert_eq!(
+            ended.get("wake").is_some(),
+            failed,
+            "failed: {failed}: {ended}"
+        );
+        api.abort();
+    }
+}
+
+fn merged_base() -> Value {
+    let pr: Value = serde_json::from_str(include_str!(
+        "../../../../conn-source-control/src/pull_requests/sample.json"
+    ))
+    .expect("sample");
+    pr["baseRefName"].clone()
 }
 
 /// A stub GitHub for the link sweep. Pull request 7 (`sample.json`, head `feature`) lives in

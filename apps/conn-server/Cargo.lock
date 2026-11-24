@@ -452,6 +452,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "regex-automata",
  "rustls",
  "serde",
  "serde_json",

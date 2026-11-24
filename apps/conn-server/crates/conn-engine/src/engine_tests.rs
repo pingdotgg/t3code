@@ -14076,6 +14076,65 @@ async fn a_provider_failure_holds_only_its_provider() {
     assert_eq!(count(&codex.sessions), 1);
 }
 
+/// The command feed the pull request watch reads: every thread's `command_execution` item
+/// updates and run updates committed after it opened, and nothing else.
+#[tokio::test(flavor = "current_thread")]
+async fn the_command_feed_carries_command_items_and_run_updates() {
+    let db = TempDb::new("command-feed");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut feed = engine.subscribe_command_events().await.unwrap();
+    engine
+        .inner()
+        .db(|s| {
+            let mut tx = s.tx()?;
+            for item in [
+                json!({"id": "cmd", "type": "command_execution", "input": "gh pr merge 7", "status": "completed"}),
+                json!({"id": "msg", "type": "assistant_message", "status": "completed"}),
+            ] {
+                tx.append(crate::store::Draft::new("t1", "turn-item.updated", item))?;
+            }
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "c2", "one")).await;
+    let (thread, event) = timeout(Duration::from_secs(5), feed.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(thread, "t1");
+    assert_eq!(event["type"], "turn-item.updated");
+    assert_eq!(event["payload"]["input"], "gh pr merge 7");
+    let (_, event) = timeout(Duration::from_secs(5), feed.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        event["type"], "run.updated",
+        "the assistant message is left out"
+    );
+}
+
+/// The command feed's page says how far it scanned: past rows that matched nothing, so a
+/// commit with no command does not make the next wake read them again.
+#[tokio::test(flavor = "current_thread")]
+async fn the_command_feed_moves_past_rows_that_match_nothing() {
+    let db = TempDb::new("command-feed-cursor");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let (rows, through, high) = engine
+        .inner()
+        .db(|s| {
+            let (rows, through) = s.command_events_after(0, 64)?;
+            Ok::<_, String>((rows.len(), through, s.high_water()))
+        })
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "thread.created is no command");
+    assert_eq!(through, high);
+}
+
 /// Pass-4 gate finding 1: a monitor wake queued on model A starts on model B after the user
 /// picks B on the same instance (T3's `startNextQueuedRun` copies the whole selection).
 #[tokio::test(flavor = "current_thread")]

@@ -28,6 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{OnceCell, mpsc, watch};
+mod agent_ends;
 mod guide_writer;
 mod guides;
 mod issues;
@@ -166,6 +167,8 @@ struct Panel {
     providers: conn_provider::ProviderSet,
     text_generators: Option<Arc<crate::text_generation::TextGenerators>>,
     guide_runs: guide_writer::Runs,
+    /// The pull requests each thread's own agent is merging or closing (`watches.rs`).
+    agent_ends: agent_ends::AgentEnds,
 }
 /// `PullRequestService.summary` and `runAction` for `createPullRequest`'s draft step.
 struct PanelDrafts<'a> {
@@ -500,6 +503,38 @@ impl Panel {
             }
             "reviewGuide" => self.review_guide(&input).await,
             "generateReviewGuide" => self.generate_review_guide(&input).await,
+            // The calling thread merges a pull request through the MCP tool: like an agent's
+            // `gh pr merge`, the watch ends quietly for it (`agent_ends.rs`).
+            // It names the repository and each pull request it merges (a stack's layers).
+            "agentMerge" => {
+                let numbers: std::collections::BTreeSet<u64> = input["numbers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_u64)
+                    .collect();
+                if numbers.is_empty() {
+                    return Ok(Value::Null);
+                }
+                let succeeded = match text(&input, "phase") {
+                    "running" => None,
+                    "merged" => Some(true),
+                    _ => Some(false),
+                };
+                let repository = format!(
+                    "{}/{}",
+                    text(&input, "host").to_lowercase(),
+                    text(&input, "repository").to_lowercase()
+                );
+                self.agent_ends.command(
+                    text(&input, "threadId"),
+                    text(&input, "itemId"),
+                    conn_source_control::close_commands::ClosedBy::Numbers(numbers),
+                    Some(repository),
+                    succeeded,
+                );
+                Ok(Value::Null)
+            }
             // `servesProject`: false only when the project is on no host the panel reads.
             "servesProject" => Ok(json!(
                 self.projects(&json!({"projectId": input.get("projectId")}))
@@ -1934,6 +1969,7 @@ impl Shared {
                         providers: deps.providers.clone(),
                         text_generators: deps.text_generators.clone(),
                         guide_runs: guide_writer::Runs::default(),
+                        agent_ends: agent_ends::AgentEnds::default(),
                     })
                 })
                 .clone(),

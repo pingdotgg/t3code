@@ -256,6 +256,44 @@ pub(crate) async fn subscribe_thread(
     Ok(rx)
 }
 
+/// `Engine::subscribe_command_events`: from the current high water on, read in pages after
+/// each commit. A slow reader holds the task, not memory: the cursor stays in the store.
+pub(crate) async fn subscribe_command_events(
+    inner: Arc<Inner>,
+) -> Result<mpsc::Receiver<(String, Value)>, String> {
+    let mut wake = inner.notify.subscribe();
+    let mut cursor = inner.db(|store| store.high_water()).await;
+    let (tx, rx) = mpsc::channel(64);
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tx.closed() => return,
+                changed = wake.changed() => if changed.is_err() { return },
+            }
+            loop {
+                let after = cursor;
+                let Ok((events, through)) = inner
+                    .db(move |store| store.command_events_after(after, LIVE_READ_BATCH))
+                    .await
+                else {
+                    return;
+                };
+                let full = events.len() == LIVE_READ_BATCH;
+                for (_, thread_id, event) in events {
+                    if tx.send((thread_id, event)).await.is_err() {
+                        return;
+                    }
+                }
+                cursor = through;
+                if !full {
+                    break;
+                }
+            }
+        }
+    });
+    Ok(rx)
+}
+
 /// The items a resume from `after` replays, or `None` when it needs a snapshot, decided as
 /// `ws.ts` `subscribeThread` does: more than 128 events or 1 MiB of stored payload JSON; a
 /// `thread.created` of a thread that exists now (deleted and created again under its ID); or

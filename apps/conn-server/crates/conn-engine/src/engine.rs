@@ -2428,6 +2428,12 @@ impl Engine for SqliteEngine {
         ))
     }
 
+    fn subscribe_command_events(
+        &self,
+    ) -> BoxFuture<'_, Result<tokio::sync::mpsc::Receiver<(String, Value)>, String>> {
+        Box::pin(streams::subscribe_command_events(self.inner.clone()))
+    }
+
     fn subscribe_thread(
         &self,
         input: SubscribeThreadInput,

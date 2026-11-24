@@ -4,7 +4,7 @@
 //! `std` mutex that is never held across an `.await`.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
@@ -117,6 +117,9 @@ struct State {
     /// matches no later run.
     abandoned_run: Option<String>,
     logged: HashSet<String>,
+    /// MCP app notes sent to the native thread, by key (T3's `additionalContextByThread`):
+    /// a turn's `additionalContext`, then what steers added. Bounded by the thread's notes.
+    sent_app_notes: Option<(String, HashMap<String, String>)>,
     /// The goal grace timers and expiry pauses running; close cancels them. Finished ones are
     /// dropped at each spawn, and a session holds one goal run at a time.
     goal_tasks: Vec<tokio::task::AbortHandle>,
@@ -236,7 +239,18 @@ impl CodexSession {
             t3_tools,
             &input.app_context,
         );
-        inner.lock().mapper.begin_turn(native, input);
+        {
+            let mut state = inner.lock();
+            state.mapper.begin_turn(native, input);
+            state.sent_app_notes = Some((
+                native.to_owned(),
+                input
+                    .app_context
+                    .iter()
+                    .map(|e| (e.key.clone(), e.text.clone()))
+                    .collect(),
+            ));
+        }
         // Written first, then awaited, so a Stop knows whether the request went out.
         let sent = inner
             .unless_abandoned(run_id, async {
@@ -652,6 +666,7 @@ impl CodexSession {
                 released: false,
                 abandoned_run: None,
                 logged: HashSet::new(),
+                sent_app_notes: None,
                 goal_tasks: Vec::new(),
             }),
             progressed: Notify::new(),
@@ -1733,15 +1748,51 @@ impl Session for CodexSession {
                 inner.attachments_dir.as_deref(),
             )
             .map_err(|detail| ProviderError::Protocol { detail })?;
+            // `turn/steer` takes no `additionalContext`: notes the thread has not been sent go
+            // as quoted user input before the message (T3's `steerTurn`).
+            let unsent: Vec<&conn_provider::AppContextEntry> = {
+                let state = inner.lock();
+                let sent = state
+                    .sent_app_notes
+                    .as_ref()
+                    .filter(|(native, _)| *native == thread)
+                    .map(|(_, sent)| sent);
+                input
+                    .app_context
+                    .iter()
+                    .filter(|e| sent.and_then(|sent| sent.get(&e.key)) != Some(&e.text))
+                    .collect()
+            };
+            let mut steer_input: Vec<Value> = unsent
+                .iter()
+                .map(|e| json!({"type": "text", "text": format!("<external_{0}>{1}</external_{0}>", e.key, e.text) }))
+                .collect();
+            match codex_input {
+                Value::Array(items) => steer_input.extend(items),
+                other => steer_input.push(other),
+            }
             inner
                 .server
                 .request(
                     "turn/steer",
-                    json!({"expectedTurnId": turn, "input": codex_input, "threadId": thread}),
+                    json!({"expectedTurnId": turn, "input": steer_input, "threadId": thread}),
                 )
                 .await
-                .map(|_| ())
-                .map_err(call_failed("steer_turn"))
+                .map_err(call_failed("steer_turn"))?;
+            if !unsent.is_empty() {
+                let mut state = inner.lock();
+                if !state
+                    .sent_app_notes
+                    .as_ref()
+                    .is_some_and(|(native, _)| *native == thread)
+                {
+                    state.sent_app_notes = Some((thread.clone(), HashMap::new()));
+                }
+                if let Some((_, sent)) = state.sent_app_notes.as_mut() {
+                    sent.extend(unsent.iter().map(|e| (e.key.clone(), e.text.clone())));
+                }
+            }
+            Ok(())
         })
     }
 
@@ -2283,6 +2334,8 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       emit "{\"id\":$id,\"result\":{}}"
       emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu2","status":"interrupted","completedAt":3}}}' ;;
+    *'"method":"turn/steer"'*'reject me'*) emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"no active turn\"}}" ;;
+    *'"method":"turn/steer"'*) emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"thread/unsubscribe"'*) emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"thread/resume"'*'th-busy'*)
       emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"thread th-busy already has an active writer\"}}" ;;
@@ -3362,6 +3415,133 @@ done
         session.close().await;
         let ended = until(&mut events, "turn.terminal").await;
         assert_eq!(ended.last().unwrap()["status"], "interrupted");
+    }
+
+    /// A steer carries the MCP app notes Codex has not been sent, as quoted user input before
+    /// the message, once: `turn/steer` takes no `additionalContext` (T3's "steers carry MCP
+    /// app notes"). A refused steer sends them again on the retry.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_steer_carries_a_changed_app_note_once() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-codex-steer-notes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("codex");
+        conn_support::test_util::executable(&script, &format!("#!/bin/sh\n{FAKE}")).unwrap();
+        let log = dir.join("codex.stdin");
+        let _ = std::fs::remove_file(&log);
+        let provider = CodexProvider::new(
+            "codex".into(),
+            CodexConfig {
+                binary: script,
+                home_path: Some(dir.clone()),
+                ..CodexConfig::default()
+            },
+        );
+        let selection = || -> conn_contract::ModelSelection {
+            from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"})).unwrap()
+        };
+        let OpenedSession {
+            session,
+            mut events,
+            ..
+        } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "t1".into(),
+                provider_session_id: "s1".into(),
+                model_selection: selection(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .unwrap();
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: selection(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        let note = |text: &str| conn_provider::AppContextEntry {
+            key: "mcp_app_item-1".into(),
+            text: text.into(),
+        };
+        let mut first = turn(&thread, 1, "stuck");
+        first.app_context = vec![note("Created PROJ-42")];
+        session.start_turn(first).await.unwrap();
+        let running = until(&mut events, "provider_turn.updated").await;
+        let provider_turn = running.last().unwrap()["providerTurn"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let steer = |text: &str, notes: Vec<conn_provider::AppContextEntry>| SteerInput {
+            thread_id: "t1".into(),
+            run_id: "r1".into(),
+            provider_thread: thread.clone(),
+            provider_turn_id: provider_turn.as_str().into(),
+            message: TurnMessage {
+                created_by: conn_contract::OrchestrationV2Actor::User,
+                creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+                scheduled_task_id: None,
+                sender_thread_id: None,
+                message_id: "m-steer".into(),
+                text: text.into(),
+                attachments: vec![],
+            },
+            model_selection: None,
+            app_context: notes,
+        };
+        let steered = |text: &str| -> Value {
+            let lines = std::fs::read_to_string(&log).unwrap();
+            let line = lines
+                .lines()
+                .rfind(|l| l.contains("\"method\":\"turn/steer\"") && l.contains(text))
+                .unwrap()
+                .to_owned();
+            serde_json::from_str::<Value>(&line).unwrap()["params"]["input"].clone()
+        };
+        let quoted = json!({"type": "text",
+            "text": "<external_mcp_app_item-1>Created PROJ-44</external_mcp_app_item-1>"});
+
+        // The note the turn started with needs no resend.
+        session
+            .steer_turn(steer("unchanged", vec![note("Created PROJ-42")]))
+            .await
+            .unwrap();
+        assert_eq!(
+            steered("unchanged"),
+            json!([{"type": "text", "text": "unchanged"}])
+        );
+        // A changed note goes once, before the message.
+        session
+            .steer_turn(steer("changed", vec![note("Created PROJ-44")]))
+            .await
+            .unwrap();
+        assert_eq!(
+            steered("changed"),
+            json!([quoted, {"type": "text", "text": "changed"}])
+        );
+        session
+            .steer_turn(steer("again", vec![note("Created PROJ-44")]))
+            .await
+            .unwrap();
+        assert_eq!(steered("again"), json!([{"type": "text", "text": "again"}]));
+        // A refused steer delivered nothing, so the retry still carries the change.
+        let changed = || vec![note("Created PROJ-45")];
+        assert!(
+            session
+                .steer_turn(steer("reject me", changed()))
+                .await
+                .is_err()
+        );
+        session.steer_turn(steer("retry", changed())).await.unwrap();
+        assert!(steered("retry").to_string().contains("PROJ-45"));
+        session.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `forkThread` sends the fork's own model and cwd (`codexThreadRuntimeParams`), and
