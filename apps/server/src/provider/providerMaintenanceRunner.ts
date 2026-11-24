@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -110,11 +111,14 @@ const needsOpenCodeServerRestart = (providers: ReadonlyArray<ServerProvider>) =>
 const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceRunner.runCommand")(
   function* (input: {
     readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    readonly scope: Scope.Scope;
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly env?: NodeJS.ProcessEnv;
     readonly onProgress?: (line: string) => Effect.Effect<void>;
   }) {
+    const pendingProgress = yield* Ref.make<string | null>(null);
+    const onProgress = input.onProgress;
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
         const env = input.env ? { env: input.env, extendEnv: true } : {};
@@ -140,15 +144,6 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
 
-        const pendingProgress = yield* Ref.make<string | null>(null);
-        const onProgress = input.onProgress;
-        if (onProgress) {
-          yield* Ref.getAndSet(pendingProgress, null).pipe(
-            Effect.flatMap((line) => (line === null ? Effect.void : onProgress(line))),
-            Effect.repeat(Schedule.spaced(UPDATE_PROGRESS_INTERVAL)),
-            Effect.forkScoped,
-          );
-        }
         const trackProgress = <E>(stream: Stream.Stream<Uint8Array, E>) => {
           if (!onProgress) {
             return stream;
@@ -201,7 +196,19 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
       },
     );
 
-    return yield* collectCommandResult().pipe(
+    // Killing an installer mid-install (taskkill /F on Windows) leaves the provider half-replaced,
+    // so the timeout only stops waiting; the command keeps running and draining its output.
+    const command = yield* collectCommandResult().pipe(Effect.scoped, Effect.forkIn(input.scope));
+    return yield* Effect.gen(function* () {
+      if (onProgress) {
+        yield* Ref.getAndSet(pendingProgress, null).pipe(
+          Effect.flatMap((line) => (line === null ? Effect.void : onProgress(line))),
+          Effect.repeat(Schedule.spaced(UPDATE_PROGRESS_INTERVAL)),
+          Effect.forkScoped,
+        );
+      }
+      return yield* Fiber.join(command);
+    }).pipe(
       Effect.scoped,
       Effect.timeoutOption(Duration.millis(UPDATE_TIMEOUT_MS)),
       Effect.map((result) =>
@@ -326,12 +333,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const serviceScope = yield* Effect.scope;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+  // Created before any update fiber, so shutdown stops updates before the commands they leave running.
+  const commandScope = yield* Scope.fork(serviceScope);
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
   ) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
+      scope: commandScope,
       command: update.executable,
       args: update.args,
       onProgress,
