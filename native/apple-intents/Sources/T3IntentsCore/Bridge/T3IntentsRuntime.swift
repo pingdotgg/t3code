@@ -2,8 +2,9 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 
-/// Runs index mutations one at a time, each store write together with its Spotlight update, so a
-/// clear can never interleave with an in-flight sync or a system reindex callback.
+/// Runs this process's index mutations one at a time, each store write together with its Spotlight
+/// update, so a clear never interleaves with an in-flight sync or reindex callback here. Reindex
+/// callbacks in another process are reconciled by `T3SpotlightIndexer.reindex` instead.
 enum T3IndexOperationQueue {
   private static let lock = NSLock()
   nonisolated(unsafe) private static var tail: Task<Void, Never>?

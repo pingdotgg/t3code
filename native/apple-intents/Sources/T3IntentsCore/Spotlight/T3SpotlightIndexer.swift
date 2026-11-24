@@ -41,6 +41,36 @@ public enum T3SpotlightIndexer {
     }
   }
 
+  /// System reindex callbacks can run in the extension while the host clears the shared store, and
+  /// the in-process queue cannot order the two. A clear empties the store before Spotlight, so
+  /// re-reading the store after writing finds, and deletes, anything that landed after that clear.
+  public static func reindex(
+    projects: [T3ProjectRecord] = [],
+    threads: [T3ThreadRecord] = [],
+    store: T3IndexStore
+  ) async throws {
+    try await indexEntities(projects: projects, threads: threads)
+    let missing = missingRecordIds(
+      projectIds: projects.map(\.id),
+      threadIds: threads.map(\.id),
+      in: store
+    )
+    try await removeEntities(threadIds: missing.threadIds, projectIds: missing.projectIds)
+  }
+
+  static func missingRecordIds(
+    projectIds: [String],
+    threadIds: [String],
+    in store: T3IndexStore
+  ) -> (projectIds: [String], threadIds: [String]) {
+    let keptProjects = Set(store.projects(for: projectIds).map(\.id))
+    let keptThreads = Set(store.threads(for: threadIds).map(\.id))
+    return (
+      projectIds.filter { !keptProjects.contains($0) },
+      threadIds.filter { !keptThreads.contains($0) }
+    )
+  }
+
   public static func clearAll() async throws {
     try await withDeadline {
       try await CSSearchableIndex.default().deleteAllSearchableItems()

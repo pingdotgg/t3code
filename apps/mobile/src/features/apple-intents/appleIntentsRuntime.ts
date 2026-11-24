@@ -36,6 +36,8 @@ import {
 
 const DPOP_PROOF_KEY_STORAGE_KEY = "t3code.cloud.dpop-proof-key";
 const SYNC_DEBOUNCE_MS = 400;
+const SYNC_RETRY_BASE_MS = 2_000;
+const SYNC_MAX_RETRIES = 5;
 
 const activeOnscreenThreadRefAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
   Atom.keepAlive,
@@ -218,14 +220,33 @@ export function installAppleIntents(): () => void {
 
   let disposed = false;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryAttempt = 0;
+
+  // An unchanged source never re-triggers the subscription, so a failed sync retries on its own.
+  const scheduleRetry = () => {
+    if (disposed || retryTimer !== null || retryAttempt >= SYNC_MAX_RETRIES) return;
+    const delay = SYNC_RETRY_BASE_MS * 2 ** retryAttempt;
+    retryAttempt += 1;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      flush(appAtomRegistry.get(appleIntentsSourceAtom));
+    }, delay);
+  };
 
   const flush = (source: Atom.Type<typeof appleIntentsSourceAtom>) => {
     void enqueueAppleIntentsWork(async () => {
       if (disposed || !source.preferencesReady) return;
       await syncNativeIndex(source);
-    }).catch((error: unknown) => {
-      console.warn("[apple-intents] sync failed", error);
-    });
+    }).then(
+      () => {
+        retryAttempt = 0;
+      },
+      (error: unknown) => {
+        console.warn("[apple-intents] sync failed", error);
+        scheduleRetry();
+      },
+    );
   };
 
   const unsubscribe = appAtomRegistry.subscribe(
@@ -245,6 +266,10 @@ export function installAppleIntents(): () => void {
     if (debounceTimer !== null) {
       clearTimeout(debounceTimer);
       debounceTimer = null;
+    }
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
     }
     unsubscribe();
   };

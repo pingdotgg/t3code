@@ -215,20 +215,14 @@ public struct ThreadEntityQuery: IndexedEntityQuery, EntityStringQuery, Sendable
   ) async throws {
     let store = store
     try await T3IndexOperationQueue.run {
-      let entities = store.threads(for: identifiers).map(ThreadEntity.init(record:))
-      try await T3SpotlightIndexer.withDeadline {
-        try await T3SpotlightIndexer.indexAppEntities(threads: entities)
-      }
+      try await T3SpotlightIndexer.reindex(threads: store.threads(for: identifiers), store: store)
     }
   }
 
   public func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
     let store = store
     try await T3IndexOperationQueue.run {
-      let entities = store.allThreads().map(ThreadEntity.init(record:))
-      try await T3SpotlightIndexer.withDeadline {
-        try await T3SpotlightIndexer.indexAppEntities(threads: entities)
-      }
+      try await T3SpotlightIndexer.reindex(threads: store.allThreads(), store: store)
     }
   }
 }

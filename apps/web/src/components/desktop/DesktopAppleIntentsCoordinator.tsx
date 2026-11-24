@@ -29,6 +29,8 @@ import { environmentShell } from "../../state/shell";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 
 const SYNC_DEBOUNCE_MS = 400;
+const SYNC_RETRY_BASE_MS = 2_000;
+const SYNC_MAX_RETRIES = 5;
 
 interface RawDesktopCredential {
   readonly environmentId: EnvironmentId;
@@ -227,15 +229,34 @@ export function DesktopAppleIntentsCoordinator() {
 
     let disposed = false;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryAttempt = 0;
     const cleanups: Array<() => void> = [];
+
+    // Unchanged sources never re-trigger a flush, so a failed sync retries on its own.
+    const scheduleRetry = () => {
+      if (disposed || retryTimer !== null || retryAttempt >= SYNC_MAX_RETRIES) return;
+      const delay = SYNC_RETRY_BASE_MS * 2 ** retryAttempt;
+      retryAttempt += 1;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        flush();
+      }, delay);
+    };
 
     const flush = () => {
       void enqueueAppleIntentsWork(async () => {
         if (disposed) return;
         await syncNativeIndex(bridge, router);
-      }).catch((error: unknown) => {
-        console.warn("[apple-intents] desktop sync failed", error);
-      });
+      }).then(
+        () => {
+          retryAttempt = 0;
+        },
+        (error: unknown) => {
+          console.warn("[apple-intents] desktop sync failed", error);
+          scheduleRetry();
+        },
+      );
     };
 
     const scheduleFlush = () => {
@@ -266,6 +287,10 @@ export function DesktopAppleIntentsCoordinator() {
       if (debounceTimer !== null) {
         clearTimeout(debounceTimer);
         debounceTimer = null;
+      }
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
       }
       for (const cleanup of cleanups) cleanup();
     };

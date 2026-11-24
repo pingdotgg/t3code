@@ -292,6 +292,27 @@ struct T3IntentsCoreTests {
     #expect(try await T3SpotlightIndexer.withDeadline(seconds: 5) { 42 } == 42)
   }
 
+  @Test("A reindex that races a clear in another process finds what the clear removed")
+  func reindexReconcilesAgainstStore() throws {
+    let store = makeTempStore()
+    try store.upsertThreadRecord(makeThread(id: "thread-1"))
+    let beforeClear = T3SpotlightIndexer.missingRecordIds(
+      projectIds: ["env-1:proj-gone"],
+      threadIds: ["env-1:thread-1", "env-1:thread-gone"],
+      in: store
+    )
+    #expect(beforeClear.projectIds == ["env-1:proj-gone"])
+    #expect(beforeClear.threadIds == ["env-1:thread-gone"])
+
+    try store.clearAll()
+    let afterClear = T3SpotlightIndexer.missingRecordIds(
+      projectIds: [],
+      threadIds: ["env-1:thread-1"],
+      in: store
+    )
+    #expect(afterClear.threadIds == ["env-1:thread-1"])
+  }
+
   private func makeThread(id: String, status: String = "idle") -> T3ThreadRecord {
     T3ThreadRecord(
       id: "env-1:\(id)",

@@ -120,20 +120,14 @@ public struct ProjectEntityQuery: IndexedEntityQuery, EnumerableEntityQuery, Ent
   ) async throws {
     let store = store
     try await T3IndexOperationQueue.run {
-      let entities = store.projects(for: identifiers).map(ProjectEntity.init(record:))
-      try await T3SpotlightIndexer.withDeadline {
-        try await T3SpotlightIndexer.indexAppEntities(projects: entities)
-      }
+      try await T3SpotlightIndexer.reindex(projects: store.projects(for: identifiers), store: store)
     }
   }
 
   public func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
     let store = store
     try await T3IndexOperationQueue.run {
-      let entities = store.allProjects().map(ProjectEntity.init(record:))
-      try await T3SpotlightIndexer.withDeadline {
-        try await T3SpotlightIndexer.indexAppEntities(projects: entities)
-      }
+      try await T3SpotlightIndexer.reindex(projects: store.allProjects(), store: store)
     }
   }
 }
