@@ -8,6 +8,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { OrchestrationV2Actor, OrchestrationV2CreationSource } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadPullRequestLink } from "./threadPullRequest.ts";
 
@@ -18,6 +19,9 @@ export const ThreadMoveMessage = Schema.Struct({
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   createdAt: IsoDateTime,
+  /** Who wrote a user-role message, and through what; an agent can send one. Omitted means the user. */
+  createdBy: Schema.optional(OrchestrationV2Actor),
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
 });
 export type ThreadMoveMessage = typeof ThreadMoveMessage.Type;
 

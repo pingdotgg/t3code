@@ -79,12 +79,18 @@ export function historyFromTurnItems(
     if (visibility === "synthetic") return [];
     if (item.type !== "user_message" && item.type !== "assistant_message") return [];
     if (item.text.trim() === "") return [];
+    const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
     return [
-      {
-        role: item.type === "user_message" ? ("user" as const) : ("assistant" as const),
-        text: item.text,
-        createdAt: DateTime.formatIso(item.startedAt ?? item.updatedAt),
-      },
+      item.type === "user_message"
+        ? {
+            role: "user" as const,
+            text: item.text,
+            createdAt,
+            ...(item.createdBy === "user"
+              ? {}
+              : { createdBy: item.createdBy, creationSource: item.creationSource }),
+          }
+        : { role: "assistant" as const, text: item.text, createdAt },
     ];
   });
 }
@@ -155,7 +161,7 @@ export function planMoveWorkspace(input: {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 /** The notice the moved thread opens with: where it came from and what stayed behind. */
-export function moveArrivalNotice(input: {
+function moveArrivalNotice(input: {
   readonly snapshot: Pick<
     ThreadMoveSnapshot,
     "sourceEnvironmentLabel" | "omittedMessageCount" | "git"
@@ -163,12 +169,19 @@ export function moveArrivalNotice(input: {
   readonly outcome:
     | { readonly type: "carried"; readonly branch: string; readonly headMismatch: string | null }
     | { readonly type: "not-carried"; readonly reason: "no-git" | "not-pushed" | "not-on-remote" };
+  /** The model the thread switched to, when this machine cannot run its own. */
+  readonly switchedModel: string | null;
 }): string {
   const { snapshot, outcome } = input;
   const source = snapshot.sourceEnvironmentLabel;
   const parts = [
     `Moved from ${source}. The conversation came along; tool activity, attachments and reasoning stay with the original thread there.`,
   ];
+  if (input.switchedModel !== null) {
+    parts.push(
+      `The thread's model is not available here, so it continues with ${input.switchedModel}.`,
+    );
+  }
   if (snapshot.omittedMessageCount > 0) {
     parts.push(
       `${plural(snapshot.omittedMessageCount, "older message was", "older messages were")} left behind to keep the move small.`,
@@ -400,19 +413,27 @@ const make = Effect.gen(function* () {
       projectFile,
     ).settings;
 
+    const providers = yield* providerRegistry.getProviders;
     const modelSelection = (yield* threads.isProviderInstanceEnabledForProject({
       projectId: project.id,
       instanceId: snapshot.modelSelection.instanceId,
     }))
       ? snapshot.modelSelection
       : (projectSettings.defaultModelSelection ??
-        fallbackMoveModel(snapshot.modelSelection, yield* providerRegistry.getProviders));
+        fallbackMoveModel(snapshot.modelSelection, providers));
     if (modelSelection === null) {
       return yield* moveError(
         "failed",
         `No provider here can run the moved thread. Set one up in Settings, then move it again.`,
       );
     }
+    const switchedModel =
+      modelSelection === snapshot.modelSelection
+        ? null
+        : (providers
+            .find((provider) => provider.instanceId === modelSelection.instanceId)
+            ?.models.find((model) => model.slug === modelSelection.model)?.name ??
+          modelSelection.model);
     const runtimeMode = [
       settingsService.managedPolicy?.limits?.maxRuntimeMode,
       caller.runtimeModeCeiling,
@@ -515,6 +536,7 @@ const make = Effect.gen(function* () {
         carriedBranch !== null
           ? { type: "carried", branch: carriedBranch, headMismatch }
           : { type: "not-carried", reason: notCarriedReason ?? "no-git" },
+      switchedModel,
     });
     // Worktree preparation writes the thread row in the background; re-read under the lock.
     yield* threadCommands
@@ -681,8 +703,8 @@ function moveMessageEvents(input: {
       threadId: input.threadId,
       occurredAt: at,
       payload: {
-        createdBy: isUser ? "user" : "agent",
-        creationSource: "server",
+        createdBy: isUser ? (input.message.createdBy ?? "user") : "agent",
+        creationSource: input.message.creationSource ?? "server",
         id: messageId,
         threadId: input.threadId,
         runId: null,
@@ -703,8 +725,8 @@ function moveMessageEvents(input: {
       payload: isUser
         ? {
             ...common,
-            createdBy: "user",
-            creationSource: "server",
+            createdBy: input.message.createdBy ?? "user",
+            creationSource: input.message.creationSource ?? "server",
             type: "user_message",
             messageId,
             inputIntent: "turn_start",

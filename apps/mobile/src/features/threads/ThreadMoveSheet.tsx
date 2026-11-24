@@ -1,9 +1,10 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useNavigation, StackActions, type StaticScreenProps } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
+  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
@@ -19,9 +20,9 @@ import {
   type ThreadId,
   type ThreadMoveSnapshot,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -54,8 +55,24 @@ const NO_PROJECTS_ATOM = Atom.make<ReadonlyArray<OrchestrationProjectShell>>([])
 
 type SnapshotState =
   | { readonly status: "loading" }
-  | { readonly status: "failed"; readonly message: string }
+  | { readonly status: "failed"; readonly failure: unknown }
   | { readonly status: "ready"; readonly snapshot: ThreadMoveSnapshot };
+
+async function exportSnapshot(
+  registry: AtomRegistry.AtomRegistry,
+  thread: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+  signal?: AbortSignal,
+): Promise<SnapshotState> {
+  const result = await runAtomCommand(
+    registry,
+    threadMoveCommands.exportThread,
+    { environmentId: thread.environmentId, input: { threadId: thread.threadId } },
+    { reportFailure: false, ...(signal === undefined ? {} : { signal }) },
+  );
+  return result._tag === "Success"
+    ? { status: "ready", snapshot: result.value }
+    : { status: "failed", failure: squashAtomCommandFailure(result) };
+}
 
 type ThreadMoveParams = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
@@ -93,7 +110,7 @@ export function ThreadMoveSheet({ route }: StaticScreenProps<ThreadMoveParams>) 
   const project =
     openProjects.find((candidate) => candidate.id === chosenProjectId) ?? matchingProject;
 
-  const exportThread = useAtomCommand(threadMoveCommands.exportThread, { reportFailure: false });
+  const registry = useContext(RegistryContext);
   const moveThread = useAtomCommand(threadMoveCommands.move, { reportFailure: false });
   const [snapshotState, setSnapshotState] = useState<SnapshotState>({ status: "loading" });
   // One id per flow, so retrying after a lost reply lands on the same new thread.
@@ -102,29 +119,14 @@ export function ThreadMoveSheet({ route }: StaticScreenProps<ThreadMoveParams>) 
   const [moveError, setMoveError] = useState<string | null>(null);
   const running = thread !== null && !threadCanArchive(thread.runtime);
 
-  const loadSnapshot = async (isCurrent: () => boolean) => {
-    const result = await exportThread({ environmentId, input: { threadId } });
-    if (!isCurrent()) return;
-    if (result._tag === "Success") {
-      setSnapshotState({ status: "ready", snapshot: result.value });
-      return;
-    }
-    setSnapshotState({
-      status: "failed",
-      message:
-        errorDisplayMessage(squashAtomCommandFailure(result), m) ??
-        gt("This thread could not be prepared for the move."),
-    });
-  };
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exports the thread from its environment
   useEffect(() => {
-    let current = true;
-    void loadSnapshot(() => current);
-    return () => {
-      current = false;
-    };
-  }, [environmentId, threadId]);
+    const abort = new AbortController();
+    void exportSnapshot(registry, { environmentId, threadId }, abort.signal).then((state) => {
+      if (!abort.signal.aborted) setSnapshotState(state);
+    });
+    return () => abort.abort();
+  }, [registry, environmentId, threadId]);
 
   const close = () => navigation.goBack();
   const addProject = (targetEnvironmentId: EnvironmentId) =>
@@ -269,14 +271,15 @@ export function ThreadMoveSheet({ route }: StaticScreenProps<ThreadMoveParams>) 
       ) : snapshotState.status === "failed" ? (
         <View className="gap-3">
           <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
-            {snapshotState.message}
+            {errorDisplayMessage(snapshotState.failure, m) ??
+              gt("This thread could not be prepared for the move.")}
           </Text>
           <Button
             label={gt("Try again")}
             fullWidth
             onPress={() => {
               setSnapshotState({ status: "loading" });
-              void loadSnapshot(() => true);
+              void exportSnapshot(registry, { environmentId, threadId }).then(setSnapshotState);
             }}
           />
         </View>
