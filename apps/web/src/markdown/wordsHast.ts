@@ -1,8 +1,10 @@
 import type { Element, ElementContent, Root, Text } from "hast";
 import {
+  init as initWords,
   renderToHtml as wordsRenderToHtml,
   type RenderOptions as WordsRenderOptions,
-} from "@pierre/words";
+} from "@pierre/words/core";
+import wordsWasm from "@pierre/words/wasm";
 import { decodeHTML, decodeHTMLAttribute } from "entities";
 import { find, html as htmlSchema, svg as svgSchema } from "property-information";
 import { resolveCodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -86,6 +88,11 @@ type RenderOptions = Omit<WordsRenderOptions, "frontmatter">;
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+
+// Browsers can disable WebAssembly (JIT off by policy, CSP); renderToHtml then falls back below.
+try {
+  initWords(new WebAssembly.Module(wordsWasm));
+} catch {}
 
 function renderToHtml(markdown: string, options: RenderOptions): Uint8Array {
   try {
