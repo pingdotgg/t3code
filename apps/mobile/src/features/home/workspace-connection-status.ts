@@ -1,3 +1,7 @@
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
+import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
 import type { WorkspaceState } from "../../state/workspaceModel";
 
 export interface WorkspaceConnectionStatusPresentation {
@@ -16,30 +20,45 @@ function shouldShowWorkspaceConnectionStatus(state: WorkspaceState): boolean {
   );
 }
 
-function workspaceConnectionStatusLabel(state: WorkspaceState): string {
-  if (state.networkStatus === "offline") return "You are offline";
+function workspaceConnectionStatusLabel(state: WorkspaceState, resolve: MessageResolver): string {
+  if (state.networkStatus === "offline") return resolve(msg("You are offline"));
   if (state.hasReadyEnvironment && state.hasSyncingConnectedEnvironment) {
-    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
+    return state.hasLoadedShellSnapshot
+      ? resolve(msg("Syncing threads..."))
+      : resolve(msg("Loading threads..."));
   }
   if (state.connectingEnvironments.length === 1) {
-    return `Reconnecting to ${state.connectingEnvironments[0]!.environmentLabel}`;
+    return resolve(
+      msg("Reconnecting to {environment}", {
+        environment: state.connectingEnvironments[0]!.environmentLabel,
+      }),
+    );
   }
   if (state.connectingEnvironments.length > 1) {
-    return `Reconnecting ${state.connectingEnvironments.length} environments`;
+    return resolve(
+      msg(
+        "{count, plural, one {Reconnecting {count} environment} other {Reconnecting {count} environments}}",
+        { count: state.connectingEnvironments.length },
+      ),
+    );
   }
-  if (state.connectionError !== null) return state.connectionError;
+  const connectionError = runtimeConnectionErrorText(state, resolve);
+  if (connectionError !== null) return connectionError;
   if (state.hasPendingShellSnapshot) {
-    return state.hasLoadedShellSnapshot ? "Syncing threads..." : "Loading threads...";
+    return state.hasLoadedShellSnapshot
+      ? resolve(msg("Syncing threads..."))
+      : resolve(msg("Loading threads..."));
   }
-  return "Not connected";
+  return resolve(msg("Not connected"));
 }
 
 export function workspaceConnectionStatusPresentation(
   state: WorkspaceState,
+  resolve: MessageResolver = m,
 ): WorkspaceConnectionStatusPresentation | null {
   if (!shouldShowWorkspaceConnectionStatus(state)) return null;
   return {
-    label: workspaceConnectionStatusLabel(state),
+    label: workspaceConnectionStatusLabel(state, resolve),
     showsProgress:
       state.networkStatus !== "offline" &&
       (state.hasReadyEnvironment || state.connectionError === null) &&

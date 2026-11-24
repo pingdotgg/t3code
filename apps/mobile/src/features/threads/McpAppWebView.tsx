@@ -15,6 +15,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CommandId, MessageId } from "@t3tools/contracts";
 import {
+  MCP_APP_DOCUMENT_MESSAGE,
   mcpAppAllowAttribute,
   mcpAppFileName,
   mcpAppReferencesEqual,
@@ -23,6 +24,7 @@ import {
 import * as Predicate from "effect/Predicate";
 import { AsyncResult } from "effect/reactivity";
 import Constants from "expo-constants";
+import { msg, T, useGT, Var } from "gt-react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Platform, View } from "react-native";
@@ -30,10 +32,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { m } from "../../i18n/messages";
 import { shareGeneratedAttachment } from "../../lib/attachmentDownload";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { uuidv4 } from "../../lib/uuid";
+import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 import { useAssetUrlState } from "../../state/assets";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useThreadShell } from "../../state/entities";
@@ -54,14 +58,21 @@ const ROW_BOTTOM_MARGIN = 8;
 function outerDocument(src: string, allow: string, secret: string) {
   const attribute = (value: string) =>
     value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  // The frame's window outlives its document, so the relay trusts only the port the app
+  // document's bootstrap sends first, and relays a message once that document confirms it is
+  // alive. Servers without the bootstrap keep the plain window relay.
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>html,body{margin:0;height:100%;background:transparent}iframe{border:0;display:block;width:100%;height:100%}</style></head>
 <body><iframe id="app" sandbox="allow-scripts allow-forms" allow="${attribute(allow)}"></iframe>
 <script>(function(){var frame=document.getElementById("app"),secret=${JSON.stringify(secret)},loads=0,live=true;
 var send=function(m){var u=navigator.userActivation;window.ReactNativeWebView.postMessage(JSON.stringify({secret:secret,active:!!(u&&u.isActive)&&document.activeElement===frame,message:m}));};
 frame.addEventListener("load",function(){loads+=1;if(loads>1&&live){live=false;send({t3:"navigated"});}});
-window.addEventListener("message",function(e){if(live&&e.source===frame.contentWindow)send(e.data);});
-window.__t3McpAppReceive=function(m){live&&frame.contentWindow&&frame.contentWindow.postMessage(m,"*");};
+var port=null,plain=false,unconfirmed=Object.create(null),waiting=0,probe=0;
+window.addEventListener("message",function(e){if(!live||e.source!==frame.contentWindow)return;
+if(!port&&!plain){if(e.data&&e.data.t3===${JSON.stringify(MCP_APP_DOCUMENT_MESSAGE)}&&e.ports[0]){port=e.ports[0];
+port.onmessage=function(r){var k=r.data&&r.data.alive;if(live&&k in unconfirmed){var m=unconfirmed[k];delete unconfirmed[k];waiting-=1;send(m);}};return;}plain=true;}
+if(plain)send(e.data);else if(waiting<256){unconfirmed[probe]=e.data;waiting+=1;port.postMessage({alive:probe++});}});
+window.__t3McpAppReceive=function(m){if(!live)return;if(port)port.postMessage({message:m,origin:location.origin});else if(plain&&frame.contentWindow)frame.contentWindow.postMessage(m,"*");};
 frame.src=${JSON.stringify(src).replace(/</g, "\\u003c")};})();</script></body></html>`;
 }
 
@@ -81,7 +92,7 @@ const confirm = (title: string, message: string, action: string) =>
       title,
       message,
       [
-        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        { text: m(msg("Cancel")), style: "cancel", onPress: () => resolve(false) },
         { text: action, onPress: () => resolve(true) },
       ],
       // Android dismisses earlier alerts when showing another; decline dismissed requests to release their slots.
@@ -116,6 +127,7 @@ export function ThreadMcpApp(props: {
   readonly onExitFullscreen?: () => void;
   readonly height?: number;
 }) {
+  const gt = useGT();
   const [height, setHeight] = useState(MCP_APP_INLINE_MAX_HEIGHT);
   const [documentKey, setDocumentKeyState] = useState(0);
   // The view keeps its first URL: a re-minted one would reload the app.
@@ -263,6 +275,8 @@ export function ThreadMcpApp(props: {
     );
   }, [host, detailAtom]);
   const userActive = useRef(false);
+  // Teardown completions check this so a replaced document's late callback is ignored.
+  const currentHost = useRef<McpAppHost | null>(null);
 
   // Each WebView document gets its own host: the view is keyed by document,
   // restart generation and URL, and a changed app re-attaches this callback.
@@ -326,9 +340,14 @@ export function ThreadMcpApp(props: {
         if (
           !info.value.readOnly &&
           !(await confirm(
-            `Allow ${app.server} to run ${info.value.title ?? name}?`,
+            m(
+              msg("Allow {server} to run {tool}?", {
+                server: app.server,
+                tool: info.value.title ?? name,
+              }),
+            ),
             JSON.stringify(args, null, 2),
-            "Allow",
+            m(msg("Allow", { $context: "verb, confirm button" })),
           ))
         ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
@@ -351,7 +370,13 @@ export function ThreadMcpApp(props: {
       },
       openLink: async (url) => {
         // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
-        if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
+        if (
+          !(await confirm(
+            m(msg("Open a link from {server}?", { server: app.server })),
+            url,
+            m(msg("Open", { $context: "verb, opens a link" })),
+          ))
+        ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
@@ -359,7 +384,13 @@ export function ThreadMcpApp(props: {
         }
       },
       sendMessage: async (text) => {
-        if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
+        if (
+          !(await confirm(
+            m(msg("Send this message from {server}?", { server: app.server })),
+            text,
+            m(msg("Send", { $context: "verb, sends the message" })),
+          ))
+        ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         await enqueueThreadOutboxMessage({
@@ -398,6 +429,8 @@ export function ThreadMcpApp(props: {
         }
         if (mode === "fullscreen" && current.displayMode !== "fullscreen") {
           await documentHost.teardown();
+          // A crash restart or reload during the wait already replaced this document.
+          if (currentHost.current !== documentHost) return "inline";
           // Approval arrival or navigation during the wait requires reloading inline.
           const navigation = latest.current.navigation;
           if (latest.current.awaitingUser || !navigation.isFocused()) {
@@ -416,14 +449,20 @@ export function ThreadMcpApp(props: {
         }
         if (mode === "inline" && current.displayMode === "fullscreen") {
           await documentHost.teardown();
-          current.onExitFullscreen?.();
+          if (currentHost.current === documentHost) current.onExitFullscreen?.();
           return "inline";
         }
         return current.displayMode ?? "inline";
       },
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
-        if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
+        if (
+          !(await confirm(
+            m(msg("Save a file from {server}?", { server: app.server })),
+            names,
+            m(msg("Save", { $context: "verb, confirm button" })),
+          ))
+        ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
         for (const file of files) {
@@ -459,11 +498,11 @@ export function ThreadMcpApp(props: {
       },
       onRequestTeardown: () => {
         const current = latest.current.props;
-        if (current.displayMode === "fullscreen") {
-          void documentHost.teardown().then(() => current.onExitFullscreen?.());
-        } else {
-          void documentHost.teardown().then(() => setClosed(true));
-        }
+        void documentHost.teardown().then(() => {
+          if (currentHost.current !== documentHost) return;
+          if (current.displayMode === "fullscreen") current.onExitFullscreen?.();
+          else setClosed(true);
+        });
       },
       onSizeChanged: (size) => {
         if (latest.current.props.displayMode === "fullscreen") return;
@@ -472,7 +511,9 @@ export function ThreadMcpApp(props: {
       },
     });
     setHost(documentHost);
+    currentHost.current = documentHost;
     return () => {
+      if (currentHost.current === documentHost) currentHost.current = null;
       // An unmount cannot wait: the request goes out before the view does.
       void documentHost.teardown();
       setHost((current) => (current === documentHost ? null : current));
@@ -491,7 +532,9 @@ export function ThreadMcpApp(props: {
         className="items-center justify-center rounded-lg border border-border"
       >
         <Text className="text-sm text-foreground-muted">
-          The {app.server} app is open full screen
+          <T>
+            The <Var>{app.server}</Var> app is open full screen
+          </T>
         </Text>
       </View>
     );
@@ -503,10 +546,14 @@ export function ThreadMcpApp(props: {
         style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
         className="items-center justify-center gap-2 rounded-lg border border-border"
       >
-        <Text className="text-sm text-foreground-muted">The {app.server} app was closed</Text>
+        <Text className="text-sm text-foreground-muted">
+          <T>
+            The <Var>{app.server}</Var> app was closed
+          </T>
+        </Text>
         <View className="items-center">
           <Button
-            label="Show app"
+            label={gt("Show app")}
             tone="secondary"
             onPress={() => {
               reopenDocument();
@@ -523,7 +570,9 @@ export function ThreadMcpApp(props: {
       {navigatedAway ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-sm text-foreground-muted">
-            The {app.server} app left its page and was stopped
+            <T>
+              The <Var>{app.server}</Var> app left its page and was stopped
+            </T>
           </Text>
         </View>
       ) : uri !== null && !crashed ? (
@@ -533,9 +582,10 @@ export function ThreadMcpApp(props: {
           onContentProcessDidTerminate={restart}
           onRenderProcessGone={restart}
           source={source!}
-          accessibilityLabel={`${app.server} app`}
+          accessibilityLabel={gt("{server} app", { server: app.server })}
           style={{ flex: 1, backgroundColor: "transparent" }}
           nestedScrollEnabled
+          decelerationRate={webViewDecelerationRate}
           originWhitelist={["*"]}
           // Android misreports nested frames as top-level; rely on iframe sandboxing there and gate navigation elsewhere.
           onShouldStartLoadWithRequest={(request) =>
@@ -568,7 +618,11 @@ export function ThreadMcpApp(props: {
         />
       ) : asset._tag === "Failure" || crashed ? (
         <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">Unable to load the {app.server} app</Text>
+          <Text className="text-sm text-foreground-muted">
+            <T>
+              Unable to load the <Var>{app.server}</Var> app
+            </T>
+          </Text>
         </View>
       ) : null}
       {uri !== null && !loaded && !crashed && !navigatedAway ? (

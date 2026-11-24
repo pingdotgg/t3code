@@ -7,9 +7,12 @@
     "erasableSyntaxOnly": false,
     "verbatimModuleSyntax": false,
     "jsx": "react-jsx",
-    "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "ES2024.Promise", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "paths": {
-      "~/*": ["./src/*"]
+      "~/*": ["./src/*"],
+      // Words' entry compiles its WebAssembly on import; these reach its parts without doing so.
+      "@pierre/words/core": ["./node_modules/@pierre/words/dist/core"],
+      "@pierre/words/wasm": ["./node_modules/@pierre/words/dist/words.wasm.mjs"]
     },
     "plugins": [
       {
@@ -30,10 +33,12 @@
     "vite",
     "vite.config.ts",
     "vercel.ts",
+    "gt.config.json",
     "test",
     "scripts/verify-built-boot.ts",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",
+    "../../scripts/lib/tagged-source-version.ts",
     "../../scripts/lib/third-party-licenses.ts"
   ]
 }
