@@ -32,6 +32,7 @@ const BASE_TARGET: FileContextMenuTarget = {
   workspaceRoot: "/workspace/project",
 };
 const EMPTY_CAPABILITIES = { revealLabel: undefined, canOpenDefault: false, editorIds: [] };
+const editorIcons = new Map();
 
 describe("resolveFileContextMenuAbsolutePath", () => {
   it("joins workspace-relative diff paths onto the workspace root", () => {
@@ -95,6 +96,7 @@ describe("resolveFileContextMenuAbsolutePath", () => {
 describe("buildFileContextMenuItems", () => {
   it("offers open, reveal, and an open-with submenu when all are available", () => {
     const items = buildFileContextMenuItems({
+      editorIcons,
       resolve: m,
       target: BASE_TARGET,
       capabilities: {
@@ -120,6 +122,7 @@ describe("buildFileContextMenuItems", () => {
 
   it("keeps copy actions available alongside reveal without editors", () => {
     const items = buildFileContextMenuItems({
+      editorIcons,
       resolve: m,
       target: BASE_TARGET,
       capabilities: {
@@ -140,6 +143,7 @@ describe("buildFileContextMenuItems", () => {
   it("offers both copy actions without host file capabilities", () => {
     expect(
       buildFileContextMenuItems({
+        editorIcons,
         resolve: m,
         target: BASE_TARGET,
         capabilities: EMPTY_CAPABILITIES,
@@ -158,6 +162,7 @@ describe("buildFileContextMenuItems", () => {
   it("still offers relative-path copying when the absolute path cannot be resolved", () => {
     expect(
       buildFileContextMenuItems({
+        editorIcons,
         resolve: m,
         target: { ...BASE_TARGET, workspaceRoot: undefined },
         capabilities: {
@@ -178,6 +183,7 @@ describe("buildFileContextMenuItems", () => {
 
   it("offers path copying for a sibling project without enabling host file actions", () => {
     const items = buildFileContextMenuItems({
+      editorIcons,
       resolve: m,
       target: {
         ...BASE_TARGET,

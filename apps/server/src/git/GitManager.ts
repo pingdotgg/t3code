@@ -586,8 +586,8 @@ const readThreadContext = Effect.fn("GitManager.readThreadContext")(
     const runSelections = [...runs, ...ancestorRuns.flat()]
       .filter((run) => visibleRunIds.has(run.id) && run.startedAt !== null)
       .map((run) => run.modelSelection);
-    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-    const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
+    const registry = yield* ProviderRegistry.ProviderRegistry;
+    const providers = yield* registry.getProviders;
     const producedBy = Arr.dedupeWith(
       (runSelections.length > 0 ? runSelections : [thread.modelSelection]).map(
         ({ instanceId, model }) => {
