@@ -26,6 +26,7 @@ import type {
   OrchestrationV2RemoteTaskChild,
   OrchestrationV2ThreadShell,
   NodeId,
+  OrchestrationV2PlanArtifact,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -60,6 +61,11 @@ const EMPTY_THREAD_SHELL_ATOM = Atom.make<EnvironmentThreadShell | null>(null).p
 );
 const EMPTY_THREAD_PROJECTION_ATOM = Atom.make<EnvironmentThread | null>(null).pipe(
   Atom.withLabel("web-thread-projection:empty"),
+);
+
+export type ThreadTodoList = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
+const EMPTY_LATEST_TODO_LIST_ATOM = Atom.make<ThreadTodoList | null>(null).pipe(
+  Atom.withLabel("web-thread-latest-todo-list:empty"),
 );
 const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pipe(
   Atom.withLabel("web-thread-status:empty"),
@@ -191,6 +197,13 @@ export function useQuietThreadProjection(
 ): EnvironmentThreadStructure | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.quietThreadAtom(ref),
+  );
+}
+
+/** The thread's newest task checklist, kept until a later run publishes one. */
+export function useThreadLatestTodoList(ref: ScopedThreadRef | null): ThreadTodoList | null {
+  return useAtomValue(
+    ref === null ? EMPTY_LATEST_TODO_LIST_ATOM : environmentThreadDetails.latestTodoListAtom(ref),
   );
 }
 

@@ -14,6 +14,7 @@ import {
   getUserQueuedThreadRuns,
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
+import { selectLatestTodoList, type TodoListPlan } from "./latestTodoList.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
 import {
   deriveUsageLimitNoticeRows,
@@ -353,6 +354,21 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-usage-limit-notice:${key}`));
   });
 
+  // The thread's current task checklist, read from the structure so streamed
+  // text does not rescan plans. Keeps its identity until the chosen plan changes.
+  const latestTodoListAtomFamily = Atom.family((key: string) => {
+    let previous: EnvironmentThreadStructure | null = null;
+    let value: TodoListPlan | null = null;
+    return Atom.make((get) => {
+      const thread = get(quietThreadAtomFamily(key));
+      if (thread !== previous) {
+        previous = thread;
+        value = thread === null ? null : selectLatestTodoList(thread.projection);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-latest-todo-list:${key}`));
+  });
+
   // Presentation only: the projection keeps every row for other readers.
   const visibleTurnItemsAtomFamily = Atom.family((key: string) => {
     const projectQuestionHistory = createQuestionHistoryProjector();
@@ -639,6 +655,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
     quietThreadAtom: (ref: ScopedThreadRef) => quietThreadAtomFamily(threadKey(ref)),
+    latestTodoListAtom: (ref: ScopedThreadRef) => latestTodoListAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     quietVisibleTurnItemsAtom: (ref: ScopedThreadRef) =>
       quietVisibleTurnItemsAtomFamily(threadKey(ref)),
