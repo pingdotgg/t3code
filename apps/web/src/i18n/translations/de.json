@@ -12801,5 +12801,47 @@
   "012c67c7f1a99e33": "Auto-Merge für Stack",
   "4a18481bea4b4ad5": "Neues Gerät bei {environmentLabel} angemeldet",
   "4144ab6aa487528a": "{device} hat sich über {product} verbunden. Warst du das nicht? Prüfe es.",
-  "a10cfdb27152c757": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht? Prüfe sie."
+  "a10cfdb27152c757": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht? Prüfe sie.",
+  "e0856d6a402ad821": "Die Richtlinie von {organization} erlaubt keine Worktree-Layout-Befehle von Projekten.",
+  "206811f6f441bfc7": "Dieses Projekt richtet Worktrees mit einem eigenen Befehl ein, den in seiner jetzigen Form niemand genehmigt hat. Über diese Verbindung lässt er sich nicht genehmigen: Genehmige ihn in einem Client, der das Terminal verwenden darf.",
+  "b8087c9a70c26da9": "Der Worktree-Layout-Befehl konnte nicht genehmigt werden.",
+  "49eda70cfd56e621": "Läuft, wenn ein Worktree-Thread startet und wenn sein Ordner wiederhergestellt wird",
+  "188ccaa1199f5611": "Läuft, wenn der Worktree eines Threads entfernt wird",
+  "7e8476e7306acabe": "Darf dieses Projekt seine Worktree-Befehle ausführen?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " richtet Worktree-Threads mit eigenen Befehlen aus ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    " ein. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen, außerhalb jeder Agenten-Sandbox. Du wirst erneut gefragt, sobald sich ihr Text ändert."
+  ],
+  "46807acd02a4ff72": "Genehmigen und fortfahren",
+  "a9cb97fca6a6576b": "Befehl zum Erstellen",
+  "90f45a354884ccdd": "Befehl zum Entfernen",
+  "78e308ada516928b": "Der Befehl konnte nicht genehmigt werden",
+  "a0c772d32a233da6": "Die Genehmigung konnte nicht widerrufen werden",
+  "0cdc8cdbed3e5eae": "Worktree-Layout",
+  "c17b25519e2b194e": "Die Worktree-Layout-Befehle konnten nicht geladen werden",
+  "5ccd5614c65f8d1f": "Genehmigung des Befehls {kind} widerrufen",
+  "80c3794a5fa12f3a": "Befehl {kind} genehmigen",
+  "f206891e124c77b0": [
+    "Die ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " dieses Projekts richtet Worktree-Threads mit eigenen Befehlen ein. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen und nur so, wie sie hier genehmigt wurden: Ändert sich der Text eines Befehls, muss er erneut genehmigt werden."
+  ],
+  "f6a91589456cca50": "Genehmigt",
+  "c92657bb7f2293ff": "Genehmigung nötig",
+  "f1e5c1be1ac92361": "Genehmigen",
+  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf."
 }
