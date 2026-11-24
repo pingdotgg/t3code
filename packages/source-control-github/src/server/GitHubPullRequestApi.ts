@@ -2753,8 +2753,20 @@ export const make = Effect.gen(function* () {
             .pipe(graphql(target));
         });
       }
-      if (input.stackNumber !== undefined)
-        return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
+      if (input.stackNumber !== undefined) {
+        const target = { ...input, operation: "runPullRequestAction" };
+        // A stack auto-merge request sits on the layer it was armed on and covers those below.
+        if (input.action === "disable-auto-merge")
+          return pullRequestNodeId(target).pipe(
+            Effect.flatMap((pullRequestId) =>
+              actionSummary(
+                client
+                  .DisableStackAutoMerge({ pullRequestId })
+                  .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
+              ).pipe(graphql(target)),
+            ),
+          );
+        const stackAction = runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
           Effect.provideService(GitHubRest.GitHubRest, api),
           Effect.provideService(GitHubAppAccess.GitHubAppAccess, appAccess),
           Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
@@ -2762,6 +2774,28 @@ export const make = Effect.gen(function* () {
           Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
+        if (input.action !== "enable-auto-merge") return stackAction;
+        const expectedHeadOid = input.expectedStackHeads?.find(
+          (layer) => layer.number === input.number,
+        )?.headSha;
+        return stackAction.pipe(
+          Effect.andThen(pullRequestNodeId(target)),
+          Effect.flatMap((pullRequestId) =>
+            actionSummary(
+              client
+                .EnablePullRequestAutoMerge({
+                  input: {
+                    pullRequestId,
+                    mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",
+                    ...(expectedHeadOid === undefined ? {} : { expectedHeadOid }),
+                    includeStack: true,
+                  },
+                })
+                .pipe(Effect.map((result) => result.enablePullRequestAutoMerge?.pullRequest)),
+            ).pipe(graphql(target)),
+          ),
+        );
+      }
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
           Effect.flatMap((pullRequestId) =>

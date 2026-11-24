@@ -2761,6 +2761,53 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("arms and cancels auto-merge for a stack through the pinned layer", () =>
+    Effect.gen(function* () {
+      route(
+        [
+          "stacks?pull_request=7",
+          [
+            {
+              number: 3,
+              url: "https://api.github.com/repos/acme/web/stacks/3",
+              base: { ref: "main" },
+              pull_requests: [
+                { number: 6, head: { ref: "one", sha: "aaa" }, state: "open", draft: false },
+                { number: 7, head: { ref: "two", sha: "bbb" }, state: "open", draft: false },
+              ],
+            },
+          ],
+        ],
+        ["PullRequestNodeId", { data: { repository: { pullRequest: { id: "PR_7" } } } }],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+      yield* cli.runPullRequestAction({
+        ...target,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+        stackNumber: 3,
+        expectedStackHeads: [
+          { number: 6, headSha: "aaa" },
+          { number: 7, headSha: "bbb" },
+        ],
+      });
+      yield* cli.runPullRequestAction({ ...target, action: "disable-auto-merge", stackNumber: 3 });
+      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([
+        {
+          input: {
+            pullRequestId: "PR_7",
+            mergeMethod: "SQUASH",
+            expectedHeadOid: "bbb",
+            includeStack: true,
+          },
+        },
+      ]);
+      expect(variablesOf("DisableStackAutoMerge")).toEqual([{ pullRequestId: "PR_7" }]);
+      expect(restCallsTo("merge-async")).toEqual([]);
+    }),
+  );
+
   it.effect.each(["merge", "enable-auto-merge"] as const)(
     "removes agent credits from the proposed message for %s",
     (action) =>
