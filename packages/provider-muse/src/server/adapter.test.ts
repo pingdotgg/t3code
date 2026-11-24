@@ -402,7 +402,7 @@ describe("MuseAdapterV2", () => {
         yield* sessions.set(config);
         const fake = yield* makeFakeMuse();
         fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
-        const harness = yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        yield* makeHarness(fake, INSTANCE_ID, nativeId);
         const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
         assert.deepStrictEqual(call.params.config, {
           mcpServers: {
@@ -414,13 +414,6 @@ describe("MuseAdapterV2", () => {
             },
           },
         });
-        yield* sessions.clear(THREAD_ID);
-        yield* harness.runtime.startTurn({
-          ...(yield* turnInput(harness.providerThread, 1, harness.policy)),
-          agentFeedback: "auto",
-        });
-        const turn = yield* fake.takeCall("turn/start");
-        assert.match(JSON.stringify(turn.params.input), /t3_feedback/);
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

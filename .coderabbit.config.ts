@@ -58,9 +58,10 @@ const DOC_RULES = [
   },
   {
     files: "docs/internals/08_product-analytics.md",
-    applyTo: "{apps/server/src/telemetry,apps/server/src/feedback}/**/*.ts",
+    applyTo:
+      "{packages/shared/src/telemetryBlocklist.ts,apps/server/src/outboundHttp.ts,apps/desktop/src/window/TelemetryRequestBlock.ts,scripts/no-upstream-telemetry.test.ts}",
     instructions:
-      "Hold analytics identity, attribution, and privacy boundaries to docs/internals/08_product-analytics.md.",
+      "Hold the no-analytics rule and the runtime host block to docs/internals/08_product-analytics.md.",
   },
   {
     files: "docs/internals/09_connection-runtime.md",

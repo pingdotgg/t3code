@@ -474,7 +474,7 @@ describe("AcpMcpStdioBridge", () => {
 
   it.effect("keeps the server's JSON-RPC error on a failed tool call", () =>
     Effect.gen(function* () {
-      const rpcError = { code: -32602, message: "Tool 't3_feedback' not found" };
+      const rpcError = { code: -32602, message: "Tool 't3_missing' not found" };
       const error = yield* mcpToolSession({
         endpoint: "http://127.0.0.1:1/mcp",
         authorization: "Bearer bridge-test",
@@ -489,7 +489,7 @@ describe("AcpMcpStdioBridge", () => {
           return Response.json({ jsonrpc: "2.0", id: message.id, error: rpcError });
         },
       }).pipe(
-        Effect.flatMap((session) => session.call("t3_feedback", {})),
+        Effect.flatMap((session) => session.call("t3_missing", {})),
         Effect.scoped,
         Effect.asVoid,
         Effect.flip,
