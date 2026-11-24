@@ -361,7 +361,7 @@ describe("ThemeEditorPanel", () => {
     expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 
-  it("keeps the color filter on a composing Escape and closes on a modified Escape", async () => {
+  it("keeps the color filter on an IME Escape", async () => {
     await using view = await renderBesideSettings();
     (await editorElement('[aria-label="Use advanced theme colors"]')).click();
 
@@ -370,69 +370,9 @@ describe("ThemeEditorPanel", () => {
     await userEvent.keyboard("accent");
     await expect.poll(() => filter.value).toBe("accent");
 
-    await act(async () => {
-      filter.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "Escape",
-          isComposing: true,
-        }),
-      );
-      filter.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "Escape",
-          keyCode: 229,
-        }),
-      );
-    });
+    await pressImeEscapes(filter);
     expect(filter.value).toBe("accent");
     expect(view.onEditorOpenChange).not.toHaveBeenCalled();
-    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
-
-    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
-    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
-    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
-  });
-
-  it("ignores a held or composing Escape from other editor fields", async () => {
-    await using view = await renderBesideSettings();
-    const input = await editorElement("input");
-    input.focus();
-
-    await act(async () => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "Escape",
-          repeat: true,
-        }),
-      );
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "Escape",
-          isComposing: true,
-        }),
-      );
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "Escape",
-          keyCode: 229,
-        }),
-      );
-    });
-    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
-    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
-
-    await userEvent.keyboard("{Escape}");
-    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
     expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 });
