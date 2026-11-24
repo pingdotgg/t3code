@@ -1,7 +1,10 @@
 // These guards run on the raw Node HTTP server before Effect handles requests.
 // @effect-diagnostics nodeBuiltinImport:off
 import type * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import type * as NodeStream from "node:stream";
+
+import { isWildcardHost } from "@t3tools/shared/hostClassification";
 
 export function guardHttpResponseWriteErrors<T extends NodeHttp.Server>(
   server: T,
@@ -41,6 +44,26 @@ export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
       // Pipelined requests share the socket, so the last response ends it.
       if (left === 0 && !server.listening) socket.end();
     });
+  });
+  return server;
+}
+
+// macOS lets another process (e.g. a Remote SSH port forward) bind 127.0.0.1 on a
+// port held on a wildcard address, capturing loopback clients. Holding loopback
+// too prevents that; elsewhere the OS already refuses the bind, so errors are ignored.
+export function holdLoopbackOnWildcard<T extends NodeHttp.Server>(server: T): T {
+  server.once("listening", () => {
+    const address = server.address();
+    if (address === null || typeof address === "string" || !isWildcardHost(address.address)) {
+      return;
+    }
+    const loopback = NodeNet.createServer((socket) => {
+      if (server.listening) server.emit("connection", socket);
+      else socket.destroy();
+    });
+    loopback.on("error", () => {});
+    loopback.listen({ host: "127.0.0.1", port: address.port });
+    server.once("close", () => loopback.close());
   });
   return server;
 }
