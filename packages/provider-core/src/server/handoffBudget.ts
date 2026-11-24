@@ -75,6 +75,7 @@ export function contextUsageForHandoff(input: {
 }): ThreadTokenUsageSnapshot | null {
   if (!input.sameNativeThread || input.previousUsage == null) return null;
   if (input.sameSelection) return input.previousUsage;
+  if (input.previousUsage.usedTokens === undefined) return null;
   const reportedMax =
     input.previousUsage.maxTokens != null && input.previousUsage.maxTokens > 0
       ? input.previousUsage.maxTokens

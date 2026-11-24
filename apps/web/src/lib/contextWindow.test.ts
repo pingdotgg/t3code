@@ -270,6 +270,29 @@ describe("latestProviderTurnTokenUsage", () => {
     },
   );
 
+  it("keeps percentage-only provider context usage without inventing tokens", () => {
+    const providerThread = {
+      id: ProviderThreadId.make("kiro-thread"),
+      contextUsage: {
+        usedPercentage: 9.38,
+      },
+      updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
+    };
+
+    expect(
+      deriveLatestContextWindowSnapshot(
+        [],
+        latestProviderTurnTokenUsage([], null, providerThread),
+        providerThread,
+      ),
+    ).toMatchObject({
+      usedTokens: null,
+      maxTokens: null,
+      usedPercentage: 9.38,
+      remainingPercentage: 90.62,
+    });
+  });
+
   it("keeps the fallback after a native fork is consumed", () => {
     const projection = forkProjection();
     const transfer = projection.contextTransfers[0]!;

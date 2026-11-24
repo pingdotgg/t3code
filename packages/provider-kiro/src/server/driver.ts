@@ -3,6 +3,8 @@ import { KiroSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -30,6 +32,7 @@ import {
   checkKiroProviderStatus,
   kiroDefaultModelId,
 } from "./status.ts";
+import { discoverKiroSkills } from "./skills.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
@@ -62,6 +65,8 @@ export type KiroDriverEnv =
   | KiroAdapterV2DriverEnv
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | Path.Path
   | ProviderHost.ProviderHost;
 
 export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
@@ -82,10 +87,13 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* SecureRandom.SecureRandom;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const processEnv = yield* mergeProviderInstanceEnvironment(
       environment,
       yield* HostProcess.Environment,
     );
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -100,7 +108,7 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
     const effectiveConfig = {
       ...config,
       enabled,
-      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      binaryPath: expandHomePath(config.binaryPath, homeDirectory),
     } satisfies KiroSettings;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<KiroSettings>>({
@@ -160,6 +168,27 @@ export const KiroDriver: ProviderDriver<KiroSettings, KiroDriverEnv> = {
       accentColor,
       enabled,
       snapshot,
+      snapshotForCwd: (cwd) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              discoverKiroSkills({ cwd, home: homeDirectory }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
+            ]).pipe(
+              Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to discover Kiro skills for '${cwd}'`,
+                    cause,
+                  }),
+              ),
+            ),
       orchestrationAdapter,
       textGeneration: unsupportedTextGeneration,
     } satisfies ProviderInstance;

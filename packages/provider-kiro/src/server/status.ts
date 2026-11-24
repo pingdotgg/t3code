@@ -42,6 +42,7 @@ const KIRO_PRESENTATION = {
   displayName: "Kiro",
   showInteractionModeToggle: false,
   supportedRuntimeModes: KIRO_SUPPORTED_RUNTIME_MODES,
+  reportsContextWindow: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const KIRO_DEFAULT_MODEL_SLUG = "default";

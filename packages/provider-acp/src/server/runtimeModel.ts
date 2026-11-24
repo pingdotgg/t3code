@@ -1650,10 +1650,16 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     }
     case "usage_update": {
       const currency = upd.cost?.currency.trim().slice(0, 32);
+      const t3Meta = isRecord(upd._meta) ? upd._meta.t3 : undefined;
+      const percentageOnly =
+        isRecord(t3Meta) && typeof t3Meta.usedPercentage === "number"
+          ? t3Meta.usedPercentage
+          : undefined;
       events.push({
         _tag: "UsageUpdated",
         usage: {
-          usedTokens: upd.used,
+          ...(percentageOnly === undefined ? { usedTokens: upd.used } : {}),
+          ...(percentageOnly === undefined ? {} : { usedPercentage: percentageOnly }),
           ...(upd.size > 0 ? { maxTokens: upd.size } : {}),
           ...(upd.cost && currency ? { cost: { amount: upd.cost.amount, currency } } : {}),
         },

@@ -414,6 +414,14 @@ const KIRO_STEERING_NOTE = "[STEERING steer-";
 const decodeKiroSteeringInfo = Schema.decodeUnknownOption(
   Schema.Struct({ kiro: Schema.Struct({ kind: Schema.String }) }),
 );
+const decodeKiroContextUsage = Schema.decodeUnknownOption(
+  Schema.Struct({
+    kiro: Schema.Struct({
+      kind: Schema.Literal("context_usage"),
+      usagePercentage: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+    }),
+  }),
+);
 
 /** Length of the longest end of `text` that could still grow into the steering note. */
 function steeringNotePrefixLength(text: string): number {
@@ -497,6 +505,21 @@ function normalizeKiroSessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
   const { update } = notification;
+  const contextUsage =
+    update.sessionUpdate === "session_info_update"
+      ? Option.getOrUndefined(decodeKiroContextUsage(update._meta))
+      : undefined;
+  if (contextUsage !== undefined) {
+    return {
+      ...notification,
+      update: {
+        sessionUpdate: "usage_update",
+        used: 0,
+        size: 0,
+        _meta: { t3: { usedPercentage: contextUsage.kiro.usagePercentage } },
+      },
+    };
+  }
   const subtask = decodeKiroAgentSubtask("_meta" in update ? update._meta : undefined);
   return Option.isSome(subtask) && subtask.value.kiro.kind !== "agent-subtask"
     ? { ...notification, sessionId: subtask.value.kiro.agentSubtaskId }
