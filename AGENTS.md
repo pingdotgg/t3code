@@ -173,5 +173,5 @@ Read the matching doc before changing code in that area; code review enforces th
 - React effects are only for synchronizing with external systems. Derive in render and act in handlers; any remaining effect states its reason via `// oxlint-disable-next-line t3code/no-unreasoned-state-sync -- <why>`.
 - No continuously repainting animations; they peg the GPU on high-refresh displays.
 - Security matters, but do not over-index on dev-mode or maintainer-only features. Read [SECURITY.md](SECURITY.md) before auditing or triaging reports.
-- When asked whether something is a known or upstream issue, search `pingdotgg/t3code` issues, pull requests (open and merged), and discussions before answering. Say which of the three you searched.
+- When asked whether something is a known or upstream issue, search `pingdotgg/t3code` issues, pull requests (open and merged), and discussions before answering. Say which of the three you searched, and link every issue, PR, and discussion you cite by its full URL, not just its number.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
