@@ -61,7 +61,8 @@ pub(crate) fn apply_kit_theme(tokens: &Tokens, cx: &mut App) {
         c.secondary_foreground = hsla(tokens.secondary_foreground);
         c.muted = hsla(tokens.muted);
         c.muted_foreground = hsla(tokens.muted_foreground);
-        c.popover = hsla(tokens.shell_overlay);
+        // Opaque: kit popups must not let content show through (Nick, #332).
+        c.popover = hsla(tokens.shell_overlay.with_alpha(1.0));
         c.popover_foreground = hsla(tokens.popover_foreground);
         c.sidebar = hsla(tokens.shell_panel);
         c.sidebar_foreground = hsla(tokens.sidebar_foreground);

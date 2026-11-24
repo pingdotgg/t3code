@@ -108,9 +108,10 @@ fn detail_row(
     icon: AnyElement,
     text: impl Into<SharedString>,
     color: gpui_kit::Hsla,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
+) -> AnyElement {
     div()
         .id(key)
+        .test_support()
         .a11y_group(format!("sidebar.thread-hover-card.{key}"), ax_label)
         .flex()
         .flex_row()
@@ -125,6 +126,7 @@ fn detail_row(
                 .text_color(color)
                 .child(text.into()),
         )
+        .into_any_element()
 }
 
 fn pull_request_line(
@@ -180,6 +182,7 @@ pub(crate) fn render_thread_hover_card(
     thread: &ThreadShell,
     project: Option<&ProjectShell>,
     environment_label: Option<&str>,
+    environment_icon: &'static str,
     rect: &RowRectCell,
     app: WeakEntity<ConnApp>,
     tokens: &Tokens,
@@ -260,7 +263,7 @@ pub(crate) fn render_thread_hover_card(
         rows = rows.child(detail_row(
             "environment",
             format!("Environment {label}"),
-            icon("superhero/server.svg", muted),
+            icon(environment_icon, muted),
             label.clone(),
             text,
         ));
@@ -271,6 +274,16 @@ pub(crate) fn render_thread_hover_card(
             format!("Branch {branch}"),
             icon("superhero/branch.svg", muted),
             middle_truncate(branch, BRANCH_CHAR_BUDGET),
+            text,
+        ));
+    }
+    // The linked issues live here, not on the row: the issue icon and its key, or how many.
+    if let Some(issues) = &model.issues {
+        rows = rows.child(detail_row(
+            "issues",
+            issues.label.clone(),
+            icon("superhero/circle-dot.svg", muted),
+            issues.label.clone(),
             text,
         ));
     }

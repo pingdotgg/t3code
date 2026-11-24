@@ -137,18 +137,39 @@ pub fn more_label(state: MoreState, hidden: usize) -> String {
     }
 }
 
-/// What the sidebar remembers between launches (`SETTLED_SHELF_EXPANDED_KEY`). Conn keeps it in
-/// local storage; this client keeps a small file.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// What the sidebar remembers between launches (`SETTLED_SHELF_EXPANDED_KEY`, and the widths
+/// Conn keeps under `chat_thread_sidebar_width` and `t3code:preview-panel-width`). Conn keeps
+/// them in local storage; this client keeps a small file.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SidebarPrefs {
     pub settled_expanded: bool,
+    /// The width the user dragged the thread sidebar to; none until they do.
+    pub sidebar_width: Option<f32>,
+    /// The width the user dragged the right panel to; none until they do.
+    pub right_panel_width: Option<f32>,
+}
+
+fn width_of(value: &Value) -> Option<f32> {
+    // `Schema.Finite`: a stored width that is not a finite number is not one.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a panel width is a few hundred pixels"
+    )]
+    value.as_f64().map(|w| w as f32).filter(|w| w.is_finite())
 }
 
 impl SidebarPrefs {
     /// The file's text.
     #[must_use]
     pub fn to_json(self) -> String {
-        json!({ "settledExpanded": self.settled_expanded }).to_string()
+        let mut value = json!({ "settledExpanded": self.settled_expanded });
+        if let Some(width) = self.sidebar_width {
+            value["sidebarWidth"] = json!(width);
+        }
+        if let Some(width) = self.right_panel_width {
+            value["rightPanelWidth"] = json!(width);
+        }
+        value.to_string()
     }
 
     /// The preferences in `text`; anything unreadable is the default (`useLocalStorage` falls
@@ -158,6 +179,8 @@ impl SidebarPrefs {
         let value: Value = serde_json::from_str(text).unwrap_or(Value::Null);
         Self {
             settled_expanded: value["settledExpanded"].as_bool().unwrap_or(false),
+            sidebar_width: width_of(&value["sidebarWidth"]),
+            right_panel_width: width_of(&value["rightPanelWidth"]),
         }
     }
 }
@@ -272,6 +295,7 @@ mod tests {
     fn preferences_round_trip_and_bad_text_is_the_default() {
         let prefs = SidebarPrefs {
             settled_expanded: true,
+            ..SidebarPrefs::default()
         };
         assert_eq!(SidebarPrefs::from_json(&prefs.to_json()), prefs);
         assert_eq!(SidebarPrefs::from_json("not json"), SidebarPrefs::default());
@@ -280,5 +304,32 @@ mod tests {
             SidebarPrefs::default()
         );
         assert!(!SidebarPrefs::default().settled_expanded);
+    }
+
+    #[test]
+    fn the_widths_round_trip_and_an_unreadable_one_is_none() {
+        let prefs = SidebarPrefs {
+            settled_expanded: true,
+            sidebar_width: Some(280.0),
+            right_panel_width: Some(640.5),
+        };
+        assert_eq!(SidebarPrefs::from_json(&prefs.to_json()), prefs);
+        assert_eq!(
+            SidebarPrefs::from_json("{\"sidebarWidth\": \"wide\", \"rightPanelWidth\": null}"),
+            SidebarPrefs::default()
+        );
+        // A file from before the widths holds none.
+        assert_eq!(
+            SidebarPrefs::from_json("{\"settledExpanded\": true}"),
+            SidebarPrefs {
+                settled_expanded: true,
+                ..SidebarPrefs::default()
+            }
+        );
+        assert_eq!(
+            SidebarPrefs::default().to_json(),
+            "{\"settledExpanded\":false}",
+            "a width never chosen is not written"
+        );
     }
 }

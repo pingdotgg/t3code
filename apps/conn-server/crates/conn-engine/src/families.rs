@@ -254,7 +254,18 @@ pub(crate) fn on_run_end(
         let status = run["status"].as_str().unwrap_or("failed").to_owned();
         if TERMINAL.contains(&status.as_str()) {
             let now = tx.now().to_owned();
-            let result = run_result(tx, thread_id, run_id)?;
+            let result = match run_result(tx, thread_id, run_id)? {
+                None if status == "completed" => {
+                    let notice = tx.entity(
+                        thread_id,
+                        "turnItems",
+                        &commands::provider_stop_reason_id(run_id),
+                    )?;
+                    let reason = notice.as_ref().and_then(|n| n["message"].as_str());
+                    Some(commands::completed_without_result(reason))
+                }
+                result => result,
+            };
             let cancelled = row["cancelledRunId"] == run_id;
             row["status"] = json!(if cancelled && status == "completed" {
                 "interrupted"

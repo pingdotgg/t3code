@@ -21,22 +21,21 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use conn_desktop::orbit::OrbitWorkspace;
-use conn_state::{RightPanelTab, ShellState};
+use conn_state::RightPanelTab;
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, Bounds, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
-    MouseDownEvent, ParentElement as _, Pixels, Point, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, WindowControlArea, anchored,
-    canvas, deferred, div, point, px,
+    AnyElement, Bounds, Context, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
+    TestSupportExt as _, WindowControlArea, anchored, canvas, deferred, div, point, px,
 };
 
 use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
 use crate::icons;
-use crate::orbit_sync::{workspace_monogram, workspace_tile_color};
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
 use crate::sidebar::thread_menu::{
@@ -113,32 +112,41 @@ fn measure_tile(bounds: &Rc<RefCell<HashMap<String, Bounds<Pixels>>>>, id: &str)
     .into_any_element()
 }
 
-/// The `28px` tile of a workspace: its colour, with its monogram on it.
-fn workspace_tile(ws: &OrbitWorkspace, tokens: &Tokens) -> gpui_kit::Div {
-    let tile_rgba = workspace_tile_color(&ws.color, tokens.primary);
-    let luma = 0.2126 * tile_rgba.r + 0.7152 * tile_rgba.g + 0.0722 * tile_rgba.b;
-    let text_color = if luma > 0.58 {
-        hsla(conn_theme::Rgba::hex(0x111111))
-    } else {
-        hsla(conn_theme::Rgba::hex(0xffffff))
-    };
+/// The images painted for the workspaces that have one, by workspace id.
+pub(crate) type WorkspaceImages = HashMap<String, (String, Option<Arc<gpui_kit::Image>>)>;
+
+/// The `28px` tile of a workspace (`WorkspaceBadge`): its image, or its icon or first letter on
+/// its colour.
+fn workspace_tile(ws: &OrbitWorkspace, images: &WorkspaceImages, tokens: &Tokens) -> AnyElement {
+    let image = images.get(&ws.id).and_then(|(_, image)| image.clone());
+    let badge = crate::workspace_editor::workspace_badge(
+        &ws.name,
+        &ws.color,
+        ws.icon.as_deref(),
+        image,
+        RAIL_TILE_SIZE_PX,
+        RAIL_TILE_RADIUS_PX,
+        tokens.primary,
+    );
+    // The same `28px` tile of the same radius for a letter, an icon and an image.
     div()
-        .flex()
-        .items_center()
-        .justify_center()
+        .id(SharedString::from(format!("rail-badge-{}", ws.id)))
+        .test_support()
+        .a11y_group(
+            SharedString::from(format!("rail.workspace.{}.badge", ws.id)),
+            format!("Badge {}", ws.name),
+        )
         .size(px(RAIL_TILE_SIZE_PX))
-        .rounded(px(RAIL_TILE_RADIUS_PX))
-        .bg(hsla(tile_rgba))
-        .text_size(px(11.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(text_color)
-        .child(workspace_monogram(&ws.name))
+        .flex_shrink_0()
+        .child(badge)
+        .into_any_element()
 }
 
 /// The tile lifted under the pointer (`z-10 opacity-70` in Conn): it keeps its column and
 /// follows the pointer up and down (`restrictToVerticalAxis`).
 fn render_held_tile(
     ws: &OrbitWorkspace,
+    images: &WorkspaceImages,
     drag: &workspace_order::Drag,
     is_active: bool,
     tokens: &Tokens,
@@ -147,7 +155,7 @@ fn render_held_tile(
         SharedString::from(format!("rail-ws-held-{}", ws.id)),
         is_active,
         tokens,
-        workspace_tile(ws, tokens),
+        workspace_tile(ws, images, tokens),
         |_, _, _| {},
     )
     .opacity(0.7);
@@ -172,6 +180,37 @@ pub(crate) fn render_rail_menu(
     let highlight = hsla(tokens.shell_highlight);
     let workspace_id = anchor.workspace_id.clone();
     let workspace_name = anchor.workspace_name.clone();
+    let edit_id = anchor.workspace_id.clone();
+    let fg = hsla(tokens.foreground);
+    // `Edit…` (`WorkspaceRail.tsx` context menu): opens the workspace editor.
+    let edit = div()
+        .id("rail-menu-edit")
+        .test_support()
+        .a11y(
+            gpui_kit::Role::MenuItem,
+            "rail.menu.edit-workspace",
+            "Edit…",
+        )
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .w_full()
+        .min_h(px(MENU_ROW_HEIGHT_PX))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(MENU_ROW_RADIUS_PX))
+        .text_size(px(MENU_FONT_PX))
+        .line_height(px(MENU_LINE_PX))
+        .text_color(fg)
+        .cursor_pointer()
+        .hover(move |s| s.bg(highlight))
+        .child(icons::concept("superhero/edit.svg", MENU_ICON_PX, fg))
+        .child(div().flex_1().min_w_0().truncate().child("Edit…"))
+        .on_click(cx.listener(move |app, _, window, cx| {
+            cx.stop_propagation();
+            app.open_workspace_editor(Some(edit_id.clone()), window, cx);
+        }));
     let remove = div()
         .id("rail-menu-remove")
         .test_support()
@@ -212,6 +251,7 @@ pub(crate) fn render_rail_menu(
         }));
     let list = menu_surface(SharedString::from("rail-menu"), tokens)
         .a11y(gpui_kit::Role::Menu, "rail.menu", "Workspace actions")
+        .child(edit)
         .child(remove);
     deferred(
         anchored()
@@ -226,8 +266,8 @@ pub(crate) fn render_rail_menu(
 /// Renders the vertical workspace rail matching real Conn (`WorkspaceRail.tsx`).
 #[must_use]
 pub(crate) fn render_workspace_rail(
-    _shell: &ShellState,
     workspaces: &[OrbitWorkspace],
+    images: &WorkspaceImages,
     active_workspace: Option<&str>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
@@ -293,7 +333,7 @@ pub(crate) fn render_workspace_rail(
                 SharedString::from(format!("rail-ws-{}", ws.id)),
                 is_active,
                 tokens,
-                workspace_tile(ws, tokens),
+                workspace_tile(ws, images, tokens),
                 cx.listener(move |app, _event, _window, cx| {
                     // The click that ends a drag selects nothing.
                     if !app.rail_click_suppressed() {
@@ -327,7 +367,7 @@ pub(crate) fn render_workspace_rail(
     let held_tile = held.and_then(|drag| {
         let ws = workspaces.iter().find(|w| w.id == drag.id)?;
         let is_active = active_workspace == Some(ws.id.as_str());
-        Some(render_held_tile(ws, drag, is_active, tokens))
+        Some(render_held_tile(ws, images, drag, is_active, tokens))
     });
     workspace_btns.extend(held_tile);
 
@@ -337,11 +377,12 @@ pub(crate) fn render_workspace_rail(
         tokens,
         icons::chrome(IconName::Plus, muted),
         cx.listener(|app, _event, window, cx| {
-            app.add_project_via_picker(window, cx);
+            app.open_workspace_editor(None, window, cx);
         }),
     )
-    .a11y_button("rail.add-project", "Add project")
-    .conn_tooltip("Add project", tokens);
+    .test_support()
+    .a11y_button("rail.new-workspace", "New workspace")
+    .conn_tooltip("New workspace", tokens);
 
     let usage_btn = rail_button(
         "rail-usage",

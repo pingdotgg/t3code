@@ -20,6 +20,9 @@ use super::markdown::{MarkdownBlock, parse_markdown};
 /// Maximum characters stored for a single-line TOC turn preview.
 const TOC_PREVIEW_MAX_CHARS: usize = 96;
 
+/// A longer queue shows its first messages and a toggle that shows the rest (web `QUEUE_VISIBLE_ROWS`).
+pub(super) const QUEUE_VISIBLE_ROWS: usize = 3;
+
 /// One cached timeline row ready for virtualized rendering.
 #[derive(Clone, Debug)]
 pub(super) struct CachedRow {
@@ -71,6 +74,14 @@ pub(super) enum VirtualItem {
     },
     QueuedUser {
         row_idx: usize,
+        /// Index among the queued messages, and how many there are (the web `Queued message n of N`).
+        position: usize,
+        total: usize,
+    },
+    /// The `Show all N queued` / `Show fewer` toggle under a queue longer than
+    /// `QUEUE_VISIBLE_ROWS` (web `QueuedRunsControl`).
+    QueuedToggle {
+        total: usize,
     },
     Assistant {
         row_idx: usize,
@@ -120,7 +131,11 @@ impl VirtualItem {
                 *grouped_with_previous as u8,
                 *grouped_with_next as u8
             ),
-            Self::QueuedUser { row_idx } => match &rows[*row_idx].entry {
+            Self::QueuedUser {
+                row_idx,
+                position,
+                total,
+            } => match &rows[*row_idx].entry {
                 TimelineEntry::QueuedUser {
                     id,
                     run_id,
@@ -128,12 +143,13 @@ impl VirtualItem {
                     attachments,
                     ..
                 } => format!(
-                    "qu:{id}:{run_id}:{:016x}:{}",
+                    "qu:{id}:{run_id}:{:016x}:{}:{position}:{total}",
                     fnv1a64(text.as_bytes()),
                     attachments.len()
                 ),
                 other => format!("qu:{}", other.id()),
             },
+            Self::QueuedToggle { total } => format!("qt:{total}"),
             Self::Assistant {
                 row_idx,
                 followed_by_work,
@@ -213,7 +229,7 @@ impl VirtualItem {
             }
             Self::Approval { row_idx }
             | Self::Notice { row_idx }
-            | Self::QueuedUser { row_idx } => rows[*row_idx].entry.id() == target_id,
+            | Self::QueuedUser { row_idx, .. } => rows[*row_idx].entry.id() == target_id,
             Self::Card { row_idx } => {
                 let id = rows[*row_idx].entry.id();
                 target_id == id || target_id.starts_with(&format!("{id}:"))
@@ -221,7 +237,7 @@ impl VirtualItem {
             Self::ChangedFiles { run_id, .. } => {
                 target_id.strip_prefix("changed-files:") == Some(run_id.as_str())
             }
-            Self::LoadEarlier { .. } | Self::Working => false,
+            Self::LoadEarlier { .. } | Self::QueuedToggle { .. } | Self::Working => false,
         }
     }
 }
@@ -607,7 +623,11 @@ impl RowCache {
                     idx += 1;
                 }
                 TimelineEntry::QueuedUser { .. } => {
-                    queued_items.push(VirtualItem::QueuedUser { row_idx: idx });
+                    queued_items.push(VirtualItem::QueuedUser {
+                        row_idx: idx,
+                        position: queued_items.len(),
+                        total: 0,
+                    });
                     idx += 1;
                 }
                 TimelineEntry::Assistant {
@@ -668,6 +688,7 @@ impl RowCache {
                 }
                 VirtualItem::LoadEarlier { .. }
                 | VirtualItem::QueuedUser { .. }
+                | VirtualItem::QueuedToggle { .. }
                 | VirtualItem::ChangedFiles { .. }
                 | VirtualItem::Working => return None,
             };
@@ -809,7 +830,18 @@ impl RowCache {
         }
 
         // Queued user messages always render at the bottom of the timeline, after Working.
+        let queued_total = queued_items.len();
+        for item in &mut queued_items {
+            if let VirtualItem::QueuedUser { total, .. } = item {
+                *total = queued_total;
+            }
+        }
         items.extend(queued_items);
+        if queued_total > QUEUE_VISIBLE_ROWS {
+            items.push(VirtualItem::QueuedToggle {
+                total: queued_total,
+            });
+        }
 
         let item_keys = items.iter().map(|item| item.stable_key(rows)).collect();
         self.items = items;
@@ -1393,7 +1425,7 @@ mod tests {
             "Working row should precede queued messages"
         );
         assert!(
-            matches!(cache.items()[2], VirtualItem::QueuedUser { row_idx: 1 }),
+            matches!(cache.items()[2], VirtualItem::QueuedUser { row_idx: 1, .. }),
             "QueuedUser should sit at the bottom after Working"
         );
         assert_eq!(
