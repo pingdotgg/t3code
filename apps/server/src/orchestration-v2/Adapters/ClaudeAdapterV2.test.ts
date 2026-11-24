@@ -10748,6 +10748,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect(
+    "measures context from the last main-model iteration when an advisor call samples twice",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-advisor-iterations-usage"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        // With the advisor server tool the API samples the main model more than once in
+        // one message: top-level usage sums every pass, `iterations` holds each one.
+        const frames = [
+          usageStreamFrame({
+            type: "message_start",
+            message: {
+              id: "msg_advisor",
+              usage: {
+                input_tokens: 2,
+                cache_read_input_tokens: 543_529,
+                cache_creation_input_tokens: 214,
+                output_tokens: 1,
+              },
+            },
+          }),
+          usageStreamFrame({
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: {
+              input_tokens: 4,
+              cache_read_input_tokens: 1_087_272,
+              cache_creation_input_tokens: 1_222,
+              output_tokens: 711,
+              iterations: [
+                {
+                  type: "message",
+                  input_tokens: 2,
+                  cache_read_input_tokens: 543_529,
+                  cache_creation_input_tokens: 214,
+                  output_tokens: 268,
+                },
+                { type: "advisor_message", input_tokens: 545_497, output_tokens: 3_144 },
+                {
+                  type: "message",
+                  input_tokens: 2,
+                  cache_read_input_tokens: 543_743,
+                  cache_creation_input_tokens: 1_008,
+                  output_tokens: 443,
+                },
+              ],
+            },
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000678", result: "Done." }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        const lastUsage = harness.events
+          .flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+              ? [decodeProviderTurnTokenUsage(event.providerTurn.tokenUsage)]
+              : [],
+          )
+          .at(-1);
+        assert.deepEqual(
+          { inputTokens: lastUsage?.inputTokens, cachedInputTokens: lastUsage?.cachedInputTokens },
+          { inputTokens: 544_753, cachedInputTokens: 543_743 },
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("measures a model outside the catalog against the window Claude reports", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
