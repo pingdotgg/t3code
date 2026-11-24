@@ -707,7 +707,10 @@ describe("environment theme", () => {
           colors: { canvas: "#101010", accent: "#ff8800" },
         };
         yield* themes.save({ themeId: "look", theme: edited });
-        assert.deepEqual(yield* themes.current, [withRevision({ id: "look", ...edited })]);
+        Object.assign(edited, {
+          revision: EnvironmentTheme.environmentThemeRevision({ id: "look", ...edited }),
+        });
+        assert.deepEqual(yield* themes.current, [{ id: "look", ...edited }]);
 
         const refused = yield* themes
           .save({ themeId: "dark", theme: NIGHTFALL_THEME })
