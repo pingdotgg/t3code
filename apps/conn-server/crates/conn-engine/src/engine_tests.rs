@@ -2204,7 +2204,7 @@ async fn abort_inside_commit<T: Send + 'static>(
         release: release_rx,
     });
     let call = tokio::spawn(call);
-    tokio::task::spawn_blocking(move || paused_rx.recv())
+    tokio::task::spawn_blocking(move || paused_rx.recv_timeout(Duration::from_secs(30)))
         .await
         .unwrap()
         .expect("the commit paused");
@@ -2213,8 +2213,9 @@ async fn abort_inside_commit<T: Send + 'static>(
     release_tx.send(()).unwrap();
 }
 
-/// A closed socket aborts a launch while its first message commits. The commit goes through,
-/// and so does the provider start it holds: exactly one session opens and the run completes.
+/// A closed socket aborts a launch while its first message commits (in the launch's own
+/// `thread.create`). The commit goes through, and so does the provider start it holds: exactly
+/// one session opens and the run completes.
 #[tokio::test(flavor = "current_thread")]
 async fn an_aborted_launch_still_starts_its_committed_run() {
     let db = TempDb::new("launch-aborted");
@@ -2228,7 +2229,7 @@ async fn an_aborted_launch_still_starts_its_committed_run() {
         "initialMessage": {"messageId": "m-a", "text": "hi", "attachments": []},
     });
     let launcher = engine.clone();
-    abort_inside_commit(&engine, "A:initial-message", async move {
+    abort_inside_commit(&engine, "A", async move {
         launcher.launch_thread(input).await
     })
     .await;
