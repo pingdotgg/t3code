@@ -199,9 +199,9 @@ periodic checks (the socket revocation check, the desktop parent watch) caught u
 thousands of ticks at once; client activity leases and `/mcp` credential liveness counted only
 monotonic time. A turn that was running stays running at the thaw; whether it ends is the
 CLI's choice, as in T3. In a container on Beast a held turn stayed `running` through 10
-minutes and completed, a scheduled task due during a pause ran at the thaw, and a client
-socket open across a pause longer than 60 s was closed at the thaw (the client reconnects)
-[measured, `docs/status.md` "Proof on Beast"].
+minutes and completed, a scheduled task due during a pause ran at the thaw
+[measured, `docs/status.md` "Proof on Beast"]. A client socket open across a pause stays open:
+the server has no idle timer, as in T3 [test, `a_suspended_client_stays_connected`].
 
 **The checks touch nothing of the host** [check, `R/tools/canary.mjs`, the last check of
 `tools/check.sh`]: no read of a provider, `gh` or `git` setting or credential, no real provider

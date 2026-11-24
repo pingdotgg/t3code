@@ -831,10 +831,7 @@ impl Files {
                 ..
             } => {
                 let decoded = decode_component(name)?;
-                let hidden = decoded
-                    .split(['/', '\\'])
-                    .any(|s| s.is_empty() || s == "." || s == ".." || s.starts_with('.'));
-                if hidden || decoded.contains('\0') || !mime::is_page_dependency(&decoded) {
+                if !is_preview_dependency(&decoded) {
                     return None;
                 }
                 let joined = if base_relative_path == "." {
@@ -842,11 +839,22 @@ impl Files {
                 } else {
                     format!("{base_relative_path}/{decoded}")
                 };
-                canonical_workspace_file(Path::new(&workspace_root), &joined, &self.internal)
-                    .map(file)
+                let root = Path::new(&workspace_root);
+                let real = canonical_workspace_file(root, &joined, &self.internal)?;
+                // An alias may point at a hidden or non-asset file; T3 checks the target.
+                let relative = real.strip_prefix(fs::canonicalize(root).ok()?).ok()?;
+                is_preview_dependency(relative.to_str()?).then(|| file(real))
             }
         }
     }
+}
+
+/// `isPreviewDependencyPath`: a visible asset a page may load, by extension.
+fn is_preview_dependency(path: &str) -> bool {
+    let hidden = path
+        .split(['/', '\\'])
+        .any(|s| s.is_empty() || s == "." || s == ".." || s.starts_with('.'));
+    !hidden && !path.contains('\0') && mime::is_page_dependency(path)
 }
 
 /// Browsers cannot draw `.icns`; serve its embedded PNG.

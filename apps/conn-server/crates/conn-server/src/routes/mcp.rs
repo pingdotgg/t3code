@@ -10,7 +10,7 @@
 //!   mode, as it already may over `/ws`; without, it is read-only. The T3 server takes only
 //!   MCP OAuth clients here; see `crates/conn-mcp/README.md`, "Auth".
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Router,
@@ -32,8 +32,9 @@ pub fn router() -> Router<AppState> {
     )
 }
 
-/// The service for these deps, or `None` without an engine and environment.
-pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
+/// The service for these deps, or `None` without an engine and environment. `listen_address`
+/// is where the server listens: the URL in every agent credential.
+pub fn service(deps: &Deps, listen_address: SocketAddr) -> Option<Arc<McpService>> {
     let engine = deps.engine.clone()?;
     let environment = deps.environment.clone()?;
     let descriptor = environment.descriptor();
@@ -42,6 +43,7 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
     let directory = environment.clone();
     let refresh_deps = deps.clone();
     Some(McpService::new(McpConfig {
+        listen_address,
         preview: deps.preview.clone(),
         refresh_provider: Some(Arc::new(move |id| {
             let deps = refresh_deps.clone();

@@ -1,0 +1,197 @@
+//! Headless renders of Settings → Providers with model preferences, so a duplicate AccessKit id
+//! or a render panic fails here before it reaches the live app.
+
+use std::sync::Arc;
+
+use conn_state::providers::ServerConfigState;
+use conn_theme::{ShellGeometry, Tokens};
+use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+use gpui_kit::{
+    AnyWindowHandle, AppContext as _, Bounds, Entity, Point, TestAppContext, WindowBounds,
+    WindowOptions, px, size,
+};
+use serde_json::{Value, json};
+
+use super::{ProvidersInit, ProvidersView};
+use crate::theme::apply_kit_theme;
+
+fn config() -> Arc<ServerConfigState> {
+    let mut snapshot: Value = serde_json::from_str(include_str!(
+        "../../../../../../../crates/conn-state/tests/fixtures/server-config-snapshot.json"
+    ))
+    .expect("fixture is JSON");
+    let config = &mut snapshot["config"];
+    config["settings"]["favorites"] = json!([{ "provider": "codex", "model": "gpt-6-astra" }]);
+    config["settings"]["providerModelPreferences"] =
+        json!({ "codex": { "hiddenModels": ["gpt-6.1-sol"], "modelOrder": [] } });
+    config["settings"]["providerInstances"] = json!({
+        "codex": {
+            "driver": "codex",
+            "config": { "customModels": ["my-model"] },
+            "environment": [
+                { "name": "A", "value": "1", "sensitive": false },
+                { "name": "TOKEN", "value": "", "sensitive": true, "valueRedacted": true },
+            ],
+        },
+        "claudeAgent": { "driver": "claudeAgent", "environment": [{ "name": "B", "value": "2" }] },
+    });
+    let mut state = ServerConfigState::new();
+    state.apply(serde_json::from_value(snapshot).expect("snapshot event"));
+    Arc::new(state)
+}
+
+fn init(cx: &mut gpui_kit::App) -> Tokens {
+    gpui_kit::init(cx);
+    let theme = conn_theme::theme_by_id("dark-ocean").expect("built-in theme");
+    let tokens = Tokens::derive(&theme);
+    apply_kit_theme(&tokens, cx);
+    tokens
+}
+
+fn tall_window() -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+            Point::default(),
+            size(px(1200.0), px(2400.0)),
+        ))),
+        ..Default::default()
+    }
+}
+
+fn mount(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ProvidersView>) {
+    cx.update(|cx| {
+        let tokens = init(cx);
+        gpui_kit::open_window(tall_window(), cx, |window, cx| {
+            window.activate_window();
+            cx.new(|_| {
+                ProvidersView::new(ProvidersInit {
+                    tokens,
+                    geometry: ShellGeometry::default(),
+                    connection: None,
+                    environment_label: "Mini".to_owned(),
+                })
+            })
+        })
+        .expect("window opens")
+    })
+}
+
+fn has(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> bool {
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.try_find_by_label(label).is_some()
+    })
+    .unwrap_or(false)
+}
+
+#[gpui_kit::test]
+fn the_editor_renders_models_and_variables(cx: &mut TestAppContext) {
+    let (window, view) = mount(cx);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.set_server_config(config(), cx);
+            view.focus_provider("codex".to_owned(), cx);
+        });
+    });
+    assert!(has(cx, window, "Remove GPT-6-Astra from favorites"));
+    assert!(
+        has(cx, window, "Add my-model to favorites"),
+        "custom models list too"
+    );
+    assert!(has(cx, window, "Accent color for Codex"));
+
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.focus_provider("claudeAgent".to_owned(), cx);
+        });
+    });
+    assert!(has(cx, window, "Add variable"));
+}
+
+#[gpui_kit::test]
+fn only_antigravity_offers_a_credential_check(cx: &mut TestAppContext) {
+    let mut snapshot: Value = serde_json::from_str(include_str!(
+        "../../../../../../../crates/conn-state/tests/fixtures/server-config-snapshot.json"
+    ))
+    .expect("fixture is JSON");
+    for provider in snapshot["config"]["providers"]
+        .as_array_mut()
+        .expect("providers")
+    {
+        if provider["driver"] == "antigravity" {
+            provider["auth"] = json!({ "status": "unauthenticated", "type": "gemini-api-key" });
+        }
+    }
+    let mut state = ServerConfigState::new();
+    state.apply(serde_json::from_value(snapshot).expect("snapshot event"));
+    let (window, view) = mount(cx);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.set_server_config(Arc::new(state), cx);
+            view.focus_provider("antigravity".to_owned(), cx);
+        });
+    });
+    assert!(has(cx, window, "Connect"), "the API-key check");
+    for gone in [
+        "Sign in",
+        "Open browser",
+        "Copy sign-in link",
+        "Sign out",
+        "Open docs",
+    ] {
+        assert!(!has(cx, window, gone), "{gone} is not offered");
+    }
+
+    cx.update(|cx| {
+        view.update(cx, |view, cx| view.focus_provider("codex".to_owned(), cx));
+    });
+    assert!(
+        !has(cx, window, "Connect"),
+        "Codex signs in through the AI router"
+    );
+    assert!(!has(cx, window, "Sign in"));
+}
+
+#[gpui_kit::test]
+fn a_custom_model_opens_its_editor_and_takes_options(cx: &mut TestAppContext) {
+    let (window, view) = mount(cx);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.set_server_config(config(), cx);
+            view.focus_provider("codex".to_owned(), cx);
+        });
+    });
+    assert!(
+        has(cx, window, "Edit my-model"),
+        "a custom row has a pencil"
+    );
+    assert!(!has(cx, window, "Add custom option"), "closed until asked");
+
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.toggle_custom_edit("codex", "my-model", window, cx);
+            view.edit_custom(|d| d.add_preset("reasoningEffort"), window, cx);
+        });
+    })
+    .expect("window");
+    assert!(has(cx, window, "Add custom option"));
+    assert!(
+        has(cx, window, "Add option Speed"),
+        "an option already added is not offered again"
+    );
+    assert!(!has(cx, window, "Add option Reasoning"));
+    assert!(has(cx, window, "Option 1 type Choices"));
+    assert!(has(cx, window, "Add choice to option 1"));
+
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.edit_custom(|d| d.add_custom_option(), window, cx);
+            view.save_custom_edit(cx);
+        });
+    })
+    .expect("window");
+    assert!(
+        has(cx, window, "Option 2 needs an id."),
+        "a blank option blocks the save and names itself"
+    );
+}

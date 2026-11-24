@@ -10,7 +10,10 @@
 //! No auth is set here. In an Orbit container the inherited environment points the CLI at the
 //! AI router.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use serde_json::{Map, Value, json};
 
@@ -82,6 +85,8 @@ pub struct ClaudeConfig {
     /// Runs the status probe. Off, the entry stays T3's pending one: checks that start a
     /// server set `CONN_CLAUDE_STATUS_PROBE=off`, so they never run this machine's `claude`.
     pub status_probe: bool,
+    /// The model manifest the server accepted last; the entry lists its Claude models.
+    pub model_manifest: conn_provider::LiveManifest,
 }
 
 /// T3's `DEFAULT_IDLE_TIMEOUT_MS`.
@@ -179,6 +184,7 @@ impl Default for ClaudeConfig {
             helper: HelperCommand::discover(),
             status_cwd: None,
             status_probe: true,
+            model_manifest: conn_provider::LiveManifest::default(),
         }
     }
 }
@@ -623,6 +629,20 @@ pub fn config_dir(config: &ClaudeConfig, env: &Map<String, Value>) -> PathBuf {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => expand_home("~/.claude"),
     }
+}
+
+/// `workflowFilesRoot`: `<CLAUDE_CONFIG_DIR>/projects` from the query's environment, a relative
+/// value resolved from the session cwd, else `~/.claude/projects`.
+pub fn workflow_files_root(env: &Map<String, Value>, cwd: Option<&Path>) -> PathBuf {
+    let config = match env
+        .get("CLAUDE_CONFIG_DIR")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
+        Some(dir) if !dir.is_empty() => cwd.map_or_else(|| PathBuf::from(dir), |cwd| cwd.join(dir)),
+        _ => expand_home("~/.claude"),
+    };
+    config.join("projects")
 }
 
 /// Claude's managed settings file (`claudeManagedSettingsPath`).

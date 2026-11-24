@@ -36,8 +36,22 @@ const GROUP_RADIUS_PX: f32 = 12.0;
 /// Value font size (`text-lg leading-6` = 18px / 24px).
 const VALUE_FONT_PX: f32 = 18.0;
 const VALUE_LINE_HEIGHT_PX: f32 = 24.0;
-/// Height of the expanded insight chart card (matches a 2-row strip so the board stays put).
-const EXPANDED_HEIGHT_PX: f32 = 216.0;
+/// Height of one insight card: top border 1 + padding 10 + label 20 + gap 4 + value 24 + gap 4 +
+/// sparkline 32 (4 above, 28 tall) + padding 8. Cards are set to it, so the strip's height is
+/// known and the expanded chart can take exactly the same space.
+const CARD_HEIGHT_PX: f32 = 103.0;
+
+/// Height of a strip of `rows` cards.
+fn strip_height(rows: usize) -> f32 {
+    rows as f32 * CARD_HEIGHT_PX + rows.saturating_sub(1) as f32 * GRID_GAP_PX
+}
+
+/// Height of the expanded insight chart: the two-row strip it replaces, so clicking a number
+/// moves nothing below it. (A strip of one or two numbers is a single row; the chart still gets
+/// room for two.)
+fn expanded_height(shown: usize) -> f32 {
+    strip_height(insight_grid_layout(shown).rows.max(2))
+}
 /// Width of the horizontal edge fade overlays (`w-8` = 32px).
 const EDGE_FADE_WIDTH_PX: f32 = 32.0;
 
@@ -85,6 +99,7 @@ pub(super) fn render_insights_strip(
                 .child(render_insight_detail(
                     tokens,
                     &surface,
+                    expanded_height(shown.len()),
                     open_spec,
                     result,
                     insights,
@@ -143,7 +158,6 @@ pub(super) fn render_insights_strip(
                 tooltip_text,
                 span,
                 corners,
-                row_idx == 0,
                 Rc::clone(&callbacks.on_expand),
             ));
         }
@@ -160,6 +174,7 @@ pub(super) fn render_insights_strip(
     let mut section = div().relative().w_full().flex_shrink_0().child(
         div()
             .id("tasks-insights-scroll")
+            .a11y_group("panel.tasks.insights", "Task insights")
             .w_full()
             .overflow_x_scroll()
             .track_scroll(scroll)
@@ -214,21 +229,27 @@ fn render_insight_card(
     tooltip_text: String,
     span: usize,
     corners: [bool; 4],
-    top_row: bool,
     on_expand: Rc<dyn Fn(Option<InsightId>, &mut Window, &mut App)>,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
     let muted = to_hsla(tokens.muted_foreground);
     let card_bg = to_hsla(surface.card_bg);
     let card_hover = to_hsla(surface.card_hover_bg);
-    let top_edge = to_hsla(surface.shell_card_edge);
 
     let formatted_value = result.value.map(|v| format_insight_value(spec.id, v));
     let min_w = span as f32 * CARD_MIN_WIDTH_PX + span.saturating_sub(1) as f32 * GRID_GAP_PX;
 
     let mut card = v_flex()
         .id(SharedString::from(format!("tasks-insight-{:?}", spec.id)))
-        .a11y_group(format!("panel.tasks.insight.{:?}", spec.id), spec.label)
+        .a11y_button(
+            format!("panel.tasks.insight.{:?}", spec.id),
+            format!(
+                "{}: {}",
+                spec.label,
+                formatted_value.as_deref().unwrap_or("no data")
+            ),
+        )
+        .h(px(CARD_HEIGHT_PX))
         .min_w(px(min_w))
         .flex_grow(span as f32)
         .flex_shrink(1.0)
@@ -243,13 +264,10 @@ fn render_insight_card(
         .on_click(move |_, window, cx| on_expand(Some(spec.id), window, cx))
         .conn_tooltip(tooltip_text, tokens);
 
-    if top_row {
-        card = card.border_t_1().border_color(top_edge);
-    } else {
-        card = card
-            .border_t_1()
-            .border_color(gpui_kit::transparent_black());
-    }
+    // No divider line above or below the strip; the transparent border keeps tile sizes.
+    card = card
+        .border_t_1()
+        .border_color(gpui_kit::transparent_black());
     if corners[0] {
         card = card.rounded_tl(px(GROUP_RADIUS_PX));
     }
@@ -349,6 +367,7 @@ fn render_insight_change(
 fn render_insight_detail(
     tokens: &Tokens,
     surface: &TasksSurfaceColors,
+    height: f32,
     spec: InsightSpec,
     result: InsightResult,
     insights: Option<&TaskInsights>,
@@ -412,11 +431,11 @@ fn render_insight_detail(
     v_flex()
         .relative()
         .w_full()
-        .h(px(EXPANDED_HEIGHT_PX))
+        .h(px(height))
         .gap(px(4.0))
         .rounded(px(GROUP_RADIUS_PX))
         .border_t_1()
-        .border_color(to_hsla(surface.shell_card_edge))
+        .border_color(gpui_kit::transparent_black())
         .bg(to_hsla(surface.card_bg))
         .px(px(12.0))
         .pt(px(10.0))
@@ -478,4 +497,18 @@ fn render_insight_detail(
         )
         .child(div().mt(px(12.0)).flex_1().min_h_0().child(chart_body))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_expanded_chart_takes_exactly_the_strip_it_replaces() {
+        for shown in 3..=8 {
+            assert_eq!(expanded_height(shown), strip_height(2));
+        }
+        assert_eq!(strip_height(2), 208.0);
+        assert_eq!(expanded_height(2), strip_height(2));
+    }
 }

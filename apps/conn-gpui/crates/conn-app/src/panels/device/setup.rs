@@ -1,5 +1,6 @@
 //! Three-step Device onboarding wizard matching Conn's `DeviceSetup.tsx` + `WizardPopup`.
 
+use crate::a11y::ConnA11yExt as _;
 use conn_contract::{DeviceHostStatus, DevicePlatform};
 use conn_theme::Tokens;
 use gpui_kit::component::{h_flex, v_flex};
@@ -139,6 +140,10 @@ pub(super) fn render_setup_wizard(
 
         let mut step_btn = h_flex()
             .id(SharedString::from(format!("device-setup-step-{idx}")))
+            .a11y_group(
+                format!("panel.device.setup-step.{idx}"),
+                format!("Setup step {}", idx + 1),
+            )
             .flex_1()
             .min_w_0()
             .items_center()
@@ -563,6 +568,7 @@ pub(super) fn render_setup_wizard(
 
     div()
         .id("device-setup-scroll")
+        .a11y_group("panel.device.setup", "Device setup")
         .flex()
         .flex_1()
         .min_h_0()

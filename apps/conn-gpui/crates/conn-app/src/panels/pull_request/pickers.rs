@@ -118,6 +118,7 @@ pub(super) fn render_reviewer_picker(
 
         let mut list = v_flex()
             .id("pr-reviewer-picker-list")
+            .a11y_group("panel.pull-request.reviewer-list", "Reviewer candidates")
             .w_full()
             .max_h(px(260.0))
             .overflow_y_scroll()
@@ -210,6 +211,7 @@ pub(super) fn render_reviewer_picker(
 
         let popup = v_flex()
             .id("pr-reviewer-picker-popup")
+            .a11y_group("panel.pull-request.reviewer-picker", "Reviewer picker")
             .w(px(288.0))
             .rounded(px(12.0))
             .bg(to_hsla(tokens.popover))
@@ -294,6 +296,7 @@ pub(super) fn render_label_picker(
 
         let mut list = v_flex()
             .id("pr-label-picker-list")
+            .a11y_group("panel.pull-request.label-list", "Label candidates")
             .w_full()
             .max_h(px(260.0))
             .overflow_y_scroll()
@@ -330,6 +333,10 @@ pub(super) fn render_label_picker(
                     .map(ToOwned::to_owned);
                 let mut row = h_flex()
                     .id(SharedString::from(format!("pr-label-cand-{idx}")))
+                    .a11y_button(
+                        format!("panel.pull-request.label-candidate.{idx}"),
+                        "Label candidate",
+                    )
                     .w_full()
                     .min_h(px(28.0))
                     .px(px(8.0))
@@ -394,6 +401,7 @@ pub(super) fn render_label_picker(
 
         let popup = v_flex()
             .id("pr-label-picker-popup")
+            .a11y_group("panel.pull-request.label-picker", "Label picker")
             .w(px(288.0))
             .rounded(px(12.0))
             .bg(to_hsla(tokens.popover))
@@ -569,6 +577,11 @@ pub(super) fn render_reaction_bar(
             .id(SharedString::from(format!(
                 "pr-react-{subject_key}-{content:?}"
             )))
+            .a11y_switch(
+                format!("panel.pull-request.react.{subject_key}.{content:?}"),
+                format!("{} {}", reaction_name(content), reaction.count),
+                reacted,
+            )
             .h(px(24.0))
             .px(px(8.0))
             .gap(px(4.0))
@@ -612,6 +625,10 @@ pub(super) fn render_reaction_bar(
         let on_open = on_toggle_picker.clone();
         let add_btn = div()
             .id(SharedString::from(format!("pr-react-add-{subject_key}")))
+            .a11y_button(
+                format!("panel.pull-request.react-add.{subject_key}"),
+                "Add a reaction",
+            )
             .flex()
             .flex_shrink_0()
             .h(px(24.0))
@@ -633,6 +650,10 @@ pub(super) fn render_reaction_bar(
             let divider = chrome::alpha(tokens.foreground, 0.08);
             let mut row = h_flex()
                 .id(SharedString::from(format!("pr-react-picker-{subject_key}")))
+                .a11y_group(
+                    format!("panel.pull-request.react-picker.{subject_key}"),
+                    "Reactions",
+                )
                 .p(px(4.0))
                 .gap(px(2.0))
                 .items_center()
@@ -657,6 +678,11 @@ pub(super) fn render_reaction_bar(
                         .id(SharedString::from(format!(
                             "pr-react-opt-{subject_key}-{content:?}"
                         )))
+                        .a11y_switch(
+                            format!("panel.pull-request.react-opt.{subject_key}.{content:?}"),
+                            reaction_name(content),
+                            reacted,
+                        )
                         .flex()
                         .size(px(28.0))
                         .items_center()

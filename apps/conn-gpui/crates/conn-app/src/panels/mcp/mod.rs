@@ -1502,6 +1502,7 @@ impl Render for McpPanel {
         let sk_key = session_key;
         let mut root = v_flex()
             .id("mcp-panel")
+            .a11y_group("panel.mcp", "MCP")
             .size_full()
             .on_key_down(cx.listener(move |panel, event: &KeyDownEvent, _, cx| {
                 let k = &event.keystroke;

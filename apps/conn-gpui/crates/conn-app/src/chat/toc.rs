@@ -13,8 +13,9 @@
 
 use conn_theme::Tokens;
 use gpui_kit::{
-    AnyElement, Context, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, deferred, div, px,
+    AnimationExt as _, AnyElement, Context, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, SharedString, SpringAnimation, SpringConfig,
+    StatefulInteractiveElement, Styled, deferred, div, px,
 };
 
 use super::cache::TocEntry;
@@ -26,6 +27,17 @@ use crate::a11y::ConnA11yExt as _;
 const MAX_VISIBLE_TICKS: usize = 36;
 /// Vertical spacing per tick row (px) so preview tooltip aligns vertically with the hovered tick.
 const TICK_ROW_HEIGHT_PX: f32 = 10.0;
+
+/// Tick length spring: critically damped (`damping = 2 * sqrt(stiffness * mass)`), natural
+/// frequency 54 rad/s, so a length change settles in about 75 ms. That is twice as fast as web's
+/// `duration-150` (Nick, #304).
+const TICK_SPRING: SpringConfig = SpringConfig::new(2916.0, 108.0, 1.0);
+
+/// Prev/next chevron buttons are 20px boxes. Their glyph is centred on the idle tick, which
+/// starts at the rail's left edge and is 8px wide, so the box starts `4 - 10` px left of it.
+const NAV_BUTTON_PX: f32 = 20.0;
+const IDLE_TICK_WIDTH_PX: f32 = 8.0;
+const NAV_BUTTON_LEFT_PX: f32 = IDLE_TICK_WIDTH_PX / 2.0 - NAV_BUTTON_PX / 2.0;
 
 /// Fisheye width curve matching `TimelineMinimap.tsx` (`w-6` = 24px scaled by `1.0 / 0.667 / 0.417 / 0.333`).
 #[must_use]
@@ -114,10 +126,12 @@ pub(super) fn render_toc_overlay(
         let mut btn = div()
             .id(id)
             .a11y_button(ax_id, label)
+            // Centre the chevron over an idle tick (`x = 0..8`), not over the 30px rail (#312).
+            .ml(px(NAV_BUTTON_LEFT_PX))
             .flex()
             .items_center()
             .justify_center()
-            .size(px(20.0))
+            .size(px(NAV_BUTTON_PX))
             .rounded(px(6.0))
             .child(icons::icon(
                 icon_path,
@@ -175,8 +189,6 @@ pub(super) fn render_toc_overlay(
             tick_focus
         } else if is_in_view {
             tick_in_view
-        } else if entry.has_error {
-            hsla_alpha(tokens.destructive, 0.55)
         } else if matches!(distance, Some(1)) {
             tick_near
         } else {
@@ -209,7 +221,16 @@ pub(super) fn render_toc_overlay(
                 .on_click(cx.listener(move |view, _, _, cx| {
                     view.jump_to_toc_item(item_index, cx);
                 }))
-                .child(div().w(px(bar_w)).h(px(2.0)).rounded_full().bg(bar_color)),
+                .child(
+                    // Web's strip: `transition-transform duration-150` (ease `cubic-bezier(.4,0,.2,1)`).
+                    // A critically damped spring settles in about the same 150 ms and, unlike a
+                    // timed tween, picks up from the current length when the target changes mid-flight.
+                    div().h(px(2.0)).rounded_full().bg(bar_color).with_spring(
+                        SharedString::from(format!("chat-toc-bar-{}", entry.turn_number)),
+                        SpringAnimation::new(TICK_SPRING).to(bar_w),
+                        |bar, width| bar.w(px(width)),
+                    ),
+                ),
         );
     }
 
@@ -322,9 +343,14 @@ pub(super) fn render_scroll_to_bottom_pill(
     tokens: &Tokens,
     cx: &mut Context<'_, ChatView>,
 ) -> AnyElement {
-    let bg = hsla(tokens.popover);
-    let hover_bg = hsla(tokens.shell_highlight);
-    let border = hsla(tokens.shell_inner_border);
+    // Web's `Button variant="glass"` (`surface-glass`): `--background` at `--glass-opacity` (80%),
+    // `border-border/60`, and on hover only the border firms up. The fill must not change on
+    // hover, or the text behind shows through more than at rest. GPUI has no per-element backdrop
+    // blur (gpui-kit#3598), so the fill stays opaque until it lands (Nick, 2026-11-23). It shares
+    // the composer card's fill so the two floating surfaces match (Nick, #341).
+    let (bg, _) = super::composer::composer_surface_colors(tokens);
+    let border = hsla_alpha(tokens.border, 0.60);
+    let hover_border = hsla(tokens.border);
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
 
@@ -357,7 +383,7 @@ pub(super) fn render_scroll_to_bottom_pill(
                     .line_height(px(16.0))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
-                    .hover(move |s| s.bg(hover_bg))
+                    .hover(move |s| s.border_color(hover_border))
                     .occlude()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(|view, _, _, cx| {
@@ -384,6 +410,25 @@ mod tests {
         assert_eq!(sampled.last().copied(), Some(119));
         assert!(sampled.contains(&37), "active turn must be visible on rail");
         assert!(sampled.len() <= MAX_VISIBLE_TICKS);
+    }
+
+    /// The tick spring is critically damped (no overshoot) and twice as fast as web's 150ms:
+    /// natural frequency 54 rad/s, damping ratio 1.
+    #[test]
+    fn tick_spring_is_critically_damped_and_75ms() {
+        let (omega, zeta) = TICK_SPRING.canonical();
+        assert!((omega - 54.0).abs() < 1e-3);
+        assert!((zeta - 1.0).abs() < 1e-3);
+        // A critically damped spring is within 2% of its target after about 4 / omega seconds.
+        assert!(4.0 / omega < 0.08);
+    }
+
+    /// The chevron's centre sits over the centre of an idle tick.
+    #[test]
+    fn nav_chevron_is_centred_on_an_idle_tick() {
+        assert_eq!(IDLE_TICK_WIDTH_PX, tick_width_for_distance(None));
+        let chevron_centre = NAV_BUTTON_LEFT_PX + NAV_BUTTON_PX / 2.0;
+        assert_eq!(chevron_centre, tick_width_for_distance(None) / 2.0);
     }
 
     #[test]

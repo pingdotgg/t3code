@@ -31,6 +31,7 @@ mod projects;
 mod pull_request_forge;
 mod pull_requests;
 mod scheduled;
+mod script_completion;
 mod secrets;
 mod tasks;
 mod test_logins;

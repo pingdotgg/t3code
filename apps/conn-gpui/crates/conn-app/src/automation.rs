@@ -95,7 +95,6 @@ fn text<'a>(cmd: &'a Value, key: &str) -> &'a str {
     cmd.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
-#[cfg(feature = "cef")]
 async fn await_preview_reply(
     rx: oneshot::Receiver<Result<Value, String>>,
 ) -> Result<Value, String> {
@@ -416,7 +415,6 @@ async fn run(
         "browser-title" => app
             .read_with(cx, |app, cx| json!(app.browser_title(cx)))
             .map_err(|e| err(e.into())),
-        #[cfg(feature = "cef")]
         "browser-eval" => {
             let expression = text(cmd, "expression").to_owned();
             let rx = app
@@ -424,7 +422,6 @@ async fn run(
                 .map_err(|e| err(e.into()))??;
             await_preview_reply(rx).await
         }
-        #[cfg(feature = "cef")]
         "browser-snapshot" => {
             let rx = app
                 .update(cx, |app, cx| {
@@ -433,14 +430,12 @@ async fn run(
                 .map_err(|e| err(e.into()))??;
             await_preview_reply(rx).await
         }
-        #[cfg(feature = "cef")]
         "browser-act" => {
             let rx = app
                 .update(cx, |app, cx| app.browser_preview_call("act", cmd, cx))
                 .map_err(|e| err(e.into()))??;
             await_preview_reply(rx).await
         }
-        #[cfg(feature = "cef")]
         "browser-screenshot" => {
             let path = std::path::PathBuf::from(text(cmd, "path"));
             app.read_with(cx, |app, cx| app.browser_screenshot(&path, cx))
