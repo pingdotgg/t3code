@@ -588,7 +588,7 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a delete purges its thread even when nothing marks it as unpurged", () =>
+it.effect("a deleted thread's leftover settled request is purged", () =>
   Effect.gen(function* () {
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const sql = yield* SqlClient.SqlClient;
@@ -616,7 +616,8 @@ it.effect("a delete purges its thread even when nothing marks it as unpurged", (
     `;
     yield* deleteThread(thread, now);
 
-    yield* maintenance.purgeDeletedThread(thread.id);
+    // The sweep alone finds the leftover request too.
+    yield* maintenance.pruneEventStore();
     assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
   }).pipe(Effect.provide(layerTest)),
 );

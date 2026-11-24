@@ -360,6 +360,16 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
               AND json_extract(payload_json, '$.title') IS NOT ${DELETED_THREAD_TITLE}
           )`,
                 sql`json_type(thread.payload_json, '$.guestShare') IS NOT NULL`,
+                // The purge deletes settled requests and clears a failed one's error.
+                sql`EXISTS (
+                  SELECT 1 FROM orchestration_v2_effect_outbox AS effect
+                  WHERE effect.thread_id = thread.thread_id
+                    AND effect.effect_type <> 'thread-content.purge'
+                    AND (
+                      effect.status IN ('succeeded', 'cancelled')
+                      OR (effect.status = 'failed' AND effect.last_error IS NOT NULL)
+                    )
+                )`,
                 ...DELETED_THREAD_CONTENT_TABLES.map(
                   (table) =>
                     sql`EXISTS (SELECT 1 FROM ${sql(table)} WHERE thread_id = thread.thread_id)`,
@@ -532,15 +542,16 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         }
         if (mark === undefined || markIsDue) yield* writeMetadata(EVENT_LOG_PRUNE_MARK, head, now);
 
+        // Catches threads deleted before purging existed, and any purge a crash interrupted.
+        // It runs first so the legacy prune below takes the v1 events of threads it marks.
+        const purgedRowCount = yield* purgeThreads(undefined, betweenPages);
+
         const legacy = yield* pruneImportedLegacyHistory(
           head,
           bounds[0]?.receipt_row_id ?? 0,
           betweenPages,
         );
         deletedEventCount += legacy.deletedEventCount;
-
-        // Catches threads deleted before purging existed, and any purge a crash interrupted.
-        const purgedRowCount = yield* purgeThreads(undefined, betweenPages);
 
         const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
         const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
