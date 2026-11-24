@@ -1160,7 +1160,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <TooltipTrigger
         render={
           <InlineButton
-            tone="muted"
             aria-label={issueLabel}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -1170,9 +1169,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           />
         }
       >
-        <IssueIcon aria-hidden className={cn("size-3 shrink-0", issueStatus?.toneClassName)} />
-        <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
-          {issueCount === 1 ? firstIssue.displayKey : issueCount}
+        <span
+          className={cn(
+            "contents font-normal text-xs tabular-nums",
+            issueStatus?.toneClassName ?? "text-muted-foreground",
+          )}
+        >
+          <IssueIcon aria-hidden className="size-3 shrink-0" />
+          <span className="max-w-16 truncate">
+            {issueCount === 1 ? firstIssue.displayKey.replace(/^#/, "") : issueCount}
+          </span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
