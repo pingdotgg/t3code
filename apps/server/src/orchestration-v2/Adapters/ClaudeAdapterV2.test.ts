@@ -10601,6 +10601,76 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         : [],
     );
 
+  it.effect("measures Claude context from the last main-model pass in an advisor response", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-advisor-context"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const usage = {
+        input_tokens: 4,
+        cache_read_input_tokens: 1087272,
+        cache_creation_input_tokens: 1222,
+        output_tokens: 711,
+        iterations: [
+          {
+            type: "message",
+            input_tokens: 2,
+            cache_read_input_tokens: 543529,
+            cache_creation_input_tokens: 214,
+            output_tokens: 268,
+          },
+          { type: "advisor_message", input_tokens: 545497, output_tokens: 3144 },
+          {
+            type: "message",
+            input_tokens: 2,
+            cache_read_input_tokens: 543743,
+            cache_creation_input_tokens: 1008,
+            output_tokens: 443,
+          },
+        ],
+      };
+      for (const frame of [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_advisor", usage: zeroUsage },
+        }),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage,
+        }),
+        usageSnapshotFrame("msg_snapshot_only", "00000000-0000-4000-8000-000000000690", {
+          ...zeroUsage,
+          iterations: [
+            ...usage.iterations,
+            { type: "advisor_message", input_tokens: 547000, output_tokens: 25 },
+          ],
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000691", result: "Done." }),
+      ])
+        yield* Queue.offer(harness.sdkMessages, frame);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [545196, 545196]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("reports context from final stream usage when the request starts at zero", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
