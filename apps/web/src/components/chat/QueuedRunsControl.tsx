@@ -26,6 +26,7 @@ import {
   CalendarClockIcon,
   ChevronDownIcon,
   Clock3Icon,
+  GitForkIcon,
   MessagesSquareIcon,
   PencilIcon,
   XIcon,
@@ -41,7 +42,7 @@ import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entit
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatImageAttachment, type ChatMessage } from "../../types";
-import { cn } from "~/lib/utils";
+import { cn, newThreadId } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { m } from "../../i18n/messages";
@@ -109,6 +110,7 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const forkQueued = useAtomCommand(threadEnvironment.forkQueuedRun, "send queued message as fork");
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -173,6 +175,23 @@ export function QueuedRunsControl({
       pending: true,
     })),
   ];
+
+  const sendAsFork = async (runId: RunId) => {
+    if (steerInFlightRef.current) return;
+    steerInFlightRef.current = true;
+    setBusyRunId(runId);
+    try {
+      const targetThreadId = newThreadId();
+      const result = await forkQueued({
+        environmentId: props.environmentId,
+        input: { sourceThreadId: props.threadId, targetThreadId, runId },
+      });
+      if (result._tag === "Success") props.onOpenThread(targetThreadId, props.environmentId);
+    } finally {
+      steerInFlightRef.current = false;
+      setBusyRunId(null);
+    }
+  };
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
     const freshContext = queued.some(
@@ -348,6 +367,19 @@ export function QueuedRunsControl({
                       </TooltipPopup>
                     </Tooltip>
                   </>
+                ) : null}
+                {item.runId !== null && item.editable && !isEditing ? (
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={busyRunId !== null}
+                    onClick={() => {
+                      if (item.runId !== null) void sendAsFork(item.runId);
+                    }}
+                  >
+                    <GitForkIcon />
+                    <T>Send as fork</T>
+                  </Button>
                 ) : null}
                 {item.pending ? (
                   <span className="flex items-center gap-1 px-1">

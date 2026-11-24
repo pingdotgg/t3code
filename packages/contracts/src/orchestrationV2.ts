@@ -3759,7 +3759,10 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
-    sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    sourcePoint: Schema.Union([
+      OrchestrationV2ThreadForkSourcePoint,
+      Schema.Struct({ type: Schema.Literal("queued_run"), runId: RunId }),
+    ]),
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),

@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { type ChatAttachment, type EnvironmentId, type RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -33,6 +33,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { ScreenContent } from "../../components/ui/ScreenContent";
+import { uuidv4 } from "../../lib/uuid";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { waitForThreadShell } from "./threadForkNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAssetUrl } from "../../state/assets";
 import { useQuietThreadShell } from "../../state/entities";
@@ -56,7 +59,7 @@ const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
 );
 
 type QueueTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
-type QueueAction = "steer" | "edit" | "remove";
+type QueueAction = "steer" | "edit" | "remove" | "fork";
 
 function useThreadQueueWorkflow(target: QueueTarget) {
   return useAtomValue(environmentThreadDetails.queueWorkflowAtom(target));
@@ -132,6 +135,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const theme = useUniwindTheme();
   const target = route.params;
   const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const m = useMessages();
@@ -146,6 +150,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     m,
   );
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
+  const forkQueued = useAtomCommand(threadEnvironment.forkQueuedRun, "send queued message as fork");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const resumeHeldQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
@@ -156,6 +161,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const busyRef = useRef(false);
+  const openingFork = useRef(false);
   const queuedRuns = workflow?.queuedRuns ?? [];
 
   const hadQueuedRuns = useRef(queuedRuns.length > 0);
@@ -165,7 +171,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       hadQueuedRuns.current = true;
       return;
     }
-    if (hadQueuedRuns.current) navigation.goBack();
+    if (hadQueuedRuns.current && !openingFork.current) navigation.goBack();
   }, [navigation, queuedRuns.length]);
 
   const act = async (runId: RunId, action: QueueAction) => {
@@ -200,6 +206,38 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         }),
       );
       navigation.goBack();
+      return;
+    }
+    if (action === "fork") {
+      openingFork.current = true;
+      const targetThreadId = ThreadId.make(uuidv4());
+      busyRef.current = true;
+      setBusyRunId(runId);
+      try {
+        const result = await forkQueued({
+          environmentId: target.environmentId,
+          input: {
+            sourceThreadId: target.threadId,
+            targetThreadId,
+            runId,
+            creationSource: "mobile",
+          },
+        });
+        if (result._tag !== "Success") return;
+        if (!(await waitForThreadShell(scopeThreadRef(target.environmentId, targetThreadId)))) {
+          Dialog.alert(gt("Fork created"), gt("Open it from the thread list."));
+          return;
+        }
+        navigation.goBack();
+        selectDetail({
+          name: "Thread",
+          params: { environmentId: target.environmentId, threadId: targetThreadId },
+        });
+      } finally {
+        openingFork.current = false;
+        busyRef.current = false;
+        setBusyRunId(null);
+      }
       return;
     }
     if (action !== "steer" && action !== "remove") return;
@@ -317,6 +355,16 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                             title: gt("Send now"),
                             attributes: { disabled: !controls.canSend },
                             image: "arrow.up",
+                          },
+                        ]
+                      : []),
+                    ...(context?.guest === undefined && !controls.isEditing
+                      ? [
+                          {
+                            id: "fork",
+                            title: gt("Send as fork"),
+                            attributes: { disabled: busyRunId !== null },
+                            image: "arrow.triangle.branch",
                           },
                         ]
                       : []),

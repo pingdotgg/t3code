@@ -2105,6 +2105,69 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("moves a queued message into a visible fork during the first turn", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sourceThreadId = ThreadId.make("queued-fork-source");
+      const targetThreadId = ThreadId.make("queued-fork-target");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("queued-fork-create"),
+        threadId: sourceThreadId,
+        projectId: ProjectId.make("queued-fork-project"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [text, type] of [
+        ["Parent prompt", "start_immediately"],
+        ["Fork prompt", "queue_after_active"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`queued-fork:${type}`),
+          threadId: sourceThreadId,
+          messageId: MessageId.make(`queued-fork:${type}`),
+          text,
+          attachments: [],
+          dispatchMode: { type },
+        });
+      }
+      const before = yield* orchestrator.getThreadProjection(sourceThreadId);
+      const queued = before.runs.find((run) => run.status === "queued");
+      assert.isDefined(queued);
+      const fork = {
+        type: "thread.fork",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("queued-fork-move"),
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "queued_run", runId: queued.id },
+      } as const;
+      yield* orchestrator.dispatch(fork);
+      yield* orchestrator.dispatch(fork);
+      const source = yield* orchestrator.getThreadProjection(sourceThreadId);
+      const target = yield* orchestrator.getThreadProjection(targetThreadId);
+      assert.equal(source.runs.find((run) => run.id === queued.id)?.status, "cancelled");
+      assert.equal(source.runs[0]?.status, before.runs[0]?.status);
+      assert.equal(target.thread.lineage.parentThreadId, sourceThreadId);
+      assert.notEqual(target.thread.lineage.sideChat, true);
+      assert.deepEqual(
+        target.messages.map((message) => message.text),
+        ["Fork prompt"],
+      );
+      assert.lengthOf(target.runs, 1);
+    }),
+  );
+
   // regression: #37412 one thread's busy lock held up every other thread's run-end reaction
   it.effect("starts an idle thread's queued run while another thread's lock is busy", () =>
     Effect.gen(function* () {

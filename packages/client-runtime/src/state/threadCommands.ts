@@ -31,6 +31,7 @@ import {
   deleteThread,
   editQueuedRun,
   interruptThreadTurn,
+  forkQueuedRun,
   forkSideChat,
   forkThreadFromRun,
   markThreadUnread,
@@ -395,6 +396,15 @@ export function createThreadEnvironmentAtoms<R, E>(
     forkFromRun: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:fork-from-run",
       execute: forkThreadFromRun,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
+    forkQueuedRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork-queued-run",
+      execute: forkQueuedRun,
       scheduler,
       concurrency: {
         mode: "serial",

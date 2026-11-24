@@ -1132,6 +1132,22 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
   });
 });
 
+export const forkQueuedRun = Effect.fn("EnvironmentCommands.forkQueuedRun")(function* (
+  input: Omit<ForkThreadFromRunInput, "title">,
+) {
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      type: "thread.fork",
+      commandId: yield* allocateCommandId(input),
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      sourceThreadId: input.sourceThreadId,
+      targetThreadId: input.targetThreadId,
+      sourcePoint: { type: "queued_run", runId: input.runId },
+    }),
+  );
+});
+
 /** Forks the thread's latest stable point into a hidden side chat; works while it runs. */
 export const forkSideChat = Effect.fn("EnvironmentCommands.forkSideChat")(function* (
   input: ForkSideChatInput,
