@@ -209,35 +209,31 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       return;
     }
     if (action === "fork") {
-      openingFork.current = true;
       const targetThreadId = ThreadId.make(uuidv4());
+      openingFork.current = true;
       busyRef.current = true;
       setBusyRunId(runId);
-      try {
-        const result = await forkQueued({
-          environmentId: target.environmentId,
-          input: {
-            sourceThreadId: target.threadId,
-            targetThreadId,
-            runId,
-            creationSource: "mobile",
-          },
+      await forkQueued({
+        environmentId: target.environmentId,
+        input: { sourceThreadId: target.threadId, targetThreadId, runId, creationSource: "mobile" },
+      })
+        .then(async (result) => {
+          if (result._tag !== "Success") return;
+          if (!(await waitForThreadShell(scopeThreadRef(target.environmentId, targetThreadId)))) {
+            Dialog.alert(gt("Fork created"), gt("Open it from the thread list."));
+            return;
+          }
+          navigation.goBack();
+          selectDetail({
+            name: "Thread",
+            params: { environmentId: target.environmentId, threadId: targetThreadId },
+          });
+        })
+        .finally(() => {
+          openingFork.current = false;
+          busyRef.current = false;
+          setBusyRunId(null);
         });
-        if (result._tag !== "Success") return;
-        if (!(await waitForThreadShell(scopeThreadRef(target.environmentId, targetThreadId)))) {
-          Dialog.alert(gt("Fork created"), gt("Open it from the thread list."));
-          return;
-        }
-        navigation.goBack();
-        selectDetail({
-          name: "Thread",
-          params: { environmentId: target.environmentId, threadId: targetThreadId },
-        });
-      } finally {
-        openingFork.current = false;
-        busyRef.current = false;
-        setBusyRunId(null);
-      }
       return;
     }
     if (action !== "steer" && action !== "remove") return;

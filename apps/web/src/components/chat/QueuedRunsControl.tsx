@@ -178,19 +178,20 @@ export function QueuedRunsControl({
 
   const sendAsFork = async (runId: RunId) => {
     if (steerInFlightRef.current) return;
+    const targetThreadId = newThreadId();
     steerInFlightRef.current = true;
     setBusyRunId(runId);
-    try {
-      const targetThreadId = newThreadId();
-      const result = await forkQueued({
-        environmentId: props.environmentId,
-        input: { sourceThreadId: props.threadId, targetThreadId, runId },
+    await forkQueued({
+      environmentId: props.environmentId,
+      input: { sourceThreadId: props.threadId, targetThreadId, runId },
+    })
+      .then((result) => {
+        if (result._tag === "Success") props.onOpenThread(targetThreadId, props.environmentId);
+      })
+      .finally(() => {
+        steerInFlightRef.current = false;
+        setBusyRunId(null);
       });
-      if (result._tag === "Success") props.onOpenThread(targetThreadId, props.environmentId);
-    } finally {
-      steerInFlightRef.current = false;
-      setBusyRunId(null);
-    }
   };
 
   const sendQueuedMessage = async (queuedRunId: RunId) => {
