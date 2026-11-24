@@ -109,6 +109,7 @@ const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   body: "",
   lastEditedAt: null,
   isMinimized: false,
+  viewerCanUpdate: false,
   url: "https://github.com/acme/web/pull/1#discussion",
   pullRequestReview: null,
   ...raw,
@@ -500,6 +501,7 @@ describe("pull request detail decoding", () => {
                   lastEditedAt: null,
                   url: "https://github.com/c",
                   isMinimized: false,
+                  viewerCanUpdate: false,
                   author: null,
                   ...comment,
                 }),
@@ -512,6 +514,7 @@ describe("pull request detail decoding", () => {
                   lastEditedAt: null,
                   url: "https://github.com/r",
                   isMinimized: false,
+                  viewerCanUpdate: false,
                   author: null,
                   submittedAt: null,
                   ...review,
@@ -802,6 +805,36 @@ describe("pull request detail decoding", () => {
     expect(detail.comments.at(-1)?.reviewState).toBe("APPROVED");
   });
 
+  it("lets the reader edit a comment GitHub says they may update, such as a bot's", () => {
+    const detail = expectSuccess(
+      activity({
+        comments: [
+          { id: "c1", body: "- [ ] merge", createdAt: "2026-07-04T00:00:00Z" },
+          {
+            id: "c2",
+            body: "- [ ] merge",
+            createdAt: "2026-07-05T00:00:00Z",
+            viewerCanUpdate: true,
+          },
+        ],
+        reviews: [
+          {
+            id: "r1",
+            body: "- [ ] Autofix",
+            state: "COMMENTED",
+            submittedAt: "2026-07-06T00:00:00Z",
+            viewerCanUpdate: true,
+          },
+        ],
+      }),
+    );
+    expect(detail.comments.map((comment) => [comment.id, comment.canEdit])).toEqual([
+      ["c1", false],
+      ["c2", true],
+      ["r1", true],
+    ]);
+  });
+
   it("drops the bodyless review GitHub opens to hold line comments", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const detail = expectSuccess(
@@ -1060,6 +1093,35 @@ describe("review thread decoding", () => {
       kind: "review-comment",
       path: "apps/server/src/ws.ts",
     });
+  });
+
+  it("keeps whether the reader may edit a line comment in the conversation", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_a",
+            path: "README.md",
+            comments: {
+              nodes: [
+                { id: "t1", body: "- [ ] a", createdAt: "2026-07-01T00:00:00Z" },
+                {
+                  id: "t2",
+                  body: "- [ ] b",
+                  createdAt: "2026-07-02T00:00:00Z",
+                  viewerCanUpdate: true,
+                },
+              ],
+            },
+          },
+        ]),
+      ),
+    );
+    const comments = reviewThreadConversation(result.threads.map((entry) => entry.thread));
+    expect(comments.map((comment) => [comment.id, comment.canEdit])).toEqual([
+      ["t1", false],
+      ["t2", true],
+    ]);
   });
 
   it("carries every reply, not only the remark each thread opened with", () => {
@@ -1433,6 +1495,7 @@ describe("review thread decoding", () => {
             editedAt: "2026-07-02T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc1",
             reactions: [],
+            canEdit: false,
           },
           {
             id: "c2",
@@ -1442,6 +1505,7 @@ describe("review thread decoding", () => {
             editedAt: null,
             url: "https://github.com/acme/web/pull/1#discussion_rc2",
             reactions: [],
+            canEdit: false,
           },
         ],
       },

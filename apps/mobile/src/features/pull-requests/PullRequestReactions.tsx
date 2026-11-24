@@ -168,8 +168,7 @@ export function PullRequestCommentFooter(props: {
   const gt = useGT();
   const { comment } = props;
   const reactions = comment.reactions ?? [];
-  const editableKind = comment.kind === "review" ? null : comment.kind;
-  const canEdit = editableKind !== null && props.permissions.canEditComment(comment);
+  const canEdit = props.permissions.canEditComment(comment);
   const canReact = props.permissions.canReactComment(comment);
   const onReact = usePullRequestReact(props.params, comment.id);
   if (reactions.length === 0 && !canReact && !canEdit) return null;
@@ -181,7 +180,7 @@ export function PullRequestCommentFooter(props: {
         onReact={onReact}
         onChanged={props.onChanged}
       />
-      {canEdit && editableKind !== null ? (
+      {canEdit ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Edit comment")}
@@ -192,7 +191,7 @@ export function PullRequestCommentFooter(props: {
               field: "comment",
               comment: {
                 id: comment.id,
-                kind: editableKind,
+                kind: comment.kind,
                 body: comment.body,
                 author: comment.author,
                 ...(comment.canEdit === undefined ? {} : { canEdit: comment.canEdit }),

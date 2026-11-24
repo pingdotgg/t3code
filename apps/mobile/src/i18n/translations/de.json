@@ -3171,6 +3171,7 @@
   "ed12185f6491f9aa": "{term, select, mr {Dieser Merge Request konnte nicht aktualisiert werden} cr {Diese Änderungsanfrage konnte nicht aktualisiert werden} other {Dieser Pull Request konnte nicht aktualisiert werden}}",
   "52a848a6b739560f": "{term, select, mr {Diesen Merge Request schließen, ohne die Änderungen zu mergen?} cr {Diese Änderungsanfrage schließen, ohne die Änderungen zu mergen?} other {Diesen Pull Request schließen, ohne die Änderungen zu mergen?}}",
   "6447b79f23fc5446": "Erledigt: {title}",
+  "faef5657f28d1c69": "Der Kommentar konnte nicht gespeichert werden",
   "e3e1ec05d1224d36": "Die Beschreibung konnte nicht gespeichert werden",
   "87586388ddab87f9": "Angesehene Dateien konnten nicht aktualisiert werden.",
   "2800188d5c223fa6": "Die Liste konnte nicht weitergeschaltet werden. Versuch es erneut.",

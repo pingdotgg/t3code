@@ -3172,6 +3172,7 @@
   "ed12185f6491f9aa": "Kunde inte uppdatera den här {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}",
   "52a848a6b739560f": "Stänga den här {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}} utan att merga ändringarna?",
   "6447b79f23fc5446": "Klar: {title}",
+  "faef5657f28d1c69": "Kunde inte spara kommentaren",
   "e3e1ec05d1224d36": "Kunde inte spara beskrivningen",
   "87586388ddab87f9": "Kunde inte uppdatera visade filer.",
   "2800188d5c223fa6": "Kunde inte gå vidare i listan. Försök igen.",

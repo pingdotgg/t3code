@@ -270,6 +270,8 @@ export const PullRequestEditCapabilities = Schema.Struct({
   changeRequest: Schema.Boolean,
   comment: Schema.Boolean,
   maintainerEdits: Schema.optional(Schema.Boolean),
+  /** A review's summary can be rewritten through `updateComment`. */
+  review: Schema.optional(Schema.Boolean),
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
@@ -879,7 +881,7 @@ export type PullRequestUpdateInput = typeof PullRequestUpdateInput.Type;
 export const PullRequestCommentUpdateInput = Schema.Struct({
   ...PullRequestRef.fields,
   commentId: TrimmedNonEmptyString,
-  kind: Schema.Literals(["issue-comment", "review-comment"]),
+  kind: PullRequestCommentKind,
   body: CommentBody,
 });
 export type PullRequestCommentUpdateInput = typeof PullRequestCommentUpdateInput.Type;

@@ -250,6 +250,72 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
   expect(onFixFinding).toHaveBeenCalledWith({ kind: "comment", comment: remark });
 });
 
+it("ticks a checkbox in a comment the viewer may edit", async () => {
+  setup();
+  const comment = {
+    id: "20",
+    kind: "issue-comment" as const,
+    body: "- [ ] Trigger review",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+    canEdit: true,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+  await expect.element(screen.getByRole("button", { name: "Edit comment" })).toBeInTheDocument();
+  await expect.element(screen.getByRole("checkbox", { name: "Toggle task" })).toBeEnabled();
+});
+
+it("opens the comment editor from the ticks already saved", async () => {
+  setup();
+  const comment = {
+    id: "22",
+    kind: "issue-comment" as const,
+    body: "- [ ] Trigger review",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+    canEdit: true,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+  await userEvent.click(screen.getByRole("checkbox", { name: "Toggle task" }));
+  await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(1));
+  const edit = screen.getByRole("button", { name: "Edit comment" });
+  await expect.element(edit).toBeEnabled();
+  await userEvent.click(edit);
+  await expect.element(screen.getByRole("textbox")).toHaveValue("- [x] Trigger review");
+});
+
+it("ticks a checkbox in a review summary the viewer may edit", async () => {
+  setup();
+  const review = {
+    id: "21",
+    kind: "review" as const,
+    body: "- [ ] Autofix",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: "COMMENTED",
+    canEdit: true,
+  };
+  await using screen = await render({
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      edit: { changeRequest: true, comment: true, review: true },
+    },
+    comments: [review],
+    commentCount: 1,
+  });
+  await expect.element(screen.getByRole("button", { name: "Edit comment" })).toBeInTheDocument();
+  await expect.element(screen.getByRole("checkbox", { name: "Toggle task" })).toBeEnabled();
+});
+
 it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   setup();
   state.timestampFormat = "24-hour";

@@ -604,7 +604,8 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly commentId: string;
-      readonly kind: "issue-comment" | "review-comment";
+      /** `review` rewrites a review's summary, only on hosts with `capabilities.edit.review`. */
+      readonly kind: "issue-comment" | "review-comment" | "review";
       readonly body: string;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;

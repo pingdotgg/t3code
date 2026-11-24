@@ -725,9 +725,15 @@ interface RemarkFields {
 // Hidden (minimized) remarks are left out, as github.com collapses them: a maintainer marked them
 // spam, off-topic, or outdated, and they should not reach readers or agents.
 function toComments(raw: {
-  readonly comments: ReadonlyArray<RemarkFields & { readonly createdAt: string }>;
+  readonly comments: ReadonlyArray<
+    RemarkFields & { readonly createdAt: string; readonly viewerCanUpdate: boolean }
+  >;
   readonly reviews: ReadonlyArray<
-    RemarkFields & { readonly state: string; readonly submittedAt: string | null }
+    RemarkFields & {
+      readonly state: string;
+      readonly submittedAt: string | null;
+      readonly viewerCanUpdate: boolean;
+    }
   >;
 }): ReadonlyArray<PullRequestComment> {
   const issueComments = raw.comments
@@ -742,6 +748,7 @@ function toComments(raw: {
       url: trimmed(comment.url),
       path: null,
       reviewState: null,
+      canEdit: comment.viewerCanUpdate,
     }));
   // Bodiless COMMENTED reviews only hold line comments read separately.
   const reviews = raw.reviews.flatMap((review): ReadonlyArray<PullRequestComment> => {
@@ -765,6 +772,7 @@ function toComments(raw: {
         url: trimmed(review.url),
         path: null,
         reviewState,
+        canEdit: review.viewerCanUpdate,
       },
     ];
   });
@@ -1376,6 +1384,7 @@ export function reviewThreadConversation(
       path: thread.path,
       reviewState: null,
       reactions: comment.reactions ?? [],
+      ...(comment.canEdit === undefined ? {} : { canEdit: comment.canEdit }),
     })),
   );
 }
@@ -1416,6 +1425,7 @@ function toThreadComment(comment: ThreadComment, viewer: string | null): PullReq
     url: trimmed(comment.url),
     ...(reviewUrl === null ? {} : { reviewUrl }),
     reactions: toReactions(comment.reactionGroups, viewer),
+    canEdit: comment.viewerCanUpdate,
   };
 }
 

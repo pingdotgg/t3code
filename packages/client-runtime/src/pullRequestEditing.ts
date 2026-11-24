@@ -101,13 +101,12 @@ export function settleDescriptionSave(
   return { ...draft, saves, body: saved || saves > 0 ? draft.body : null };
 }
 
-/** Hosts do not support rewriting review summaries through comment mutations. */
 export function canEditPullRequestComment(
   detail: EditingSubject,
   comment: Pick<PullRequestComment, "author" | "canEdit" | "kind">,
 ): boolean {
   if (detail.capabilities.edit?.comment !== true) return false;
-  if (comment.kind !== "issue-comment" && comment.kind !== "review-comment") return false;
+  if (comment.kind === "review" && detail.capabilities.edit.review !== true) return false;
   if (comment.canEdit !== undefined) return comment.canEdit;
   return sameLogin(detail.viewer, comment.author?.login);
 }
@@ -117,4 +116,60 @@ export function canResolvePullRequestThread(
   thread: Pick<PullRequestReviewThread, "canResolve">,
 ): boolean {
   return detail.viewerPermissions.resolve && thread.canResolve !== false;
+}
+
+/** A comment with task ticks shown before the host confirms them. */
+export interface TaskListDraft {
+  /** The host's copy the ticks started from. */
+  readonly base: string;
+  readonly body: string;
+  /** Every save has finished; the ticks now wait for a host copy other than `base`. */
+  readonly settled: boolean;
+}
+
+/** Once the host's copy moves on, the ticks are dropped, so a later revert cannot revive them. */
+export function taskListDraftInForce(
+  draft: TaskListDraft | null,
+  body: string,
+): TaskListDraft | null {
+  return draft === null || !draft.settled || draft.base === body ? draft : null;
+}
+
+export function startTaskListToggle(
+  draft: TaskListDraft | null,
+  body: string,
+  next: string,
+): TaskListDraft {
+  return { base: draft?.base ?? body, body: next, settled: false };
+}
+
+export function settleTaskListDraft(draft: TaskListDraft | null): TaskListDraft | null {
+  return draft === null ? null : { ...draft, settled: true };
+}
+
+/**
+ * Runs comment saves one at a time in the order they were asked for. Each save writes the whole
+ * body with every earlier tick in it, so a failure drops the saves queued behind it.
+ */
+export function createTaskListSaveQueue() {
+  let tail = Promise.resolve();
+  let generation = 0;
+  let waiting = 0;
+  return (
+    save: () => Promise<boolean>,
+    on: { readonly failed: () => void; readonly drained: () => void },
+  ) => {
+    const ticket = generation;
+    waiting += 1;
+    tail = tail
+      .then(async () => {
+        if (ticket !== generation || (await save().catch(() => false))) return;
+        generation += 1;
+        on.failed();
+      })
+      .then(() => {
+        waiting -= 1;
+        if (waiting === 0) on.drained();
+      });
+  };
 }

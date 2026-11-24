@@ -3166,6 +3166,7 @@
   "ed12185f6491f9aa": "Não foi possível atualizar {term, select, mr {este merge request} cr {esta solicitação de alteração} other {este pull request}}",
   "52a848a6b739560f": "Fechar {term, select, mr {este merge request} cr {esta solicitação de alteração} other {este pull request}} sem mesclar as alterações?",
   "6447b79f23fc5446": "Concluída: {title}",
+  "faef5657f28d1c69": "Não foi possível salvar o comentário",
   "e3e1ec05d1224d36": "Não foi possível salvar a descrição",
   "87586388ddab87f9": "Não foi possível atualizar os arquivos visualizados.",
   "2800188d5c223fa6": "Não foi possível avançar a lista. Tente novamente.",

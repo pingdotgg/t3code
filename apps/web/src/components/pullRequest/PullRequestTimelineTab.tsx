@@ -53,6 +53,7 @@ import {
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { usePullRequestTaskToggle } from "./usePullRequestTaskToggle";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -94,12 +95,14 @@ function TimelineBody({
   cwd,
   environmentId,
   threadRef,
+  onTaskListChange,
 }: {
   body: string;
   markdown: boolean;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
   return (
     <div className="mt-3">
@@ -109,6 +112,7 @@ function TimelineBody({
           cwd={cwd}
           environmentId={environmentId}
           threadRef={threadRef}
+          onTaskListChange={onTaskListChange}
         />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
@@ -263,7 +267,7 @@ function ConversationCard({
   });
 
   const save = async (body: string) => {
-    if (editable === null || saving || editable.kind === "review") return;
+    if (editable === null || saving) return;
     setSaving(true);
     const result = await updateComment({
       environmentId: reactions.environmentId,
@@ -277,6 +281,33 @@ function ConversationCard({
     setEditing(false);
     reactions.onRefresh();
   };
+
+  // The timeline shows the body trimmed; the whitespace around it goes back on save.
+  const untrimmed = (shown: string) => {
+    if (editable === null) return shown;
+    const start = editable.body.length - editable.body.trimStart().length;
+    return (
+      editable.body.slice(0, start) + shown + editable.body.slice(editable.body.trimEnd().length)
+    );
+  };
+  const saveTasks = async (shown: string) => {
+    if (editable === null) return false;
+    const body = untrimmed(shown);
+    const result = await updateComment({
+      environmentId: reactions.environmentId,
+      input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: m(msg("Could not save the comment")) });
+      return false;
+    }
+    return true;
+  };
+  const tasks = usePullRequestTaskToggle(
+    event.body ?? "",
+    editable === null ? null : saveTasks,
+    reactions.onRefresh,
+  );
 
   return (
     <article
@@ -331,6 +362,7 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton
               aria-label={gt("Edit comment")}
+              disabled={tasks.saving}
               onClick={() => setEditing(true)}
             />
           ) : null}
@@ -355,7 +387,7 @@ function ConversationCard({
       {editing && editable !== null ? (
         <div className="px-2 pb-2 pt-3">
           <PullRequestMarkdownEditor
-            value={editable.body}
+            value={tasks.text === (event.body ?? "") ? editable.body : untrimmed(tasks.text)}
             cwd={cwd}
             environmentId={reactions.environmentId}
             completionScope={reactions.completionScope}
@@ -369,11 +401,12 @@ function ConversationCard({
       ) : event.body ? (
         <div className="px-2 pb-2">
           <TimelineBody
-            body={event.body}
+            body={tasks.text}
             markdown={event.markdown}
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
+            onTaskListChange={tasks.onTaskListChange}
           />
         </div>
       ) : null}
