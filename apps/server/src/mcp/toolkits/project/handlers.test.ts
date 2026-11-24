@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - a directory junction needs no privilege on Windows.
+import * as NodeFSP from "node:fs/promises";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -254,6 +256,7 @@ it.effect(
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
       expect(belowCeiling.launched[0]?.generateTitle).toBeUndefined();
+      expect(belowCeiling.launched[0]?.titleRenamed).toBe(true);
 
       const titled = yield* launchWith("full-access", "full-access", {
         title: "Fix",
@@ -261,6 +264,7 @@ it.effect(
         message: "Fix the bug",
       });
       expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
+      expect(titled.launched[0]?.titleRenamed).toBeUndefined();
 
       for (const message of [undefined, "", " \n "]) {
         const idleTitled = yield* launchWith("full-access", "full-access", {
@@ -565,10 +569,14 @@ it.effect("a launch binds only an existing checkout that is one of the project's
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-worktree-" });
+    // Git registers resolved paths, and a launch keeps the registered one.
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-worktree-" }),
+    );
     const repo = path.join(root, "repo");
     const worktree = path.join(root, "feature");
     const outside = path.join(root, "outside");
+    const alias = path.join(root, "alias");
     yield* fileSystem.makeDirectory(repo);
     yield* fileSystem.makeDirectory(outside);
 
@@ -613,9 +621,13 @@ it.effect("a launch binds only an existing checkout that is one of the project's
         code: "invalid_request",
       });
     }
+    // The thread keeps the registered worktree path when launched through a link to it.
+    yield* Effect.promise(() => NodeFSP.symlink(worktree, alias, "junction"));
+    expect((yield* launchInto(alias)).at(-1)?.result).toMatchObject({ projectId });
     expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([
       { type: "existing_worktree", worktreePath: worktree },
       { type: "existing_worktree", worktreePath: repo },
+      { type: "existing_worktree", worktreePath: worktree },
     ]);
 
     yield* fileSystem.remove(worktree, { recursive: true });

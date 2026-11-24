@@ -22,6 +22,7 @@ import {
 } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
 import { useEnvironmentScope } from "../../state/session";
+import { AppRouteModal } from "../AppRouteModal";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
@@ -698,6 +699,43 @@ it("keeps a dictionary term and alias draft on the Enter that confirms an IME ca
   alias.element().dispatchEvent(composingEnter());
   expect(getClientSettings().speechCustomWords).toEqual([{ term: "日本語", aliases: [] }]);
   await expect.element(alias).toHaveValue("にほん");
+});
+
+it("cancels an alias draft on Esc without closing Settings", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  __setClientSettingsForTests({
+    ...previous,
+    speechCustomWords: [{ term: "Kubernetes", aliases: [] }],
+  });
+  await using screen = await render(
+    <AppRouteModal label="Settings">
+      <SettingsScopeProvider search={{}} onChange={() => {}}>
+        <VoiceSettingsPanel />
+      </SettingsScopeProvider>
+    </AppRouteModal>,
+    { router: "/settings/voice" },
+  );
+  const settings = screen.getByRole("dialog", { name: "Settings" });
+  const addAlias = screen.getByRole("button", { name: "Add an alias for Kubernetes" });
+  await expect.element(addAlias).toBeVisible();
+  (addAlias.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  const alias = screen.getByRole("textbox", { name: "Alias for Kubernetes" });
+  await expect.element(alias).toHaveFocus();
+  await userEvent.keyboard("cooper");
+
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(alias).not.toBeInTheDocument();
+  await expect.element(settings).toHaveAttribute("data-open");
+  await expect.element(settings).toHaveFocus();
+  expect(getClientSettings().speechCustomWords).toEqual([{ term: "Kubernetes", aliases: [] }]);
+
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(settings).not.toBeInTheDocument();
 });
 
 it("records from the first connected microphone in the saved order", async () => {
