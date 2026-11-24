@@ -77,7 +77,11 @@ const withService = <A, E>(
   options: {
     readonly threadId?: ThreadId;
     readonly delivery?: "file";
-    readonly fields?: ReadonlyArray<{ readonly name: string; readonly label: string }>;
+    readonly fields?: ReadonlyArray<{
+      readonly name: string;
+      readonly label: string;
+      readonly optional?: boolean;
+    }>;
     readonly directory?: string;
     readonly runStatus?: string;
     readonly removeFails?: boolean;
