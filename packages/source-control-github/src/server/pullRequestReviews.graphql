@@ -37,6 +37,7 @@ fragment ThreadComment on PullRequestReviewComment {
   createdAt
   lastEditedAt
   url
+  viewerCanUpdate
   isMinimized
   # A review link names the review, not its comments; this lets it find the comments it posted.
   pullRequestReview {

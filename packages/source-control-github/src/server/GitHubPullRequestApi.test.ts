@@ -359,6 +359,7 @@ function threadComments(
       lastEditedAt: null,
       url: `https://github.com/acme/web/pull/7#discussion_${id}`,
       isMinimized: false,
+      viewerCanUpdate: false,
       pullRequestReview: null,
       reactionGroups: [],
     })),

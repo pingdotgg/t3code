@@ -53,6 +53,7 @@ import {
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { usePullRequestTaskToggle } from "./usePullRequestTaskToggle";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -94,21 +95,27 @@ function TimelineBody({
   cwd,
   environmentId,
   threadRef,
+  saveTasks = null,
+  onRefresh,
 }: {
   body: string;
   markdown: boolean;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
+  saveTasks?: ((body: string) => Promise<boolean>) | null;
+  onRefresh: () => void;
 }) {
+  const tasks = usePullRequestTaskToggle(body, saveTasks, onRefresh);
   return (
     <div className="mt-3">
       {markdown ? (
         <PullRequestMarkdown
-          text={body}
+          text={tasks.text}
           cwd={cwd}
           environmentId={environmentId}
           threadRef={threadRef}
+          onTaskListChange={tasks.onTaskListChange}
         />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
@@ -278,6 +285,23 @@ function ConversationCard({
     reactions.onRefresh();
   };
 
+  // The timeline shows the body trimmed; the whitespace around it goes back on save.
+  const saveTasks = async (shown: string) => {
+    if (editable === null || editable.kind === "review") return false;
+    const start = editable.body.length - editable.body.trimStart().length;
+    const body =
+      editable.body.slice(0, start) + shown + editable.body.slice(editable.body.trimEnd().length);
+    const result = await updateComment({
+      environmentId: reactions.environmentId,
+      input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: m(msg("Could not save the comment")) });
+      return false;
+    }
+    return true;
+  };
+
   return (
     <article
       {...(reactions.revealAnchor != null &&
@@ -374,6 +398,8 @@ function ConversationCard({
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
+            saveTasks={editable === null ? null : saveTasks}
+            onRefresh={reactions.onRefresh}
           />
         </div>
       ) : null}
@@ -813,6 +839,7 @@ function ReviewVerdictEvent({
           cwd={cwd}
           environmentId={reactions.environmentId}
           threadRef={reactions.threadRef}
+          onRefresh={reactions.onRefresh}
         />
       ) : null}
     </div>

@@ -35,6 +35,7 @@ import {
 } from "./pullRequestDetail.logic";
 import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { usePullRequestTaskToggle } from "./usePullRequestTaskToggle";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
@@ -188,6 +189,30 @@ export function InlineReviewThreads({
   );
 }
 
+function ThreadCommentText({
+  body,
+  workspaceRoot,
+  environmentId,
+  save,
+}: {
+  body: string;
+  workspaceRoot: string;
+  environmentId: EnvironmentId;
+  save: ((body: string) => Promise<boolean>) | null;
+}) {
+  // Each save refreshes the pull request itself, so there is nothing left to do once they drain.
+  const tasks = usePullRequestTaskToggle(body, save, () => {});
+  return (
+    <PullRequestMarkdown
+      className="min-w-0 flex-1 text-sm"
+      text={tasks.text}
+      cwd={workspaceRoot}
+      environmentId={environmentId}
+      onTaskListChange={tasks.onTaskListChange}
+    />
+  );
+}
+
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -254,11 +279,8 @@ export function ReviewThreadCard({
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
   const commentCount = thread.commentCount ?? comments.length;
 
-  const saveEdit = async (commentId: string, body: string) => {
-    if (savingEdit) return;
-    setSavingEdit(true);
+  const saveComment = async (commentId: string, body: string) => {
     const saved = await onEditComment(commentId, body);
-    setSavingEdit(false);
     if (saved) {
       setLoadedPage((previous) =>
         previous?.threadId === thread.id
@@ -268,8 +290,15 @@ export function ReviewThreadCard({
             }
           : previous,
       );
-      setEditingId(null);
     }
+    return saved;
+  };
+  const saveEdit = async (commentId: string, body: string) => {
+    if (savingEdit) return;
+    setSavingEdit(true);
+    const saved = await saveComment(commentId, body);
+    setSavingEdit(false);
+    if (saved) setEditingId(null);
   };
 
   const send = async (text: string) => {
@@ -409,11 +438,13 @@ export function ReviewThreadCard({
                   />
                 ) : (
                   <div className="mt-1 flex items-start gap-1">
-                    <PullRequestMarkdown
-                      className="min-w-0 flex-1 text-sm"
-                      text={comment.body}
-                      cwd={workspaceRoot}
+                    <ThreadCommentText
+                      body={comment.body}
+                      workspaceRoot={workspaceRoot}
                       environmentId={environmentId}
+                      save={
+                        canEditComment(comment) ? (body) => saveComment(comment.id, body) : null
+                      }
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton

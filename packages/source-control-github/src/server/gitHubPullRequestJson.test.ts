@@ -109,6 +109,7 @@ const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   body: "",
   lastEditedAt: null,
   isMinimized: false,
+  viewerCanUpdate: false,
   url: "https://github.com/acme/web/pull/1#discussion",
   pullRequestReview: null,
   ...raw,
@@ -500,6 +501,7 @@ describe("pull request detail decoding", () => {
                   lastEditedAt: null,
                   url: "https://github.com/c",
                   isMinimized: false,
+                  viewerCanUpdate: false,
                   author: null,
                   ...comment,
                 }),
@@ -800,6 +802,26 @@ describe("pull request detail decoding", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
     expect(detail.comments.at(-1)?.reviewState).toBe("APPROVED");
+  });
+
+  it("lets the reader edit a comment GitHub says they may update, such as a bot's", () => {
+    const detail = expectSuccess(
+      activity({
+        comments: [
+          { id: "c1", body: "- [ ] merge", createdAt: "2026-07-04T00:00:00Z" },
+          {
+            id: "c2",
+            body: "- [ ] merge",
+            createdAt: "2026-07-05T00:00:00Z",
+            viewerCanUpdate: true,
+          },
+        ],
+      }),
+    );
+    expect(detail.comments.map((comment) => [comment.id, comment.canEdit])).toEqual([
+      ["c1", false],
+      ["c2", true],
+    ]);
   });
 
   it("drops the bodyless review GitHub opens to hold line comments", () => {
@@ -1433,6 +1455,7 @@ describe("review thread decoding", () => {
             editedAt: "2026-07-02T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc1",
             reactions: [],
+            canEdit: false,
           },
           {
             id: "c2",
@@ -1442,6 +1465,7 @@ describe("review thread decoding", () => {
             editedAt: null,
             url: "https://github.com/acme/web/pull/1#discussion_rc2",
             reactions: [],
+            canEdit: false,
           },
         ],
       },
