@@ -289,9 +289,9 @@ it("app-stream-assistant-turn", async () => {
       .element(page.getByText(`word${STREAM_DELTAS - 1}`, { exact: false }))
       .toBeVisible();
   });
-  // Only the streaming row changes. The timeline renders for the new item and its layout, not
-  // per delta, and history rows not at all.
-  expect(counted.components.ConversationTimeline).toBeLessThanOrEqual(3);
+  // Only the streaming row changes. The timeline renders once for the new item, not per delta or
+  // per scroll frame, and history rows not at all.
+  expect(counted.components.ConversationTimeline).toBe(1);
   expect(counted.components.UserTimelineRow).toBeUndefined();
   expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
   // Each delta adds a paragraph; finished blocks keep their render.

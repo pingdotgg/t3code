@@ -12,6 +12,18 @@ import {
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { createStore, useStore, type StoreApi } from "zustand";
+
+interface TimelineMinimapPosition {
+  readonly currentIndex: number | null;
+  readonly atEnd: boolean;
+}
+
+/** Where the timeline's viewport is, which only the minimap renders, so scrolling re-renders the minimap alone. */
+export type TimelineMinimapPositionStore = StoreApi<TimelineMinimapPosition>;
+
+export const createTimelineMinimapPositionStore = (): TimelineMinimapPositionStore =>
+  createStore<TimelineMinimapPosition>(() => ({ currentIndex: null, atEnd: false }));
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -33,8 +45,7 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
 export function TimelineMinimap({
   hasPersistentGutter,
   hitStrip: { left: hitStripLeft, width: hitStripWidth },
-  currentIndex,
-  atEnd,
+  position,
   items,
   stripMap,
   onWheel,
@@ -42,14 +53,15 @@ export function TimelineMinimap({
 }: {
   hasPersistentGutter: boolean;
   hitStrip: { left: number; width: number };
-  currentIndex: number | null;
-  atEnd: boolean;
+  position: TimelineMinimapPositionStore;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const gt = useGT();
+  const currentIndex = useStore(position, (state) => state.currentIndex);
+  const atEnd = useStore(position, (state) => state.atEnd);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
