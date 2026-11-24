@@ -19,6 +19,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import { useChatCanvas } from "../chat/ChatCanvasContext";
 import type { ChatCanvasPreview } from "../chat/chatCanvasLayout";
+import { BrowserDialogCard } from "~/browser/BrowserDialogCard";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   findActiveBrowserRecordingRuntimeTabId,
@@ -277,6 +278,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
       : null;
   const loadFailed = snapshot.navStatus._tag === "LoadFailed" ? snapshot.navStatus : null;
   const poppedOut = serverTab ? serverPictureInPicture : Boolean(desktopOverlay?.pictureInPicture);
+  const pageDialog = desktopOverlay?.dialog;
   const canPopOut = serverTab
     ? poppedOut || (pdfUrl === null && supportsServerPictureInPicture())
     : true;
@@ -371,6 +373,19 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
                 <T>Reconnecting preview…</T>
               </div>
+            ) : null}
+            {pageDialog ? (
+              <BrowserDialogCard
+                key={pageDialog.id}
+                dialog={pageDialog}
+                canAnswer
+                className="pointer-events-auto z-[49]"
+                onAnswer={(accept) =>
+                  void previewBridge
+                    ?.answerDialog(runtimeTabId, pageDialog.id, accept)
+                    .catch(() => undefined)
+                }
+              />
             ) : null}
           </>
         )

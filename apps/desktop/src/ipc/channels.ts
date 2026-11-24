@@ -98,6 +98,7 @@ export const PREVIEW_SET_ZOOM_FACTOR_CHANNEL = "desktop:preview-set-zoom-factor"
 export const PREVIEW_HARD_RELOAD_CHANNEL = "desktop:preview-hard-reload";
 export const PREVIEW_SET_COLOR_SCHEME_CHANNEL = "desktop:preview-set-color-scheme";
 export const PREVIEW_SET_AUDIO_MUTED_CHANNEL = "desktop:preview-set-audio-muted";
+export const PREVIEW_ANSWER_DIALOG_CHANNEL = "desktop:preview-answer-dialog";
 export const PREVIEW_FIND_IN_PAGE_CHANNEL = "desktop:preview-find-in-page";
 export const PREVIEW_STOP_FIND_IN_PAGE_CHANNEL = "desktop:preview-stop-find-in-page";
 export const PREVIEW_SET_SHOWN_CHANNEL = "desktop:preview-set-shown";
