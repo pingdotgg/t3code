@@ -25,31 +25,31 @@ import { openZipArchive } from "../zipArchive.ts";
 // https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json
 // Never pin below 156.0.8078.70: the shell has no CRLSet and older SPKI blocklists trust
 // compromised eMudhra intermediates (crrev.com/c/8627687).
-const VERSION = "157.0.8103.78";
+export const VERSION = "158.0.8127.36";
 const ARCHIVES = {
   linux64: {
-    bytes: 127_965_683,
-    sha256: "f90329720fb61e5a76da9b6b509b6ad12a484c9c5df0359403e935177c6d153a",
+    bytes: 132_087_165,
+    sha256: "2d3a23017323c54fd457a678e4351f895c4076d8050e39d5aa6247f93448b73a",
   },
   "linux-arm64": {
-    bytes: 128_047_138,
-    sha256: "912fbf877e53de34d7b3cca5104f3b95607d41bd35412ccc6cd2a599ff0c0dbf",
+    bytes: 129_938_239,
+    sha256: "176ee5c55486c22de43128871189061365ea28e881fc96016fd18e7cb59437c8",
   },
   "mac-arm64": {
-    bytes: 104_822_985,
-    sha256: "17bf66d53c1b1104dcb641c5b331cd4ac5d200c778f5feed0934a0b92deaf8d6",
+    bytes: 105_057_133,
+    sha256: "c24d40a3786322ff3a5e3ac6eed162226cbaf07ebe468715407827226b0f8897",
   },
   "mac-x64": {
-    bytes: 110_132_547,
-    sha256: "f1a6a9561eaf1f409849538de663695d36d72fbf1ebca4d42e47c7b5f2a157f3",
+    bytes: 112_306_247,
+    sha256: "e0c5d07d8f5bcc5bdd5ef370e7daf3770856b585fcc9eecf441c7e3bb2e3d1cf",
   },
   win32: {
-    bytes: 120_403_126,
-    sha256: "d9829c59dcc79d9e6e920f8ab841f2a9a055dcf54229d756ac0b42dfec303910",
+    bytes: 122_509_290,
+    sha256: "c1fc009622363bccbc1e5f60be654b90fa7b70ad83e642875da1fcb147ae430d",
   },
   win64: {
-    bytes: 126_047_001,
-    sha256: "2138c1583d25d6f3abec5269943b2f430207d87a539895aa9e90cc4697ec0e1f",
+    bytes: 127_876_264,
+    sha256: "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e",
   },
 } as const;
 

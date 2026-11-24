@@ -6,6 +6,7 @@ import { Atom } from "effect/reactivity";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { clearReviewCommentTarget } from "./reviewCommentSelection";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
 
 const EMPTY_REVIEW_SECTION_FILE_IDS = Object.freeze<
@@ -54,6 +55,7 @@ export const MAX_CACHED_REVIEW_SOURCE_CHARACTERS = 4 * 1024 * 1024;
 
 interface CachedReviewParsedDiff {
   readonly diff: string | null;
+  readonly locale: string;
   readonly parsed: ReviewParsedDiff;
   readonly sourceCharacterCount: number;
 }
@@ -171,22 +173,25 @@ export function getCachedReviewParsedDiff(input: {
   readonly threadKey: string | null;
   readonly sectionId: string | null;
   readonly diff: string | null | undefined;
+  readonly resolve?: MessageResolver;
+  readonly locale: string;
 }): ReviewParsedDiff {
+  const resolve = input.resolve ?? m;
   if (!input.threadKey || !input.sectionId) {
-    return buildReviewParsedDiff(input.diff, input.sectionId ?? "mobile-review");
+    return buildReviewParsedDiff(input.diff, input.sectionId ?? "mobile-review", resolve);
   }
 
   const cacheKey = buildSectionCacheKey(input.threadKey, input.sectionId);
   const normalizedDiff = input.diff?.trim() ?? null;
   const cache = appAtomRegistry.get(reviewParsedDiffCacheAtom);
   const cached = cache.entries.get(cacheKey);
-  if (cached && cached.diff === normalizedDiff) {
+  if (cached && cached.diff === normalizedDiff && cached.locale === input.locale) {
     cache.entries.delete(cacheKey);
     cache.entries.set(cacheKey, cached);
     return cached.parsed;
   }
 
-  const parsed = buildReviewParsedDiff(input.diff, input.sectionId);
+  const parsed = buildReviewParsedDiff(input.diff, input.sectionId, resolve);
   if (cached) {
     cache.entries.delete(cacheKey);
     cache.sourceCharacterCount -= cached.sourceCharacterCount;
@@ -208,6 +213,7 @@ export function getCachedReviewParsedDiff(input: {
   }
   cache.entries.set(cacheKey, {
     diff: normalizedDiff,
+    locale: input.locale,
     parsed,
     sourceCharacterCount,
   });

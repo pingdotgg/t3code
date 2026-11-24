@@ -9,7 +9,7 @@ optional mobile notifications and Live Activities.
 
 The relay is intentionally not in the hot path for normal T3 Code traffic. After a client connects,
 regular API and WebSocket traffic goes directly between that client and the selected environment.
-See the [T3 Connect architecture note](../../docs/internals/t3-connect.md) for the larger system
+See the [T3 Connect architecture note](../../docs/internals/06_t3-connect.md) for the larger system
 design.
 
 ## Responsibilities
@@ -25,7 +25,7 @@ The relay currently owns:
 - Persisting relay state and exposing relay-specific traces for diagnostics.
 
 The environment server and relay have separate credentials and trust boundaries. Read
-[Environment Authentication Profile](../../docs/internals/environment-auth.md) before changing token,
+[Environment Authentication Profile](../../docs/internals/04_environment-auth.md) before changing token,
 credential, or authorization behavior.
 
 ## Code Map
@@ -145,7 +145,7 @@ The `production` GitHub environment must define these Actions variables:
 - `RELAY_DOMAIN` if overriding the derived production relay domain
 - `RELAY_ALERT_NOTIFIER_ID`, the Axiom notifier that relay alerts page. Without it the deployment
   creates no monitors or health dashboard. See
-  [Relay alerts](../../docs/operations/relay-observability.md#alerts).
+  [Relay alerts](../../docs/operations/05_relay-observability.md#alerts).
 - `RELAY_WARNING_NOTIFIER_ID`, optional, the Axiom notifier for relay warnings
 - `CLERK_PUBLISHABLE_KEY`
 - `CLERK_JWT_AUDIENCE`
@@ -172,6 +172,6 @@ and hosted web builds.
 
 See:
 
-- [T3 Connect setup](../../docs/operations/connect-setup.md) for Clerk keys, JWT templates, and sign-up restrictions.
-- [Relay Observability](../../docs/operations/relay-observability.md) for deployment tracing and diagnostics.
-- [T3 Connect architecture](../../docs/internals/t3-connect.md) for environment linking and trust boundaries.
+- [T3 Connect setup](../../docs/operations/02_connect-setup.md) for Clerk keys, JWT templates, and sign-up restrictions.
+- [Relay Observability](../../docs/operations/05_relay-observability.md) for deployment tracing and diagnostics.
+- [T3 Connect architecture](../../docs/internals/06_t3-connect.md) for environment linking and trust boundaries.

@@ -1,9 +1,6 @@
+import { useGT } from "gt-react";
 import { memo } from "react";
 import { cn } from "~/lib/utils";
-
-export function hasNonZeroStat(stat: { additions: number; deletions: number }): boolean {
-  return stat.additions > 0 || stat.deletions > 0;
-}
 
 export function formatCompactDiffCount(value: number): string {
   if (value < 1000) return String(value);
@@ -26,10 +23,11 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
   layout?: "aligned" | "inline";
 }) {
   const { additions, deletions, className, layout = "aligned" } = props;
+  const gt = useGT();
   return (
     <span
       role="group"
-      aria-label={`${additions} additions, ${deletions} deletions`}
+      aria-label={gt("{additions} additions, {deletions} deletions", { additions, deletions })}
       className={cn(
         layout === "inline"
           ? "inline-flex items-center gap-1 tabular-nums align-middle"

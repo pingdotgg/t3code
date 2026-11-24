@@ -1,5 +1,7 @@
 import type { PullRequestAction } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { T } from "gt-react";
 import { SearchIcon } from "lucide-react";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
@@ -24,6 +26,7 @@ import {
   PullRequestRowGlyph,
   PullRequestRowLines,
 } from "./PullRequestListRow";
+import { PullRequestPrivateMark } from "./PullRequestDetailLayout";
 import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
 
 const LABEL_SLOTS = [
@@ -151,6 +154,7 @@ function PullRequestRowImpl({
                   url: entry.url,
                   openLabel: openOnHostLabel(sourceControlClients.get(entry.provider)),
                   position: { x: event.clientX, y: event.clientY },
+                  source: contextMenuSourceOf(event),
                 });
               }}
             >
@@ -160,6 +164,9 @@ function PullRequestRowImpl({
           title={entry.title}
           signals={
             <>
+              {entry.visibility === "private" ? (
+                <PullRequestPrivateMark className="size-3 text-muted-foreground" />
+              ) : null}
               {entry.checksState === undefined ? null : (
                 <PullRequestChecksPopover
                   checksState={entry.checksState}
@@ -216,13 +223,17 @@ function PullRequestRowImpl({
                       <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
                     }
                   >
-                    <span className="sr-only">matched in the description</span>
+                    <span className="sr-only">
+                      <T>matched in the description</T>
+                    </span>
                     <SearchIcon aria-hidden className="size-3 shrink-0" />
                     <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                      matched in the description
+                      <T>matched in the description</T>
                     </span>
                   </TooltipTrigger>
-                  <TooltipPopup side="top">Matched in the description</TooltipPopup>
+                  <TooltipPopup side="top">
+                    <T>Matched in the description</T>
+                  </TooltipPopup>
                 </Tooltip>
               ) : null}
               {showProvider ? (
