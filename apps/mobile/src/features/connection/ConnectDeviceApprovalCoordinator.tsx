@@ -1,9 +1,16 @@
 import { msg } from "gt-react-native";
-import { AuthAccessWriteScope, type AuthPairingLink, type EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useEffectEvent } from "react";
+import { unseenConnectDevices } from "@t3tools/client-runtime/connect-device-notices";
+import {
+  AuthAccessWriteScope,
+  type AuthConnectDevice,
+  type AuthPairingLink,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { Fragment, useEffect, useEffectEvent } from "react";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { m } from "../../i18n/messages";
+import { loadPreferences, updatePreferences } from "../../persistence/imperative";
 import { authEnvironment } from "../../state/auth";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
@@ -13,30 +20,136 @@ import {
   type ConnectDeviceApprovalPrompt,
   connectDeviceApprovalPrompts,
   createApprovalPromptQueue,
+  describeConnectDevice,
 } from "./connectDeviceApproval";
 
-/** Asks to approve T3 Connect devices waiting on hosts that require it and this phone manages. */
+/**
+ * Asks to approve T3 Connect devices waiting on hosts that require it and this phone manages,
+ * and tells it about devices that got in on hosts that do not.
+ */
 export function ConnectDeviceApprovalCoordinator() {
   const { environments } = useEnvironments();
-  const requiring = environments.filter(
+  const connected = environments.filter(
     (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.settings.requireConnectDeviceApproval === true,
+      environment.connection.phase === "connected" && environment.serverConfig !== undefined,
   );
-  const managed = useEnvironmentsWithScope(requiring, AuthAccessWriteScope);
+  const managed = useEnvironmentsWithScope(connected, AuthAccessWriteScope);
   return (
     <>
-      {requiring
+      {connected
         .filter((environment) => managed.has(environment.environmentId))
-        .map((environment) => (
-          <EnvironmentApprovalWatcher
-            key={environment.environmentId}
-            environmentId={environment.environmentId}
-            environmentLabel={environment.label}
-          />
-        ))}
+        .map((environment) => {
+          const approvalRequired =
+            environment.serverConfig?.settings.requireConnectDeviceApproval === true;
+          return (
+            <Fragment key={environment.environmentId}>
+              {approvalRequired ? (
+                <EnvironmentApprovalWatcher
+                  environmentId={environment.environmentId}
+                  environmentLabel={environment.label}
+                />
+              ) : null}
+              <NewConnectDeviceWatcher
+                environmentId={environment.environmentId}
+                environmentLabel={environment.label}
+                announce={!approvalRequired}
+              />
+            </Fragment>
+          );
+        })}
     </>
   );
+}
+
+interface NewDeviceNotice {
+  /** Keys the queue; a later notice for the same host carries a newer watermark. */
+  readonly pairingLinkId: string;
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
+  readonly message: string;
+  readonly newest: number;
+}
+
+const markConnectDevicesSeen = (environmentId: EnvironmentId, newest: number) =>
+  updatePreferences((current) => ({
+    connectDevicesSeenThrough: {
+      ...current.connectDevicesSeenThrough,
+      [environmentId]: Math.max(current.connectDevicesSeenThrough?.[environmentId] ?? 0, newest),
+    },
+  })).catch(() => undefined);
+
+const newDeviceNotices = createApprovalPromptQueue<NewDeviceNotice>((notice, answer) => {
+  const acknowledge = () => {
+    void markConnectDevicesSeen(notice.environmentId, notice.newest);
+    answer("done");
+  };
+  Dialog.alert(
+    notice.title,
+    notice.message,
+    [{ text: m(msg("OK")), onPress: acknowledge }],
+    // Another dialog took the screen; the notice shows again on the next update.
+    { onDismiss: () => answer("later") },
+  );
+});
+
+/** Devices approved by hand are already known, so only `announce` hosts that skip approval. */
+function NewConnectDeviceWatcher(props: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly announce: boolean;
+}) {
+  const access = useEnvironmentQuery(
+    authEnvironment.accessChanges({ environmentId: props.environmentId, input: null }),
+  );
+  // Older servers omit the list.
+  const devices = access.data?.type === "snapshot" ? access.data.payload.connectDevices : undefined;
+
+  const check = useEffectEvent(async (current: ReadonlyArray<AuthConnectDevice>) => {
+    const preferences = await loadPreferences().catch(() => null);
+    if (preferences === null) return;
+    const seenThrough = preferences.connectDevicesSeenThrough?.[props.environmentId];
+    const { unseen, newest } = unseenConnectDevices(current, seenThrough);
+    if (!props.announce || unseen.length === 0) {
+      if (seenThrough !== newest) await markConnectDevicesSeen(props.environmentId, newest);
+      return;
+    }
+    const [firstDevice = ""] = unseen.map(({ client: device }) => describeConnectDevice(device));
+    newDeviceNotices.offer([
+      {
+        pairingLinkId: `${props.environmentId}:${newest}`,
+        environmentId: props.environmentId,
+        title: m(
+          msg("New device signed in to {environment}", { environment: props.environmentLabel }),
+        ),
+        message:
+          unseen.length === 1
+            ? m(
+                msg(
+                  "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
+                  { device: firstDevice, product: "T3 Connect" },
+                ),
+              )
+            : m(
+                msg(
+                  "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
+                  { count: unseen.length, product: "T3 Connect" },
+                ),
+              ),
+        newest,
+      },
+    ]);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a device this phone has not announced opens a native alert
+  useEffect(() => {
+    if (devices !== undefined) void check(devices);
+  }, [devices]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops this host's queued notice when it goes away
+  useEffect(() => {
+    const environmentId = props.environmentId;
+    return () => newDeviceNotices.drop((notice) => notice.environmentId === environmentId);
+  }, [props.environmentId]);
+
+  return null;
 }
 
 /** "gone": the request expired or was answered elsewhere before this answer arrived. */
