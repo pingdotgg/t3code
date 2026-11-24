@@ -18,6 +18,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const antigravityInitialThinking = process.env.T3_ACP_ANTIGRAVITY_INITIAL_THINKING;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -125,7 +126,7 @@ let currentModeId = antigravityProfile
     : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
-let currentReasoning = "medium";
+let currentReasoning = antigravityInitialThinking ?? "medium";
 let currentContext = "272k";
 let currentFast = false;
 let currentAgent = "";
@@ -169,6 +170,18 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         currentValue: currentModelId,
         options: antigravityModels.map((model) => ({ value: model.modelId, name: model.name })),
       },
+      ...(antigravityInitialThinking === undefined
+        ? []
+        : [
+            {
+              configId: "reasoning",
+              name: "Thinking level",
+              category: "thought_level" as const,
+              type: "select" as const,
+              currentValue: currentReasoning,
+              options: ["medium", "high"].map((value) => ({ value, name: value })),
+            },
+          ]),
       {
         configId: "mode",
         name: "Mode",
@@ -890,6 +903,7 @@ const program = Effect.gen(function* () {
       }
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
+        if (antigravityInitialThinking !== undefined) currentReasoning = "medium";
       }
       if (request.configId === "agent" && typeof request.value === "string") {
         currentAgent = request.value;
