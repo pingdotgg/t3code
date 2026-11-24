@@ -1,6 +1,7 @@
 import {
   CommandId,
   MessageId,
+  type ModelSelection,
   ThreadId,
   OrchestratorMcpFailure,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -322,26 +323,35 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               }
             : input.workspaceStrategy;
+        let validatedModelSelection = input.modelSelection;
         if (!replaying && input.modelSelection !== undefined) {
-          const { instanceId, model } = input.modelSelection;
+          const requestedSelection = input.modelSelection;
+          const { instanceId, model } = requestedSelection;
           const registry = yield* ProviderRegistry.ProviderRegistry;
           // The thread runs in this folder, whose own provider config can add models.
           const cwd =
             workspaceStrategy?.type === "existing_worktree"
               ? workspaceStrategy.worktreePath
               : project?.workspaceRoot;
-          const requireModel = (
+          const validateSelection = Effect.fn("mcp.validateLaunchModelSelection")(function* (
             providers: ReadonlyArray<ServerProvider>,
-          ): Effect.Effect<void, OrchestratorMcpFailure> => {
+          ): Effect.fn.Return<ModelSelection, OrchestratorMcpFailure> {
             const provider = OrchestrationMcp.withWorkspaceModels(providers, cwd).find(
               (candidate) => candidate.instanceId === instanceId,
             );
-            return provider === undefined
-              ? Effect.void
-              : OrchestrationMcp.requireAdvertisedModel(provider, model);
-          };
-          const checked = requireModel(yield* registry.getProviders);
-          yield* cwd === undefined
+            if (provider === undefined) return requestedSelection;
+            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+            const options = yield* OrchestrationMcp.validateModelOptions(
+              provider,
+              model,
+              requestedSelection.options,
+            );
+            return options === undefined || options === requestedSelection.options
+              ? requestedSelection
+              : { ...requestedSelection, options };
+          });
+          const checked = validateSelection(yield* registry.getProviders);
+          validatedModelSelection = yield* cwd === undefined
             ? checked
             : checked.pipe(
                 Effect.catchIf(
@@ -352,7 +362,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                       Effect.flatMap((scanCwd) =>
                         registry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
                       ),
-                      Effect.flatMap(requireModel),
+                      Effect.flatMap(validateSelection),
                     ),
                 ),
               );
@@ -408,7 +418,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // within the ceiling it was approved with.
         const projectDefaults = caller === undefined ? projectSettings : undefined;
         const modelSelection =
-          input.modelSelection ??
+          validatedModelSelection ??
           launchedModel ??
           caller?.modelSelection ??
           (projectDefaults
