@@ -2892,69 +2892,68 @@ export const make = Effect.gen(function* () {
     projectId: ProjectId | undefined,
     pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
   ) {
-      const result = yield* openPrFromBranch(
+    const result = yield* openPrFromBranch(
+      cwd,
+      fallbackBranch,
+      emit,
+      pushRemoteRef,
+      undefined,
+      settings.openPullRequestsAsDrafts,
+      ({ provider, baseBranch, baseRef, headBranch }) =>
+        Effect.gen(function* () {
+          const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
+          yield* emit({
+            kind: "phase_started",
+            phase: "pr",
+            label: `Generating ${terms.shortLabel} content...`,
+          });
+          const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
+          const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
+          const policy = yield* resolveStylePolicy(cwd, settings);
+          const changeRequestTemplate =
+            settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
+              ? Option.getOrUndefined(
+                  yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
+                )
+              : undefined;
+          const { history: threadContext, producedBy } = yield* readThreadContext(threadId);
+
+          return yield* textGeneration.generatePrContent({
+            cwd,
+            baseBranch,
+            headBranch,
+            commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+            diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+            diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+            ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+            ...(threadContext ? { threadContext } : {}),
+            producedBy,
+            ...(policy ? { policy } : {}),
+            modelSelection: settings.modelSelection,
+            projectId: settings.projectId,
+          });
+        }),
+    );
+    // The same rule createPullRequest applies: a draft request on a provider
+    // without native draft support must still end drafted or fail, never
+    // report success on a ready pull request.
+    const openedAsDraft =
+      result.status === "created" &&
+      (yield* sourceControlProvider(cwd)).createsDraftChangeRequests === true;
+    const prProjectId = settings.projectId ?? projectId;
+    if (
+      settings.openPullRequestsAsDrafts &&
+      !openedAsDraft &&
+      !(prProjectId != null && (yield* draftOpened({ cwd, projectId: prProjectId }, result)))
+    ) {
+      return yield* new GitManagerError({
+        operation: "runPrStep",
         cwd,
-        fallbackBranch,
-        emit,
-        pushRemoteRef,
-        undefined,
-        settings.openPullRequestsAsDrafts,
-        ({ provider, baseBranch, baseRef, headBranch }) =>
-          Effect.gen(function* () {
-            const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
-            yield* emit({
-              kind: "phase_started",
-              phase: "pr",
-              label: `Generating ${terms.shortLabel} content...`,
-            });
-            const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
-            const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-            const policy = yield* resolveStylePolicy(cwd, settings);
-            const changeRequestTemplate =
-              settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
-                ? Option.getOrUndefined(
-                    yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
-                  )
-                : undefined;
-            const { history: threadContext, producedBy } = yield* readThreadContext(threadId);
-
-            return yield* textGeneration.generatePrContent({
-              cwd,
-              baseBranch,
-              headBranch,
-              commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-              diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-              diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-              ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-              ...(threadContext ? { threadContext } : {}),
-              producedBy,
-              ...(policy ? { policy } : {}),
-              modelSelection: settings.modelSelection,
-              projectId: settings.projectId,
-            });
-          }),
-      );
-      // The same rule createPullRequest applies: a draft request on a provider
-      // without native draft support must still end drafted or fail, never
-      // report success on a ready pull request.
-      const openedAsDraft =
-        result.status === "created" &&
-        (yield* sourceControlProvider(cwd)).createsDraftChangeRequests === true;
-      const prProjectId = settings.projectId ?? projectId;
-      if (
-        settings.openPullRequestsAsDrafts &&
-        !openedAsDraft &&
-        !(prProjectId != null && (yield* draftOpened({ cwd, projectId: prProjectId }, result)))
-      ) {
-        return yield* new GitManagerError({
-          operation: "runPrStep",
-          cwd,
-          detail: "Opened the pull request, but the host does not list it yet to make it a draft.",
-        });
-      }
-      return result;
+        detail: "Opened the pull request, but the host does not list it yet to make it a draft.",
+      });
+    }
+    return result;
   });
-
 
   const openPrivatePullRequest = Effect.fn("GitManager.openPrivatePullRequest")(function* (
     input: Parameters<GitManager["Service"]["createPullRequest"]>[0],
