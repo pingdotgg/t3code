@@ -634,6 +634,38 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("saves a project's default model where Settings reads it once folded", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectId = ProjectId.make("project:default-model");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      };
+      yield* settings.updateSettings({
+        projectSettingsFolded: true,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
+      });
+      yield* service.create({
+        commandId: CommandId.make("command:default-model:create"),
+        projectId,
+        title: "Default model",
+        workspaceRoot: "/work/default-model",
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:default-model:update"),
+        projectId,
+        defaultModelSelection: modelSelection,
+      });
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        defaultThreadEnvMode: "worktree",
+        defaultModelSelection: modelSelection,
+      });
+    }),
+  );
+
   it.effect("rejects a workspace another active project holds", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
