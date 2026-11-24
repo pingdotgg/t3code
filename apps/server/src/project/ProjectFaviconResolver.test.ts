@@ -43,7 +43,7 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 
 const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
   ProjectFaviconResolver.make.pipe(
-    Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
+    Effect.provide([Layer.fresh(WorkspacePaths.layer), T3ProjectFileLoader.layer]),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
   );
 
@@ -79,6 +79,28 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         expect(yield* resolver.resolvePath(cwd)).toBeNull();
       }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("looks up a missing workspace root once within the negative cache window", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = path.join(yield* makeTempDir, "deleted-project");
+        let rootStats = 0;
+        const resolver = yield* makeResolverWithFileSystem(
+          FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) => {
+              if (filePath === cwd) rootStats += 1;
+              return fileSystem.stat(filePath);
+            },
+          }),
+        );
+
+        yield* Effect.exit(resolver.resolvePath(cwd));
+        yield* Effect.exit(resolver.resolvePath(cwd));
+        expect(rootStats).toBe(1);
+      }),
     );
 
     it.effect("prefers a t3.json iconPath over well-known files", () =>
@@ -172,13 +194,118 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          `<link rel="icon" href="data:image/png;base64,${"A".repeat(5000)}">
+<link rel="icon" href="https://cdn.example.com/icon.svg">
+<link rel="icon" href="/missing.svg">
+<link rel="icon" href="//cdn.example.com/icon.svg">
+<link rel="icon" href="/index.html/icon.svg">
+<link rel="icon" href="/a%00b.svg">
+<link rel="icon" href="/brand/logo.svg#mark">
+<link rel="icon" href="/brand/late.svg">`,
+        );
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+        yield* writeTextFile(cwd, "public/brand/late.svg", "<svg>late</svg>");
+        yield* writeTextFile(cwd, "public/cdn.example.com/icon.svg", "<svg>cdn</svg>");
+        yield* writeTextFile(cwd, "web/favicon.png", "flutter");
 
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+
+        // A cached icon whose `public` folder became a file falls back instead of failing.
+        yield* (yield* FileSystem.FileSystem).remove((yield* Path.Path).join(cwd, "public"), {
+          recursive: true,
+        });
+        yield* writeTextFile(cwd, "public", "not a folder");
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          (yield* Path.Path).join(cwd, "web", "favicon.png"),
+        );
+
+        const flutterCwd = yield* makeTempDir;
+        yield* writeTextFile(flutterCwd, "web/favicon.png", "flutter");
+        expect(yield* resolver.resolvePath(flutterCwd)).toBe(
+          (yield* Path.Path).join(flutterCwd, "web", "favicon.png"),
+        );
+
+        const paddedCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          paddedCwd,
+          "index.html",
+          '<link rel="icon" href=" brand/custom.svg ">',
+        );
+        yield* writeTextFile(paddedCwd, "brand/custom.svg", "<svg>custom</svg>");
+        expect(yield* resolver.resolvePath(paddedCwd)).toBe(
+          (yield* Path.Path).join(paddedCwd, "brand", "custom.svg"),
+        );
+
+        const tokenListCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          tokenListCwd,
+          "index.html",
+          `<link rel="apple-touch-icon" href="touch.svg"><link rel="icon's" href="touch.svg"><link rel="Icon\tshortcut" href="brand.svg">`,
+        );
+        yield* writeTextFile(tokenListCwd, "touch.svg", "<svg>touch</svg>");
+        yield* writeTextFile(tokenListCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(tokenListCwd)).toBe(
+          (yield* Path.Path).join(tokenListCwd, "brand.svg"),
+        );
+
+        const unquotedCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          unquotedCwd,
+          "index.html",
+          `<link rel=stylesheet data-rel=icon href=app.css><link href=app.css rel=icon/><link rel=icon href={icon} /><link rel=icon data-href=app.css title="href=app.css" href=brand.svg/>`,
+        );
+        yield* writeTextFile(unquotedCwd, "app.css", "body {}");
+        yield* writeTextFile(unquotedCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(unquotedCwd)).toBe(
+          (yield* Path.Path).join(unquotedCwd, "brand.svg"),
+        );
+
+        const quotedValueCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          quotedValueCwd,
+          "index.html",
+          `<link rel="icon" title="preview href=app.css here" href="brand.svg">`,
+        );
+        yield* writeTextFile(quotedValueCwd, "app.css", "body {}");
+        yield* writeTextFile(quotedValueCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(quotedValueCwd)).toBe(
+          (yield* Path.Path).join(quotedValueCwd, "brand.svg"),
+        );
+
+        const encodedCwd = yield* makeTempDir;
+        yield* writeTextFile(encodedCwd, "index.html", '<link rel="icon" href="/team%20mark.svg">');
+        yield* writeTextFile(encodedCwd, "public/team mark.svg", "<svg>team</svg>");
+        expect(yield* resolver.resolvePath(encodedCwd)).toBe(
+          (yield* Path.Path).join(encodedCwd, "public", "team mark.svg"),
+        );
+
+        const malformedCwd = yield* makeTempDir;
+        yield* writeTextFile(malformedCwd, "index.html", '<link rel="icon" href="/100%.svg">');
+        yield* writeTextFile(malformedCwd, "public/100%.svg", "<svg>100</svg>");
+        expect(yield* resolver.resolvePath(malformedCwd)).toBe(
+          (yield* Path.Path).join(malformedCwd, "public", "100%.svg"),
+        );
+      }),
+    );
+
+    it.effect("skips source metadata beyond the favicon scan limit", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          `<!-- ${" ".repeat(128 * 1024)} --><link rel="icon" href="/brand/logo.svg">`,
+        );
+        yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
       }),
     );
 
@@ -193,7 +320,8 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
   head: () => ({
     links: [
       { rel: "stylesheet", href: "/app.css" },
-      { rel: "icon", href: "/brand/logo.svg" },
+      { rel: "icon", href: "https://cdn.example.com/icon.svg" },
+      { rel: "icon shortcut", href: "/brand/logo.svg#mark" },
     ],
   }),
 });`,
@@ -247,8 +375,16 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
     it.effect("skips icon metadata paths outside the workspace", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="../../secret.svg">');
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir;
+        const cwd = path.join(root, "parent", "workspace");
+        yield* writeTextFile(root, "outside.svg", "<svg>two-levels-up</svg>");
+        yield* writeTextFile(root, "parent/outside.svg", "<svg>one-level-up</svg>");
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          '<link rel="icon" href="../../outside.svg"><link rel="icon" href="/%2e%2e%2f%2e%2e%2foutside.svg">',
+        );
 
         const resolved = yield* resolver.resolvePath(cwd);
 

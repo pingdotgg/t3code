@@ -1,12 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ManagedPolicyLimits } from "@t3tools/contracts";
+import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makePathDirectoryListings, PathDirectoryListings } from "@t3tools/shared/shell";
+import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
+import type * as Electron from "electron";
 
 const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
@@ -21,13 +29,21 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as IpcChannels from "../channels.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getRelayTelemetryEnabled,
+  installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
+  readMedia,
+  syncHtmlFullscreen,
+  toLocalBackendPath,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -115,6 +131,37 @@ describe("getLocalEnvironmentBootstraps", () => {
     ),
   );
 
+  it.effect("includes the token only once the backend has reported ready", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+
+      assert.deepEqual(result, [
+        {
+          id: "wsl:default",
+          label: "WSL (Ubuntu)",
+          runningDistro: "Ubuntu",
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        bootstrapsLayer([
+          {
+            ...defaultWslInstance,
+            snapshot: Effect.succeed({
+              desiredRunning: true,
+              ready: false,
+              activePid: Option.some(123),
+              restartAttempt: 0,
+              restartScheduled: false,
+            }),
+          },
+        ]),
+      ),
+    ),
+  );
+
   it.effect("publishes a pending bootstrap only while a transient retry is scheduled", () => {
     const retryingConfig: DesktopBackendManager.DesktopBackendStartConfig = {
       ...readyWslConfig,
@@ -177,21 +224,170 @@ describe("getLocalEnvironmentBootstraps", () => {
   });
 });
 
-describe("getRelayTelemetryEnabled", () => {
-  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+describe("toLocalBackendPath", () => {
+  const { runningDistro: _, ...windowsConfig } = readyWslConfig;
+  it.effect("converts paths through wslpath only for backends running in WSL", () =>
     Effect.gen(function* () {
-      assert.isFalse(
-        yield* getRelayTelemetryEnabled.handler().pipe(
-          Effect.provideService(HostProcess.Environment, {
-            T3CODE_TELEMETRY_ENABLED: "false",
+      const convert = (backendId: string, path = "C:\\Users\\me\\project") =>
+        toLocalBackendPath.handler({ backendId, path });
+      assert.strictEqual(yield* convert("primary"), "C:\\Users\\me\\project");
+      assert.strictEqual(yield* convert("wsl:default"), "/drives/c/Users/me/project");
+      assert.strictEqual(yield* convert("wsl:missing"), null);
+      assert.strictEqual(
+        yield* convert("wsl:default", "\\\\wsl.localhost\\ubuntu\\home\\me\\repo"),
+        "/home/me/repo",
+      );
+      assert.strictEqual(yield* convert("wsl:default", "\\\\wsl$\\Debian\\home\\me\\repo"), null);
+      assert.strictEqual(
+        yield* convert("primary", "\\\\wsl$\\Debian\\home\\me\\repo"),
+        "\\\\wsl$\\Debian\\home\\me\\repo",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([
+            {
+              ...defaultWslInstance,
+              id: DesktopBackendManager.BackendInstanceId("primary"),
+              currentConfig: Effect.succeedSome(windowsConfig),
+            },
+            defaultWslInstance,
+          ]),
+          DesktopWslEnvironment.layerTest({
+            windowsToWslPath: (distro, windowsPath) =>
+              distro === "Ubuntu" && windowsPath === "C:\\Users\\me\\project"
+                ? Option.some("/drives/c/Users/me/project")
+                : Option.none(),
           }),
         ),
+      ),
+    ),
+  );
+});
+
+describe("installRelayTelemetryEnabled", () => {
+  // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
+  const relayTelemetryEnabled = (
+    env: NodeJS.ProcessEnv,
+    policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+    loginShellEnv: NodeJS.ProcessEnv = {},
+  ) =>
+    Effect.gen(function* () {
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      const ipcMain: DesktopIpc.DesktopIpcMain = {
+        removeHandler: () => undefined,
+        handle: () => undefined,
+        removeAllListeners: (channel) => void listeners.delete(channel),
+        on: (channel, listener) => void listeners.set(channel, listener),
+      };
+      let discoveryFinished = false;
+      const ask = () => {
+        const event = { returnValue: undefined as unknown };
+        listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
+        return event.returnValue;
+      };
+      yield* installRelayTelemetryEnabled().pipe(
+        Effect.provideService(HostProcess.Environment, env),
+        Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
+          installIntoProcess: Effect.succeed(true),
+          awaitDiscovery: Effect.succeed(true),
+          awaitUserShellDiscovery: Effect.succeed(true),
+          discoveryFinished: Effect.sync(() => discoveryFinished),
+          updates: Stream.empty,
+        }),
+        Effect.provide(
+          Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
+        ),
       );
-      assert.isTrue(
-        yield* getRelayTelemetryEnabled
-          .handler()
-          .pipe(Effect.provideService(HostProcess.Environment, {})),
+      const beforeDiscovery = ask();
+      // The login shell's values land in the process env after startup has installed handlers.
+      Object.assign(env, loginShellEnv);
+      discoveryFinished = true;
+      return { beforeDiscovery, afterDiscovery: ask() };
+    }).pipe(Effect.scoped);
+
+  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }), {
+        beforeDiscovery: false,
+        afterDiscovery: false,
+      });
+      // Undecided until the login shell is read, so the renderer asks again instead of opting out.
+      assert.deepEqual(yield* relayTelemetryEnabled({}), {
+        beforeDiscovery: null,
+        afterDiscovery: true,
+      });
+      assert.deepEqual(
+        yield* relayTelemetryEnabled({}, undefined, { T3CODE_TELEMETRY_ENABLED: "false" }),
+        { beforeDiscovery: null, afterDiscovery: false },
       );
+    }),
+  );
+
+  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
+    Effect.gen(function* () {
+      const policy = (limits: ManagedPolicyLimits) => ({
+        schemaVersion: 1 as const,
+        organization: "Example Corp",
+        limits,
+      });
+      const after = function* (...args: Parameters<typeof relayTelemetryEnabled>) {
+        return (yield* relayTelemetryEnabled(...args)).afterDiscovery;
+      };
+      assert.isFalse(yield* after({}, policy({ telemetry: false })));
+      assert.isTrue(yield* after({}, policy({ webhookTasks: false })));
+      // A policy that cannot be read fails closed.
+      assert.isFalse(
+        yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+      );
+    }),
+  );
+});
+
+describe("readMedia", () => {
+  it.effect("reads http(s) media only for the main window", () =>
+    Effect.gen(function* () {
+      const mib = new Uint8Array(1024 * 1024);
+      const fetch = vi.fn(async (url: string) => {
+        if (url.endsWith("/missing.png")) return new Response("Not Found", { status: 404 });
+        if (url.endsWith("/small.png")) return new Response(new Uint8Array([1, 2]));
+        let sent = 0;
+        // 257 MiB from one reused chunk: over the cap without allocating it.
+        const huge = new ReadableStream<Uint8Array>({
+          pull: (controller) => (sent++ < 257 ? controller.enqueue(mib) : controller.close()),
+        });
+        return new Response(huge);
+      });
+      const main = {
+        webContents: { id: 1, session: { fetch } },
+      } as unknown as Electron.BrowserWindow;
+      const read = (url: string, senderId: number) =>
+        readMedia
+          .handler(url, { sender: { id: senderId } })
+          .pipe(
+            Effect.provide(
+              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
+            ),
+          );
+
+      assert.strictEqual(yield* read("https://example.com/a.png", 2), null);
+      assert.strictEqual(yield* read("file:///etc/passwd", 1), null);
+      assert.strictEqual(fetch.mock.calls.length, 0);
+      assert.deepEqual(yield* read("https://example.com/small.png", 1), {
+        status: 200,
+        mimeType: "",
+        data: Buffer.from([1, 2]),
+      });
+      assert.deepEqual(yield* read("https://example.com/missing.png", 1), {
+        status: 404,
+        mimeType: "text/plain;charset=UTF-8",
+        data: new Uint8Array(),
+      });
+      assert.deepEqual(yield* read("https://example.com/huge.mp4", 1), {
+        status: 413,
+        mimeType: "",
+        data: new Uint8Array(),
+      });
     }),
   );
 });
@@ -268,6 +464,93 @@ describe("pickProjectFavicon", () => {
   );
 });
 
+describe("syncHtmlFullscreen", () => {
+  const fullscreenWindow = (fullscreen: boolean, { animatedExit = false } = {}) => {
+    let current = fullscreen;
+    let exiting = false;
+    const queued: boolean[] = [];
+    const leaveListeners: Array<() => void> = [];
+    const leave = () => {
+      current = false;
+      for (const listener of leaveListeners) listener();
+    };
+    // Like macOS, an animated exit keeps reporting fullscreen and queues requests until it ends.
+    const setFullScreen = vi.fn((next: boolean) => {
+      if (exiting) queued.push(next);
+      else if (next) current = true;
+      else if (!current) return;
+      else if (animatedExit) exiting = true;
+      else leave();
+    });
+    const finishExit = () => {
+      exiting = false;
+      leave();
+      for (const next of queued.splice(0)) setFullScreen(next);
+    };
+    const window = {
+      webContents: { id: 1 },
+      isDestroyed: () => false,
+      isFullScreen: () => current,
+      setFullScreen,
+      on: (event: string, listener: () => void) => {
+        if (event === "leave-full-screen") leaveListeners.push(listener);
+      },
+    } as unknown as Electron.BrowserWindow;
+    const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
+    return { window, setFullScreen, finishExit, layer };
+  };
+  const fromMainRenderer = { sender: { id: 1 } };
+
+  it.effect("takes the screen for the app's own fullscreen element and gives it back", () => {
+    const { window, layer } = fullscreenWindow(false);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      assert.isTrue(window.isFullScreen());
+
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      assert.isFalse(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a window the user had already made fullscreen", () => {
+    const { window, setFullScreen, layer } = fullscreenWindow(true);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+
+      assert.isTrue(window.isFullScreen());
+      assert.strictEqual(setFullScreen.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("hands the window back once the user leaves OS fullscreen during playback", () => {
+    const { window, layer } = fullscreenWindow(false);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      window.setFullScreen(false);
+      window.setFullScreen(true);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+
+      assert.isTrue(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("takes the screen again when the video returns during an animated exit", () => {
+    const { window, finishExit, layer } = fullscreenWindow(false, { animatedExit: true });
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      finishExit();
+      assert.isTrue(window.isFullScreen());
+
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      finishExit();
+      assert.isFalse(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "finds remote editors installed without PATH launchers",
   () =>
@@ -298,3 +581,102 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("probeRemoteEditors PATH scan", () => {
+  const FIXTURE_MTIME = 1_767_225_600;
+  const platform = HostProcess.Platform.defaultValue();
+  const launcherName = (command: string) => (platform === "win32" ? `${command}.cmd` : command);
+
+  const makeFakePath = Effect.fnUntraced(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-probe-path-" });
+    const dirs = ["a", "b", "c", "d"].map((name) => path.join(root, name));
+    for (const dir of dirs) yield* fs.makeDirectory(dir, { recursive: true });
+    // Launchers in different PATH directories, deliberately not in REMOTE_CAPABLE_EDITOR_IDS order.
+    for (const [dir, command] of [
+      [dirs[2]!, "webstorm"],
+      [dirs[0]!, "cursor"],
+      [dirs[3]!, "code"],
+      [dirs[1]!, "zeditor"],
+    ] as const) {
+      const file = path.join(dir, launcherName(command));
+      yield* fs.writeFileString(file, "#!/bin/sh\n");
+      if (platform !== "win32") yield* fs.chmod(file, 0o755);
+    }
+    // A listing of a directory changed moments ago is not kept, so age them past that window.
+    for (const dir of dirs) yield* fs.utimes(dir, FIXTURE_MTIME, FIXTURE_MTIME);
+    yield* TestClock.setTime((FIXTURE_MTIME + 60) * 1000);
+    return {
+      root,
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: dirs.join(platform === "win32" ? ";" : ":"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      },
+    };
+  });
+
+  const countingFileSystem = (reads: Map<string, number>) =>
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return FileSystem.FileSystem.of({
+          ...fs,
+          readDirectory: (target, options) => {
+            reads.set(target, (reads.get(target) ?? 0) + 1);
+            return fs.readDirectory(target, options);
+          },
+        });
+      }),
+    ).pipe(Layer.provideMerge(NodeServices.layer));
+
+  const serialReference = (env: Record<string, string>) =>
+    Effect.gen(function* () {
+      const available: Array<string> = [];
+      for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
+        const editor = EDITORS.find((candidate) => candidate.id === editorId);
+        if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
+          available.push(editorId);
+        }
+      }
+      return available;
+    });
+
+  it.effect("finds the editors a serial scan finds, listing each PATH directory at most once", () =>
+    Effect.gen(function* () {
+      const { env: baseEnv } = yield* makeFakePath();
+      const delimiter = platform === "win32" ? ";" : ":";
+      const reads = new Map<string, number>();
+      // Distinct PATH values keep one scan from answering the other out of the resolution cache.
+      const serialEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
+      const probeEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
+      const serial = yield* serialReference(serialEnv).pipe(
+        Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
+      );
+      const probed = yield* probeRemoteEditors
+        .handler(undefined)
+        .pipe(
+          Effect.provideService(HostProcess.Environment, probeEnv),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provide(countingFileSystem(reads)),
+          Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
+        );
+      // The host can add editors from app folders the fixture can't redirect (e.g. /Applications).
+      const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
+      assert.deepStrictEqual(
+        serial.filter((id) => fixtureEditors.includes(id)),
+        fixtureEditors,
+      );
+      assert.deepStrictEqual(probed, serial);
+      // Only PATH entries count: resolveEditorCommand also reads app folders such as /Applications
+      // on macOS. PATH directories are listed on Windows only, once even for concurrent probes.
+      const pathReads = probeEnv.PATH.split(delimiter)
+        .filter((entry) => entry.length > 0)
+        .map((entry) => reads.get(entry) ?? 0);
+      assert.strictEqual(Math.max(...pathReads), platform === "win32" ? 1 : 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});

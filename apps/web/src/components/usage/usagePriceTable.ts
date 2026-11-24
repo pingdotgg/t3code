@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   parseUsagePriceForm,
   usagePriceForm,
@@ -35,35 +38,49 @@ function modelAlias(target: UsagePriceTarget, model: string) {
   return target.aliases && Object.hasOwn(target.aliases, model) ? target.aliases[model] : undefined;
 }
 
-export function usageAliasCell(targets: readonly UsagePriceTarget[], model: string) {
+/** Components pass `useMessages()` so placeholders and errors follow a language switch. */
+export function usageAliasCell(
+  targets: readonly UsagePriceTarget[],
+  model: string,
+  resolve: MessageResolver = m,
+) {
   if (targets.some((target) => target.aliases === null))
-    return { value: "", placeholder: "Unavailable" };
+    return { value: "", placeholder: resolve(msg("Unavailable")) };
   const values = targets.map((target) => modelAlias(target, model) ?? "");
-  if (values.some((value) => value !== values[0])) return { value: "", placeholder: "Mixed" };
-  return { value: values[0] ?? "", placeholder: "None" };
+  if (values.some((value) => value !== values[0]))
+    return { value: "", placeholder: resolve(msg("Mixed")) };
+  return { value: values[0] ?? "", placeholder: resolve(msg("None")) };
 }
 
 export function usagePriceCell(
   targets: readonly UsagePriceTarget[],
   model: string,
   field: UsagePriceField,
+  resolve: MessageResolver = m,
 ) {
   const optional = USAGE_PRICE_FIELDS.find((entry) => entry.key === field)!.optional;
   const values = targets.map((target) =>
     modelPrice(target, model) ? usagePriceForm(model, modelPrice(target, model))[field] : null,
   );
   if (targets.some((target) => target.prices === null))
-    return { value: "", placeholder: "Unavailable" };
-  if (values.some((value) => value !== values[0])) return { value: "", placeholder: "Mixed" };
+    return { value: "", placeholder: resolve(msg("Unavailable")) };
+  if (values.some((value) => value !== values[0]))
+    return { value: "", placeholder: resolve(msg("Mixed")) };
   return {
     value: values[0] ?? "",
-    placeholder: values[0] === null ? "Automatic" : optional ? "Input rate" : "0.00",
+    placeholder:
+      values[0] === null
+        ? resolve(msg("Automatic"))
+        : optional
+          ? resolve(msg("Input rate"))
+          : "0.00",
   };
 }
 
 export function usagePriceTableChanges(
   target: UsagePriceTarget,
   drafts: readonly UsagePriceDraft[],
+  resolve: MessageResolver = m,
 ) {
   const changes: UsagePriceChange[] = [];
   const errors = new Map<string, string>();
@@ -78,8 +95,19 @@ export function usagePriceTableChanges(
     }
     const alias = (draft.alias ?? currentAlias ?? "").trim();
     if (alias !== "") {
-      if (model === "") errors.set(draft.id, "Enter a model ID.");
-      else if (alias === model) errors.set(draft.id, "Map to a different model.");
+      if (draft.alias === undefined && Object.keys(draft.values).length > 0) {
+        errors.set(
+          draft.id,
+          resolve(
+            msg('{target} maps this model. Remove it from "Apply to" or clear its mapping first.', {
+              target: target.label,
+            }),
+          ),
+        );
+        continue;
+      }
+      if (model === "") errors.set(draft.id, resolve(msg("Enter a model ID.")));
+      else if (alias === model) errors.set(draft.id, resolve(msg("Map to a different model.")));
       else {
         if (alias !== currentAlias) changes.push({ model, alias });
         if (modelPrice(target, model)) changes.push({ model, price: null });
@@ -104,10 +132,15 @@ export function usagePriceTableChanges(
       errors.set(
         draft.id,
         model === ""
-          ? "Enter a model ID."
+          ? resolve(msg("Enter a model ID."))
           : missing
-            ? `${missing.label} is required on ${target.label}.`
-            : "Use non-negative numbers for prices.",
+            ? resolve(
+                msg("{field} is required on {target}.", {
+                  field: resolve(missing.label),
+                  target: target.label,
+                }),
+              )
+            : resolve(msg("Use non-negative numbers for prices.")),
       );
       continue;
     }
@@ -128,7 +161,10 @@ export function usagePriceTableChanges(
     const seen = new Set<string>();
     while (aliases.has(model)) {
       if (seen.has(model)) {
-        errors.set(draft.id, `Model mappings cannot form a cycle on ${target.label}.`);
+        errors.set(
+          draft.id,
+          resolve(msg("Model mappings cannot form a cycle on {target}.", { target: target.label })),
+        );
         break;
       }
       seen.add(model);
@@ -141,10 +177,11 @@ export function usagePriceTableChanges(
 export function usagePriceTableErrors(
   targets: readonly UsagePriceTarget[],
   drafts: readonly UsagePriceDraft[],
+  resolve: MessageResolver = m,
 ) {
   return new Map(
     targets
       .filter((target) => target.unavailable === null && target.prices !== null)
-      .flatMap((target) => [...usagePriceTableChanges(target, drafts).errors]),
+      .flatMap((target) => [...usagePriceTableChanges(target, drafts, resolve).errors]),
   );
 }

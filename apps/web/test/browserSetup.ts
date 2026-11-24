@@ -1,10 +1,16 @@
 import { beforeEach } from "vite-plus/test";
 import { commands } from "vite-plus/test/browser";
 
+import { initializeI18n } from "../src/i18n/initializeI18n";
+
 declare module "vite-plus/test/browser" {
   interface BrowserCommands {
     /** Defined in vite.config.ts. Moves Playwright's mouse off the page. */
     resetPointer: () => Promise<void>;
+    /** Defined in vite.config.ts. Presses the primary button where the mouse is, without releasing. */
+    pointerDown: () => Promise<void>;
+    /** Defined in vite.config.ts. Releases the primary button. */
+    pointerUp: () => Promise<void>;
   }
 }
 
@@ -15,3 +21,6 @@ declare module "vite-plus/test/browser" {
 beforeEach(async () => {
   await commands.resetPointer();
 });
+
+// The app initializes GT at startup; components using its hooks need the same here.
+initializeI18n(() => {});

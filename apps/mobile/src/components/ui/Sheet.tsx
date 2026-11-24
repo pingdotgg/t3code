@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useId, useState } from "react";
 import { Platform, View } from "react-native";
 import { FormSheet, ScreenStack } from "react-native-screens";
@@ -14,23 +15,28 @@ import type { SheetProps } from "./Sheet.types";
 
 /** Native presentation. Scrollable children use automatic insets beneath the iOS header. */
 export function Sheet(props: SheetProps) {
+  const gt = useGT();
   const containerStyle = useResolveClassNames("bg-sheet");
   const screenId = useId();
   const [isOpen, setIsOpen] = useState(true);
-  const close = () => setIsOpen(false);
+  const close = () => {
+    if (!props.dismissDisabled) setIsOpen(false);
+  };
 
   return (
     <FormSheet
       isOpen={isOpen}
       detents={formSheetDetents(0.5, 0.9)}
       prefersGrabberVisible
+      preventNativeDismiss={props.dismissDisabled}
       // The header holds the close button, so the Duo needs no rail inside this sheet.
       prefersHorizontalBars
       nativeContainerStyle={containerStyle}
       onDismiss={props.onClose}
       onNativeDismiss={props.onClose}
     >
-      <View collapsable={false} className="flex-1 bg-sheet">
+      {/* Flex children are not bounded by the FormSheet host, so pin to its edges. */}
+      <View collapsable={false} className="absolute inset-0 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
           <NativeScreen
             activityState={2}
@@ -55,8 +61,9 @@ export function Sheet(props: SheetProps) {
                 {
                   type: "button",
                   icon: { name: "xmark", type: "sfSymbol" },
-                  accessibilityLabel: `Close ${props.title}`,
+                  accessibilityLabel: gt("Close {title}", { title: props.title }),
                   identifier: `app-sheet-close-${screenId}`,
+                  disabled: props.dismissDisabled,
                   onPress: close,
                 },
               ]}

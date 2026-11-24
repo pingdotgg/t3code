@@ -16,11 +16,16 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/stripe": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@distilled.cloud/stripe": "workspace:*",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*"
   }
 }

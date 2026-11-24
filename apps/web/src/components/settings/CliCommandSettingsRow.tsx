@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg, T, useMessages } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -7,17 +9,24 @@ import {
 } from "~/state/desktopCliCommand";
 import { useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
+import { m } from "../../i18n/messages";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
-export function CliCommandSettingsRow() {
+const FAILURE_TITLES = {
+  install: msg("Could not install t3"),
+  uninstall: msg("Could not remove t3"),
+  addToPath: msg("Could not add t3 to PATH"),
+} as const;
+
+/** The desktop `t3` command's state, and its actions with a toast on failure. */
+export function useDesktopCliCommand() {
   const bridge = getDesktopCliCommandBridge();
   const query = useEnvironmentQuery(bridge ? desktopCliCommandStateAtom : null);
-  const state = query.data;
   const [pending, setPending] = useState(false);
 
-  const change = (action: "install" | "uninstall") => {
+  const run = (action: keyof typeof FAILURE_TITLES) => {
     if (!bridge || pending) return;
     setPending(true);
     void bridge[action]()
@@ -26,37 +35,87 @@ export function CliCommandSettingsRow() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: action === "install" ? "Could not install t3" : "Could not remove t3",
-            description: error instanceof Error ? error.message : "Something went wrong.",
+            title: m(FAILURE_TITLES[action]),
+            description:
+              error instanceof Error
+                ? (thrownErrorMessage(error, m) ?? error.message)
+                : m(msg("Something went wrong.")),
           }),
         );
       })
       .finally(() => setPending(false));
   };
 
-  if (!bridge || !state?.supported) return null;
+  return {
+    state: bridge ? query.data : undefined,
+    busy: pending || query.isPending,
+    run,
+  };
+}
+
+export function CliCommandSettingsRow() {
+  const searchableSetting = useSearchableSetting();
+  const { state, busy, run } = useDesktopCliCommand();
+  const resolve = useMessages();
+
+  if (!state?.supported) return null;
   const installed = state.installedPath !== null;
   const description = state.shadowedBy
-    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
+    ? resolve(
+        msg("Another t3 at {path} runs first in a new terminal. Remove it to use T3 Code's.", {
+          path: state.shadowedBy,
+        }),
+      )
     : !installed
-      ? "Run T3 Code's CLI as `t3` from any terminal."
+      ? resolve(msg("Run T3 Code's CLI as `t3` from any terminal."))
       : state.onPath
-        ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
-        : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3\`.`;
+        ? resolve(
+            msg("Installed at {path}. Open a new terminal to use it.", {
+              path: state.installedPath,
+            }),
+          )
+        : state.pathSetup?.added
+          ? resolve(
+              msg(
+                "Installed at {path} and added to PATH in {file}. Open a new terminal to use it.",
+                { path: state.installedPath, file: state.pathSetup.file },
+              ),
+            )
+          : state.pathSetup
+            ? resolve(
+                msg("Installed at {path}, which is not on your PATH yet.", {
+                  path: state.installedPath,
+                }),
+              )
+            : resolve(
+                msg(
+                  "Installed at {path}, which is not on your PATH yet. Add its folder to your PATH to run `t3`.",
+                  { path: state.installedPath },
+                ),
+              );
 
   return (
     <SettingsRow
       {...searchableSetting("cli-command")}
       description={description}
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pending || query.isPending}
-          onClick={() => change(installed ? "uninstall" : "install")}
-        >
-          {installed ? "Remove" : "Install"}
-        </Button>
+        <div className="flex gap-2">
+          {state.pathSetup && !state.pathSetup.added ? (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
+              <T>Add to PATH</T>
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || (!installed && Boolean(state.shadowedBy))}
+            onClick={() => run(installed ? "uninstall" : "install")}
+          >
+            {installed
+              ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
+              : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
+          </Button>
+        </div>
       }
     />
   );

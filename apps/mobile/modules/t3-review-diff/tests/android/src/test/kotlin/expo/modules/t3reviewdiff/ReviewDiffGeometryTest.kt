@@ -1,6 +1,12 @@
 package expo.modules.t3reviewdiff
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.view.View
 import kotlin.math.ceil
 import expo.modules.kotlin.AppContext
@@ -144,6 +150,18 @@ class ReviewDiffGeometryTest {
   }
 
   @Test
+  fun viewedCheckboxHitTargetSpansTheHeaderHeightAndTrailingEdge() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val style = DiffStyle.defaults(1f)
+    val glyph = drawing.fileHeaderCheckboxRect(100, 144, 320, style)
+    val hit = drawing.fileHeaderCheckboxHitRect(100, 144, 320, style)
+    assertTrue(hit.contains(glyph))
+    assertTrue(hit.contains(glyph.left - 13f, 101f))
+    assertTrue(hit.contains(319f, 143f))
+    assertTrue(!hit.contains(glyph.left - 15f, 122f))
+  }
+
+  @Test
   fun asciiWidthCacheDoesNotRetainPerRowMeasurementObjects() {
     val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
     val rows = List(10000) { row("row:$it", "const value = $it") }
@@ -175,6 +193,82 @@ class ReviewDiffGeometryTest {
         assertEquals(false, drawing.tokensChangeWidth(tokens, recolored, style))
       }
     }
+  }
+
+  @Test
+  fun unwrappedWordDiffHighlightsCoverTheTextDrawCodeDraws() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val boxes = mutableListOf<RectF>()
+    val texts = mutableMapOf<String, Float>()
+    val paints = mutableMapOf<String, TextPaint>()
+    val bitmap = Bitmap.createBitmap(1000, 60, Bitmap.Config.ARGB_8888)
+    val canvas = object : Canvas(bitmap) {
+      override fun drawRoundRect(rect: RectF, rx: Float, ry: Float, paint: Paint) {
+        boxes += RectF(rect)
+      }
+
+      override fun drawText(
+        text: String,
+        start: Int,
+        end: Int,
+        x: Float,
+        y: Float,
+        paint: Paint
+      ) {
+        texts[text.substring(start, end)] = x
+        paints[text.substring(start, end)] = TextPaint(paint)
+      }
+    }
+
+    // The framework's caret position in the piece drawCode drew, kerning included.
+    fun caret(piece: String, offset: Int): Float {
+      val layout = StaticLayout.Builder.obtain(piece, 0, piece.length, paints.getValue(piece), 1000)
+      return texts.getValue(piece) + layout.build().getPrimaryHorizontal(offset)
+    }
+    val lines = CodeLines(intArrayOf(0), 0)
+    for (weight in listOf("medium", "regular")) {
+      val style = DiffStyle.defaults(1f).copy(codeFontWeight = weight, codeFontSizePx = 17f)
+      for (prefix in listOf("if ", "说明 ", "😀 ")) {
+        val tokens = listOf(
+          DiffToken(prefix, Color.RED, 2),
+          DiffToken("go ", Color.BLUE, 0),
+          DiffToken("1.27.3", Color.GREEN, 0),
+          DiffToken(";", Color.BLUE, 0),
+          DiffToken(" LTP.", Color.BLUE, 0),
+          DiffToken(" AV", Color.GREEN, 0),
+          DiffToken("LP.", Color.BLUE, 0),
+        )
+        val content = tokens.joinToString("") { it.content }
+        val start = content.indexOf("1.27.3")
+        val kerned = content.indexOf("TP")
+        val crossing = content.indexOf("VLP")
+        val row = row("line", content).copy(
+          wordDiffRanges = listOf(
+            DiffWordDiffRange(start, start + "1.27.3".length),
+            DiffWordDiffRange(kerned, kerned + 2),
+            DiffWordDiffRange(crossing, crossing + 3),
+          ),
+        )
+        boxes.clear()
+        texts.clear()
+        paints.clear()
+        drawing.configureCodePaint(Color.BLACK, 0, style)
+        drawing.drawWordDiffRanges(canvas, row, tokens, 10f, 0, 40, lines, style)
+        drawing.drawCode(canvas, row, tokens, 10f, 28f, style, lines)
+        assertEquals(3, boxes.size)
+        val (box, kernedBox, crossingBox) = boxes
+        val case = "weight=$weight prefix=$prefix"
+        assertEquals("$case left", requireNotNull(texts["1.27.3"]), box.left, 0.5f)
+        assertEquals("$case right", requireNotNull(texts[";"]), box.right, 0.5f)
+        val unkerned = texts.getValue(" LTP.") + paints.getValue(" LTP.").measureText(" L")
+        if (weight == "medium") assertTrue("$case L and T kern", caret(" LTP.", 2) < unkerned - 1f)
+        assertEquals("$case kerned left", caret(" LTP.", 2), kernedBox.left, 0.5f)
+        assertEquals("$case kerned right", caret(" LTP.", 4), kernedBox.right, 0.5f)
+        assertEquals("$case crossing left", caret(" AV", 2), crossingBox.left, 0.5f)
+        assertEquals("$case crossing right", caret("LP.", 2), crossingBox.right, 0.5f)
+      }
+    }
+    bitmap.recycle()
   }
 
   @Test
@@ -219,6 +313,157 @@ class ReviewDiffGeometryTest {
     }
   }
 
+  @Test
+  fun headerPathLimitsKeepFirstMatchAndNeverReadCodeRows() {
+    val parent = T3ReviewDiffView(RuntimeEnvironment.getApplication(), AppContext())
+    val reference = T3ReviewDiffView(RuntimeEnvironment.getApplication(), AppContext())
+    val canvas = parent.getChildAt(0)
+    val oracle = reference.getChildAt(0)
+    val spec = View.MeasureSpec.makeMeasureSpec(390, View.MeasureSpec.EXACTLY)
+    for (view in listOf(canvas, oracle)) {
+      view.measure(spec, spec)
+      view.layout(0, 0, 390, 600)
+    }
+    val longPath = "long/directory/".repeat(12)
+    val ordinary = headerRows(longPath)
+    val input = listOf(row("impostor", "value").copy(fileId = "f9")) + ordinary + listOf(
+      row("duplicate:header", "").copy(kind = "file", fileId = "f9", filePath = "short.kt"),
+      row("id-fallback", "").copy(kind = "file", fileId = "", filePath = longPath + "fallback.kt"),
+      row("", "").copy(kind = "file", fileId = "", filePath = longPath + "empty.kt"),
+      row("orphan:line:0", "code ".repeat(100)).copy(fileId = "orphan"),
+    )
+    try {
+      // Drive the production collapse path from its full decoded payload boundary.
+      parent.javaClass.getDeclaredField("rows").apply { isAccessible = true }.set(parent, input)
+      call(parent, "rebuildVisibleRows")
+      for (wrap in listOf(false, true)) {
+        parent.setStyleJson("{\"wordWrap\":$wrap}")
+        reference.setStyleJson("{\"wordWrap\":$wrap}")
+        for (collapsed in listOf("[]", "[\"f0\",\"f5\"]", "[]")) {
+          parent.setCollapsedFileIdsJson(collapsed)
+          checkHeaderLimits(canvas, oracle, input, wrap, collapsed)
+        }
+      }
+      parent.setStyleJson("{\"wordWrap\":false}")
+      val counted = CountingRows(ordinary)
+      call(canvas, "setRows", counted)
+      val target = panTarget(canvas, "f9", "FILE_HEADER_PATH")
+      call(canvas, "resetHorizontalOffsets")
+      counted.reads = 0
+      counted.codeReads = 0
+      repeat(120) { call(canvas, "scrollByHorizontal", 1, target) }
+      val panReads = counted.reads
+      val panCodeReads = counted.codeReads
+      counted.reads = 0
+      counted.codeReads = 0
+      repeat(120) { call(canvas, "clampHeaderPathOffsets") }
+      val clampReads = counted.reads
+      val clampCodeReads = counted.codeReads
+      println(
+        "HEADER_LOOKUP Android updates=120 panReads=$panReads panCodeReads=$panCodeReads " +
+          "clampReads=$clampReads clampCodeReads=$clampCodeReads"
+      )
+      call(
+        canvas,
+        "setRows",
+        listOf(row("replacement", "").copy(kind = "file", fileId = "f9", filePath = "short.kt"))
+      )
+      assertEquals(0, headerLimit(canvas, "f9"))
+      assertEquals(0, headerOffset(canvas, "f9"))
+      parent.setContentResetKey("new-content")
+      assertEquals(0, headerLimit(canvas, "f9"))
+      assertTrue((field(canvas, "fileHeaderIndices") as IntArray).isEmpty())
+      assertTrue((field(canvas, "headerPathOffsetsByFileId") as Map<*, *>).isEmpty())
+      println(
+        "Passed Android header limits: first/middle/last, duplicate, empty/missing IDs, rename, " +
+          "collapse/reexpand, replacement/reset, wrap and code bounds"
+      )
+      assertEquals("Header pans must not inspect code rows", 0, panCodeReads)
+      assertEquals("Header clamps must not inspect code rows", 0, clampCodeReads)
+      assertTrue("Header pans must read only preceding headers", panReads <= 1320)
+      assertTrue("Header clamps must read only preceding headers", clampReads <= 1320)
+    } finally {
+      parent.cleanup()
+      reference.cleanup()
+    }
+  }
+
+  private fun headerRows(longPath: String): List<DiffRow> = (0 until 10).flatMap { file ->
+    listOf(
+      row("f$file:header", "").copy(
+        kind = "file",
+        fileId = "f$file",
+        filePath = "${longPath}new-$file.kt",
+        previousPath = "old-$file.kt",
+        additions = file + 1,
+        deletions = file * 2,
+      )
+    ) +
+      List(100) { line -> row("f$file:line:$line", "code ".repeat(100)).copy(fileId = "f$file") }
+  }
+
+  private fun checkHeaderLimits(
+    canvas: View,
+    oracle: View,
+    input: List<DiffRow>,
+    wrap: Boolean,
+    collapsed: String
+  ) {
+    for ((caseIndex, id) in listOf(
+      "f0",
+      "f5",
+      "f9",
+      "id-fallback",
+      "",
+      "orphan",
+      "missing"
+    ).withIndex()) {
+      val header = input.firstOrNull { it.kind == "file" && it.resolvedFileId == id }
+      call(oracle, "setRows", listOfNotNull(header))
+      val expected = headerLimit(oracle, id)
+      val actual = headerLimit(canvas, id)
+      println("HEADER_LIMIT Android wrap=$wrap collapsed=$collapsed case=$caseIndex limit=$actual")
+      assertEquals("wrap=$wrap collapsed=$collapsed id=$id", expected, actual)
+      if (header != null) assertTrue("Long rename/header path must overflow", expected > 0)
+      val target = panTarget(canvas, id, "FILE_HEADER_PATH")
+      assertEquals(expected, call(canvas, "maxHorizontalOffset", target))
+      call(canvas, "scrollByHorizontal", 1_000_000, target)
+      assertEquals(expected, headerOffset(canvas, id))
+      call(canvas, "scrollByHorizontal", -1_000_000, target)
+      assertEquals(0, headerOffset(canvas, id))
+      call(canvas, "scrollByHorizontal", 1, target)
+      call(canvas, "clampHeaderPathOffsets")
+      assertEquals(minOf(1, expected), headerOffset(canvas, id))
+    }
+    val codeTarget = panTarget(canvas, "f9", "CODE")
+    val codeLimit = call(canvas, "maxHorizontalOffset") as Int
+    assertEquals(codeLimit, call(canvas, "maxHorizontalOffset", codeTarget))
+    if (wrap) assertEquals(0, codeLimit) else assertTrue(codeLimit > 0)
+    call(canvas, "scrollByHorizontal", 1_000_000, codeTarget)
+    assertEquals(codeLimit, call(canvas, "horizontalOffset"))
+    call(canvas, "scrollByHorizontal", -1_000_000, codeTarget)
+    assertEquals(0, call(canvas, "horizontalOffset"))
+  }
+
+  private fun headerLimit(canvas: View, id: String): Int = canvas.javaClass
+    .getDeclaredMethod("maxHeaderPathOffset", String::class.java).apply { isAccessible = true }
+    .invoke(canvas, id) as Int
+
+  private fun headerOffset(canvas: View, id: String): Int =
+    (field(canvas, "headerPathOffsetsByFileId") as Map<*, *>)[id] as Int? ?: 0
+
+  private fun panTarget(canvas: View, id: String, kind: String): Any {
+    val targetClass = canvas.javaClass.declaredMethods.single {
+      it.name == "scrollByHorizontal"
+    }.parameterTypes[1]
+    val constructor = targetClass.declaredConstructors.single().apply { isAccessible = true }
+    val enumValue = constructor.parameterTypes[1].enumConstants.single {
+      (it as Enum<*>).name ==
+        kind
+    }
+    return constructor.newInstance(id, enumValue)
+  }
+
   private fun call(target: Any, name: String, vararg args: Any): Any? = target.javaClass
     .declaredMethods.single { it.name == name && it.parameterCount == args.size }
     .apply { isAccessible = true }.invoke(target, *args)
@@ -235,9 +480,11 @@ class ReviewDiffGeometryTest {
 
   private class CountingRows(private val rows: List<DiffRow>) : AbstractList<DiffRow>() {
     var reads = 0
+    var codeReads = 0
     override val size: Int get() = rows.size
     override fun get(index: Int): DiffRow {
       reads += 1
+      if (rows[index].kind != "file") codeReads += 1
       return rows[index]
     }
   }

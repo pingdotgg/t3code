@@ -5,7 +5,8 @@ export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'
 
 export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -z "$ANDROID_HOME" ]; then
-  if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
+  if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
+  elif [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
 fi
 if [ -n "$ANDROID_HOME" ]; then export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"; fi
@@ -133,13 +134,31 @@ async function install(name, version, entry) {
 }
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
-  const android = run('adb', ['version']).status === 0;
+  // The SSH shell setup chose ANDROID_HOME, so later commands use the SDK accepted here.
+  const sdk = process.env.ANDROID_HOME;
+  const executable = (relative) => {
+    try {
+      const file = path.join(sdk, relative);
+      fs.accessSync(file, fs.constants.X_OK);
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const androidReason = !sdk ? 'Android SDK was not found. Install it with Android Studio or set ANDROID_HOME on the SSH host.'
+    : !executable('platform-tools/adb') ? 'Android SDK Platform-Tools are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
+    : !executable('emulator/emulator') ? 'Android Emulator is missing from ' + sdk + '. Install it in Android Studio SDK Manager.'
+    : !executable('cmdline-tools/latest/bin/avdmanager') ? 'Android SDK Command-line Tools (latest) are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
+    : run(path.join(sdk, 'platform-tools', 'adb'), ['version']).status !== 0 ? 'adb in ' + sdk + ' failed to run. Reinstall Android SDK Platform-Tools.'
+    : null;
+  const android = androidReason === null;
   const platforms = [
     { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
-    { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
+    { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
-    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
+    const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+    if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) throw Error('Node 22.12 or newer is required on the device host.');
     if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
     console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;
   }
@@ -151,15 +170,28 @@ async function install(name, version, entry) {
   const hubFile = path.join(state, 'hub.json');
   const daemonFile = path.join(state, 'daemon.json');
   const agentFile = path.join(state, 'agent.json');
+  const stopAgent = () => {
+    const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
+    if (fs.existsSync(entry)) return run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]).status === 0;
+    // A running daemon outlives its deleted CLI, so without one only a recorded pid that is gone counts as stopped.
+    const pid = read(daemonFile)?.pid;
+    return Number.isSafeInteger(pid) && pid > 0 && !maintenanceAlive(pid);
+  };
   if (mode === 'stop' || mode === 'stop-agent') {
     const hub = read(hubFile);
     if (mode === 'stop' && hub && hub.owner === owner) {
       stopHub(hub);
       fs.rmSync(hubFile, { force: true });
     }
-    const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
-    if (fs.existsSync(entry)) run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]);
+    stopAgent();
     return;
+  }
+  // A start without agent tools means the server holds no claims, so a daemon still here is
+  // orphaned. Agent access was turned off while the tunnel was down, or a server crashed.
+  // Close skips the release when start returns no endpoint, so the claims must end here.
+  if (mode === 'start' && read(daemonFile)) {
+    if (!stopAgent()) throw Error('Could not stop the agent-device daemon in ' + state);
+    fs.rmSync(daemonFile, { force: true });
   }
   if (!ios && !android) throw Error(platforms.map(p => p.reason).join(' '));
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
@@ -175,13 +207,20 @@ async function install(name, version, entry) {
   }) : [];
   const emulatorExtraArgs = [cameraArgs.join(' '), process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
+  // A hub recorded without a token predates --require-token and is replaced.
+  if (!hub || hub.owner !== owner || !hub.token || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
-      const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
-        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
+      // The hub prints the session token it generates, so its log is private and read from here on.
+      // It also records the token in its state folder, kept in this host's private folder.
+      const logFile = path.join(state, 'hub.log');
+      const log = fs.openSync(logFile, 'a', 0o600);
+      fs.fchmodSync(log, 0o600);
+      const logStart = fs.fstatSync(log).size;
+      const announcedToken = () => /\btoken=([\w.~-]+)/.exec(fs.readFileSync(logFile, 'utf8').slice(logStart))?.[1];
+      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--require-token', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
+        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_STATE_DIR: state, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
@@ -191,7 +230,7 @@ async function install(name, version, entry) {
       const deadline = Date.now() + 30000;
       let listening = false;
       while (child.exitCode === null && child.signalCode === null) {
-        if (await healthy(hub.port, '/readyz')) { listening = true; break; }
+        if (await healthy(hub.port, '/readyz') && (hub.token = announcedToken())) { write(hubFile, hub); listening = true; break; }
         if (Date.now() > deadline) { stopHub(hub); throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log')); }
         await sleep(200);
       }
@@ -226,7 +265,7 @@ async function install(name, version, entry) {
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
   await pruneTools(path.join(root, 'tools'), [['expo-device-hub', hubVersion], ...(mode === 'agent-start' ? [['agent-device', agentVersion]] : [])], true).catch(() => {});
-  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
+  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, hubToken: hub.token, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
   } finally { releaseHost(); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

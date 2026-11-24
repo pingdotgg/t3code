@@ -7,11 +7,13 @@ import type { NavigationState, PartialState } from "@react-navigation/native";
  * to the NotFound wildcard route on every dev launch.
  */
 export function shouldHandleAppLink(url: string, cloudConfigured: boolean): boolean {
+  // Only the route: a thread link's ?prompt= may mention either lifecycle URL.
+  const route = url.split(/[?#]/)[0] ?? "";
   return (
-    !url.includes("expo-development-client") &&
-    !url.includes("://expo-sharing") &&
+    !route.includes("expo-development-client") &&
+    !route.includes("://expo-sharing") &&
     !/^t3code(-dev|-preview)?:\/*$/.test(url) &&
-    (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(url.split(/[?#]/)[0] ?? ""))
+    (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(route))
   );
 }
 
@@ -33,7 +35,14 @@ export function restoreDraftLinkState(
   if (!state || !pathname || !/^new\/draft(?:\/|$)/.test(pathname)) return state;
   const target = state.routes.at(-1);
   if (!target) return state;
-  const draft = target.params ?? {};
+  // The draft screen checks out its branch on mount; the checkout comes from the draft, not the link.
+  const {
+    branch: _branch,
+    worktreePath: _worktreePath,
+    ...draft
+  } = (target.params ?? {}) as {
+    readonly [param: string]: unknown;
+  };
   const routes = state.routes.slice(0, -1);
   routes.push({ name: "Thread", params: { draft } });
   if (pathname !== "new/draft") routes.push(target);

@@ -2,7 +2,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import * as HttpResponseErrorGuard from "./httpResponseErrorGuard.ts";
 
@@ -125,6 +128,83 @@ describe("guardHttpResponseWriteErrors", () => {
   });
 });
 
+describe("keepIdleConnections", () => {
+  it("closes a connection whose response finishes after the server stopped listening", async () => {
+    const server = HttpResponseErrorGuard.keepIdleConnections(NodeHttp.createServer());
+    const body = "x".repeat(1_000_000);
+    const closed = Promise.withResolvers<void>();
+    server.on("request", (_request, response) => {
+      // The server shuts down while this request is in flight.
+      server.close(() => closed.resolve());
+      response.end(body);
+    });
+    const port = await listen(server);
+    const agent = new NodeHttp.Agent({ keepAlive: true });
+
+    const received = await new Promise<number>((resolve, reject) => {
+      const request = NodeHttp.get({ host: "127.0.0.1", port, agent }, (response) => {
+        let bytes = 0;
+        response.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+        });
+        response.on("end", () => resolve(bytes));
+        response.on("error", reject);
+      });
+      requests.push(request);
+      request.on("error", reject);
+    });
+
+    expect(received).toBe(body.length);
+    // Left alone, the kept-alive connection holds the server open for the keep-alive time.
+    await closed.promise;
+    agent.destroy();
+  });
+
+  it("keeps a connection until every response on it has finished", async () => {
+    const server = HttpResponseErrorGuard.keepIdleConnections(NodeHttp.createServer());
+    const closed = Promise.withResolvers<void>();
+    // Larger than a socket buffer, so it still has output to send after `end`.
+    const thirdBody = "x".repeat(8_000_000);
+    const held: NodeHttp.ServerResponse[] = [];
+    server.on("request", (request, response) => {
+      if (request.url !== "/third") {
+        held.push(response);
+        return;
+      }
+      const [first, second] = held;
+      // All three pipelined requests are in flight when the server shuts down. The third
+      // response is ended before the first two, and the second ends after the first.
+      response.end(thirdBody);
+      server.close(() => closed.resolve());
+      first?.once("finish", () => setImmediate(() => second?.end("second-body")));
+      first?.end("first-body");
+    });
+    const port = await listen(server);
+
+    const received = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      const client = NodeNet.connect(port, "127.0.0.1", () => {
+        client.write(
+          ["/first", "/second", "/third"]
+            .map((path) => `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`)
+            .join(""),
+        );
+      });
+      sockets.push(client);
+      client.on("data", (chunk: Buffer) => {
+        data += chunk.toString();
+      });
+      client.on("end", () => resolve(data));
+      client.on("error", reject);
+    });
+
+    expect(received.slice(0, 1_000)).toContain("first-body");
+    expect(received.slice(0, 1_000)).toContain("second-body");
+    expect(received.endsWith(thirdBody)).toBe(true);
+    await closed.promise;
+  });
+});
+
 describe("rejectRequestsUntilServing", () => {
   it("rejects early HTTP and upgrades, then hands each off to its serving handler", async () => {
     const writeErrors: unknown[] = [];
@@ -162,4 +242,30 @@ describe("rejectRequestsUntilServing", () => {
     expect(servingUpgrade.headers["retry-after"]).toBeUndefined();
     expect(writeErrors).toEqual([]);
   });
+
+  it.effect(
+    "rejects early requests on NodeHttpServer, which adds its own listener before listening",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* NodeHttpServer.make(
+            () =>
+              HttpResponseErrorGuard.rejectRequestsUntilServing(
+                HttpResponseErrorGuard.keepIdleConnections(
+                  guardHttpResponseWriteErrors(NodeHttp.createServer()),
+                ),
+              ),
+            { host: "127.0.0.1", port: 0 },
+          );
+          const port = (server.address as { readonly port: number }).port;
+
+          const early = yield* Effect.promise(() => fetchResponse(port, "/"));
+          expect(early.statusCode).toBe(503);
+          expect(early.headers["retry-after"]).toBe("1");
+
+          yield* server.serve(Effect.succeed(HttpServerResponse.empty({ status: 204 })));
+          expect(yield* Effect.promise(() => fetchStatus(port, "/"))).toBe(204);
+        }),
+      ),
+  );
 });

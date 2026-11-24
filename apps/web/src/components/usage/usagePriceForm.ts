@@ -1,10 +1,11 @@
+import { msg } from "gt-react";
 import type { UsageModelPriceOverride } from "@t3tools/contracts";
 
 export const USAGE_PRICE_FIELDS = [
-  { key: "inputCostPerMillionTokens", label: "Input", optional: false },
-  { key: "outputCostPerMillionTokens", label: "Output", optional: false },
-  { key: "cacheReadCostPerMillionTokens", label: "Cache read", optional: true },
-  { key: "cacheWriteCostPerMillionTokens", label: "Cache write", optional: true },
+  { key: "inputCostPerMillionTokens", label: msg("Input"), optional: false },
+  { key: "outputCostPerMillionTokens", label: msg("Output"), optional: false },
+  { key: "cacheReadCostPerMillionTokens", label: msg("Cache read"), optional: true },
+  { key: "cacheWriteCostPerMillionTokens", label: msg("Cache write"), optional: true },
 ] as const;
 
 export type UsagePriceForm = { model: string } & Record<
@@ -25,7 +26,7 @@ export function usagePriceForm(model = "", price?: UsageModelPriceOverride): Usa
 /** Allow decimal/exponent edits and all deletions, including temporarily invalid values; saving validates
  * the result. */
 export function isUsagePriceEdit(previous: string, next: string): boolean {
-  if (/^\s*(?:\d*\.?\d*|(?:\d+\.?\d*|\.\d+)e[+-]?\d*)\s*$/i.test(next)) return true;
+  if (/^\s*(?:\d*[.,]?\d*|(?:\d+[.,]?\d*|[.,]\d+)e[+-]?\d*)\s*$/i.test(next)) return true;
   if (next.length >= previous.length) return false;
   let start = 0;
   while (start < next.length && next[start] === previous[start]) start++;
@@ -40,7 +41,7 @@ export function parseUsagePriceForm(
   if (model.length === 0) return null;
   const rates: Partial<Record<(typeof USAGE_PRICE_FIELDS)[number]["key"], number>> = {};
   for (const field of USAGE_PRICE_FIELDS) {
-    const raw = form[field.key].trim();
+    const raw = form[field.key].trim().replace(",", ".");
     if (raw === "") {
       if (field.optional) continue;
       return null;

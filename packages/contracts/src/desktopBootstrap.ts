@@ -4,6 +4,8 @@ import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts
 
 // A supervisor must not restart a server refused by the state-directory owner.
 export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
+// A server the managed policy refused, so the desktop app blames the policy rather than the release.
+export const SERVER_EXIT_CODE_MANAGED_POLICY = 77;
 
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),
@@ -15,6 +17,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopBootstrapToken: Schema.String,
   // Derives rotating tokens instead of trusting desktopBootstrapToken indefinitely; see @t3tools/shared/desktopBootstrapToken.
   desktopBootstrapSecret: Schema.optionalKey(Schema.String),
+  // Fresh per launch. A backend without a control channel proves it holds this before it counts as ready; see @t3tools/shared/desktopReadinessProof.
+  desktopReadinessSecret: Schema.optionalKey(Schema.String),
   // Absent means the backend must hydrate PATH, as WSL and older desktops require.
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
@@ -24,6 +28,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   otlpLogsUrl: Schema.optional(Schema.String),
   desktopTelemetryFd: Schema.optionalKey(PositiveInt),
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
+  // Whether the spawning desktop app can install updates when the server requests one.
+  desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
@@ -33,3 +39,6 @@ export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;
 
 /** Written to `<t3Home>/runtime` before update shutdown so the backend retains its managed tunnel. */
 export const DESKTOP_UPDATE_RESTART_MARKER_FILE = "desktop-update-restart";
+
+export const DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE = "desktop-update-in-progress";
+export const DESKTOP_UPDATE_IN_PROGRESS_TTL_MS = 60_000;

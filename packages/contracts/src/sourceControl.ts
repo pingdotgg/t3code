@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { GitRefName, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 /** Accept unknown hosts so clients can fall back to generic presentation. */
@@ -24,8 +24,8 @@ export const ChangeRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyString,
   url: Schema.String,
-  baseRefName: TrimmedNonEmptyString,
-  headRefName: TrimmedNonEmptyString,
+  baseRefName: GitRefName,
+  headRefName: GitRefName,
   headSha: Schema.optional(TrimmedNonEmptyString),
   state: ChangeRequestState,
   isDraft: Schema.optional(Schema.Boolean),
@@ -99,7 +99,7 @@ export const SourceControlPublishRepositoryResult = Schema.Struct({
   repository: SourceControlRepositoryInfo,
   remoteName: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
+  branch: GitRefName,
   status: SourceControlPublishStatus,
 });
 export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
@@ -225,6 +225,13 @@ export const SourceControlAppAccess = Schema.Struct({
   status: Schema.Literals(["covered", "not-covered", "signed-out"]),
 });
 export type SourceControlAppAccess = typeof SourceControlAppAccess.Type;
+
+export const SourceControlStarredInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  host: TrimmedNonEmptyString,
+  repository: TrimmedNonEmptyString,
+});
+export type SourceControlStarredInput = typeof SourceControlStarredInput.Type;
 
 export class SourceControlSignInError extends Schema.TaggedError<SourceControlSignInError>()(
   "SourceControlSignInError",

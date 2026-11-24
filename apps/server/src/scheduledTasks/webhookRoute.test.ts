@@ -1,3 +1,4 @@
+import * as PlatformNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
@@ -30,6 +31,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import { WEBHOOK_MAX_BODY_BYTES } from "./webhookRoute.ts";
 import * as WebhookRoute from "./webhookRoute.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as Workflows from "../workflows/Workflows.ts";
 
 class WebhookTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.webhooks) {}
 
@@ -66,7 +69,21 @@ const relayProof = Effect.fn("relayProof")(function* (claims: {
       receivedAt: claims.receivedAt,
       hookId: claims.hookId,
     },
-  });
+  }).pipe(Effect.provide(PlatformNodeCrypto.layerSignature));
+});
+
+const workflowDeliveries: Array<Parameters<Workflows.Workflows["Service"]["deliver"]>[0]> = [];
+const hooks = Layer.mock(Workflows.Workflows)({
+  deliver: (delivery) =>
+    Effect.sync(() => {
+      workflowDeliveries.push(delivery);
+      return delivery.token === "tok" ? Option.some({ runId: "run-1" }) : Option.none();
+    }).pipe(
+      Effect.filterOrFail(
+        () => delivery.token !== "busy",
+        () => new Workflows.WorkflowHookBusyError({ hook: "push" }),
+      ),
+    ),
 });
 
 const handlerFor = (
@@ -80,6 +97,7 @@ const handlerFor = (
       Layer.provide(WebhookRoute.layer),
       Layer.provide(RelayDeliveryProof.layer),
       Layer.provide(Layer.mock(ScheduledTaskService)({ triggerWebhook: trigger })),
+      Layer.provide([hooks, ManagedPolicy.layerTest()]),
       Layer.provide(
         Layer.mock(ServerSecretStore.ServerSecretStore)({
           get: (name) =>
@@ -101,7 +119,7 @@ const handlerFor = (
           Layer.provideMerge(Etag.layerWeak),
         ),
       ),
-      Layer.provide(NodeServices.layer),
+      Layer.provide([NodeServices.layer, PlatformNodeCrypto.layerSignature]),
     ),
     { disableLogger: true },
   );
@@ -113,6 +131,33 @@ const post = (
 ) => new Request(`http://env.local${path}`, { method: "POST", body, headers });
 
 describe("webhook route", () => {
+  it.live("a workflow's hook starts a run and never reaches the scheduled tasks", () =>
+    Effect.gen(function* () {
+      let tasks = 0;
+      const { handler, dispose } = handlerFor(() => {
+        tasks += 1;
+        return Effect.succeed({ _tag: "not_found" });
+      });
+      const send = (token: string) =>
+        Effect.promise(() =>
+          handler(post(`/api/hooks/wf-inbound.push/${token}?a=1`, "hello", { "X-Delivery": "d1" })),
+        );
+      const accepted = yield* send("tok");
+      expect(accepted.status).toBe(202);
+      expect(yield* Effect.promise(() => accepted.json())).toEqual({ runId: "run-1" });
+      expect((yield* send("wrong")).status).toBe(404);
+      const busy = yield* send("busy");
+      expect([busy.status, busy.headers.get("retry-after")]).toEqual([429, "60"]);
+      expect(yield* Effect.promise(() => busy.json())).toEqual({ error: "rate_limited" });
+      expect(tasks).toBe(0);
+      expect(workflowDeliveries[0]).toMatchObject({
+        hookId: "wf-inbound.push",
+        request: { method: "POST", query: "a=1", body: "hello", headers: { "x-delivery": "d1" } },
+      });
+      yield* Effect.promise(dispose);
+    }),
+  );
+
   it.live("trusts the relay's delivery id and receive time only with its signed proof", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];
@@ -187,6 +232,30 @@ describe("webhook route", () => {
     }),
   );
 
+  it("keeps a browser's session cookie out of the request a task reads", async () => {
+    const received: Array<WebhookTriggerRequest> = [];
+    const { handler, dispose } = handlerFor((request) => {
+      received.push(request);
+      return Effect.succeed({
+        _tag: "accepted",
+        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
+        outcome: "accepted",
+      });
+    });
+    try {
+      const response = await handler(
+        new Request("http://env.local/api/hooks/id/tok", {
+          headers: { Cookie: "t3_session=session-secret", "x-github-event": "push" },
+        }),
+      );
+      expect(response.status).toBe(202);
+      expect(received[0]?.headers).not.toHaveProperty("cookie");
+      expect(received[0]?.headers["x-github-event"]).toBe("push");
+    } finally {
+      await dispose();
+    }
+  });
+
   it("maps service outcomes to status codes and names each outcome for the relay", async () => {
     const deliveryId = ScheduledTaskWebhookDeliveryId.make("delivery:1");
     const cases: ReadonlyArray<[WebhookTriggerResult, number, string]> = [
@@ -197,6 +266,7 @@ describe("webhook route", () => {
       [{ _tag: "not_found" }, 404, "not_found"],
       [{ _tag: "rejected_signature" }, 401, "rejected_signature"],
       [{ _tag: "disabled" }, 409, "disabled"],
+      [{ _tag: "blocked_by_policy" }, 403, "blocked_by_policy"],
       [{ _tag: "rate_limited", outcome: "rate_limited" }, 429, "rate_limited"],
       [{ _tag: "rate_limited", outcome: "queue_full" }, 429, "queue_full"],
       [{ _tag: "expired" }, 410, "expired"],
@@ -244,6 +314,32 @@ describe("webhook route", () => {
       );
       expect(streamed.status).toBe(413);
       expect(calls).toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("refuses HEAD probes without triggering the hook", async () => {
+    let calls = 0;
+    const { handler, dispose } = handlerFor(() => {
+      calls += 1;
+      return Effect.succeed({
+        _tag: "accepted",
+        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
+        outcome: "accepted",
+      });
+    });
+    try {
+      const response = await handler(
+        new Request("http://env.local/api/hooks/id/tok", { method: "HEAD" }),
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("GET, POST, PUT, PATCH");
+      expect(response.headers.get("x-t3-hook-outcome")).toBe("method_not_allowed");
+      expect(calls).toBe(0);
+      const get = await handler(new Request("http://env.local/api/hooks/id/tok"));
+      expect(get.status).toBe(202);
+      expect(calls).toBe(1);
     } finally {
       await dispose();
     }

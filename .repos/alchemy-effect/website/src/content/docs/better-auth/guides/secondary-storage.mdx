@@ -85,7 +85,7 @@ Automatic JSON deserialization is disabled because Better Auth stores strings, i
 // worker.ts
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { RedisStorage } from "./storage.ts";
@@ -125,7 +125,7 @@ The explicit limiter also runs in development, with a 60-second window and a max
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import AuthApi from "./worker.ts";
 

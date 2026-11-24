@@ -11,6 +11,8 @@ import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import { TEST_FORMAT_MAP } from "./usageTestFormats.ts";
 import { initialCodexScanState, parseCodexLine } from "../provider/Drivers/codexUsage.ts";
 
+const parse = (parts: Iterable<string>) => JSON.parse([...parts].join(""));
+
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
     provider: "claude",
@@ -50,7 +52,7 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
       provider: "claude",
       records,
       tailRecords: [],
-      malformedRecords: 0,
+      malformedRecords: [],
       position: position(),
     });
   }
@@ -63,7 +65,15 @@ describe("scan cache round trip", () => {
       [
         "/a.jsonl",
         100,
-        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
+        [
+          record(),
+          record({
+            dedupeKey: "msg_2:",
+            model: "claude-opus-5-5",
+            speed: "fast",
+            cacheCreation1hTokens: 8,
+          }),
+        ],
       ],
       [
         "/b.jsonl",
@@ -85,7 +95,7 @@ describe("scan cache round trip", () => {
     ]);
     original.set("/grok.jsonl", {
       size: 40,
-      malformedRecords: 2,
+      malformedRecords: [1, 2],
       mtimeMs: 300,
       provider: "grok",
       records: [
@@ -121,7 +131,7 @@ describe("scan cache round trip", () => {
     const pendingTail = { ...pending, unresolvedServiceTierTurnId: "native-tail" };
     original.set("/codex.jsonl", {
       size: 80,
-      malformedRecords: 3,
+      malformedRecords: [1, 2, 3],
       mtimeMs: 400,
       provider: "codex",
       records: [
@@ -152,23 +162,30 @@ describe("scan cache round trip", () => {
         record({ model: "<synthetic>", dedupeKey: "msg_tail:" }),
       ],
     });
-    const restored = decodeScanCache(
-      JSON.parse(makeScanCacheWriter()(cached, {})),
-      TEST_FORMAT_MAP,
-    );
+    const restored = decodeScanCache(parse(makeScanCacheWriter()(cached, {})), TEST_FORMAT_MAP);
 
     expect(restored.size).toBe(4);
     expect(restored).toEqual(original);
+    const encoded = parse(makeScanCacheWriter()(original, {}));
+    const { mt: _dates, ...undated } = encoded.files["/codex.jsonl"]!;
+    const reparsed = decodeScanCache(
+      { ...encoded, files: { ...encoded.files, "/codex.jsonl": undated } },
+      TEST_FORMAT_MAP,
+    ).get("/codex.jsonl")!;
+    expect(reparsed.size).toBe(-1);
+    expect(reparsed.position.resumeOffset).toBe(0);
+    expect(reparsed.records).toEqual(original.get("/codex.jsonl")!.records);
+    expect(reparsed.malformedRecords).toEqual([]);
   });
 
-  it.each([5, 6, 7, 8])(
+  it.each([5, 6, 7, 8, 10, 11, 12, 13])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
       original.set("/gone-codex.jsonl", {
         ...original.get("/gone.jsonl")!,
         provider: "codex",
-        malformedRecords: 1,
+        malformedRecords: [1],
         records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
         position: position({
           state: {
@@ -188,15 +205,15 @@ describe("scan cache round trip", () => {
         size: 256,
         provider: "pi",
         records: [record({ provider: "pi", model: "anthropic/claude-fable-5" })],
-        malformedRecords: 3,
+        malformedRecords: [1, 2, 3],
         position: position({ state: { sessionId: "session-a" } }),
       });
       const cleanCodex = {
         ...original.get("/gone-codex.jsonl")!,
-        malformedRecords: 0,
+        malformedRecords: [],
       };
       original.set("/clean-codex.jsonl", cleanCodex);
-      const encoded = JSON.parse(makeScanCacheWriter()(original, {}));
+      const encoded = parse(makeScanCacheWriter()(original, {}));
       const entry = encoded.files["/gone.jsonl"]!;
       const legacy = {
         ...encoded,
@@ -218,21 +235,25 @@ describe("scan cache round trip", () => {
       };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-      expect(restored.get("/gone.jsonl")).toEqual(original.get("/gone.jsonl"));
+      expect(restored.get("/gone.jsonl")).toEqual(
+        version >= 13
+          ? original.get("/gone.jsonl")
+          : {
+              ...original.get("/gone.jsonl"),
+              size: -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
       expect(restored.get("/gone-codex.jsonl")).toEqual({
         ...original.get("/gone-codex.jsonl"),
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
-      expect(restored.get("/clean-codex.jsonl")).toEqual(
-        version >= 8
-          ? cleanCodex
-          : {
-              ...cleanCodex,
-              size: -1,
-              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-            },
-      );
+      expect(restored.get("/clean-codex.jsonl")).toEqual({
+        ...cleanCodex,
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -245,23 +266,129 @@ describe("scan cache round trip", () => {
     },
   );
 
+  it("re-parses a v14 Codex entry that skipped records and restarts a clean one when it grows", () => {
+    const codex = (malformedRecords: readonly number[]): CachedFile => ({
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords,
+      position: position({
+        state: { ...initialCodexScanState(), model: "gpt-6-astra", sessionId: "session-a" },
+      }),
+    });
+    const original: ScanCache = new Map([
+      ["/skipped-codex.jsonl", codex([1])],
+      ["/clean-codex.jsonl", codex([])],
+    ]);
+    const v14 = { ...parse(makeScanCacheWriter()(original, {})), version: 14 };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v14)), TEST_FORMAT_MAP);
+    expect(restored.get("/skipped-codex.jsonl")).toEqual({
+      ...codex([1]),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    // Served while unchanged, but its state predates the latest snapshot time, so it cannot resume.
+    expect(restored.get("/clean-codex.jsonl")).toEqual({
+      ...codex([]),
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    // The migrated entries persist without a state and load again under the current version.
+    expect(decodeScanCache(parse(makeScanCacheWriter()(restored, {})), TEST_FORMAT_MAP)).toEqual(
+      restored,
+    );
+  });
+
+  it("restarts a grown v15 Codex entry, whose baseline time can be older than its totals", () => {
+    const request = {
+      input_tokens: 100,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 0,
+      output_tokens: 20,
+      reasoning_output_tokens: 0,
+      total_tokens: 120,
+    };
+    const entry: CachedFile = {
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords: [],
+      position: position({
+        state: {
+          ...initialCodexScanState(),
+          model: "gpt-6-astra",
+          lastCumulativeUsage: request,
+          latestCumulativeAtMs: 1_786_000_000_000,
+        },
+      }),
+    };
+    const current = parse(makeScanCacheWriter()(new Map([["/codex.jsonl", entry]]), {}));
+
+    expect(
+      decodeScanCache({ ...current, version: 15 }, TEST_FORMAT_MAP).get("/codex.jsonl"),
+    ).toEqual({
+      ...entry,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
+  });
+
+  it("re-parses a Claude transcript cached before 1-hour cache writes were counted", () => {
+    const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
+    const v12 = { ...parse(makeScanCacheWriter()(original, {})), version: 12 };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v12)), TEST_FORMAT_MAP);
+    expect(restored.get("/claude.jsonl")).toEqual({
+      ...original.get("/claude.jsonl"),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+  });
+
+  it.each(["s:p:grok-4.5", "s:p:1786000000000:grok-4.5"])(
+    "re-parses v16 Grok transcripts with key %s",
+    (dedupeKey) => {
+      const original = cacheWith([
+        ["/grok/updates.jsonl", 100, [record({ provider: "grok", model: "grok-4.5", dedupeKey })]],
+      ]);
+      original.set("/grok/updates.jsonl", {
+        ...original.get("/grok/updates.jsonl")!,
+        provider: "grok",
+      });
+      const encoded = parse(makeScanCacheWriter()(original, {}));
+      const restored = decodeScanCache({ ...encoded, version: 16 }, TEST_FORMAT_MAP);
+      expect(restored.get("/grok/updates.jsonl")).toEqual({
+        ...original.get("/grok/updates.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+        records: [
+          record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:1786000000000:grok-4.5" }),
+        ],
+      });
+    },
+  );
+
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
     const cache = cacheWith([
       ["/a.jsonl", 100, [record()]],
       ["/b.jsonl", 200, [record({ sessionId: "session-b" })]],
     ]);
-    cache.set("/b.jsonl", { ...cache.get("/b.jsonl")!, malformedRecords: 2 });
+    cache.set("/b.jsonl", { ...cache.get("/b.jsonl")!, malformedRecords: [1, 2] });
     const sources = { "claude\u0000/projects": { dir: "/projects", volumeId: "1:2" } };
-    expect(decodeScanCache(JSON.parse(write(cache, { sources })), TEST_FORMAT_MAP)).toEqual(cache);
+    expect(decodeScanCache(parse(write(cache, { sources })), TEST_FORMAT_MAP)).toEqual(cache);
 
     cache.set("/b.jsonl", {
       ...cache.get("/b.jsonl")!,
       size: 30,
-      malformedRecords: 4,
+      malformedRecords: [1, 2, 3, 4],
       records: [record({ sessionId: "session-c", model: "claude-opus-5-5", dedupeKey: "msg_3:" })],
     });
-    const document = JSON.parse(write(cache, { sources }));
+    const document = parse(write(cache, { sources }));
     expect(decodeScanCache(document, TEST_FORMAT_MAP)).toEqual(cache);
     expect(document.sources).toEqual(sources);
   });
@@ -275,9 +402,7 @@ describe("scan cache round trip", () => {
   });
 
   it("skips malformed file entries but keeps good ones", () => {
-    const encoded = JSON.parse(
-      makeScanCacheWriter()(cacheWith([["/good.jsonl", 100, [record()]]]), {}),
-    );
+    const encoded = parse(makeScanCacheWriter()(cacheWith([["/good.jsonl", 100, [record()]]]), {}));
     const withJunk = {
       ...encoded,
       files: { ...encoded.files, "/bad.jsonl": { s: "nope", m: 1, p: "claude", r: [] } },
@@ -288,7 +413,7 @@ describe("scan cache round trip", () => {
   });
 
   it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
-    const encoded = JSON.parse(
+    const encoded = parse(
       makeScanCacheWriter()(
         cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" })]]]),
         {},

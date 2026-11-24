@@ -16,7 +16,11 @@ import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
-import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import {
+  childThreadInputsTitle,
+  createEnvironmentThreadShellAtoms,
+  resolveListedAncestorThreadRef,
+} from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
@@ -48,11 +52,44 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     registry: AtomRegistry.make(),
     snapshotAtom,
     catalogValueAtom,
-    threads: createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom }),
+    threads: createEnvironmentThreadShellAtoms({
+      catalogValueAtom,
+      snapshotAtom,
+      hiddenThreadTagsAtom: () => Atom.make(null),
+    }),
   };
 }
 
 describe("v2 thread shell lists", () => {
+  it("builds no child index while no child asks for input", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    let parentIdReads = 0;
+    const child = {
+      ...v2ThreadShell,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      lineage: {
+        rootThreadId: v2ThreadShell.id,
+        relationshipToParent: "subagent" as const,
+        // Nothing is pending, so only the child index would read parent ids.
+        get parentThreadId() {
+          parentIdReads++;
+          return v2ThreadShell.id;
+        },
+      },
+    };
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: v2ThreadShell.id });
+    const dispose = registry.mount(inputs);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [v2ThreadShell, child],
+    });
+    expect(registry.get(inputs)).toEqual([]);
+    expect(parentIdReads).toBe(0);
+    dispose();
+    registry.dispose();
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
@@ -152,7 +189,129 @@ describe("v2 thread shell lists", () => {
       threads: [root, { ...legacyChild, status: "completed" as const }],
     });
     expect(registry.get(inputs)).toEqual([]);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
     dispose();
+    registry.dispose();
+  });
+
+  it("flags the parent while a live subagent waits on a secret card", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const child = {
+      ...root,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      lineage: {
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("secret-card"),
+        kind: "user_input" as const,
+        createdAt: v2Now,
+        blocking: true,
+        userOnly: true,
+      },
+    };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+    expect(
+      registry.get(threads.threadShellAtom({ environmentId, threadId: root.id }))
+        ?.pendingSubagentRequest,
+    ).toBe("user_input");
+    registry.dispose();
+  });
+
+  it("rolls a side chat's questions and approvals up to its parent row", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const sideChat = {
+      ...root,
+      id: ThreadId.make("side-chat"),
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      latestRunId: RunId.make("side-chat-run"),
+      lineage: {
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "fork" as const,
+        sideChat: true,
+      },
+    };
+    const request = { id: RuntimeRequestId.make("ask"), createdAt: v2Now };
+    const parentRef = { environmentId, threadId: root.id };
+    const parent = threads.threadShellAtom(parentRef);
+    const inputs = threads.childThreadInputsAtom(parentRef);
+    const disposeParent = registry.mount(parent);
+    const disposeInputs = registry.mount(inputs);
+    const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
+    const withRequest = (
+      kind: "user_input" | "command",
+      options: { readonly blocking?: boolean } = {},
+    ) =>
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          root,
+          {
+            ...sideChat,
+            pendingRuntimeRequest: {
+              ...request,
+              kind,
+              ...(options.blocking === undefined ? {} : { blocking: options.blocking }),
+            },
+          },
+        ],
+      });
+
+    withRequest("user_input");
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("user_input");
+    expect(childThreadInputsTitle(registry.get(inputs))).toBe("Side chat needs input");
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      root.id,
+    ]);
+
+    withRequest("user_input", { blocking: false });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("user_input");
+
+    withRequest("command");
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("approval");
+    expect(childThreadInputsTitle(registry.get(inputs))).toBe("Side chat needs approval");
+
+    const helper = {
+      ...sideChat,
+      id: ThreadId.make("side-chat-helper"),
+      creationSource: "mcp" as const,
+      lineage: {
+        ...sideChat.lineage,
+        parentThreadId: sideChat.id,
+        relationshipToParent: "subagent" as const,
+        sideChat: false,
+      },
+      pendingRuntimeRequest: { ...request, kind: "command" as const },
+    };
+    const sideChats = threads.sideChatsAtom(parentRef);
+    const disposeSideChats = registry.mount(sideChats);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, sideChat, helper],
+    });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBe("approval");
+    expect(
+      registry.get(sideChats).map((thread) => [thread.id, thread.pendingSubagentRequest]),
+    ).toEqual([[sideChat.id, "approval"]]);
+
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, sideChat] });
+    expect(registry.get(parent)?.pendingSubagentRequest).toBeNull();
+    expect(registry.get(sideChats).map((thread) => thread.pendingSubagentRequest)).toEqual([null]);
+    expect(registry.get(inputs)).toEqual([]);
+    disposeSideChats();
+    disposeNavigation();
+    disposeInputs();
+    disposeParent();
     registry.dispose();
   });
 
@@ -285,6 +444,21 @@ describe("v2 thread shell lists", () => {
     });
     expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBeNull();
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([helper.id]);
+
+    // A secret card needs the user, so it still reaches the parent here.
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [
+        task,
+        {
+          ...helper,
+          pendingRuntimeRequest: { ...approval, kind: "user_input" as const, userOnly: true },
+        },
+      ],
+    });
+    expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBe(
+      "user_input",
+    );
 
     // A task whose parent is gone there is listed on its own, as is one whose
     // parent's environment is switched off.
@@ -538,5 +712,71 @@ describe("v2 thread shell lists", () => {
       dispose();
       harness.registry.dispose();
     }
+  });
+});
+
+describe("resolveListedAncestorThreadRef", () => {
+  type Thread = Parameters<typeof resolveListedAncestorThreadRef>[1][number];
+  const otherEnvironmentId = EnvironmentId.make("environment-other");
+  const ref = (environment: EnvironmentId, threadId: ThreadId) => ({
+    environmentId: environment,
+    threadId,
+  });
+  const listed = (
+    id: string,
+    environment = environmentId,
+    overrides?: Partial<Thread>,
+  ): Thread => ({
+    id: ThreadId.make(id),
+    environmentId: environment,
+    lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
+    archivedAt: null,
+    delegatedFrom: null,
+    ...overrides,
+  });
+  const subagentOf = (id: string, parentId: ThreadId, environment = environmentId) =>
+    listed(id, environment, {
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    });
+  const rowOf = (threadId: ThreadId, environment: EnvironmentId, threads: readonly Thread[]) =>
+    resolveListedAncestorThreadRef(ref(environment, threadId), threads);
+
+  it("maps an open subagent to its nearest listed ancestor", () => {
+    const root = listed("thread-root");
+    const fork = listed("thread-fork", environmentId, {
+      lineage: { rootThreadId: root.id, parentThreadId: root.id, relationshipToParent: "fork" },
+    });
+    const child = subagentOf("thread-child", root.id);
+    const grandchild = subagentOf("thread-grandchild", child.id);
+    const forkChild = subagentOf("thread-fork-child", fork.id);
+    const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
+    const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
+    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
+
+    expect(rowOf(child.id, environmentId, threads)).toEqual(ref(environmentId, root.id));
+    expect(rowOf(grandchild.id, environmentId, threads)).toEqual(ref(environmentId, root.id));
+    expect(rowOf(forkChild.id, environmentId, threads)).toEqual(ref(environmentId, fork.id));
+    expect(rowOf(elsewhere.id, otherEnvironmentId, threads)).toEqual(
+      ref(otherEnvironmentId, elsewhere.id),
+    );
+    expect(rowOf(orphan.id, environmentId, threads)).toEqual(ref(environmentId, orphan.id));
+    const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
+    const loopB = subagentOf("thread-loop-b", loopA.id);
+    expect(rowOf(loopA.id, environmentId, [loopA, loopB])).toEqual(ref(environmentId, loopA.id));
+  });
+
+  it("maps an open task a linked environment delegated to its listed parent", () => {
+    const parent = listed("thread-parent", remoteEnvironmentId);
+    const task = listed("thread-task", environmentId, {
+      delegatedFrom: { environmentId: remoteEnvironmentId, threadId: parent.id, title: "Parent" },
+    });
+
+    expect(rowOf(task.id, environmentId, [parent, task])).toEqual(
+      ref(remoteEnvironmentId, parent.id),
+    );
   });
 });

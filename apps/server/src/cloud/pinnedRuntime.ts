@@ -7,22 +7,25 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   CLI_RELEASE_CHECKSUMS_FILE,
   cliArchiveFileName,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
-  cliReleaseDownloadBaseUrl,
+  cliReleaseAssetUrl,
+  type CliArchivePlatformKey,
   parseChecksums,
 } from "@t3tools/shared/cliRelease";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsPowerShellPath } from "@t3tools/shared/windowsSystem";
 import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
@@ -70,6 +73,8 @@ export class PinnedRuntimeInstallError extends Schema.TaggedError<PinnedRuntimeI
     exitCode: Schema.optional(Schema.Number),
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.optional(Schema.Number),
+    httpStatus: Schema.optional(Schema.Number),
+    downloadHost: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -111,66 +116,154 @@ interface PinnedRuntimeInstallInput {
   readonly arch: string;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
+  /** Reuse a cached runtime only while the release source still lists it, as a policy mirror does. */
+  readonly requirePublishedRelease?: boolean;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
+
+// GitHub release downloads intermittently answer 5xx during incidents; a retry usually lands.
+const DOWNLOAD_RETRY = { times: 3, schedule: Schedule.exponential("2 seconds") } as const;
+
+const isTransientDownloadFailure = (
+  error: HttpClientError.HttpClientError | Cause.TimeoutError,
+): boolean => {
+  // A slow link stalls past the bound and then recovers; the retry resumes from the bytes held.
+  if (error._tag === "TimeoutError") return true;
+  // Body bytes are read raw, so a DecodeError is a body that failed after the host answered.
+  if (error.reason._tag === "DecodeError") return true;
+  const status = error.response?.status;
+  return status !== undefined && (status >= 500 || status === 429 || status === 408);
+};
+
+const CONTENT_RANGE = /^bytes (\d+)-\d+\/(\d+|\*)$/;
+
+const concatChunks = (chunks: ReadonlyArray<Uint8Array>, length: number): Uint8Array => {
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
 
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
   url: string,
   step: string,
+  // Only a digest-checked asset resumes; anything else restarts at byte 0 on each retry.
+  resume: boolean,
   onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
+  // Bytes from earlier attempts outlive the retry so a stalled download resumes with Range.
+  let chunks: Array<Uint8Array> = [];
+  let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
   // receiving bytes to finish regardless of their total duration.
-  return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
+  return yield* Effect.suspend(() => {
+    if (!resume) {
+      chunks = [];
+      received = 0;
+    }
+    return httpClient.execute(
+      received > 0
+        ? HttpClientRequest.get(url).pipe(
+            HttpClientRequest.setHeader("range", `bytes=${received}-`),
+          )
+        : HttpClientRequest.get(url),
+    );
+  }).pipe(
+    // A resume answered 416 has nothing after the held bytes to send; the archive
+    // checksum decides whether they are the whole file.
+    Effect.filterOrElse(
+      (response) => received > 0 && response.status === 416,
+      HttpClientResponse.filterStatusOk,
+    ),
     Effect.timeout(PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT),
     Effect.flatMap(
       Effect.fn(function* (response) {
-        const length = Number(response.headers["content-length"]);
+        if (response.status === 416) return concatChunks(chunks, received);
+        const contentRange =
+          response.status === 206
+            ? CONTENT_RANGE.exec(response.headers["content-range"] ?? "")
+            : null;
+        if (response.status === 206 && Number(contentRange?.[1]) !== received) {
+          chunks = [];
+          received = 0;
+          return yield* new HttpClientError.HttpClientError({
+            reason: new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "partial content does not resume the bytes already received",
+            }),
+          });
+        }
+        if (contentRange === null) {
+          chunks = [];
+          received = 0;
+        }
+        const length = Number(
+          contentRange === null ? response.headers["content-length"] : contentRange[2],
+        );
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
-        let received = 0;
         onProgress?.({ stage: "download", received, total });
-        const chunks = yield* response.stream.pipe(
+        const attemptStart = received;
+        yield* response.stream.pipe(
           Stream.timeoutOrElse({
             duration: PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT,
             orElse: () => Stream.fail(new Cause.TimeoutError()),
           }),
-          Stream.tap((chunk) =>
+          Stream.runForEach((chunk) =>
             Effect.sync(() => {
+              chunks.push(chunk);
               received += chunk.byteLength;
               onProgress?.({ stage: "download", received, total });
             }),
           ),
-          Stream.runCollect,
         );
+        // A server may end a 206 before the declared total; a retry asks for the rest.
+        if (
+          resume &&
+          contentRange !== null &&
+          total !== undefined &&
+          received > attemptStart &&
+          received < total
+        ) {
+          return yield* new HttpClientError.HttpClientError({
+            reason: new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "partial content ended before the declared total",
+            }),
+          });
+        }
         if (total === undefined && received > 0) {
           onProgress?.({ stage: "download", received, total: received });
         }
-        const bytes = new Uint8Array(received);
-        let offset = 0;
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        return bytes;
+        return concatChunks(chunks, received);
       }),
     ),
+    Effect.retry({ ...DOWNLOAD_RETRY, while: isTransientDownloadFailure }),
     Effect.mapError(
       (cause) =>
         new PinnedRuntimeInstallError({
           step: cause._tag === "TimeoutError" ? `${step} (timed out)` : step,
+          httpStatus:
+            HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
+              ? cause.reason.response.status
+              : undefined,
+          downloadHost: URL.parse(
+            HttpClientError.isHttpClientError(cause) ? cause.request.url : url,
+          )?.host,
           cause,
         }),
     ),
   );
 });
 
-const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(function* (
+const downloadArchive = Effect.fn("cloud.pinned_runtime.download_archive")(function* (
   input: PinnedRuntimeInstallInput,
-  stagingDir: string,
 ) {
-  const { fs, path } = input;
   const platformKey = cliArchivePlatformKey(input.platform, input.arch);
   if (platformKey === undefined) {
     return yield* new PinnedRuntimeInstallError({
@@ -178,29 +271,13 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     });
   }
   const httpClient = input.httpClient;
-  const baseUrl = cliReleaseDownloadBaseUrl(input.version, input.releaseBaseUrl);
-  const fileName = cliArchiveFileName(input.version, platformKey);
-
   input.onProgress?.({ stage: "download", received: 0, total: undefined });
-  const checksums = parseChecksums(
-    new TextDecoder().decode(
-      yield* fetchReleaseAsset(
-        httpClient,
-        `${baseUrl}/${CLI_RELEASE_CHECKSUMS_FILE}`,
-        "downloading the t3 release checksums",
-      ),
-    ),
-  );
-  const expected = checksums.get(fileName);
-  if (expected === undefined) {
-    return yield* new PinnedRuntimeInstallError({
-      step: `finding ${fileName} in the t3 release checksums`,
-    });
-  }
+  const { fileName, expected } = yield* publishedArchive(input, platformKey);
   const archive = yield* fetchReleaseAsset(
     httpClient,
-    `${baseUrl}/${fileName}`,
+    cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl),
     "downloading the t3 release archive",
+    true,
     input.onProgress,
   );
   input.onProgress?.({ stage: "verify" });
@@ -214,7 +291,15 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       step: "verifying the t3 release archive checksum",
     });
   }
+  return archive;
+});
 
+const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(function* (
+  input: PinnedRuntimeInstallInput,
+  stagingDir: string,
+  archive: Uint8Array,
+) {
+  const { fs, path } = input;
   const archivePath = path.join(stagingDir, PINNED_RUNTIME_ARCHIVE_FILE);
   yield* fs
     .writeFile(archivePath, archive)
@@ -248,6 +333,41 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
 });
 
+/** The release's archive for this machine and its checksum; fails when the release lists none. */
+const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(function* (
+  input: PinnedRuntimeInstallInput,
+  platformKey: CliArchivePlatformKey,
+) {
+  const fileName = cliArchiveFileName(input.version, platformKey);
+  const checksums = parseChecksums(
+    new TextDecoder().decode(
+      yield* fetchReleaseAsset(
+        input.httpClient,
+        cliReleaseAssetUrl(input.version, CLI_RELEASE_CHECKSUMS_FILE, input.releaseBaseUrl),
+        "downloading the t3 release checksums",
+        false,
+      ),
+    ),
+  );
+  const expected = checksums.get(fileName);
+  if (expected === undefined) {
+    return yield* new PinnedRuntimeInstallError({
+      step: `finding ${fileName} in the t3 release checksums`,
+    });
+  }
+  return { fileName, expected };
+});
+
+const isPinnedRuntimeInstallError = Schema.is(PinnedRuntimeInstallError);
+
+/** Whether an install failed because the release source does not publish the version for this machine. */
+export const isUnpublishedRelease = (error: unknown): error is PinnedRuntimeInstallError =>
+  isPinnedRuntimeInstallError(error) &&
+  (error.step.startsWith("finding ") ||
+    (error.step.startsWith("downloading the t3 release") &&
+      HttpClientError.isHttpClientError(error.cause) &&
+      error.cause.response?.status === 404));
+
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
   input: PinnedRuntimeInstallInput,
 ) {
@@ -265,6 +385,15 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   const alreadyPinned =
     entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
   if (alreadyPinned) {
+    if (input.requirePublishedRelease === true) {
+      const platformKey = cliArchivePlatformKey(input.platform, input.arch);
+      if (platformKey === undefined) {
+        return yield* new PinnedRuntimeInstallError({
+          step: `selecting a t3 release archive for ${input.platform}-${input.arch}`,
+        });
+      }
+      yield* publishedArchive(input, platformKey);
+    }
     input.onProgress?.({ stage: "cached" });
     yield* input.validate(paths);
     return paths;
@@ -291,10 +420,13 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         }),
     ),
   );
+  // Downloads are buffered in memory and can take hours; staging only once they finish keeps a
+  // staging directory's age a sign of abandonment for prunes in other processes.
+  const archive = yield* downloadArchive(input);
   const stagingDir = yield* fs
     .makeTempDirectory({
       directory: versionsDir,
-      prefix: ".staging-",
+      prefix: PINNED_RUNTIME_STAGING_PREFIX,
     })
     .pipe(
       Effect.mapError(
@@ -312,7 +444,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
-    yield* installFromArchive(input, stagingDir);
+    yield* installFromArchive(input, stagingDir, archive);
 
     input.onProgress?.({ stage: "validate" });
     yield* input.validate(stagingPaths);
@@ -363,6 +495,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
   pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
 
+const PINNED_RUNTIME_STAGING_PREFIX = ".staging-";
 const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
 /**
  * Another process may have just published a runtime it has not yet pointed anything at: an
@@ -377,6 +510,13 @@ const PINNED_RUNTIME_PRUNE_GRACE = Duration.hours(1);
  */
 const PINNED_RUNTIME_LAUNCHERS_FILE = "launchers";
 
+/**
+ * Starts on a fresh line whatever the file ends with when the append lands: another process's
+ * append may have been cut short since this one read the file. Readers skip the blank lines.
+ */
+const launcherRecords = (launchers: ReadonlyArray<string>) =>
+  `\n${launchers.map((launcher) => `${launcher}\n`).join("")}`;
+
 export function launcherOwnsVersionsDir(
   path: Path.Path,
   versionsDir: string,
@@ -386,8 +526,176 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+/** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
+export const resolveLauncherPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const invokedAs = yield* HostProcess.InvokedAs;
+  const cwd = yield* HostProcess.WorkingDirectory;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
+  if (invokedAs.includes("/") || invokedAs.includes("\\")) {
+    return path.resolve(cwd, invokedAs);
+  }
+  const delimiter = platform === "win32" ? ";" : ":";
+  const searchPath = environment["PATH"] ?? "";
+  for (const directory of searchPath.split(delimiter)) {
+    // POSIX shells search the working directory for an empty entry of a nonempty PATH.
+    if (directory.length === 0 && (platform === "win32" || searchPath.length === 0)) continue;
+    const candidate = path.resolve(cwd, directory || ".", invokedAs);
+    const info = yield* fs.stat(candidate).pipe(Effect.option);
+    // Like the shell, pass over directories and non-executable files named the same.
+    if (
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      (platform === "win32" || (info.value.mode & 0o111) !== 0)
+    ) {
+      return candidate;
+    }
+  }
+  return undefined;
+});
+
+/**
+ * `t3 update` repoints the launcher it was started through, which may be on neither PATH nor the
+ * default bin dir. Unrecorded, the next prune would remove the runtime it now points at.
+ */
+export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.record_launcher")(
+  function* (input: { readonly baseDir: string; readonly launcher: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const launchersFile = path.join(
+      input.baseDir,
+      PINNED_RUNTIME_DIR,
+      PINNED_RUNTIME_LAUNCHERS_FILE,
+    );
+    // Prune may run in another process, such as the service, whose working directory differs.
+    const launcher = path.resolve(input.launcher);
+    const recorded = yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => ""));
+    if (recorded.split(/\r?\n/).includes(launcher)) return;
+    yield* fs.writeFileString(launchersFile, launcherRecords([launcher]), { flag: "a" });
+  },
+);
+
+/** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */
+export function isVersionExecutable(
+  path: Path.Path,
+  versionsDir: string,
+  candidate: string,
+): boolean {
+  const relative = path.relative(versionsDir, path.resolve(candidate));
+  // On another Windows drive, relative() returns the absolute path, like `D:\t3.exe`.
+  return !path.isAbsolute(relative) && /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(relative);
+}
+
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
+
+/** Like {@link windowsShimTarget}, but only for a shim exactly as written; never a user's wrapper. */
+export const generatedWindowsShimTarget = (contents: string) =>
+  /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(contents)?.[1];
+
+/**
+ * The `t3` script the install scripts and `t3 update` write on macOS and Linux. Exec by absolute
+ * path: through a symlink, argv0 is the link, and the Cursor SDK looks for its helpers beside it.
+ */
+export const posixLauncherScript = (executable: string) =>
+  `#!/bin/sh\nexec '${executable.replaceAll("'", "'\\''")}' "$@"\n`;
+
+/** The executable a script exactly as {@link posixLauncherScript} writes it runs; never a user's wrapper. */
+export const readPosixLauncherTarget = Effect.fn("cloud.pinned_runtime.read_posix_launcher")(
+  function* (launcher: string) {
+    const fs = yield* FileSystem.FileSystem;
+    // Stat first so a runtime binary found the same way is never read whole.
+    const info = yield* fs.stat(launcher).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File" || info.value.size > 4096n) {
+      return undefined;
+    }
+    const contents = yield* fs.readFileString(launcher).pipe(Effect.option);
+    if (Option.isNone(contents)) return undefined;
+    const quoted = /^#!\/bin\/sh\nexec '((?:[^']|'\\'')*)' "\$@"\n$/.exec(contents.value)?.[1];
+    return quoted?.replaceAll("'\\''", "'");
+  },
+);
+
+/**
+ * The `t3` this executable was started through on macOS or Linux: a legacy symlink into this
+ * home's runtime/versions, or, since a script execs the executable and argv0 names it, an unedited
+ * {@link posixLauncherScript} that runs it.
+ */
+export const findPosixLauncher = Effect.fn("cloud.pinned_runtime.find_posix_launcher")(
+  function* (input: { readonly launchedAs: string; readonly versionsDir: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const environment = yield* HostProcess.Environment;
+    const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
+    if (Option.isSome(linkTarget)) {
+      const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
+      return isVersionExecutable(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
+    }
+    const realPath = (file: string) =>
+      fs.realPath(file).pipe(Effect.orElseSucceed(() => undefined));
+    const executable = yield* realPath(input.launchedAs);
+    const realVersionsDir = yield* realPath(input.versionsDir);
+    if (
+      executable === undefined ||
+      realVersionsDir === undefined ||
+      !isVersionExecutable(path, realVersionsDir, executable)
+    ) {
+      return undefined;
+    }
+    const recorded = yield* fs
+      .readFileString(path.join(path.dirname(input.versionsDir), "launchers"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    const cwd = yield* HostProcess.WorkingDirectory;
+    const searchPath = environment["PATH"] ?? "";
+    const candidates = [
+      // PATH first, resolved like the shell does: it decides which t3 the user runs. An empty
+      // entry of a nonempty PATH is the working directory; an empty PATH searches nothing.
+      ...(searchPath.length === 0 ? [] : searchPath.split(":")).map((directory) =>
+        path.resolve(cwd, directory || ".", "t3"),
+      ),
+      path.join(
+        environment["T3CODE_INSTALL_BIN_DIR"] ||
+          path.join(yield* HostProcess.HomeDirectory, ".local", "bin"),
+        "t3",
+      ),
+      ...recorded.split(/\r?\n/),
+    ].filter((candidate) => path.isAbsolute(candidate));
+    for (const candidate of candidates) {
+      // The script itself, so an alias that links to it keeps working.
+      const script = yield* realPath(candidate);
+      if (script === undefined) continue;
+      // Like the shell, pass over a script nobody can execute.
+      const info = yield* fs.stat(script).pipe(Effect.option);
+      if (Option.isNone(info) || (info.value.mode & 0o111) === 0) continue;
+      const target = yield* readPosixLauncherTarget(script);
+      if (target !== undefined && (yield* realPath(target)) === executable) return script;
+    }
+    return undefined;
+  },
+);
+
+/** Writes {@link posixLauncherScript} at `launcher` in one rename, replacing a legacy symlink rather than writing through it. */
+export const writePosixLauncher = Effect.fn("cloud.pinned_runtime.write_posix_launcher")(
+  function* (input: {
+    readonly launcher: string;
+    readonly executable: string;
+    /** Fail instead of replacing a file that is there, even one created after the caller looked. */
+    readonly exclusive: boolean;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const staging = yield* fs.makeTempFileScoped({
+      directory: path.dirname(input.launcher),
+      prefix: ".t3-",
+    });
+    yield* fs.writeFileString(staging, posixLauncherScript(input.executable));
+    yield* fs.chmod(staging, 0o755);
+    yield* input.exclusive ? fs.link(staging, input.launcher) : fs.rename(staging, input.launcher);
+  },
+  Effect.scoped,
+);
 
 /** Where the `t3` launchers written by the install scripts and `t3 update` point. */
 const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targets")(function* (
@@ -413,10 +721,13 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
+  const inVersionsDir = (candidate: string) =>
+    launcherOwnsVersionsDir(path, versionsDir, candidate) ||
+    launcherOwnsVersionsDir(path, realVersionsDir, candidate);
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
   for (const launcher of [...recorded, ...found]) {
-    const target =
+    const resolved =
       platform === "win32"
         ? yield* fs.readFileString(launcher).pipe(
             Effect.map(windowsShimTarget),
@@ -424,22 +735,33 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
           )
         : // Fully resolved, through chained links and a symlinked T3 home alike.
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
-    if (target === undefined) continue;
-    targets.push(target);
+    if (resolved === undefined) continue;
+    const scriptTarget =
+      platform === "win32" ? undefined : yield* readPosixLauncherTarget(resolved);
+    const target =
+      scriptTarget === undefined
+        ? resolved
+        : yield* fs.realPath(scriptTarget).pipe(Effect.orElseSucceed(() => scriptTarget));
+    // A runtime's own entry, on the macOS service PATH or recorded by an earlier prune, is no launcher.
+    // It is named as `versions/<version>/t3`, and neither it nor its directory is a link.
+    const entryDir = path.dirname(path.resolve(launcher));
+    const parent = path.dirname(entryDir);
     if (
-      (launcherOwnsVersionsDir(path, versionsDir, target) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
-      !recorded.includes(launcher) &&
-      !unrecorded.includes(launcher)
+      platform !== "win32" &&
+      scriptTarget === undefined &&
+      (parent === versionsDir || parent === realVersionsDir) &&
+      target === path.join(realVersionsDir, path.basename(entryDir), path.basename(launcher))
     ) {
+      continue;
+    }
+    targets.push(target);
+    if (inVersionsDir(target) && !recorded.includes(launcher) && !unrecorded.includes(launcher)) {
       unrecorded.push(launcher);
     }
   }
   if (unrecorded.length > 0) {
     yield* fs
-      .writeFileString(launchersFile, unrecorded.map((launcher) => `${launcher}\n`).join(""), {
-        flag: "a",
-      })
+      .writeFileString(launchersFile, launcherRecords(unrecorded), { flag: "a" })
       .pipe(Effect.ignore);
   }
   return targets;
@@ -471,12 +793,12 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
     .run({
       ...(platform === "win32"
         ? {
-            command: "powershell.exe",
+            command: windowsPowerShellPath(yield* HostProcess.Environment),
             args: [
               "-NoProfile",
               "-NonInteractive",
               "-Command",
-              "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+              "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
             ],
           }
         : { command: "lsof", args: ["-nP", "-w", "-d", "txt", "-F", "n"] }),
@@ -509,6 +831,16 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
     (yield* Clock.currentTimeMillis) - Duration.toMillis(PINNED_RUNTIME_PRUNE_GRACE);
   const completed: Array<string> = [];
   for (const version of entries) {
+    if (version.startsWith(PINNED_RUNTIME_STAGING_PREFIX)) {
+      // A crashed or interrupted install leaves its staging directory behind.
+      const stagingDir = path.join(versionsDir, version);
+      const modifiedAt = yield* fs.stat(stagingDir).pipe(
+        Effect.map((info) => Option.getOrUndefined(info.mtime)?.getTime()),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (modifiedAt !== undefined && modifiedAt < settledBefore) pruned.add(stagingDir);
+      continue;
+    }
     if (!isExactServiceVersion(version)) continue;
     const versionDir = path.join(versionsDir, version);
     const sentinelPath = path.join(versionDir, ".install-complete");
@@ -546,7 +878,8 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
     if (state === undefined) return pruned;
     keep.add(state.activeVersion);
     if (state.update !== undefined) {
-      keep.add(state.update.fromVersion);
+      // A committed update never returns to the runtime it replaced.
+      if (state.update.status !== "committed") keep.add(state.update.fromVersion);
       keep.add(state.update.targetVersion);
     }
   }
@@ -593,8 +926,8 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
 
 /**
  * Keep runtimes named by callers, service state, running processes, launchers, or references,
- * and anything published within an hour. Only prune completed runtimes; leave staging
- * directories, symlinks, and unexpected entries untouched.
+ * and anything published within an hour. Only prune completed runtimes and staging directories
+ * untouched for an hour; leave symlinks and unexpected entries untouched.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
   readonly baseDir: string;
@@ -609,11 +942,14 @@ export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(funct
   );
   const removed: Array<string> = [];
   for (const target of pruned) {
+    const name = path.basename(target);
     yield* fs.remove(target, { recursive: true, force: true }).pipe(
       Effect.andThen(
-        Effect.sync(() =>
-          removed.push(path.basename(target).slice(PINNED_RUNTIME_PRUNED_PREFIX.length)),
-        ),
+        Effect.sync(() => {
+          if (name.startsWith(PINNED_RUNTIME_PRUNED_PREFIX)) {
+            removed.push(name.slice(PINNED_RUNTIME_PRUNED_PREFIX.length));
+          }
+        }),
       ),
       Effect.catch((cause) =>
         Effect.logWarning("Could not remove an unused t3 runtime.", { target, cause }),

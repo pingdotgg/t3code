@@ -25,6 +25,7 @@ import type {
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { fakeSourceControlProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -82,6 +83,8 @@ const managedCli = (
   probe: () => Effect.die("unused"),
   refineUnknownRemote: refine,
 });
+
+const onPath = (command: string) => `/usr/bin/${command}`;
 
 function makeRegistry(input: {
   readonly remotes: ReadonlyArray<{
@@ -199,6 +202,24 @@ it.effect("leaves a remote no integration claims unknown, with its server's addr
   }),
 );
 
+it.effect.each([
+  ["github.com:team/project.git", "github"],
+  ["gitlab.com:team/project.git", "gitlab"],
+  ["bitbucket.org:team/project.git", "bitbucket"],
+  ["code.example.test:team/project.git", "unknown"],
+] as const)(
+  "reads the host of an SSH remote that leaves its user to ssh config: %s",
+  ([url, expected]) =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({ remotes: [{ name: "origin", url }] });
+
+      const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+      assert.strictEqual(handle.provider.kind, kind(expected));
+      assert.strictEqual(handle.context?.remoteUrl, url);
+    }),
+);
+
 it.effect("refines the caller-selected remote instead of choosing another configured remote", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
@@ -265,7 +286,7 @@ it.effect(
           url,
         );
       }
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("does not refine a context whose server address is empty", () =>
@@ -372,7 +393,11 @@ it.effect("asks once for every checkout of a server no integration claims", () =
       "gitlab-cli auth status --hostname git.example.internal",
     ]);
 
-    yield* TestClock.adjust("5 minutes");
+    yield* TestClock.adjust("59 minutes");
+    yield* resolveUnknown(registry, "a");
+    assert.deepStrictEqual(asked, once);
+
+    yield* TestClock.adjust("1 minute");
     yield* resolveUnknown(registry, "a");
     assert.deepStrictEqual(asked, [...once, ...once]);
   }),
@@ -446,6 +471,45 @@ it.effect("asks again once Settings change", () =>
   }),
 );
 
+it.effect("asks again once discovery finds a new sign-in, not on every discovery", () =>
+  Effect.gen(function* () {
+    let signedIn = false;
+    let refinements = 0;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [
+        {
+          ...claimingCli("gitlab"),
+          parseAuth: () => ({
+            status: signedIn ? "authenticated" : "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+      ],
+      run: ({ args }) => {
+        if (args.includes("--hostname")) refinements += 1;
+        return Effect.succeed(
+          TestSourceControlHost.processOutput(
+            signedIn ? "  ✓ Logged in to git.example.internal as user\n" : "",
+          ),
+        );
+      },
+    });
+    yield* registry.discover;
+    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
+    yield* registry.discover;
+    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
+    assert.strictEqual(refinements, 1);
+
+    signedIn = true;
+    yield* registry.discover;
+    assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "gitlab");
+    assert.strictEqual(refinements, 2);
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
 it.effect("answers discovery without waiting on a hosting API that stalls", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
@@ -468,5 +532,5 @@ it.effect("answers discovery without waiting on a hosting API that stalls", () =
     assert.strictEqual(bitbucket?.status, "available");
     assert.strictEqual(bitbucket?.auth.status, "unknown");
     assert.strictEqual(items.find((item) => item.kind === "gitlab")?.status, "available");
-  }),
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );

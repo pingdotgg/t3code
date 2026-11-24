@@ -1,13 +1,21 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Hosted handoff test uses a real localhost listener without an OpenAI account.
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
-import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { beforeEach, vi } from "vite-plus/test";
+import { afterAll, beforeEach, vi } from "vite-plus/test";
+
+const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
+afterAll(() => {
+  NodeFS.rmSync(clerkStateDir, { recursive: true, force: true });
+});
 
 const { createClerkBridgeMock, requestSingleInstanceLockMock, storageAdapter, storageMock } =
   vi.hoisted(() => ({
@@ -56,9 +64,10 @@ const layerDesktopClerk = (
     copyText: () => Effect.void,
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
+  stateDir = clerkStateDir,
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: "/tmp/t3-state",
+    stateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     platform,
@@ -92,7 +101,7 @@ const layerDesktopClerk = (
   return DesktopClerk.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        NodePath.layerPosix,
+        NodePathLayer.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
@@ -159,8 +168,27 @@ describe("DesktopClerk", () => {
         "on:open-url",
         "createClerkBridge",
       ]);
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
+      ]);
+      assert.strictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
   );
+
+  it.effect("keeps Clerk tokens under a relative state directory instead of userData", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+
+    return Effect.sync(() => {
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.resolve("relative-state", "clerk") }],
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerDesktopClerk(true, [], "darwin", undefined, undefined, undefined, "relative-state"),
+      ),
+    );
+  });
 
   it.effect.each(["before configure", "after configure"] as const)(
     "reveals the running window when a second instance launches %s",
@@ -412,7 +440,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("hands web and app links to the renderer and leaves other links alone", () =>
@@ -469,5 +497,5 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         }),
       ),
     );
-  }).pipe(Effect.scoped),
+  }),
 );

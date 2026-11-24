@@ -20,16 +20,24 @@ import {
   type ProjectMutation,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Cause from "effect/Cause";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
+import { RpcClientError } from "effect/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
+  type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
@@ -38,18 +46,18 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   interruptThreadTurn,
+  promoteQueuedRun,
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
 } from "./commands.ts";
 
-const layerTestCrypto = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => new Uint8Array(size),
-    digest: (_algorithm, data) => Effect.succeed(data),
-  }),
+const layerTestRandom = Layer.succeed(
+  SecureRandom.SecureRandom,
+  SecureRandom.make((size) => new Uint8Array(size)),
 );
+
+class Refused extends Schema.TaggedError<Refused>()("Refused", {}) {}
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -57,6 +65,12 @@ const TARGET = new PrimaryConnectionTarget({
   httpBaseUrl: "https://environment.example.test",
   wsBaseUrl: "wss://environment.example.test",
 });
+
+const CONNECTED_STATE: SupervisorConnectionState = {
+  ...AVAILABLE_CONNECTION_STATE,
+  desired: true,
+  phase: "connected",
+};
 
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (input: {
   readonly commands: OrchestrationV2Command[];
@@ -116,7 +130,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         },
       },
     } as never),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
@@ -124,7 +138,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
-    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    state: yield* SubscriptionRef.make(CONNECTED_STATE),
     session: yield* SubscriptionRef.make(Option.some(session)),
     prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
     connect: Effect.void,
@@ -153,7 +167,7 @@ describe("V2 environment commands", () => {
         { type: "queued-run.start", commandId: "send-selected", threadId, runId: "selected" },
         { type: "queue.resume", commandId: "resume-queue", threadId },
       ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("preserves caller command ids for idempotent V2 commands", () =>
@@ -169,12 +183,13 @@ describe("V2 environment commands", () => {
       expect(commands).toEqual([
         { type: "thread.archive", commandId: "queued-command", threadId: "thread-1" },
       ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("resolves run ordinal zero to the persisted thread-start checkpoint", () =>
     Effect.gen(function* () {
       const scopeId = CheckpointScopeId.make("checkpoint-scope-root");
+      const repositoryScopeId = CheckpointScopeId.make("checkpoint-scope-repository");
       const checkpointId = CheckpointId.make("checkpoint-thread-start");
       const projection: OrchestrationV2ThreadProjection = {
         ...v2Projection,
@@ -192,6 +207,38 @@ describe("V2 environment commands", () => {
             status: "ready",
             files: [],
             capturedAt: v2Now,
+          },
+          // A tracked repository's first baseline, recorded after the thread's own.
+          {
+            id: CheckpointId.make("checkpoint-repository-start"),
+            threadId: v2ThreadId,
+            scopeId: repositoryScopeId,
+            runId: null,
+            nodeId: NodeId.make("node-run-1"),
+            parentCheckpointId: null,
+            ordinalWithinScope: 0,
+            appRunOrdinal: null,
+            ref: CheckpointRef.make("refs/t3/repository-start"),
+            status: "ready",
+            files: [],
+            capturedAt: v2Now,
+          },
+        ],
+        checkpointScopes: [
+          {
+            id: repositoryScopeId,
+            threadId: v2ThreadId,
+            runId: null,
+            nodeId: NodeId.make("node-run-1"),
+            parentScopeId: scopeId,
+            providerThreadId: null,
+            kind: "manual",
+            ordinalWithinParent: 1,
+            advancesAppRunCount: false,
+            cwd: "/workspace/api",
+            label: "api",
+            repositoryPath: "/workspace/api",
+            createdAt: v2Now,
           },
         ],
       };
@@ -213,7 +260,7 @@ describe("V2 environment commands", () => {
           checkpointId,
         },
       ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("preserves an existing worktree and branch during first-message launch", () =>
@@ -257,7 +304,7 @@ describe("V2 environment commands", () => {
           branch: "feature",
         },
       });
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("uses server-resolved delivery intent without fetching the full projection", () =>
@@ -293,7 +340,417 @@ describe("V2 environment commands", () => {
         });
       }
       expect(projectionRequests).toEqual([]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect(
+    "sends fallback text only on empty manual continuations for servers without native resume",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        const resumedRunId = RunId.make("run-interrupted");
+
+        yield* startThreadTurn({
+          commandId: CommandId.make("command-resume-empty"),
+          threadId: v2ThreadId,
+          manualContinuationOfRunId: resumedRunId,
+          message: {
+            messageId: MessageId.make("message-resume-empty"),
+            role: "user",
+            text: "",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        yield* startThreadTurn({
+          commandId: CommandId.make("command-resume-text"),
+          threadId: v2ThreadId,
+          manualContinuationOfRunId: resumedRunId,
+          message: {
+            messageId: MessageId.make("message-resume-text"),
+            role: "user",
+            text: "Keep going",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        yield* startThreadTurn({
+          commandId: CommandId.make("command-start-empty"),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make("message-start-empty"),
+            role: "user",
+            text: "",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        expect(commands).toEqual([
+          expect.objectContaining({
+            type: "message.dispatch",
+            commandId: "command-resume-empty",
+            threadId: v2ThreadId,
+            manualContinuationOfRunId: resumedRunId,
+            text: "Continue where you left off.",
+            dispatchMode: { type: "start_immediately" },
+          }),
+          expect.objectContaining({
+            type: "message.dispatch",
+            commandId: "command-resume-text",
+            threadId: v2ThreadId,
+            manualContinuationOfRunId: resumedRunId,
+            text: "Keep going",
+            dispatchMode: { type: "start_immediately" },
+          }),
+          expect.objectContaining({
+            type: "message.dispatch",
+            commandId: "command-start-empty",
+            threadId: v2ThreadId,
+            text: "",
+            dispatchMode: { type: "start_immediately" },
+          }),
+        ]);
+      }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  // A dead socket reaches the caller as a protocol error, or as an interrupt when
+  // the supervisor closes the session before the protocol reports the error.
+  it.effect.each([
+    [
+      "protocol error",
+      new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "socket closed",
+          cause: new Error("socket closed"),
+        }),
+      }),
+    ],
+    ["session close", Effect.failCause(Cause.interrupt())],
+  ] as const)("retries a message dispatch lost to a %s with the same command id", ([, loss]) =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const firstAttemptLost = yield* Deferred.make<void>();
+      const lostClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            yield* Deferred.succeed(firstAttemptLost, undefined);
+            return yield* loss;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: lostClient }),
+      );
+
+      const sendFiber = yield* startThreadTurn({
+        commandId: CommandId.make("command-lost-ack"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-lost-ack"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttemptLost);
+      yield* SubscriptionRef.set(supervisor.session, Option.some(healthySession));
+      const exit = yield* Fiber.await(sendFiber);
+
+      expect(commands.map((command) => [command.type, command.commandId])).toEqual([
+        ["message.dispatch", "command-lost-ack"],
+        ["message.dispatch", "command-lost-ack"],
+      ]);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("stops resending a message whose dispatch keeps losing the socket", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const dyingClient: WsRpcProtocolClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(
+              supervisor.session,
+              Option.some({ ...healthySession, client: dyingClient }),
+            );
+            return yield* new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "socket closed",
+                cause: new Error("socket closed"),
+              }),
+            });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: dyingClient }),
+      );
+
+      const error = yield* startThreadTurn({
+        commandId: CommandId.make("command-socket-killer"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-socket-killer"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "command-socket-killer",
+        "command-socket-killer",
+        "command-socket-killer",
+      ]);
+      expect(error._tag).toBe("RpcClientError");
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("fails a message dispatch the host never answers on a live socket", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const silentClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.sync(() => commands.push(command)).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: silentClient }),
+      );
+
+      const sendFiber = yield* startThreadTurn({
+        commandId: CommandId.make("command-unanswered"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-unanswered"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 minute");
+
+      expect(sendFiber.pollUnsafe()).toBeDefined();
+      expect((yield* Fiber.join(sendFiber))._tag).toBe("EnvironmentRpcUnavailableError");
+      expect(commands.map((command) => command.commandId)).toEqual(["command-unanswered"]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("holds a lost message through reconnect backoff until disconnect", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const lostClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            return yield* new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "socket closed",
+                cause: new Error("socket closed"),
+              }),
+            });
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const send = (resendAfterSocketLoss: boolean) =>
+        Effect.gen(function* () {
+          yield* SubscriptionRef.set(
+            supervisor.session,
+            Option.some({ ...healthySession, client: lostClient }),
+          );
+          return yield* startThreadTurn({
+            commandId: CommandId.make(`command-host-gone-${resendAfterSocketLoss}`),
+            threadId: v2ThreadId,
+            message: {
+              messageId: MessageId.make(`message-host-gone-${resendAfterSocketLoss}`),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            resendAfterSocketLoss,
+          }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.flip,
+            Effect.forkChild,
+          );
+        });
+
+      const optedOut = yield* send(false);
+      expect((yield* Fiber.join(optedOut))._tag).toBe("RpcClientError");
+
+      const waiting = yield* send(true);
+      yield* SubscriptionRef.set(supervisor.state, {
+        ...CONNECTED_STATE,
+        phase: "backoff" as const,
+      });
+      yield* TestClock.adjust("2 minutes");
+      expect(waiting.pollUnsafe()).toBeUndefined();
+      yield* SubscriptionRef.set(supervisor.state, AVAILABLE_CONNECTION_STATE);
+      expect((yield* Fiber.join(waiting))._tag).toBe("RpcClientError");
+      expect(commands.map((command) => command.commandId)).toEqual([
+        "command-host-gone-false",
+        "command-host-gone-true",
+      ]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  const turnSends = [
+    {
+      name: "new thread's first message",
+      method: ORCHESTRATION_V2_WS_METHODS.launchThread,
+      send: (commandId: CommandId) =>
+        startThreadTurn({
+          commandId,
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make(commandId),
+            role: "user",
+            text: "hi",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              projectId: ProjectId.make("project-1"),
+              title: "Thread",
+              modelSelection: v2Projection.thread.modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt: "2026-06-20T00:00:00.000Z",
+            },
+          },
+        }),
+    },
+    {
+      name: "queued message sent now",
+      method: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      send: (commandId: CommandId) =>
+        resumeThreadQueue({ commandId, threadId: v2ThreadId, runId: RunId.make("queued") }),
+    },
+    {
+      name: "queued message steered",
+      method: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      send: (commandId: CommandId) =>
+        promoteQueuedRun({
+          commandId,
+          threadId: v2ThreadId,
+          queuedRunId: RunId.make("queued"),
+          targetRunId: RunId.make("running"),
+        }),
+    },
+  ] as const;
+
+  const sendFailingFirstAttempt = Effect.fn("TestEnvironmentCommands.sendFailingFirstAttempt")(
+    function* (turnSend: (typeof turnSends)[number], failure: Effect.Effect<never, Refused>) {
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const attempts: string[] = [];
+      const firstAttemptFailed = yield* Deferred.make<void>();
+      const healthyMethod = (
+        healthySession.client as unknown as Record<
+          string,
+          (input: unknown) => Effect.Effect<unknown>
+        >
+      )[turnSend.method]!;
+      const failingClient = {
+        ...healthySession.client,
+        [turnSend.method]: (input: { readonly commandId: CommandId }) =>
+          Effect.gen(function* () {
+            attempts.push(input.commandId);
+            if (attempts.length > 1) return yield* healthyMethod(input);
+            yield* SubscriptionRef.set(supervisor.session, Option.none());
+            yield* Deferred.succeed(firstAttemptFailed, undefined);
+            return yield* failure;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: failingClient }),
+      );
+      const sendFiber = yield* turnSend
+        .send(CommandId.make("command-turn-send"))
+        .pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(firstAttemptFailed);
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: failingClient }),
+      );
+      return { exit: yield* Fiber.await(sendFiber), attempts };
+    },
+  );
+
+  it.effect.each(turnSends)("resends a $name lost to a session close", (turnSend) =>
+    Effect.gen(function* () {
+      const { exit, attempts } = yield* sendFailingFirstAttempt(
+        turnSend,
+        Effect.failCause(Cause.interrupt()),
+      );
+
+      expect(attempts).toEqual(["command-turn-send", "command-turn-send"]);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
+  it.effect("doesn't resend a new thread's first message the server refused", () =>
+    Effect.gen(function* () {
+      const { exit, attempts } = yield* sendFailingFirstAttempt(
+        turnSends[0],
+        Effect.fail(new Refused()),
+      );
+
+      expect(attempts).toEqual(["command-turn-send"]);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("Stop with no run left ends the thread's pull request watches", () =>
@@ -347,7 +804,7 @@ describe("V2 environment commands", () => {
           watching: false,
         },
       ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect.each(["waiting", "completed", "rolled_back"] as const)(
@@ -418,7 +875,7 @@ describe("V2 environment commands", () => {
                 },
               ],
         );
-      }).pipe(Effect.provide(layerTestCrypto)),
+      }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect(
@@ -472,7 +929,7 @@ describe("V2 environment commands", () => {
             subagentId,
           },
         ]);
-      }).pipe(Effect.provide(layerTestCrypto)),
+      }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect(
@@ -531,7 +988,7 @@ describe("V2 environment commands", () => {
           },
           { type: "thread.stop", commandId: "lineage-stop", threadId: childThreadId },
         ]);
-      }).pipe(Effect.provide(layerTestCrypto)),
+      }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect("stops a thread without relying on background work in the history window", () =>
@@ -559,6 +1016,6 @@ describe("V2 environment commands", () => {
           threadId: v2ThreadId,
         },
       ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestRandom)),
   );
 });

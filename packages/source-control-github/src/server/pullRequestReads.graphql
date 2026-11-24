@@ -42,7 +42,10 @@ fragment CheckContext on StatusCheckRollupContext {
     isRequired(pullRequestNumber: $number) @include(if: $required)
     checkSuite {
       workflowRun {
+        event
+        runNumber
         workflow {
+          id
           name
         }
       }
@@ -59,6 +62,7 @@ query PullRequestCore(
   $headRef: String!
   $required: Boolean!
   $requestedReviewers: Int!
+  $mergeQueue: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed
@@ -82,6 +86,16 @@ query PullRequestCore(
       createdAt
       updatedAt
       mergedAt
+      mergeCommit {
+        oid
+      }
+      mergedBy {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
       closedAt
       headRefName
       baseRefName
@@ -110,6 +124,18 @@ query PullRequestCore(
       }
       autoMergeRequest {
         mergeMethod
+      }
+      # Merge queue checks run on a commit of the queue's own, so a pull request the queue drops
+      # can keep a green head. Only this event says it left without merging.
+      mergeQueueRemovals: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT])
+        @include(if: $mergeQueue) {
+        nodes {
+          ... on RemovedFromMergeQueueEvent {
+            id
+            createdAt
+            reason
+          }
+        }
       }
       viewerCanUpdate
       viewerDidAuthor
@@ -144,6 +170,7 @@ query PullRequestCore(
         nodes {
           name
           color
+          description
         }
       }
       commits(last: 1) {
@@ -156,6 +183,7 @@ query PullRequestCore(
                 }
                 pageInfo {
                   hasNextPage
+                  endCursor
                 }
               }
             }
@@ -273,6 +301,7 @@ query PullRequestActivity(
           createdAt
           lastEditedAt
           url
+          isMinimized
           author {
             login
             avatarUrl
@@ -294,6 +323,7 @@ query PullRequestActivity(
           submittedAt
           lastEditedAt
           url
+          isMinimized
           author {
             login
             avatarUrl
@@ -351,8 +381,8 @@ query PullRequestNodeId($owner: String!, $name: String!, $number: Int!) {
 }
 
 # Where a client-given subject actually hangs: the pull request itself, or the pull request an
-# issue comment, a review comment, or a review belongs to. Read before a mutation reaches it, so a
-# subject named for one pull request cannot write on another's behalf.
+# issue comment, a review comment, a review, or a review thread belongs to. Read before a mutation
+# reaches it, so a subject named for one pull request cannot write on another's behalf.
 query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjectId: ID!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -366,7 +396,7 @@ query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjec
         id
       }
     }
-    # Aliased apart: an issue comment's pull request is nullable, the other two are not.
+    # Aliased apart: an issue comment's pull request is nullable, the other three are not.
     ... on PullRequestReviewComment {
       reviewCommentPullRequest: pullRequest {
         id
@@ -374,6 +404,11 @@ query PullRequestSubject($owner: String!, $name: String!, $number: Int!, $subjec
     }
     ... on PullRequestReview {
       reviewPullRequest: pullRequest {
+        id
+      }
+    }
+    ... on PullRequestReviewThread {
+      threadPullRequest: pullRequest {
         id
       }
     }
@@ -408,9 +443,9 @@ query ViewerPermissions($owner: String!, $name: String!, $number: Int!) {
 # taken back. The teams a repository could newly be sent to live on the owning organization and
 # need `read:org`, which a repository-scoped token need not carry, and a query GitHub refuses
 # fails whole, taking the people down with the teams.
-query ReviewerCandidates($owner: String!, $name: String!, $number: Int!) {
+query ReviewerCandidates($owner: String!, $name: String!, $number: Int!, $query: String) {
   repository(owner: $owner, name: $name) {
-    assignableUsers(first: 100) {
+    assignableUsers(first: 100, query: $query) {
       pageInfo {
         hasNextPage
       }
@@ -482,6 +517,43 @@ query RepositoryLabels($owner: String!, $name: String!, $query: String) {
         name
         color
       }
+    }
+  }
+}
+
+fragment ReferenceCandidate on IssueOrPullRequest {
+  __typename
+  ... on Issue {
+    number
+    title
+    issueState: state
+  }
+  ... on PullRequest {
+    number
+    title
+    pullRequestState: state
+  }
+}
+
+# `search` cannot match a number, so a numeric query also looks the number up directly.
+query RepositoryReferences(
+  $owner: String!
+  $name: String!
+  $q: String!
+  $number: Int!
+  $exact: Boolean!
+) {
+  search(query: $q, type: ISSUE, first: 20) {
+    pageInfo {
+      hasNextPage
+    }
+    nodes {
+      ...ReferenceCandidate
+    }
+  }
+  repository(owner: $owner, name: $name) @include(if: $exact) {
+    issueOrPullRequest(number: $number) {
+      ...ReferenceCandidate
     }
   }
 }

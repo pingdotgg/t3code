@@ -1,0 +1,6 @@
+"@effect/sql-sqlite-do/SqliteClient#SqliteClient":
+  replacement: "@effect/sql-sqlite-do/SqliteClient#SqliteClient"
+  note: "Retained; the service value is now a Context.Service. The SqliteClient interface no longer extends SqlClient.SqlClient. Yielding the service still gives SqliteClient & SqlClient, but an effect that requires SqliteClient no longer type-checks against a SqlClient requirement annotation, and a SqlClient-only layer no longer satisfies SqliteClient. Annotate a layer chosen between drivers as Layer.Layer<SqlClient.SqlClient, E>."
+"@effect/sql-sqlite-do/SqliteClient#SqliteClientConfig":
+  replacement: "@effect/sql-sqlite-do/SqliteClient#SqliteClientConfig"
+  note: "Retained; db is optional and storage may be supplied, but one of db or storage is required at runtime."

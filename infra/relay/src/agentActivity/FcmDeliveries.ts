@@ -5,7 +5,7 @@ import {
   RelayAgentAwarenessPreferences,
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import type * as PlatformError from "effect/PlatformError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -22,7 +22,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, androidRecipientData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
@@ -139,7 +139,7 @@ export class FcmDeliveries extends Context.Service<
 
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const sender = yield* FcmDeliveryQueueSender.FcmDeliveryQueueSender;
   const client = yield* FcmClient.FcmClient;
   const devices = yield* LiveActivities.LiveActivities;
@@ -281,23 +281,22 @@ const make = Effect.gen(function* () {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
-      const displayedAggregate =
-        preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
-          ? aggregate
-          : null;
+      const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
       const active = (displayedAggregate?.activeCount ?? 0) > 0;
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
-        device_id: job.deviceId,
-        user_id: job.userId,
+        ...androidRecipientData(job.userId, job.deviceId, target.app_version),
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
         ...alert,
       };
       if (alert) {
         // Hash the full stable group identity to stay within the payload budget.
-        const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(alert.alert_id));
+        const digest = yield* crypto.digest(
+          Digest.sha256,
+          new TextEncoder().encode(alert.alert_id),
+        );
         data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
       }
       const result = yield* client.send({

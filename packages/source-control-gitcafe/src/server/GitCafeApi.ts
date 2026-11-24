@@ -30,6 +30,7 @@ export class GitCafeApiError extends Schema.TaggedError<GitCafeApiError>()("GitC
   status: Schema.NullOr(Schema.Int),
   reason: GitCafeApiFailure,
   detail: Schema.String,
+  userFacingDetail: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -82,7 +83,7 @@ const credentialFailure = (
 ): typeof GitCafeApiFailure.Type =>
   error._tag === "GitCafeCliMissingError"
     ? "missing-tool"
-    : error._tag === "GitCafeNotSignedInError"
+    : error._tag === "GitCafeNotSignedInError" || error._tag === "SettingsSecretUnresolvedError"
       ? "unauthenticated"
       : "failed";
 

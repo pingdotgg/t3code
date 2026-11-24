@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   View,
@@ -12,7 +13,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
@@ -29,10 +30,14 @@ export function ComposerInlineControl(props: {
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
   readonly emphasized?: boolean;
+  /** The control asks for a decision; it stays usable. */
+  readonly tone?: "warning";
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
+  readonly labelEllipsizeMode?: ComponentProps<typeof Text>["ellipsizeMode"];
   readonly suffix?: ReactNode;
+  readonly suffixWidth?: number;
   /** Show only the icon and chevron; the label still names the control for accessibility. */
   readonly iconOnly?: boolean;
   readonly maxWidth?: ViewStyle["maxWidth"];
@@ -43,6 +48,7 @@ export function ComposerInlineControl(props: {
   readonly showChevron?: boolean;
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
+  const reducedMotion = useReducedMotion();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
   const iconSize = props.size === "large" ? 20 : smallIconSize;
@@ -77,7 +83,11 @@ export function ComposerInlineControl(props: {
             name={props.icon}
             size={iconSize}
             tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+              props.tone === "warning"
+                ? "accent-warning-foreground"
+                : props.emphasized || props.selected
+                  ? "accent-icon"
+                  : "accent-icon-muted"
             }
             type="monochrome"
           />
@@ -85,21 +95,31 @@ export function ComposerInlineControl(props: {
         {props.iconOnly ? null : (
           <Animated.View
             className="shrink"
-            entering={animatesLabel ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+            entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
           >
             <Text
               className={cn(
                 props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
-                props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
+                props.tone === "warning"
+                  ? "text-warning-foreground"
+                  : props.emphasized || props.selected
+                    ? "text-foreground"
+                    : "text-foreground-muted",
               )}
               numberOfLines={1}
+              ellipsizeMode={props.labelEllipsizeMode}
             >
               {props.label}
             </Text>
           </Animated.View>
         )}
         {!props.iconOnly && props.suffix ? (
-          <View className="min-w-0 shrink">{props.suffix}</View>
+          <View
+            className={cn("min-w-0", props.suffixWidth === undefined ? "shrink" : "shrink-0")}
+            style={{ width: props.suffixWidth }}
+          >
+            {props.suffix}
+          </View>
         ) : null}
         {props.showChevron === false ? null : (
           <SymbolView
@@ -148,37 +168,59 @@ export function ComposerToolbarScroller(props: {
   readonly fadeSurface?: "card" | "sheet";
   readonly contentPaddingRight?: number;
 }) {
-  const [metrics, setMetrics] = useState({
+  const metricsRef = useRef({
     contentWidth: 0,
     offsetX: 0,
     viewportWidth: 0,
+    showLeftFade: false,
+    showRightFade: false,
+  });
+  const [scrollEdges, setScrollEdges] = useState({
+    showLeftFade: false,
+    showRightFade: false,
   });
 
-  const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
-  const scrollEdges = {
-    showLeftFade: metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON,
-    showRightFade: metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON,
-  };
+  const updateScrollEdges = useCallback(() => {
+    const metrics = metricsRef.current;
+    const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
+    const showLeftFade = metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON;
+    const showRightFade = metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON;
+    if (metrics.showLeftFade === showLeftFade && metrics.showRightFade === showRightFade) {
+      return;
+    }
+    metrics.showLeftFade = showLeftFade;
+    metrics.showRightFade = showRightFade;
+    setScrollEdges({ showLeftFade, showRightFade });
+  }, []);
 
-  const handleLayout = (event: LayoutChangeEvent) => {
-    const viewportWidth = event.nativeEvent.layout.width;
-    setMetrics((current) =>
-      current.viewportWidth === viewportWidth ? current : { ...current, viewportWidth },
-    );
-  };
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const viewportWidth = event.nativeEvent.layout.width;
+      if (metricsRef.current.viewportWidth === viewportWidth) return;
+      metricsRef.current.viewportWidth = viewportWidth;
+      updateScrollEdges();
+    },
+    [updateScrollEdges],
+  );
 
-  const handleContentSizeChange = (contentWidth: number) => {
-    setMetrics((current) =>
-      current.contentWidth === contentWidth ? current : { ...current, contentWidth },
-    );
-  };
+  const handleContentSizeChange = useCallback(
+    (contentWidth: number) => {
+      if (metricsRef.current.contentWidth === contentWidth) return;
+      metricsRef.current.contentWidth = contentWidth;
+      updateScrollEdges();
+    },
+    [updateScrollEdges],
+  );
 
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    setMetrics((current) =>
-      Math.abs(current.offsetX - offsetX) < 1 ? current : { ...current, offsetX },
-    );
-  };
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetX = event.nativeEvent.contentOffset.x;
+      if (Math.abs(metricsRef.current.offsetX - offsetX) < 1) return;
+      metricsRef.current.offsetX = offsetX;
+      updateScrollEdges();
+    },
+    [updateScrollEdges],
+  );
 
   return (
     <View className="relative min-w-0 flex-1">
@@ -254,6 +296,7 @@ export function ComposerActionButton(props: {
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
   const circleSize = Math.round((props.size === "large" ? 44 : 30) * scale);
+  const fadeIcon = props.disabled === true && props.variant !== "danger";
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
@@ -273,19 +316,30 @@ export function ComposerActionButton(props: {
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
-              ? "bg-primary/15"
+              ? "bg-foreground/12"
               : "bg-primary",
         )}
       >
-        <SymbolView
-          name={props.icon}
-          size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
-          weight="semibold"
-          tintColorClassName={
-            props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
-          }
-          type="monochrome"
-        />
+        {/* Fade the icon as one layer: a translucent tint, or opacity on a Tabler icon (which
+            copies it onto every path), stacks where the SVG strokes overlap. */}
+        <View
+          className={fadeIcon ? "opacity-38" : undefined}
+          needsOffscreenAlphaCompositing={fadeIcon}
+        >
+          <SymbolView
+            name={props.icon}
+            size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
+            weight="semibold"
+            tintColorClassName={
+              props.variant === "danger"
+                ? "accent-danger-foreground"
+                : props.disabled
+                  ? "accent-foreground"
+                  : "accent-primary-foreground"
+            }
+            type="monochrome"
+          />
+        </View>
       </View>
     </Pressable>
   );
@@ -322,12 +376,13 @@ export function ComposerToolbarButton(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
+      accessibilityState={props.active === undefined ? undefined : { selected: props.active }}
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
-        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70",
+        "h-[44px] max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70 android:h-[48px]",
         variant === "primary" && "shadow-lg shadow-adaptive-black-a10-a25 disabled:shadow-none",
-        isCircle ? "w-11" : "gap-2 px-3.5",
+        isCircle ? "w-[44px] android:w-[48px]" : "gap-2 px-3.5 android:min-w-[48px]",
         variant === "primary"
           ? props.disabled
             ? "bg-subtle-strong"
@@ -335,11 +390,11 @@ export function ComposerToolbarButton(props: {
           : variant === "danger"
             ? "bg-danger"
             : props.active
-              ? "bg-subtle-strong"
+              ? "bg-primary"
               : "bg-subtle",
         variant === "default"
           ? props.active
-            ? "border-border"
+            ? "border-primary"
             : "border-border-subtle"
           : variant === "danger"
             ? "border-danger-border"
@@ -351,7 +406,10 @@ export function ComposerToolbarButton(props: {
       style={({ pressed }) => [
         {
           maxWidth: props.maxWidth,
-          minWidth: props.minWidth,
+          minWidth:
+            Platform.OS === "android" && props.minWidth !== undefined
+              ? Math.max(48, props.minWidth)
+              : props.minWidth,
           opacity: props.disabled ? 0.55 : pressed ? 0.72 : 1,
         },
         props.style,
@@ -375,7 +433,9 @@ export function ComposerToolbarButton(props: {
               ? props.disabled
                 ? "text-foreground-muted"
                 : "text-primary-foreground"
-              : "text-foreground",
+              : props.active
+                ? "text-primary-foreground"
+                : "text-foreground",
           )}
           ellipsizeMode="tail"
           numberOfLines={1}

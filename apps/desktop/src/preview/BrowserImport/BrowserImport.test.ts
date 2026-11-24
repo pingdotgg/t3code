@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as BrowserSession from "../BrowserSession.ts";
+import { readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as BrowserImport from "./BrowserImport.ts";
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "./Sources.ts";
@@ -39,6 +41,7 @@ const layerRejectedBeforeSession = Layer.succeed(
     isPartition: () => false,
     getSession: () => Effect.die("getSession must not be reached"),
     clearCookies: () => Effect.die("clearCookies must not be reached"),
+    cookiesCleared: () => Effect.die("cookiesCleared must not be reached"),
     clearCache: () => Effect.die("clearCache must not be reached"),
   }),
 );
@@ -60,6 +63,7 @@ const withImporter = Effect.fnUntraced(function* () {
     Effect.provide(
       BrowserImport.layer.pipe(
         Layer.provide(layerRejectedBeforeSession),
+        Layer.provide(DesktopManagedPolicy.layerTest()),
         Layer.provide(layerEnvironment),
         Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
         Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/Applications/T3 Code.app")),
@@ -201,7 +205,7 @@ describe("BrowserImport.importCookies", () => {
 
       assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
       assert.equal(error.reason, "unknownSourceProfile");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(!symlinksSupported)(
@@ -224,8 +228,43 @@ describe("BrowserImport.importCookies", () => {
           })
           .pipe(Effect.flip);
 
+        assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
         assert.equal(error.reason, "browserRunning");
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("BrowserImport.checkBrowserImportPolicy", () => {
+  it.effect("allows imports unless a readable policy turns them off, and fails closed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-policy-" });
+      const outcome = (contents: string | undefined) =>
+        Effect.gen(function* () {
+          const policyPath = `${dir}/policy.json`;
+          yield* fileSystem.remove(policyPath, { force: true });
+          if (contents !== undefined) yield* fileSystem.writeFileString(policyPath, contents);
+          const readPolicy = readManagedPolicyFile(policyPath).pipe(
+            Effect.map((document) => document && { source: policyPath, document }),
+          );
+          return yield* BrowserImport.checkBrowserImportPolicy(readPolicy).pipe(
+            Effect.match({ onFailure: (error) => error.message, onSuccess: () => "allowed" }),
+          );
+        });
+      const policy = (limits?: object) =>
+        JSON.stringify({ schemaVersion: 1, organization: "Example Corp", limits });
+
+      assert.equal(yield* outcome(undefined), "allowed");
+      assert.equal(yield* outcome(policy()), "allowed");
+      assert.equal(yield* outcome(policy({ browserCookieImport: true })), "allowed");
+      assert.equal(
+        yield* outcome(policy({ browserCookieImport: false })),
+        "Example Corp's policy does not allow importing browser cookies.",
+      );
+      for (const unreadable of ["{ not json", policy({ notALimit: false })]) {
+        assert.include(yield* outcome(unreadable), "could not be read");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

@@ -4,6 +4,7 @@ import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/con
 import * as DateTime from "effect/DateTime";
 
 import {
+  resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
@@ -31,7 +32,6 @@ function commandItem(
     updatedAt: DateTime.makeUnsafe("2026-09-08T00:00:00.000Z"),
     type: "command_execution",
     input: 'rg "command not found"',
-    exitCode: 0,
     ...fields,
   };
 }
@@ -62,6 +62,22 @@ describe("workEntryIndicatesToolFailure", () => {
       expect(JSON.stringify(toolItemForDisplay(structuredPayload))).not.toContain('"output":');
     },
   );
+
+  it.each([
+    "logs/app.log:12: Error: ENOENT: no such file or directory",
+    "fixtures/ci.txt:3: Process exited with exit code 2",
+  ])("trusts a zero exit code over failure text in the output and command: %s", (output) => {
+    const entry: WorkLogPresentationEntry = {
+      ...base,
+      tone: "tool",
+      itemType: "command_execution",
+      toolLifecycleStatus: "completed",
+      command: 'rg -n "ENOENT|exit code" logs fixtures',
+      structuredPayload: commandItem({ output, exitCode: 0, outputIndicatesFailure: true }),
+    };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(false);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+  });
 
   it("ignores failure phrases in reasoning text", () => {
     const entry: WorkLogPresentationEntry = {
@@ -187,5 +203,25 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveViewedImageAsset", () => {
+  it("requests the file the agent read when its name holds %, # or ?", () => {
+    const path = "/Users/me/.grok/sessions/%2FUsers%2Fme%2Fproject/shot #1?/1.jpg";
+    expect(
+      resolveViewedImageAsset(path, { threadId: ThreadId.make("thread"), workspaceRoot: "/repo" }),
+    ).toEqual({
+      resource: { _tag: "media-file", threadId: ThreadId.make("thread"), path },
+      alt: "1.jpg",
+      srcFragment: "",
+    });
+  });
+
+  it("still decodes a file URL", () => {
+    expect(
+      resolveViewedImageAsset("file:///repo/my%20shot.png", { threadId: ThreadId.make("thread") })
+        ?.resource.path,
+    ).toBe("/repo/my shot.png");
   });
 });

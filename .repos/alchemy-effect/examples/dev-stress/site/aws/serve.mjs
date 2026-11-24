@@ -19,9 +19,7 @@ const server = Bun.serve({
     const file = Bun.file(
       `${import.meta.dirname}/site${pathname.endsWith("/") ? `${pathname}index.html` : pathname}`,
     );
-    return (await file.exists())
-      ? new Response(file)
-      : new Response("not found", { status: 404 });
+    return (await file.exists()) ? new Response(file) : new Response("not found", { status: 404 });
   },
 });
 
