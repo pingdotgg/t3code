@@ -982,6 +982,29 @@ fn work_result(projection: &Value) -> Option<Value> {
     result.cloned()
 }
 
+/// `latestRestartContinuation`: a restart cuts a run and goes on in a new run that names it
+/// (`restartContinuationOfRunId`), so a wait on the cut run follows that chain to its newest
+/// run. Recovery cancels the run and dispatches its continuation in one transaction
+/// (`restart.rs`), so T3's `restartContinuationPending` gap does not exist here.
+fn latest_restart_continuation<'a>(projection: &'a Value, run: &'a Value) -> &'a Value {
+    let runs = projection["runs"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut current = run;
+    // Each step moves to a newer run, so the chain is at most as long as the list.
+    for _ in 0..runs.len() {
+        match runs
+            .iter()
+            .find(|next| next["restartContinuationOfRunId"] == current["id"])
+        {
+            Some(next) => current = next,
+            None => break,
+        }
+    }
+    current
+}
+
 /// Waits for a run as `until` says. No `run_id`: the thread's latest run. Returns the run
 /// (`None` for a thread with no run), whether the wait timed out, and with
 /// [`Until::WorkSettled`] the run with the thread's answer.
@@ -995,8 +1018,7 @@ pub(super) async fn wait_for_run(
     let pick = |projection: &Value| -> Result<Option<Value>, ToolError> {
         match run_id {
             Some(id) => view::run_by_id(projection, id)
-                .cloned()
-                .map(Some)
+                .map(|run| Some(latest_restart_continuation(projection, run).clone()))
                 .ok_or_else(|| {
                     fail(
                         "run_not_found",
@@ -1282,6 +1304,25 @@ pub(super) async fn pending_request(cx: &Cx<'_>, args: &Args) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wait on a cut run follows its continuations through a chain; a later run that
+    /// continues nothing never answers it.
+    #[test]
+    fn a_restart_chain_leads_to_its_newest_run() {
+        let projection = json!({ "runs": [
+            { "id": "r1", "status": "cancelled", "restartContinuationOfRunId": null },
+            { "id": "r2", "status": "cancelled", "restartContinuationOfRunId": "r1" },
+            { "id": "r3", "status": "running", "restartContinuationOfRunId": "r2" },
+            { "id": "r4", "status": "completed", "restartContinuationOfRunId": null },
+        ] });
+        let newest = |id: &str| {
+            let run = view::run_by_id(&projection, id).unwrap();
+            latest_restart_continuation(&projection, run)["id"].clone()
+        };
+        assert_eq!(newest("r1"), "r3");
+        assert_eq!(newest("r2"), "r3");
+        assert_eq!(newest("r4"), "r4");
+    }
 
     fn row(position: i64, text: &str) -> Value {
         json!({ "position": position, "visibility": "visible", "sourceThreadId": "t",

@@ -4565,6 +4565,40 @@ async fn a_follow_ups_own_next_turn_and_its_restart_continuation_stay_its_work()
     );
 }
 
+/// `ThreadManagementService.test.ts`, "waitForThread follows a restart continuation instead of
+/// the cut run": a wait on a run a restart cut answers with its continuation once that ends,
+/// never with the cut run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_wait_on_a_cut_run_follows_its_restart_continuation() {
+    let f = fixture("wait-restart-continuation");
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Cut", "hang", "auto", "default").await;
+    until_provider_turn(&f, &thread).await;
+    let cut = projection_of(&f, &thread).await["runs"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    drop(operator);
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let waited = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "runId": cut, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &thread).await;
+    let continuation = projection["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["restartContinuationOfRunId"] == cut.as_str())
+        .unwrap();
+    assert_eq!(waited["runId"], continuation["id"], "{waited}");
+    assert_eq!(waited["status"], "completed", "{waited}");
+    assert_eq!(waited["timedOut"], false, "{waited}");
+}
+
 /// `Orchestrator.ts:16134`: a restart that cancels a delegated child's turn waiting on an
 /// approval starts no continuation, and still publishes the task.
 #[tokio::test(flavor = "current_thread")]
