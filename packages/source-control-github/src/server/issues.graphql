@@ -1,22 +1,9 @@
-fragment PlanningStatusFields on PlanningStatus {
-  id
-  name
-  category {
-    key
-    state
-    stateReason
-  }
-}
-
 fragment IssueRow on Issue {
   number
   title
   url
   state
   stateReason
-  status @include(if: $statuses) {
-    ...PlanningStatusFields
-  }
   createdAt
   updatedAt
   closedAt
@@ -29,7 +16,7 @@ fragment IssueRow on Issue {
   }
 }
 
-query IssueSearch($q: String!, $cursor: String, $rows: Int!, $statuses: Boolean!) {
+query IssueSearch($q: String!, $cursor: String, $rows: Int!) {
   search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
     pageInfo {
       hasNextPage
@@ -59,17 +46,12 @@ query IssueSearch($q: String!, $cursor: String, $rows: Int!, $statuses: Boolean!
   }
 }
 
-query IssueDetail($owner: String!, $name: String!, $number: Int!, $statuses: Boolean!) {
+query IssueDetail($owner: String!, $name: String!, $number: Int!) {
   viewer {
     login
   }
   repository(owner: $owner, name: $name) {
     viewerPermission
-    planningStatuses(first: 50) @include(if: $statuses) {
-      nodes {
-        ...PlanningStatusFields
-      }
-    }
     issue(number: $number) {
       ...IssueRow
       assignees(first: 100) {
@@ -97,7 +79,6 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!, $statuses: Boo
       viewerCanUpdate
       viewerCanClose
       viewerCanReopen
-      viewerCanSetStatus @include(if: $statuses)
       ...Reactions
       comments(last: 100) {
         totalCount
@@ -300,13 +281,8 @@ query IssueLinkMetadata($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
-query IssueNodeId($owner: String!, $name: String!, $number: Int!, $statuses: Boolean!) {
+query IssueNodeId($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    planningStatuses(first: 50) @include(if: $statuses) {
-      nodes {
-        ...PlanningStatusFields
-      }
-    }
     issue(number: $number) {
       id
       state
@@ -449,6 +425,67 @@ query IssueCollections(
             nameWithOwner
           }
         }
+      }
+    }
+  }
+}
+
+# Issue statuses are a github.com preview. They live in their own documents because a server
+# without them rejects any document that names them, whatever `@include` says.
+fragment PlanningStatusFields on PlanningStatus {
+  id
+  name
+  category {
+    key
+    state
+    stateReason
+  }
+}
+
+query IssueSearchWithStatus($q: String!, $cursor: String, $rows: Int!) {
+  search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ... on Issue {
+        ...IssueRow
+        status {
+          ...PlanningStatusFields
+        }
+        assignees(first: 20) {
+          nodes {
+            login
+            name
+            avatarUrl
+          }
+        }
+        labels(first: 20) {
+          nodes {
+            name
+            color
+          }
+        }
+        comments {
+          totalCount
+        }
+      }
+    }
+  }
+}
+
+query IssueStatuses($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    planningStatuses(first: 50) {
+      nodes {
+        ...PlanningStatusFields
+      }
+    }
+    issue(number: $number) {
+      viewerCanSetStatus
+      status {
+        ...PlanningStatusFields
       }
     }
   }

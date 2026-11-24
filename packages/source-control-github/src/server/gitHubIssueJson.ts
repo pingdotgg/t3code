@@ -24,7 +24,9 @@ type Actor = {
   readonly name?: string | null;
   readonly avatarUrl: string | null;
 };
-type Label = NonNullable<NonNullable<NonNullable<Issues.NodesIssue["labels"]>["nodes"]>[number]>;
+type Label = NonNullable<
+  NonNullable<NonNullable<Issues.IssueSearchSearchNodesIssue["labels"]>["nodes"]>[number]
+>;
 type TimelineItem = NonNullable<NonNullable<DetailIssue["timelineItems"]["nodes"]>[number]>;
 type Comments = Omit<DetailIssue["comments"], "totalCount">;
 type Reference = NonNullable<
@@ -115,7 +117,13 @@ function toIssueState(
   return reason === "DUPLICATE" ? DUPLICATE : { category: "closed", name: "Closed" };
 }
 
-function toSummary(raw: Omit<Issues.NodesIssue, "__typename">): TrackerIssueSummary {
+type IssueStatusRead = NonNullable<Issues.IssueStatuses.Result["repository"]>;
+
+function toSummary(
+  raw: Omit<Issues.IssueSearchSearchNodesIssue, "__typename"> & {
+    readonly status?: Issues.PlanningStatusFields | null;
+  },
+): TrackerIssueSummary {
   return {
     key: String(raw.number),
     displayKey: `#${raw.number}`,
@@ -290,14 +298,19 @@ interface GitHubIssueDetail extends TrackerIssueSummary {
 }
 
 /** Null for a number that names no issue the viewer can see. */
-export function toIssueDetail({
-  viewer: rawViewer,
-  repository,
-}: Issues.IssueDetail.Result): GitHubIssueDetail | null {
-  const issue = repository?.issue;
-  if (issue == null) return null;
+export function toIssueDetail(
+  { viewer: rawViewer, repository }: Issues.IssueDetail.Result,
+  statusRead: IssueStatusRead | null = null,
+): GitHubIssueDetail | null {
+  const raw = repository?.issue;
+  if (raw == null) return null;
+  const issue = {
+    ...raw,
+    status: statusRead?.issue?.status ?? null,
+    viewerCanSetStatus: statusRead?.issue?.viewerCanSetStatus,
+  };
   const viewer = trimmed(rawViewer?.login);
-  const statuses = planningStatusesOf(repository?.planningStatuses);
+  const statuses = planningStatusesOf(statusRead?.planningStatuses);
 
   // Closing references lead; a cross-reference seen twice is filed under the stronger relation.
   const links = new Map<string, IssueLinkedPullRequest>();
@@ -339,7 +352,9 @@ export function toIssueDetail({
   };
 }
 
-export function toIssueSearch({ search }: Issues.IssueSearch.Result) {
+export function toIssueSearch({
+  search,
+}: Issues.IssueSearch.Result | Issues.IssueSearchWithStatus.Result) {
   return {
     items: (search.nodes ?? []).flatMap((node) =>
       node !== null && node.__typename === "Issue" ? [toSummary(node)] : [],
