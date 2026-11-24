@@ -28,6 +28,9 @@ const LANGUAGE_FILLER_PATTERNS: Readonly<Record<string, readonly string[]>> = {
   pt: ["(?<=(?:^|[,.!?…])\\s*)é,"],
 };
 
+// Marks where a capitalized filler was removed; never present in transcripts.
+const SENTENCE_START = "\u0000";
+
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function removeSpeechFillerWords(
@@ -46,7 +49,23 @@ export function removeSpeechFillerWords(
     `(?<![\\p{L}\\p{N}_])(?:(${cuePattern || "(?!)"})(?![\\p{L}\\p{N}_])|(?:${words.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}_])[,.]?${patterns.map((source) => `|${source}`).join("")})`,
     "giu",
   );
-  const filtered = text.replace(pattern, (_match, cue: string | undefined) => cue ?? "");
+  // A capitalized filler opened the sentence, so the word after it takes over the capital
+  // ("Uma frase. É, enquanto" becomes "Uma frase. Enquanto"). The correction cue keeps its case.
+  const startsWithCue = cuePattern
+    ? new RegExp(`^(?:${cuePattern})(?![\\p{L}\\p{N}_])`, "iu")
+    : undefined;
+  const filtered = text
+    .replace(pattern, (match: string, cue: string | undefined) =>
+      cue !== undefined ? cue : /^\p{Lu}/u.test(match) ? SENTENCE_START : "",
+    )
+    .replace(
+      new RegExp(`${SENTENCE_START}([^\\S\\r\\n]*)(\\p{Ll})`, "gu"),
+      (_match, space: string, letter: string, offset: number, whole: string) =>
+        startsWithCue?.test(whole.slice(offset + SENTENCE_START.length + space.length))
+          ? space + letter
+          : space + letter.toUpperCase(),
+    )
+    .replaceAll(SENTENCE_START, "");
   return filtered
     .replace(/[^\S\r\n]{2,}/g, " ")
     .replace(/[^\S\r\n]*([\r\n])[^\S\r\n]*/g, "$1")

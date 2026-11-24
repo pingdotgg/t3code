@@ -3,13 +3,14 @@ import { removeSpeechFillerWords } from "./fillerWords.ts";
 
 describe("removeSpeechFillerWords", () => {
   it.each([
-    ["Ah, hum, ahn, acho que sim.", "acho que sim."],
+    ["Ah, hum, ahn, acho que sim.", "Acho que sim."],
     [
       "É, acrescente na thread, é, toda vez que criar um título.",
-      "acrescente na thread, toda vez que criar um título.",
+      "Acrescente na thread, toda vez que criar um título.",
     ],
     ["como se ele tivesse, é, é, é ansioso.", "como se ele tivesse, é ansioso."],
-    ["Uma frase.\nÉ, acrescente na thread.", "Uma frase.\nacrescente na thread."],
+    ["Uma frase.\nÉ, acrescente na thread.", "Uma frase.\nAcrescente na thread."],
+    ["Uma frase. É, enquanto eu falo.", "Uma frase. Enquanto eu falo."],
   ])("drops Portuguese hesitations: %s", (input, expected) => {
     expect(removeSpeechFillerWords(input, "pt-BR")).toBe(expected);
   });

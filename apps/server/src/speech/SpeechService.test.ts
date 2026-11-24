@@ -618,7 +618,7 @@ it.effect.each([
     cue: "uh no",
     remove: true,
     text: "Uh, Make it red, UH  NO, blue. Uh nope.",
-    expected: "Make it red, UH NO, blue. nope.",
+    expected: "Make it red, UH NO, blue. Nope.",
   },
   {
     cue: " UM ",
