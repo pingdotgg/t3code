@@ -10,7 +10,12 @@ import * as NodePath from "node:path";
 const bootEpochSeconds = () => Math.round(Date.now() / 1000 - NodeOS.uptime());
 
 /** Serialize durable selection and unit writes, never manager stop/start commands. */
-export async function acquireServiceSelectionLock(selectionPath: string): Promise<() => void> {
+export async function acquireServiceSelectionLock(
+  selectionPath: string,
+  options?: { readonly waitForRetry?: () => Promise<void> },
+): Promise<() => void> {
+  const waitForRetry =
+    options?.waitForRetry ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
   const directory = NodePath.dirname(selectionPath);
   NodeFS.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const lock = selectionPath + ".selection-lock";
@@ -51,13 +56,12 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
           (windows && (code === "EPERM" || code === "EACCES"));
         if (!contended) throw error;
       }
-      let owners: string[];
+      let owners: string[] = [];
       try {
         owners = NodeFS.readdirSync(lock);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         // A Windows rename can fail with EPERM while no lock exists; keep the deadline and delay.
-        owners = [];
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       if (owners.length === 1) {
         const previous = owners[0]!;
@@ -92,7 +96,7 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
         throw new Error(
           `Service selection is locked at ${lock}. Retry when the other operation finishes.`,
         );
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await waitForRetry();
     }
   } finally {
     NodeFS.rmSync(candidate, { recursive: true, force: true });
