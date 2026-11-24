@@ -3,7 +3,7 @@ import { type ReleaseChannel, releaseResourceAttributes } from "@t3tools/shared/
 import * as RelayTracing from "@t3tools/shared/relayTracing";
 
 import { hasTracingPublicConfig, resolveCloudPublicConfig } from "../cloud/publicConfig";
-import { diagnosticsSendingEnabled } from "./diagnosticsSetting";
+import { connectionTracesEnabled } from "./diagnosticsSetting";
 
 export interface TracingConfig {
   readonly tracesUrl: string;
@@ -47,7 +47,7 @@ export function layerFromConfig(config: TracingConfig | null, resource: TracingR
       client: `mobile-${resource.appVariant}`,
       attributes: channel && releaseResourceAttributes(channel),
     },
-    { isEnabled: diagnosticsSendingEnabled },
+    { isEnabled: connectionTracesEnabled },
   );
 }
 
