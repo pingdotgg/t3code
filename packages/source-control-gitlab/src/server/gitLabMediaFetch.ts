@@ -14,6 +14,7 @@ export const make = Effect.gen(function* () {
     const url = URL.parse(request.url);
     if (url === null || gitLabMediaUrl(url) === null || request.cwd === undefined) return null;
     const chunks: Array<Uint8Array> = [];
+    let retainedBytes = 0;
     const result = yield* cli
       .execute({
         cwd: request.cwd,
@@ -21,7 +22,11 @@ export const make = Effect.gen(function* () {
         // glab sends the host's token to a full URL on that host, not only to `/api/v4` paths.
         args: ["api", "--hostname", url.host, request.url],
         maxOutputBytes: MAX_MEDIA_BYTES,
-        onStdoutChunk: (chunk) => chunks.push(chunk),
+        onStdoutChunk: (chunk) => {
+          if (retainedBytes + chunk.byteLength > MAX_MEDIA_BYTES) return;
+          retainedBytes += chunk.byteLength;
+          chunks.push(chunk);
+        },
       })
       .pipe(Effect.orElseSucceed(() => null));
     if (result === null || result.stdoutTruncated) return null;
