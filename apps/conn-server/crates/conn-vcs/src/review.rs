@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::{VcsError, VcsResult},
-    process::{GitCommand, OnLimit, ProcessError},
+    process::{GitCommand, GitOutput, OnLimit, ProcessError},
     repo::{self, PROBE_TIMEOUT, git},
 };
 
@@ -207,6 +207,29 @@ impl Untracked {
 /// Status totals stop counting untracked files above this many bytes in all.
 pub const UNTRACKED_TOTALS_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Whether a nested repository's HEAD names a commit. Only "no such commit" (exit 1) says no,
+/// as in T3: another exit leaves the folder to Git, and a probe that does not finish (a timeout
+/// or a signal) fails the review.
+async fn nested_repository_has_head(dir: &Path) -> VcsResult<bool> {
+    let probe = git(
+        "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+        dir,
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+    )
+    .allow_exit(&[1])
+    .run()
+    .await;
+    head_probe_has_commit(probe)
+}
+
+fn head_probe_has_commit(probe: Result<GitOutput, ProcessError>) -> VcsResult<bool> {
+    match probe {
+        Ok(out) => Ok(out.code != 1),
+        Err(error) if error.is_completed_exit() => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(crate) async fn prepare_untracked(
     cwd: &Path,
     paths: &[String],
@@ -266,6 +289,16 @@ pub(crate) async fn prepare_untracked(
     .stdout_text();
     let deleted: Vec<&str> = deleted.split('\0').filter(|p| !p.is_empty()).collect();
     untracked.retain(|p| !deleted.contains(&p.as_str()));
+    // A nested repository (listed with a trailing slash) with no commit cannot be indexed:
+    // Git before 2.53 fails the add, and later versions take it and fail every diff.
+    let mut indexable = Vec::with_capacity(untracked.len());
+    for path in untracked {
+        if path.ends_with('/') && !nested_repository_has_head(&cwd.join(&path)).await? {
+            continue;
+        }
+        indexable.push(path);
+    }
+    let untracked = indexable;
     if untracked.is_empty() {
         return Ok(Untracked::None);
     }
@@ -1101,6 +1134,62 @@ pub async fn branch_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
+        let exited = |code| {
+            Ok(GitOutput {
+                code,
+                ..GitOutput::default()
+            })
+        };
+        assert_eq!(head_probe_has_commit(exited(0)), Ok(true));
+        assert_eq!(head_probe_has_commit(exited(1)), Ok(false));
+        let context = crate::process::ProcessContext {
+            operation: "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+            command: "git rev-parse".into(),
+            cwd: "/repo/nested".into(),
+            argument_count: 4,
+        };
+        let exit = ProcessError::Exit {
+            context: context.clone(),
+            code: 128,
+            stderr: String::new(),
+            stderr_truncated: false,
+        };
+        assert_eq!(head_probe_has_commit(Err(exit)), Ok(true));
+        let timeout = ProcessError::Timeout {
+            context,
+            timeout_ms: 30_000,
+        };
+        assert_eq!(
+            head_probe_has_commit(Err(timeout.clone())),
+            Err(VcsError::Process(timeout))
+        );
+    }
+
+    /// A probe that a signal ends never finished: T3 fails the command before any exit code
+    /// reaches the caller.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn nested_head_probe_propagates_a_signal() {
+        let signalled = GitCommand::host_cli(
+            "test.signalled",
+            "sh",
+            Path::new("/"),
+            ["-c", "kill -TERM $$"],
+        )
+        .allow_exit(&[1])
+        .run()
+        .await;
+        let Err(error) = signalled.clone() else {
+            panic!("sh ended by SIGTERM succeeded: {signalled:?}");
+        };
+        assert_eq!(
+            head_probe_has_commit(signalled),
+            Err(VcsError::Process(error))
+        );
+    }
 
     #[test]
     fn numstat_parses_renames_and_binaries() {
