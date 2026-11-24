@@ -1,4 +1,5 @@
 import * as AssetSigner from "../../assets/AssetSigner.ts";
+import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -28,6 +29,8 @@ import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -392,6 +395,95 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
         Layer.provide(
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed({
+                id,
+                deletedAt: null,
+                archivedAt: null,
+                activeRunId: RunId.make("mcp-core-run"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
+                interactionMode: "default",
+              } as OrchestrationV2ThreadShell),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("does not inline local images for non-full-access threads", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const server = yield* McpServer.McpServer;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-html-img-" });
+    const secretSvg = path.join(directory, "secret.svg");
+    const svgBody = '<svg xmlns="http://www.w3.org/2000/svg"><text>SECRET_SVG_DATA</text></svg>';
+    yield* fileSystem.writeFileString(secretSvg, svgBody);
+    const html = `<img src="${secretSvg}"><script>const leak = "${secretSvg}";</script>`;
+
+    const supervisedResult = yield* server
+      .callTool({
+        name: "html_render",
+        arguments: { html, title: "Supervised", height: 240 },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const supervisedRef = htmlRenderFromToolItem({
+      toolName: "t3-code.html_render",
+      output: supervisedResult.structuredContent,
+    });
+    expect(supervisedRef).toBeDefined();
+    const supervisedStored = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId: supervisedRef!.attachmentId,
+    });
+    const supervisedHtml = yield* fileSystem.readFileString(supervisedStored ?? "");
+    expect(supervisedHtml).not.toContain("data:image/svg+xml;base64,");
+    expect(supervisedHtml).not.toContain(Buffer.from(svgBody).toString("base64"));
+
+    const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+    const fullResult = yield* server
+      .callTool({
+        name: "html_render",
+        arguments: { html, title: "Full", height: 240 },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, fullAccess),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const fullRef = htmlRenderFromToolItem({
+      toolName: "t3-code.html_render",
+      output: fullResult.structuredContent,
+    });
+    expect(fullRef).toBeDefined();
+    const fullStored = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId: fullRef!.attachmentId,
+    });
+    const fullHtml = yield* fileSystem.readFileString(fullStored ?? "");
+    expect(fullHtml).toContain(
+      `data:image/svg+xml;base64,${Buffer.from(svgBody).toString("base64")}`,
+    );
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerHtmlToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(McpProviderSessions.layer),
+        Layer.provide(PreviewBrowser.layer),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-img-" })),
+        Layer.provideMerge(
           DocumentText.layer.pipe(
             Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
