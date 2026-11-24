@@ -1504,6 +1504,122 @@ it("requestSecret cancels its card when a steering restart supersedes the reques
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+it("requestSecret cancels its card when the user steers a reply into the run instead", async () => {
+  const authors = ["user", "agent"] as const;
+  const results = await Effect.forEach(authors, (author) => {
+    const dispatched: Array<{
+      readonly type: string;
+      readonly turnItemId?: string;
+      readonly secretStatus?: string;
+    }> = [];
+    let replied = false;
+    const steer = (ordinal: number, createdBy: "user" | "agent") => ({
+      type: "user_message",
+      id: `turn-item-mcp-steer-${ordinal}`,
+      runId: activeRunId,
+      nodeId: taskId,
+      ordinal,
+      createdBy,
+      inputIntent: "steer",
+    });
+    const projection = () => {
+      const card = dispatched.find((command) => command.type === "secret_request.record");
+      return {
+        thread: baseThread({
+          threadId: parentThreadId,
+          title: "Parent",
+          instanceId: parentInstanceId,
+          model: "gpt-5.4",
+        }),
+        runs: [
+          { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId },
+        ],
+        visibleTurnItems: [],
+        turnItems: [
+          // A user steer from before the card was asked must not close it.
+          steer(3, "user"),
+          ...(card === undefined
+            ? []
+            : [
+                {
+                  type: "secret_request",
+                  id: card.turnItemId,
+                  runId: activeRunId,
+                  ordinal: 5,
+                  secretStatus: "pending",
+                },
+              ]),
+          ...(replied ? [steer(6, author)] : []),
+        ],
+        providerTurns: [],
+        runtimeRequests: [],
+        messages: [],
+        contextTransfers: [],
+        subagents: [],
+        updatedAt: now,
+      } as unknown as OrchestrationV2ThreadProjection;
+    };
+    const layer = layerOrchestratorService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.sync(projection),
+            getThreadShell: () =>
+              Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command as (typeof dispatched)[number]);
+                // A message steers into the same run, under the same root, once the card is open.
+                if (
+                  command.type === "secret_request.record" &&
+                  command.secretStatus === "pending"
+                ) {
+                  replied = true;
+                }
+                return undefined as never;
+              }),
+          } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+          } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const request = yield* service
+        .requestSecret(makeScope(), {
+          label: "Booking details",
+          reason: "To check the passenger in.",
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("2 seconds");
+      const result = yield* Fiber.join(request);
+      return { result, recorded: dispatched.map((command) => command.secretStatus) };
+    }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
+  }).pipe(Effect.runPromise);
+
+  expect(results).toEqual([
+    {
+      result: { status: "cancelled", note: SECRET_REQUEST_UNSAVED_NOTE.cancelled },
+      recorded: ["pending", "cancelled"],
+    },
+    // An agent's message steered in (a wake or notification) leaves the card waiting.
+    {
+      result: { status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out },
+      recorded: ["pending", "cancelled"],
+    },
+  ]);
+});
+
 it("requestSecret closes its card when the call is aborted while the card is being recorded", async () => {
   const statuses: Array<string> = [];
   const projection = () =>

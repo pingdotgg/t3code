@@ -2727,7 +2727,8 @@ const make = Effect.gen(function* () {
             while (true) {
               const projection = yield* threadManagement
                 .getThreadRecords(threadId, ["runs", "turnItems"], {
-                  turnItemTypes: ["secret_request"],
+                  turnItemTypes: ["secret_request", "user_message"],
+                  turnItemRunId: runId,
                   messageRoles: [],
                 })
                 .pipe(
@@ -2754,6 +2755,23 @@ const make = Effect.gen(function* () {
               // the superseded attempt: its card can never be answered into that attempt,
               // and the call must stop blocking the agent's turn.
               if (current.rootNodeId !== nodeId) {
+                yield* record("cancelled");
+                return "cancelled" as const;
+              }
+              // The user answered in chat: an active steer joins this run, and the
+              // provider only delivers it once this call returns.
+              if (
+                item !== undefined &&
+                projection.turnItems.some(
+                  (candidate) =>
+                    candidate.type === "user_message" &&
+                    candidate.createdBy === "user" &&
+                    candidate.scheduledTaskId === undefined &&
+                    (candidate.inputIntent === "steer" ||
+                      candidate.inputIntent === "promoted_queued_to_steer") &&
+                    candidate.ordinal > item.ordinal,
+                )
+              ) {
                 yield* record("cancelled");
                 return "cancelled" as const;
               }
