@@ -8,9 +8,11 @@ import {
 } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
@@ -51,6 +53,37 @@ ${defaultHostOnly}`;
     assert.strictEqual(item.auth.status, "authenticated");
     assert.deepStrictEqual(item.auth.account, Option.some("gitlab-user"));
     assert.deepStrictEqual(item.auth.host, Option.some("gitlab.com"));
+  }),
+);
+
+// Discovery sweeps every integration on a timer; a CLI that is not installed should cost one spawn.
+it.effect("does not run the auth command when glab is not installed", () =>
+  Effect.gen(function* () {
+    const spawned: Array<string> = [];
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ operation, command, args, cwd }) => {
+          spawned.push([command, ...args].join(" "));
+          return Effect.fail(
+            new VcsProcessSpawnError({
+              operation,
+              command,
+              cwd,
+              cause: PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                pathOrDescriptor: command,
+              }),
+            }),
+          );
+        },
+      },
+    });
+    assert.strictEqual(item.status, "missing");
+    assert.deepStrictEqual(spawned, ["glab --version"]);
   }),
 );
 
