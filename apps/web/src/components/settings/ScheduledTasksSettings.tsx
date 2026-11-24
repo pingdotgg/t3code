@@ -18,7 +18,6 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
-  ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -55,7 +54,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 
 import { formatRelativeTime } from "../../timestampFormat";
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { getCustomModelOptionsByInstance, selectsPlanAgent } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/cloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -121,9 +120,6 @@ import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "..
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { createModelSelection } from "@t3tools/shared/model";
-// Aliased so the line stays valid on upstream sources that already import these names.
-import { useThreadShell as useBoundThreadShell } from "../../state/entities";
-import { scopeThreadRef as scopeBoundThreadRef } from "@t3tools/client-runtime/environment";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -205,10 +201,9 @@ const EMPTY_DRAFT: DraftState = {
   baseRef: "",
   startFromOrigin: true,
   existingWorktreePath: "",
-  modelKey: "",
+  modelSelection: null,
   runtimeMode: "full-access",
   interactionMode: "default",
-  baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
@@ -345,15 +340,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
 }
 
 /** formatRelativeTime handles only the past; upcoming runs need future labels. */
@@ -1568,7 +1554,7 @@ function ScheduledTaskEditorForm({
   );
 
   const firstInstance = instanceEntries[0];
-  const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
+  const draftSelection = draft.modelSelection;
   const activeSelection =
     draftSelection &&
     instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
@@ -1587,6 +1573,7 @@ function ScheduledTaskEditorForm({
     : { instanceId: activeInstanceId, model: activeModel };
   const shownInstanceId = shownSelection?.instanceId ?? activeInstanceId;
   const shownModel = shownSelection?.model ?? "";
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -1594,24 +1581,6 @@ function ScheduledTaskEditorForm({
     shownModel,
   );
 
-  // A bound run uses the thread's current model and effort, so show those read-only.
-  const boundShell = useBoundThreadShell(
-    draft.threadId ? scopeBoundThreadRef(environmentId, draft.threadId as ThreadId) : null,
-  );
-  // Options belong to the model they were chosen for; a different model starts from its defaults.
-  const draftOptions =
-    draft.baseModelSelection?.instanceId === activeInstanceId &&
-    draft.baseModelSelection.model === activeModel
-      ? draft.baseModelSelection.options
-      : undefined;
-  const traitsSelection = draft.threadId
-    ? (boundShell?.modelSelection ?? null)
-    : activeModel
-      ? { instanceId: activeInstanceId, model: activeModel, options: draftOptions }
-      : null;
-  const traitsEntry = instanceEntries.find(
-    (entry) => entry.instanceId === traitsSelection?.instanceId,
-  );
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
       stackedThreadToast({
@@ -1690,12 +1659,6 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1717,7 +1680,7 @@ function ScheduledTaskEditorForm({
       ...(draft.threadId === "" && draft.savedThreadId !== "" ? { unbindThread: true } : {}),
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
-      modelSelection,
+      modelSelection: selection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
         clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
@@ -1771,8 +1734,7 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...unbindDraftFromThread(current),
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
-                  modelKey: "",
-                  baseModelSelection: null,
+                  modelSelection: null,
                   baseRef: "",
                   startFromOrigin: true,
                   existingWorktreePath: "",
@@ -1986,29 +1948,29 @@ function ScheduledTaskEditorForm({
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
+                onInstanceModelChange={(instanceId, model) => {
+                  if (instanceId === activeSelection?.instanceId && model === activeSelection.model)
+                    return;
+                  setDraft((current) => ({
+                    ...current,
+                    modelSelection: createModelSelection(instanceId, model),
+                  }));
+                }}
               />
-              {traitsEntry && traitsSelection ? (
+              {!draft.threadId && activeSelection && activeEntry ? (
                 <TraitsPicker
-                  provider={traitsEntry.driverKind}
-                  instanceId={traitsSelection.instanceId}
-                  models={traitsEntry.models}
-                  model={traitsSelection.model}
-                  modelOptions={traitsSelection.options ?? []}
+                  provider={activeEntry.driverKind}
+                  models={activeEntry.models}
+                  model={activeModel}
+                  modelOptions={activeSelection.options ?? []}
                   allowPromptInjectedEffort={false}
-                  disabled={saving || !connected || draft.threadId !== ""}
+                  includePlanAgent={selectsPlanAgent(activeSelection.options)}
+                  disabled={saving || !connected}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     setDraft((current) => ({
                       ...current,
-                      modelKey: `${traitsSelection.instanceId}:${traitsSelection.model}`,
-                      baseModelSelection: createModelSelection(
-                        traitsSelection.instanceId,
-                        traitsSelection.model,
-                        options,
-                      ),
+                      modelSelection: createModelSelection(activeInstanceId, activeModel, options),
                     }))
                   }
                 />

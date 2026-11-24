@@ -1340,6 +1340,73 @@ describe("buildThreadFeed", () => {
     expect(presented.some((entry) => entry.type === "thinking")).toBe(false);
   });
 
+  // regression: #40551 a finished status after the children is the parent parking, not new work
+  it("keeps waiting on running subagents after the parent's finished status", () => {
+    const child = (
+      id: string,
+      ordinal: number,
+      status: "running" | "completed",
+    ): OrchestrationV2TurnItem => ({
+      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
+      status,
+      completedAt:
+        status === "running" ? null : DateTime.makeUnsafe(`2026-06-20T00:00:0${ordinal}.000Z`),
+      type: "subagent",
+      subagentId: NodeId.make(id),
+      origin: "provider_native",
+      driver: ProviderDriverKind.make("antigravity"),
+      providerInstanceId: ProviderInstanceId.make("antigravity"),
+      childThreadId: null,
+      prompt: `Read ${id}`,
+      result: null,
+    });
+    const startedAt = "2026-06-20T00:00:01.000Z";
+    const latestRun = { runId, status: "running" as const, startedAt, completedAt: null };
+    const present = (tail: ReadonlyArray<OrchestrationV2TurnItem>) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed([
+          projected(userMessage(), 0),
+          projected(child("a", 2, "running"), 1),
+          projected(child("b", 3, "completed"), 2),
+          projected(child("c", 4, "running"), 3),
+          ...tail.map((item, index) => projected(item, index + 4)),
+        ]),
+        latestRun,
+        new Set(),
+        new Set(),
+        startedAt,
+      );
+    const thinkingLabel = (rows: ReadonlyArray<ThreadFeedEntry>) => {
+      const row = rows.find((entry) => entry.type === "thinking");
+      return row?.type === "thinking" ? row.label : undefined;
+    };
+    expect(
+      thinkingLabel(
+        present([
+          {
+            ...assistantMessage("2026-06-20T00:00:05.000Z"),
+            id: TurnItemId.make("status"),
+            messageId: MessageId.make("status"),
+            text: "Subagents launched; waiting for them to report back.",
+          },
+        ]),
+      ),
+    ).toBe("Waiting on 2 subagents");
+    expect(
+      thinkingLabel(
+        present([
+          {
+            ...assistantMessage("2026-06-20T00:00:05.000Z"),
+            id: TurnItemId.make("foreign"),
+            messageId: MessageId.make("foreign"),
+            runId: RunId.make("run-2"),
+            text: "Earlier answer.",
+          },
+        ]),
+      ),
+    ).toBeUndefined();
+  });
+
   it("does not show Thinking once the provider turn has ended or its reply is streaming", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
     const run = { runId, status: "running" as const, startedAt, completedAt: null };
