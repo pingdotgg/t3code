@@ -380,7 +380,12 @@ function IssueProjectPicker({
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const needle = query.toLowerCase();
-  const candidates = (candidatesQuery.data?.projects ?? []).filter(
+  const knownProjects = candidatesQuery.data?.projects ?? [];
+  const allProjects =
+    detail.project && !knownProjects.some((project) => project.id === detail.project?.id)
+      ? [detail.project, ...knownProjects]
+      : knownProjects;
+  const candidates = allProjects.filter(
     (project) => needle.length === 0 || project.name.toLowerCase().includes(needle),
   );
   const selectProject = async (project: IssueProject | null) => {
@@ -690,6 +695,7 @@ export function IssueDetailPanel({
     body?: string;
     priority?: IssuePriority;
     parent?: string | null;
+    project?: string | null;
   }) => {
     setSaving(true);
     const result = await update({ environmentId, input: { ...reference, ...patch } });
@@ -1088,26 +1094,39 @@ export function IssueDetailPanel({
               >
                 <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                   {detail.project ? (
-                    <span className="truncate">
-                      {detail.project.url ? (
-                        <InlineButton
-                          render={
-                            <a
-                              href={detail.project.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            />
-                          }
+                    <>
+                      <span className="truncate">
+                        {detail.project.url ? (
+                          <InlineButton
+                            render={
+                              <a
+                                href={detail.project.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              />
+                            }
+                          >
+                            {detail.project.name}
+                          </InlineButton>
+                        ) : (
+                          detail.project.name
+                        )}
+                        {detail.milestone ? (
+                          <span className="text-muted-foreground"> · {detail.milestone.name}</span>
+                        ) : null}
+                      </span>
+                      {access.projects ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label={gt("Remove project")}
+                          disabled={saving}
+                          onClick={() => void save({ project: null })}
                         >
-                          {detail.project.name}
-                        </InlineButton>
-                      ) : (
-                        detail.project.name
-                      )}
-                      {detail.milestone ? (
-                        <span className="text-muted-foreground"> · {detail.milestone.name}</span>
+                          <XIcon aria-hidden className="size-3" />
+                        </Button>
                       ) : null}
-                    </span>
+                    </>
                   ) : (
                     <span className="text-muted-foreground">
                       <T context="no project">None</T>

@@ -388,6 +388,27 @@ query T3TeamProjects($key: String!) {
   }
 }
 
+query T3IssueLookup($id: String!) {
+  issue(id: $id) {
+    id
+    identifier
+  }
+}
+
+query T3ProjectRelations($id: String!, $first: Int!, $after: String) {
+  project(id: $id) {
+    id
+    relations(first: $first, after: $after) {
+      nodes {
+        ...LinearProjectRelation
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
+  }
+}
+
 mutation T3IssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
     success

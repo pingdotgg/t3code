@@ -757,6 +757,18 @@ describe("LinearIssueTracker", () => {
               },
             }),
           }),
+          T3IssueLookup: (variables) => ({
+            issue: { id: `iss_${String(variables.id)}`, identifier: String(variables.id) },
+          }),
+          T3ProjectRelations: (variables) => ({
+            project: {
+              id: String(variables.id),
+              relations: {
+                nodes: variables.id === "proj_alpha" ? projectAlpha.relations.nodes : [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
           T3IssueCreate: (variables) => {
             createdIssues.push(variables.input as Record<string, unknown>);
             return {
@@ -1025,6 +1037,211 @@ describe("LinearIssueTracker", () => {
           targetProject: "Catalog Unification",
         });
         expect(deletedProjectRelations).toEqual(["prel_1"]);
+      }),
+  );
+
+  it.effect(
+    "paginates project relations and matches full anchor and milestone identity before mutating",
+    () =>
+      Effect.gen(function* () {
+        const createdProjectRelations: Array<Record<string, unknown>> = [];
+        const deletedProjectRelations: Array<string> = [];
+        const milestoneEdge = {
+          id: "prel_page2_ms",
+          type: "dependency",
+          anchorType: "milestone",
+          relatedAnchorType: "milestone",
+          project: { id: "proj_alpha", name: "Alpha" },
+          projectMilestone: { id: "ms_a1", name: "M1" },
+          relatedProject: { id: "proj_beta", name: "Beta" },
+          relatedProjectMilestone: { id: "ms_b1", name: "B1" },
+        };
+        const projectEdge = {
+          id: "prel_page1_end_start",
+          type: "dependency",
+          anchorType: "end",
+          relatedAnchorType: "start",
+          project: { id: "proj_alpha", name: "Alpha" },
+          projectMilestone: null,
+          relatedProject: { id: "proj_beta", name: "Beta" },
+          relatedProjectMilestone: null,
+        };
+        const { tracker } = fakeLinear({
+          T3TeamProjects: () => ({
+            teams: {
+              nodes: [
+                {
+                  id: "team_eng",
+                  projects: {
+                    nodes: [
+                      {
+                        id: "proj_alpha",
+                        name: "Alpha",
+                        slugId: "alpha",
+                        url: "https://linear.app/acme/project/alpha",
+                        description: "",
+                        status: { name: "In Progress" },
+                        projectMilestones: {
+                          nodes: [{ id: "ms_a1", name: "M1", description: null, targetDate: null }],
+                        },
+                        // First page in T3TeamProjects is intentionally truncated and omits milestoneEdge.
+                        relations: { nodes: [projectEdge] },
+                        inverseRelations: { nodes: [] },
+                      },
+                      {
+                        id: "proj_beta",
+                        name: "Beta",
+                        slugId: "beta",
+                        url: "https://linear.app/acme/project/beta",
+                        description: "",
+                        status: { name: "Planned" },
+                        projectMilestones: {
+                          nodes: [{ id: "ms_b1", name: "B1", description: null, targetDate: null }],
+                        },
+                        relations: { nodes: [] },
+                        inverseRelations: { nodes: [] },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                  cycles: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                },
+              ],
+            },
+          }),
+          T3ProjectRelations: (variables) =>
+            variables.after === null
+              ? {
+                  project: {
+                    id: String(variables.id),
+                    relations: {
+                      nodes: [projectEdge],
+                      pageInfo: { hasNextPage: true, endCursor: "cursor_page_2" },
+                    },
+                  },
+                }
+              : {
+                  project: {
+                    id: String(variables.id),
+                    relations: {
+                      nodes: [milestoneEdge],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  },
+                },
+          T3ProjectRelationCreate: (variables) => {
+            createdProjectRelations.push(variables.input as Record<string, unknown>);
+            return {
+              projectRelationCreate: { success: true, projectRelation: { id: "prel_new" } },
+            };
+          },
+          T3ProjectRelationDelete: (variables) => {
+            deletedProjectRelations.push(String(variables.id));
+            return { projectRelationDelete: { success: true } };
+          },
+        });
+
+        const api = yield* tracker;
+        // Adding the page-2 edge is idempotent (must not create a duplicate).
+        yield* api.setProjectRelation({
+          ...target,
+          action: "add",
+          project: "Alpha",
+          kind: "blocks",
+          targetProject: "Beta",
+          milestone: "M1",
+          targetMilestone: "B1",
+        });
+        expect(createdProjectRelations).toEqual([]);
+
+        // Removing with mismatched anchors must NOT delete the existing end -> start edge.
+        yield* api.setProjectRelation({
+          ...target,
+          action: "remove",
+          project: "Alpha",
+          kind: "blocks",
+          targetProject: "Beta",
+          anchor: "start",
+          targetAnchor: "end",
+        });
+        expect(deletedProjectRelations).toEqual([]);
+
+        // Removing the page-2 milestone edge deletes only that exact edge.
+        yield* api.setProjectRelation({
+          ...target,
+          action: "remove",
+          project: "Alpha",
+          kind: "blocks",
+          targetProject: "Beta",
+          milestone: "M1",
+          targetMilestone: "B1",
+        });
+        expect(deletedProjectRelations).toEqual(["prel_page2_ms"]);
+      }),
+  );
+
+  it.effect(
+    "prevalidates dependency targets before creating an issue and reports the created key if relation linking fails",
+    () =>
+      Effect.gen(function* () {
+        const createdIssues: Array<Record<string, unknown>> = [];
+        const { tracker } = fakeLinear({
+          T3Team: () => teamScope(),
+          T3IssueLookup: (variables) =>
+            variables.id === "ENG-404"
+              ? new Response(
+                  JSON.stringify({ errors: [{ message: "Entity not found: Issue ENG-404" }] }),
+                  { status: 200, headers: { "content-type": "application/json" } },
+                )
+              : { issue: { id: `iss_${String(variables.id)}`, identifier: String(variables.id) } },
+          T3IssueCreate: (variables) => {
+            createdIssues.push(variables.input as Record<string, unknown>);
+            return {
+              issueCreate: {
+                success: true,
+                issue: {
+                  identifier: "ENG-77",
+                  url: "https://linear.app/acme/issue/ENG-77",
+                },
+              },
+            };
+          },
+          T3IssueRelationCreate: () =>
+            new Response(JSON.stringify({ errors: [{ message: "Relation write rejected" }] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+        });
+
+        const api = yield* tracker;
+        // Missing target must fail BEFORE createIssue is invoked.
+        const missingErr = yield* Effect.flip(
+          api.create({
+            ...target,
+            title: "Should not be created",
+            body: "",
+            labels: [],
+            assignees: [],
+            blockedBy: ["ENG-404"],
+          }),
+        );
+        expect(missingErr.detail).toContain("ENG-404");
+        expect(createdIssues).toEqual([]);
+
+        // If createIssue succeeds and relation creation fails afterward, retain the created key + URL in the error.
+        const linkErr = yield* Effect.flip(
+          api.create({
+            ...target,
+            title: "Created then link fails",
+            body: "",
+            labels: [],
+            assignees: [],
+            blocks: ["ENG-2"],
+          }),
+        );
+        expect(createdIssues).toHaveLength(1);
+        expect(linkErr.detail).toContain("ENG-77");
+        expect(linkErr.detail).toContain("https://linear.app/acme/issue/ENG-77");
       }),
   );
 });

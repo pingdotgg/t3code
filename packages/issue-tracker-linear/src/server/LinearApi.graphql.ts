@@ -249,13 +249,13 @@ export const LinearProject = Schema.Struct({
 export interface LinearProject extends Schema.Struct.Type<typeof LinearProject.fields> {}
 
 /** A project is a collection of issues working toward a shared goal. Projects have start and target dates, milestones, status tracking, and progress metrics. They can span multiple teams and be grouped under initiatives. */
-export const ProjectProject = Schema.Struct({
+export const LinearProjectRelationProjectProject = Schema.Struct({
   /** The unique identifier of the entity. */
   id: Shared.ID,
   /** The name of the project. */
   name: Schema.String
 })
-export interface ProjectProject extends Schema.Struct.Type<typeof ProjectProject.fields> {}
+export interface LinearProjectRelationProjectProject extends Schema.Struct.Type<typeof LinearProjectRelationProjectProject.fields> {}
 
 /** A milestone within a project. Milestones break a project into phases or target checkpoints, each with its own target date and set of issues. Issues can be assigned to a milestone to track progress toward that checkpoint. */
 export const ProjectMilestone = Schema.Struct({
@@ -281,11 +281,11 @@ export const LinearProjectRelation = Schema.Struct({
   /** The type of anchor on the target project end of the relation, indicating whether it is anchored to the project itself or a specific milestone. */
   relatedAnchorType: Schema.String,
   /** The source project in the dependency relation. */
-  project: ProjectProject,
+  project: LinearProjectRelationProjectProject,
   /** The specific milestone within the source project that the relation is anchored to. Null if the relation applies to the project as a whole. */
   projectMilestone: Schema.NullOr(ProjectMilestone),
   /** The target project in the dependency relation. */
-  relatedProject: ProjectProject,
+  relatedProject: LinearProjectRelationProjectProject,
   /** The specific milestone within the target project that the relation is anchored to. Null if the relation applies to the target project as a whole. */
   relatedProjectMilestone: Schema.NullOr(ProjectMilestone)
 })
@@ -764,10 +764,10 @@ export const ProjectMilestoneConnection = Schema.Struct({
 })
 export interface ProjectMilestoneConnection extends Schema.Struct.Type<typeof ProjectMilestoneConnection.fields> {}
 
-export const ProjectRelationConnection = Schema.Struct({
+export const NodesRelationsProjectRelationConnection = Schema.Struct({
   nodes: Schema.Array(LinearProjectRelation)
 })
-export interface ProjectRelationConnection extends Schema.Struct.Type<typeof ProjectRelationConnection.fields> {}
+export interface NodesRelationsProjectRelationConnection extends Schema.Struct.Type<typeof NodesRelationsProjectRelationConnection.fields> {}
 
 /** A project is a collection of issues working toward a shared goal. Projects have start and target dates, milestones, status tracking, and progress metrics. They can span multiple teams and be grouped under initiatives. */
 export const NodesProject = Schema.Struct({
@@ -775,9 +775,9 @@ export const NodesProject = Schema.Struct({
   /** Milestones associated with the project. */
   projectMilestones: ProjectMilestoneConnection,
   /** Relations associated with this project. */
-  relations: ProjectRelationConnection,
+  relations: NodesRelationsProjectRelationConnection,
   /** Inverse relations associated with this project. */
-  inverseRelations: ProjectRelationConnection
+  inverseRelations: NodesRelationsProjectRelationConnection
 })
 export interface NodesProject extends Schema.Struct.Type<typeof NodesProject.fields> {}
 
@@ -837,6 +837,85 @@ export const T3TeamProjects = GraphQL.query("T3TeamProjects", {
 export declare namespace T3TeamProjects {
   export type Variables = typeof T3TeamProjects.variables.Type
   export type Result = typeof T3TeamProjects.result.Type
+}
+
+/** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
+export const T3IssueLookupIssueIssue = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID,
+  /** Issue's human readable identifier (e.g. ENG-123). */
+  identifier: Schema.String
+})
+export interface T3IssueLookupIssueIssue extends Schema.Struct.Type<typeof T3IssueLookupIssueIssue.fields> {}
+
+/** `query T3IssueLookup` */
+export const T3IssueLookup = GraphQL.query("T3IssueLookup", {
+  document: {
+    variables: [
+      { name: "id", body: "String!" }
+    ],
+    selections: [
+      { name: "issue", body: ["(id:$", "id", "){id identifier}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    id: Schema.String
+  },
+  result: Schema.Struct({
+    /** One specific issue, looked up by its unique identifier. */
+    issue: T3IssueLookupIssueIssue
+  })
+})
+export declare namespace T3IssueLookup {
+  export type Variables = typeof T3IssueLookup.variables.Type
+  export type Result = typeof T3IssueLookup.result.Type
+}
+
+export const ProjectRelationsProjectRelationConnection = Schema.Struct({
+  nodes: Schema.Array(LinearProjectRelation),
+  pageInfo: LinearPageInfo
+})
+export interface ProjectRelationsProjectRelationConnection extends Schema.Struct.Type<typeof ProjectRelationsProjectRelationConnection.fields> {}
+
+/** A project is a collection of issues working toward a shared goal. Projects have start and target dates, milestones, status tracking, and progress metrics. They can span multiple teams and be grouped under initiatives. */
+export const T3ProjectRelationsProjectProject = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID,
+  /** Relations associated with this project. */
+  relations: ProjectRelationsProjectRelationConnection
+})
+export interface T3ProjectRelationsProjectProject extends Schema.Struct.Type<typeof T3ProjectRelationsProjectProject.fields> {}
+
+/** `query T3ProjectRelations` */
+export const T3ProjectRelations = GraphQL.query("T3ProjectRelations", {
+  document: {
+    variables: [
+      { name: "id", body: "String!" },
+      { name: "first", body: "Int!" },
+      { name: "after", body: "String" }
+    ],
+    selections: [
+      { name: "project", body: ["(id:$", "id", "){id relations(first:$", "first", " after:$", "after", "){nodes{...LinearProjectRelation}pageInfo{...LinearPageInfo}}}"] }
+    ],
+    fragments: [
+      { name: "LinearProjectRelation", body: ["on ProjectRelation{id type anchorType relatedAnchorType project{id name}projectMilestone{id name}relatedProject{id name}relatedProjectMilestone{id name}}"] },
+      { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] }
+    ]
+  },
+  variables: {
+    id: Schema.String,
+    first: Shared.Int,
+    after: Schema.optional(Schema.NullOr(Schema.String))
+  },
+  result: Schema.Struct({
+    /** Returns a single project by its identifier or URL slug. */
+    project: T3ProjectRelationsProjectProject
+  })
+})
+export declare namespace T3ProjectRelations {
+  export type Variables = typeof T3ProjectRelations.variables.Type
+  export type Result = typeof T3ProjectRelations.result.Type
 }
 
 /** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
@@ -1283,4 +1362,4 @@ export declare namespace T3CommentReactions {
 }
 
 /** Every operation in LinearApi.graphql. */
-export const LinearApiGraphQLGroup = GraphQLGroup.make(T3Viewer, T3Issues, T3Issue, T3Comments, T3Team, T3TeamProjects, T3IssueCreate, T3IssueUpdate, T3CommentCreate, T3ReactionCreate, T3ReactionDelete, T3IssueRelationCreate, T3IssueRelationDelete, T3ProjectCreate, T3ProjectMilestoneCreate, T3ProjectRelationCreate, T3ProjectRelationDelete, T3IssueReactions, T3CommentReactions)
+export const LinearApiGraphQLGroup = GraphQLGroup.make(T3Viewer, T3Issues, T3Issue, T3Comments, T3Team, T3TeamProjects, T3IssueLookup, T3ProjectRelations, T3IssueCreate, T3IssueUpdate, T3CommentCreate, T3ReactionCreate, T3ReactionDelete, T3IssueRelationCreate, T3IssueRelationDelete, T3ProjectCreate, T3ProjectMilestoneCreate, T3ProjectRelationCreate, T3ProjectRelationDelete, T3IssueReactions, T3CommentReactions)

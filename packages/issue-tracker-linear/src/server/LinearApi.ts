@@ -41,6 +41,7 @@ import {
   type LinearIssue,
   type LinearProject,
   type LinearProjectMilestone,
+  type LinearProjectRelation,
   type LinearReaction,
   type LinearTeamLabel,
   type LinearUser,
@@ -160,6 +161,10 @@ export class LinearApi extends Context.Service<
     readonly getTeamProjects: (
       key: string,
     ) => Effect.Effect<LinearTeamProjectsScope | null, IssueTrackerError>;
+    readonly issueExists: (identifier: string) => Effect.Effect<boolean, IssueTrackerError>;
+    readonly listProjectRelations: (
+      projectId: string,
+    ) => Effect.Effect<ReadonlyArray<LinearProjectRelation>, IssueTrackerError>;
     readonly createIssue: (
       input: IssueCreateInput,
     ) => Effect.Effect<{ readonly identifier: string; readonly url: string }, IssueTrackerError>;
@@ -428,6 +433,31 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const issueExists: LinearApi["Service"]["issueExists"] = (identifier) =>
+    call("issueExists", (linear) => linear.T3IssueLookup({ id: identifier })).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error) => error.reason === "failed" && /not found/i.test(error.detail),
+        () => Effect.succeed(false),
+      ),
+    );
+
+  const listProjectRelations: LinearApi["Service"]["listProjectRelations"] = Effect.fn(
+    "LinearApi.listProjectRelations",
+  )(function* (projectId) {
+    const relations: LinearProjectRelation[] = [];
+    let after: string | null = null;
+    while (true) {
+      const page = yield* call("listProjectRelations", (linear) =>
+        linear.T3ProjectRelations({ id: projectId, first: 50, after }),
+      );
+      relations.push(...page.project.relations.nodes);
+      const cursor = nextCursor(page.project.relations.pageInfo);
+      if (cursor === null) return relations;
+      after = cursor;
+    }
+  });
+
   const createIssue: LinearApi["Service"]["createIssue"] = (input) =>
     call("createIssue", (linear) => linear.T3IssueCreate({ input })).pipe(
       Effect.flatMap(({ issueCreate }) =>
@@ -552,6 +582,8 @@ export const make = Effect.gen(function* () {
     getComments,
     getTeam,
     getTeamProjects,
+    issueExists,
+    listProjectRelations,
     createIssue,
     updateIssue,
     createComment,

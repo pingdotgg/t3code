@@ -929,6 +929,36 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
             ),
           ),
         ];
+        // Prevalidate dependency targets before creating the issue so a bad key doesn't leave an orphan.
+        const seenTargets = new Set<string>();
+        const targetsToVerify = [
+          ...blocksTargets.map((target) => ({ target, label: "blocks" as const })),
+          ...blockedByTargets.map((target) => ({ target, label: "blockedBy" as const })),
+        ].filter(({ target }) => {
+          const normalized = target.toUpperCase();
+          if (seenTargets.has(normalized)) return false;
+          seenTargets.add(normalized);
+          return true;
+        });
+        yield* Effect.forEach(
+          targetsToVerify,
+          ({ target, label }) =>
+            linear
+              .issueExists(target)
+              .pipe(
+                Effect.flatMap((exists) =>
+                  exists
+                    ? Effect.void
+                    : Effect.fail(
+                        failed(
+                          "create",
+                          `Linear has no accessible issue "${target}" for ${label}.`,
+                        ),
+                      ),
+                ),
+              ),
+          { concurrency: 4 },
+        );
         const created = yield* linear.createIssue({
           teamId: scope.team.id,
           title: input.title,
@@ -944,15 +974,29 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           ...(projectMilestoneId === undefined ? {} : { projectMilestoneId }),
           ...(cycleId === undefined ? {} : { cycleId }),
         });
+        const linkOrReport = (
+          edge: string,
+          relationInput: LinearApi.IssueRelationCreateInput,
+        ): Effect.Effect<{ readonly id: string }, IssueTrackerError> =>
+          linear.createIssueRelation(relationInput).pipe(
+            Effect.mapError(
+              (error) =>
+                new IssueTrackerError({
+                  ...error,
+                  operation: "create",
+                  detail: `Created ${created.identifier} (${created.url}), but failed to link ${edge}: ${error.detail}. Retry with set_issue_deps instead of creating another issue.`,
+                }),
+            ),
+          );
         for (const target of blocksTargets) {
-          yield* linear.createIssueRelation({
+          yield* linkOrReport(`${created.identifier} blocks ${target}`, {
             issueId: created.identifier,
             relatedIssueId: target,
             type: "blocks",
           });
         }
         for (const target of blockedByTargets) {
-          yield* linear.createIssueRelation({
+          yield* linkOrReport(`${target} blocks ${created.identifier}`, {
             issueId: target,
             relatedIssueId: created.identifier,
             type: "blocks",
@@ -1162,28 +1206,21 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         const blockedAnchor =
           (isInverse ? input.anchor : input.targetAnchor) ??
           (blockedMilestoneId !== undefined ? "milestone" : "start");
-        const existing = blockingProject.relations.nodes.find(
+        const relations = yield* linear.listProjectRelations(blockingProject.id);
+        const existing = relations.find(
           (relation) =>
             relation.type === "dependency" &&
             relation.relatedProject.id === blockedProject.id &&
-            (blockingMilestoneId === undefined ||
-              relation.projectMilestone?.id === blockingMilestoneId) &&
-            (blockedMilestoneId === undefined ||
-              relation.relatedProjectMilestone?.id === blockedMilestoneId),
+            relation.anchorType === blockingAnchor &&
+            relation.relatedAnchorType === blockedAnchor &&
+            (relation.projectMilestone?.id ?? undefined) === blockingMilestoneId &&
+            (relation.relatedProjectMilestone?.id ?? undefined) === blockedMilestoneId,
         );
         if (input.action === "remove") {
           if (existing !== undefined) yield* linear.deleteProjectRelation(existing.id);
           return;
         }
-        if (
-          existing !== undefined &&
-          existing.anchorType === blockingAnchor &&
-          existing.relatedAnchorType === blockedAnchor &&
-          (existing.projectMilestone?.id ?? undefined) === blockingMilestoneId &&
-          (existing.relatedProjectMilestone?.id ?? undefined) === blockedMilestoneId
-        ) {
-          return;
-        }
+        if (existing !== undefined) return;
         yield* linear.createProjectRelation({
           projectId: blockingProject.id,
           relatedProjectId: blockedProject.id,
