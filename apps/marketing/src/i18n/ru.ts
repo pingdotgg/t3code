@@ -2,13 +2,13 @@ import type { Messages } from "./en";
 
 export const ru: Messages = {
   layout: {
-    defaultTitle: "HYR Code",
-    defaultDescription: "HYR Code. Открытый пульт управления ИИ-агентами для программирования.",
+    defaultTitle: "T3 Code",
+    defaultDescription: "T3 Code. Открытый пульт управления ИИ-агентами для программирования.",
     socialImageAlt:
-      "HYR Code: открытый пульт управления ИИ-агентами для программирования. Claude Code, Codex, Cursor, OpenCode, Grok и Antigravity.",
-    homeLabel: "Главная страница HYR Code",
+      "T3 Code: открытый пульт управления ИИ-агентами для программирования. Claude Code, Codex, Cursor, OpenCode, Grok и Antigravity.",
+    homeLabel: "Главная страница T3 Code",
     download: "Скачать",
-    starsLabel: "Поставить звезду HYR Code на GitHub, звёзд: {stars}",
+    starsLabel: "Поставить звезду T3 Code на GitHub, звёзд: {stars}",
     githubStars: "{stars} звёзд на GitHub",
     language: "Язык",
     mitLicensed: "Лицензия MIT",
@@ -19,8 +19,8 @@ export const ru: Messages = {
     security: "Безопасность",
   },
   home: {
-    title: "HYR Code | Открытый пульт управления ИИ-агентами для программирования",
-    description: "HYR Code. Открытый пульт управления ИИ-агентами для программирования.",
+    title: "T3 Code | Открытый пульт управления ИИ-агентами для программирования",
+    description: "T3 Code. Открытый пульт управления ИИ-агентами для программирования.",
     heroTitle: ["Открытый пульт", "управления", "ИИ-агентами для кода."],
     heroSub:
       "Управляйте Claude Code, Codex, Antigravity, OpenCode, Cursor и Grok из одного окна. Пользуйтесь своей подпиской. Форкайте всё целиком.",
@@ -31,14 +31,14 @@ export const ru: Messages = {
     downloadForAndroid: "Скачать для Android",
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
-    screenshotAlt: "HYR Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
+    screenshotAlt: "T3 Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
     endorsementsTitle: "Более {users} разработчиков не против",
     endorsementsSub: "Некоторые даже написали об этом в X.",
     endorsementsLabel: "Отзывы разработчиков",
     readPost: "Читать пост {handle} в X",
     harnessTitle: "Со своей подпиской",
     harnessBody:
-      "HYR Code не перепродаёт токены. Подключайте Claude Code, Codex, Antigravity, OpenCode, Cursor или Grok с учётными данными, которые у вас уже есть. Мы управляем агентами, тариф остаётся вашим.",
+      "T3 Code не перепродаёт токены. Подключайте Claude Code, Codex, Antigravity, OpenCode, Cursor или Grok с учётными данными, которые у вас уже есть. Мы управляем агентами, тариф остаётся вашим.",
     googleSignIn: "Вход через Google",
     harnessPoints: [
       "Никакой перепродажи ключей. Никаких лимитов.",
@@ -46,7 +46,7 @@ export const ru: Messages = {
       "Новые агенты каждую неделю.",
     ],
     gitVisualLabel:
-      "Схема работы с Git в HYR Code: просмотр диффа, коммит и пуш изменений, создание пул-реквеста.",
+      "Схема работы с Git в T3 Code: просмотр диффа, коммит и пуш изменений, создание пул-реквеста.",
     prReady: "Готово",
     prCommits: "3 коммита",
     viewDiff: "Открыть дифф",
@@ -72,15 +72,15 @@ export const ru: Messages = {
     browseSource: "Исходный код",
     ctaTitle: "Ваши агенты заслуживают лучшего, чем терминал.",
     ctaSub:
-      "HYR Code бесплатный, открытый и быстрый. Установите его, подключите провайдера, которому уже платите, и агенты сразу возьмутся за дело.",
+      "T3 Code бесплатный, открытый и быстрый. Установите его, подключите провайдера, которому уже платите, и агенты сразу возьмутся за дело.",
     otherPlatforms: "Другие платформы",
   },
   download: {
-    title: "Скачать HYR Code для macOS, Windows и Linux | HYR Code",
+    title: "Скачать T3 Code для macOS, Windows и Linux | T3 Code",
     description:
-      "Скачайте официальное десктопное приложение HYR Code для macOS, Windows или Linux либо приложения для iOS и Android. Единственный официальный сайт для загрузки: t3.codes.",
+      "Скачайте официальное десктопное приложение T3 Code для macOS, Windows или Linux либо приложения для iOS и Android. Единственный официальный сайт для загрузки: t3.codes.",
     breadcrumb: "Скачать",
-    heading: "Скачать HYR Code",
+    heading: "Скачать T3 Code",
     channelLabel: "Канал релизов",
     stable: "Стабильный",
     nightly: "Nightly",

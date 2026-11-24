@@ -599,7 +599,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     });
   }
 
-  progress.success(`Installed HYR Code ${targetVersion}`);
+  progress.success(`Installed t3 ${targetVersion}`);
   if (Option.isSome(repointed)) {
     yield* Console.log("  Run t3 to get started.\n");
   } else {

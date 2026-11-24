@@ -51,7 +51,7 @@ command it names and open the pairing URL to connect to that server. Stop it
 before starting a replacement, or use a different `--base-dir` for an
 independent server.
 
-To try HYR Code once without installing it, run `npx t3@latest` instead (needs
+To try upstream T3 Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`). It offers to install the `t3` command first. If you say no,
 it asks again at the next minor release, and `npx t3 install` installs it later.
 `npx t3` always runs the version npm picked, even when a `t3` is installed. On
@@ -116,7 +116,7 @@ in-app updater.
 
 ### Nix (nixpkgs)
 
-HYR Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).
+Upstream T3 Code (not HYR Code) is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).
 The command above installs from `nixos-unstable` and requires Nix 2.30 or later with
 `nix-command` and `flakes` enabled. Launch the desktop app with `t3code-desktop`;
 the package also includes the `t3` command.
@@ -176,7 +176,8 @@ folder paths, so in the web app use **Add project** instead.
 
 ## Mobile app
 
-Install HYR Code from the
+HYR Code has no app store release. The store apps are upstream T3 Code's mobile
+apps. Install T3 Code from the
 [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
 [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
 The phone connects to a server on another machine. Follow

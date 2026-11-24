@@ -74,7 +74,7 @@ Yes. On iPhone and Android, dictation uses on-device speech by default, with the
 
 ## Does it work on Windows, Mac, and Linux?
 
-Yes, all three. Desktop app, CLI, the works. One catch: there is no `t3` binary for Intel Macs, so use the desktop app there. Windows folks can also run agents inside WSL. [Install](./install.md)
+The source code runs on all three. HYR Code publishes a desktop build for macOS on Apple silicon only. On Windows, Linux, and Intel Macs, build HYR Code from source; the downloads and package managers for those platforms install upstream T3 Code. [Install](./install.md)
 
 ## Why is my provider not showing up?
 

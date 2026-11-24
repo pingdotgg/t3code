@@ -2,13 +2,13 @@ import type { Messages } from "./en";
 
 export const ko: Messages = {
   layout: {
-    defaultTitle: "HYR Code",
-    defaultDescription: "HYR Code. 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인.",
+    defaultTitle: "T3 Code",
+    defaultDescription: "T3 Code. 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인.",
     socialImageAlt:
-      "HYR Code: 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인. Claude Code, Codex, Cursor, OpenCode, Grok, Antigravity 지원.",
-    homeLabel: "HYR Code 홈",
+      "T3 Code: 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인. Claude Code, Codex, Cursor, OpenCode, Grok, Antigravity 지원.",
+    homeLabel: "T3 Code 홈",
     download: "다운로드",
-    starsLabel: "GitHub에서 HYR Code에 스타 주기, 현재 스타 {stars}",
+    starsLabel: "GitHub에서 T3 Code에 스타 주기, 현재 스타 {stars}",
     githubStars: "GitHub 스타 {stars}",
     language: "언어",
     mitLicensed: "MIT 라이선스",
@@ -19,8 +19,8 @@ export const ko: Messages = {
     security: "보안",
   },
   home: {
-    title: "HYR Code | 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인",
-    description: "HYR Code. 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인.",
+    title: "T3 Code | 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인",
+    description: "T3 Code. 코딩 에이전트를 위한 오픈 소스 컨트롤 플레인.",
     heroTitle: ["코딩 에이전트를 위한", "오픈 소스", "컨트롤 플레인."],
     heroSub:
       "Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 한 화면에서 오케스트레이션하세요. 구독은 쓰던 그대로. 통째로 포크하세요.",
@@ -31,15 +31,14 @@ export const ko: Messages = {
     downloadForAndroid: "Android용 다운로드",
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     alsoOnPhone: "휴대폰에서도:",
-    screenshotAlt:
-      "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 HYR Code",
+    screenshotAlt: "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 T3 Code",
     endorsementsTitle: "{users}명이 넘는 개발자가 나쁘지 않다고 합니다",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",
     endorsementsLabel: "개발자 추천",
     readPost: "X에서 {handle}님의 게시물 읽기",
     harnessTitle: "쓰던 구독 그대로",
     harnessBody:
-      "HYR Code는 토큰을 재판매하지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
+      "T3 Code는 토큰을 재판매하지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
     googleSignIn: "Google 로그인",
     harnessPoints: [
       "키 재판매 없음. 사용량 한도 없음.",
@@ -47,7 +46,7 @@ export const ko: Messages = {
       "매주 새 에이전트 추가.",
     ],
     gitVisualLabel:
-      "HYR Code Git 워크플로 그림: diff를 검토하고, 변경 사항을 커밋 및 푸시하고, 풀 리퀘스트를 엽니다.",
+      "T3 Code Git 워크플로 그림: diff를 검토하고, 변경 사항을 커밋 및 푸시하고, 풀 리퀘스트를 엽니다.",
     prReady: "준비됨",
     prCommits: "커밋 3개",
     viewDiff: "diff 보기",
@@ -73,15 +72,15 @@ export const ko: Messages = {
     browseSource: "소스 보기",
     ctaTitle: "에이전트에게 터미널보다 나은 작업 공간을.",
     ctaSub:
-      "HYR Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고 이미 쓰고 있는 에이전트를 연결하면 바로 일을 시작합니다.",
+      "T3 Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고 이미 쓰고 있는 에이전트를 연결하면 바로 일을 시작합니다.",
     otherPlatforms: "다른 플랫폼",
   },
   download: {
-    title: "macOS, Windows, Linux용 HYR Code 다운로드 | HYR Code",
+    title: "macOS, Windows, Linux용 T3 Code 다운로드 | T3 Code",
     description:
-      "macOS, Windows, Linux용 공식 HYR Code 데스크톱 앱을 다운로드하거나 iOS 및 Android 앱을 받으세요. 공식 다운로드 사이트는 t3.codes뿐입니다.",
+      "macOS, Windows, Linux용 공식 T3 Code 데스크톱 앱을 다운로드하거나 iOS 및 Android 앱을 받으세요. 공식 다운로드 사이트는 t3.codes뿐입니다.",
     breadcrumb: "다운로드",
-    heading: "HYR Code 다운로드",
+    heading: "T3 Code 다운로드",
     channelLabel: "릴리스 채널",
     stable: "안정판",
     nightly: "Nightly",

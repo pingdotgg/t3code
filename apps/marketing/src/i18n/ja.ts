@@ -2,13 +2,13 @@ import type { Messages } from "./en";
 
 export const ja: Messages = {
   layout: {
-    defaultTitle: "HYR Code",
-    defaultDescription: "HYR Code。オープンソースのコーディングエージェント制御プレーン。",
+    defaultTitle: "T3 Code",
+    defaultDescription: "T3 Code。オープンソースのコーディングエージェント制御プレーン。",
     socialImageAlt:
-      "HYR Code：オープンソースのコーディングエージェント制御プレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
-    homeLabel: "HYR Code ホーム",
+      "T3 Code：オープンソースのコーディングエージェント制御プレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
+    homeLabel: "T3 Code ホーム",
     download: "ダウンロード",
-    starsLabel: "GitHub で HYR Code にスターを付ける（{stars} スター）",
+    starsLabel: "GitHub で T3 Code にスターを付ける（{stars} スター）",
     githubStars: "GitHub スター {stars}",
     language: "言語",
     mitLicensed: "MIT ライセンス",
@@ -19,8 +19,8 @@ export const ja: Messages = {
     security: "セキュリティ",
   },
   home: {
-    title: "HYR Code | オープンソースのコーディングエージェント制御プレーン",
-    description: "HYR Code。オープンソースのコーディングエージェント制御プレーン。",
+    title: "T3 Code | オープンソースのコーディングエージェント制御プレーン",
+    description: "T3 Code。オープンソースのコーディングエージェント制御プレーン。",
     heroTitle: ["オープンソースの", "コーディングエージェント", "制御プレーン。"],
     heroSub:
       "Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をひとつの画面からオーケストレーション。サブスクリプションは手持ちのものをそのまま。まるごとフォークも自由です。",
@@ -32,14 +32,14 @@ export const ja: Messages = {
     sourceLink: "コードを盗もう（合法的に）",
     alsoOnPhone: "スマホでも使えます：",
     screenshotAlt:
-      "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす HYR Code",
+      "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす T3 Code",
     endorsementsTitle: "{users}人以上の開発者たちが「悪くない」と言っています",
     endorsementsSub: "温かいツイートまでいただいています。",
     endorsementsLabel: "開発者の声",
     readPost: "X で {handle} の投稿を読む",
     harnessTitle: "サブスクは持ち込みで",
     harnessBody:
-      "HYR Code はトークンの上乗せ販売を行いません。すでにお持ちの認証情報で、Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をつなぐだけ。HYR Code は制御プレーンのみを提供。プランは今のままで。",
+      "T3 Code はトークンの上乗せ販売を行いません。すでにお持ちの認証情報で、Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をつなぐだけ。T3 Code は制御プレーンのみを提供。プランは今のままで。",
     googleSignIn: "Google でサインイン",
     harnessPoints: [
       "キーの再販なし。使用量の上限なし。",
@@ -47,7 +47,7 @@ export const ja: Messages = {
       "対応エージェントは毎週追加。",
     ],
     gitVisualLabel:
-      "HYR Code の Git ワークフローの図：diff を確認し、変更をコミットしてプッシュし、プルリクエストを作成する。",
+      "T3 Code の Git ワークフローの図：diff を確認し、変更をコミットしてプッシュし、プルリクエストを作成する。",
     prReady: "準備完了",
     prCommits: "3 コミット",
     viewDiff: "diff を表示",
@@ -76,15 +76,15 @@ export const ja: Messages = {
     browseSource: "ソースを見る",
     ctaTitle: "あなたのエージェントに、ターミナルよりふさわしい場所を。",
     ctaSub:
-      "HYR Code は無料、オープンソースで、高速です。インストールしたら、お使いのハーネスをつなぐだけ。すぐに仕事に取り掛かれます。",
+      "T3 Code は無料、オープンソースで、高速です。インストールしたら、お使いのハーネスをつなぐだけ。すぐに仕事に取り掛かれます。",
     otherPlatforms: "ほかのプラットフォーム",
   },
   download: {
-    title: "HYR Code をダウンロード（macOS、Windows、Linux）| HYR Code",
+    title: "T3 Code をダウンロード（macOS、Windows、Linux）| T3 Code",
     description:
-      "公式の HYR Code デスクトップアプリ（macOS、Windows、Linux）や、iOS・Android アプリをダウンロードできます。公式のダウンロードサイトは t3.codes だけです。",
+      "公式の T3 Code デスクトップアプリ（macOS、Windows、Linux）や、iOS・Android アプリをダウンロードできます。公式のダウンロードサイトは t3.codes だけです。",
     breadcrumb: "ダウンロード",
-    heading: "HYR Code をダウンロード",
+    heading: "T3 Code をダウンロード",
     channelLabel: "リリースチャンネル",
     stable: "安定版",
     nightly: "Nightly",
