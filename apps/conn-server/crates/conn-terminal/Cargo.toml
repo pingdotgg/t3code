@@ -21,6 +21,10 @@ serde_json.workspace = true
 # `signal`: see `pty::stop_passing_on_ignored_signals`; `process` already pulls in its code.
 tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros", "signal"] }
 
+[features]
+# `TerminalManager::hold_lock`: lets another crate's tests hold the manager's lock.
+test-util = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["process", "io-util", "sync", "time", "rt", "macros", "signal", "test-util"] }
 

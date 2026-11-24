@@ -49,7 +49,9 @@ pub(crate) fn derive_tokens(theme: &ThemeDefinition) -> Tokens {
     let foreground = role("text");
     let card = role("surface");
     let card_foreground = foreground;
-    let popover = role("surfaceOverlay");
+    // Popovers and menus never let content show through: GPUI has no backdrop blur (gpui-kit#3598),
+    // so a translucent `surfaceOverlay` role is flattened to its opaque colour (Nick, 2026-11-23).
+    let popover = role("surfaceOverlay").with_alpha(1.0);
     let popover_foreground = foreground;
     // Solid controls share the theme's messageAction role (`--primary: var(--app-theme-message-action)`).
     let primary = role("messageAction");

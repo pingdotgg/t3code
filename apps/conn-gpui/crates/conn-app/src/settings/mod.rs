@@ -12,8 +12,10 @@
 //!   `shell_divider_raised` between square rows, no trailing divider).
 
 pub(crate) mod controls;
+pub(crate) mod projects;
 pub(crate) mod providers;
 pub(crate) mod scheduled_tasks;
+mod terminal;
 
 use conn_client::{Connection, ConnectionStatus};
 use conn_theme::{Appearance, Rgba, ShellGeometry, Tokens};
@@ -55,17 +57,21 @@ const NAV_ROW_HEIGHT_PX: f32 = 32.0;
 pub(crate) enum SettingsPage {
     General,
     Appearance,
+    Terminal,
     Connections,
     Providers,
+    Projects,
     ScheduledTasks,
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 6] = [
+const ALL_PAGES: [SettingsPage; 8] = [
     SettingsPage::General,
     SettingsPage::Appearance,
+    SettingsPage::Terminal,
     SettingsPage::Connections,
     SettingsPage::Providers,
+    SettingsPage::Projects,
     SettingsPage::ScheduledTasks,
     SettingsPage::Keyboard,
 ];
@@ -75,8 +81,10 @@ impl SettingsPage {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Terminal => "Terminal",
             Self::Connections => "Connections",
             Self::Providers => "Providers",
+            Self::Projects => "Projects",
             Self::ScheduledTasks => "Scheduled tasks",
             Self::Keyboard => "Keyboard",
         }
@@ -86,8 +94,10 @@ impl SettingsPage {
         match self {
             Self::General => IconName::SlidersHorizontal,
             Self::Appearance => IconName::Palette,
+            Self::Terminal => IconName::SquareTerminal,
             Self::Connections => IconName::Plug,
             Self::Providers => IconName::Bot,
+            Self::Projects => IconName::Folder,
             Self::ScheduledTasks => IconName::Clock,
             Self::Keyboard => IconName::Keyboard,
         }
@@ -118,6 +128,16 @@ pub(crate) enum SettingsEvent {
     OrbitWakeInstance {
         instance_id: i64,
         server_id: String,
+    },
+    /// Conn's per-environment switch on a linked environment (`setEnabled`).
+    LinkedEnvironmentEnabled {
+        environment_id: String,
+        enabled: bool,
+    },
+    /// Links an Orbit Instance's server, or stops choosing it.
+    LinkInstance {
+        server_id: String,
+        linked: bool,
     },
     OrbitToggleSyncWorkspaces(bool),
     OrbitToggleSyncAppearance(bool),
@@ -188,6 +208,11 @@ pub(crate) struct SettingsModal {
     search_input: Entity<InputState>,
     _search_sub: Subscription,
     new_profile_input: Entity<InputState>,
+    /// Settings → Terminal: the font family text field.
+    terminal_family_input: Entity<InputState>,
+    _terminal_family_sub: Subscription,
+    /// Settings → Terminal: the font weight slider and dropdown (`terminal.rs`).
+    terminal_weight: terminal::TerminalWeightUi,
     show_stopped_instances: bool,
     direct_server_url_input: Entity<InputState>,
     direct_server_token_input: Entity<InputState>,
@@ -196,6 +221,7 @@ pub(crate) struct SettingsModal {
     operator_saved_notice: Option<String>,
     scheduled_tasks: Entity<ScheduledTasksView>,
     providers: Entity<providers::ProvidersView>,
+    projects: Entity<projects::ProjectsView>,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -251,6 +277,24 @@ impl SettingsModal {
             }
         });
 
+        let terminal_family = crate::terminal_settings::current(cx).font_family;
+        let terminal_family_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Theme monospace font")
+                .default_value(terminal_family)
+        });
+        let terminal_family_sub = cx.subscribe(
+            &terminal_family_input,
+            |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let family = input.read(cx).value().to_string();
+                    crate::terminal_settings::update(cx, |s| s.font_family = family);
+                    // The new family has its own weights: a new slider range.
+                    this.terminal_weight.rebuild(cx);
+                }
+            },
+        );
+
         let operator_cfg = conn_desktop::operator::OperatorConfig::load_effective();
         let operator_url = operator_cfg.base_url;
         let operator_url_input = cx.new(|cx| {
@@ -259,6 +303,7 @@ impl SettingsModal {
                 .default_value(operator_url)
         });
         let provider_connection = live_connection.clone();
+        let projects_connection = live_connection.clone();
         let provider_environment = connection
             .server_label
             .clone()
@@ -286,7 +331,7 @@ impl SettingsModal {
                     geometry,
                     connection: live_connection,
                     server_url: scheduled_url,
-                    projects,
+                    projects: projects.clone(),
                     default_instance_id,
                     default_model: default_model_slug,
                 },
@@ -294,19 +339,19 @@ impl SettingsModal {
             )
         });
 
-        let providers = cx.new(|cx| {
-            providers::ProvidersView::new(
-                providers::ProvidersInit {
-                    tokens: tokens.clone(),
-                    geometry,
-                    connection: provider_connection,
-                    environment_label: provider_environment,
-                },
-                window,
-                cx,
-            )
+        let providers = cx.new(|_| {
+            providers::ProvidersView::new(providers::ProvidersInit {
+                tokens: tokens.clone(),
+                geometry,
+                connection: provider_connection,
+                environment_label: provider_environment,
+            })
         });
 
+        let projects_tokens = tokens.clone();
+        let projects = cx.new(|_| {
+            projects::ProjectsView::new(projects_tokens, geometry, projects, projects_connection)
+        });
         Self {
             tokens,
             geometry,
@@ -320,6 +365,9 @@ impl SettingsModal {
             search_input,
             _search_sub: search_sub,
             new_profile_input,
+            terminal_family_input,
+            _terminal_family_sub: terminal_family_sub,
+            terminal_weight: terminal::TerminalWeightUi::new(cx),
             show_stopped_instances: false,
             direct_server_url_input,
             direct_server_token_input,
@@ -328,6 +376,7 @@ impl SettingsModal {
             operator_saved_notice: None,
             scheduled_tasks,
             providers,
+            projects,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
@@ -339,8 +388,21 @@ impl SettingsModal {
         config: std::sync::Arc<conn_state::providers::ServerConfigState>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.projects.update(cx, |view, cx| {
+            view.set_server_config(std::sync::Arc::clone(&config), cx);
+        });
         self.providers
             .update(cx, |view, cx| view.set_server_config(config, cx));
+    }
+
+    /// The projects the server lists, for each one's actions and workspace default.
+    pub(crate) fn set_project_shells(
+        &mut self,
+        shells: Vec<conn_contract::OrchestrationProjectShell>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.projects
+            .update(cx, |view, cx| view.set_shells(shells, cx));
     }
 
     /// `Open provider setup`: the Providers page with `instance_id`'s Account row open.
@@ -367,10 +429,15 @@ impl SettingsModal {
                 .clone()
                 .unwrap_or_else(|| "this environment".to_owned());
             let provider_connection = live_connection.clone();
+            let projects_connection = provider_connection.clone();
+            self.projects
+                .update(cx, |view, cx| view.set_connection(projects_connection, cx));
             self.providers.update(cx, |view, cx| {
                 view.set_connection(provider_connection, environment, cx);
             });
         }
+        self.projects
+            .update(cx, |view, cx| view.set_projects(projects.clone(), cx));
         self.connection = connection;
         self.orbit = orbit;
         self.themes = build_theme_options(custom_themes);
@@ -395,6 +462,8 @@ impl SettingsModal {
         self.scheduled_tasks.update(cx, |view, cx| {
             view.set_tokens(tokens.clone(), cx);
         });
+        self.projects
+            .update(cx, |view, cx| view.set_tokens(tokens.clone(), cx));
         self.providers
             .update(cx, |view, cx| view.set_tokens(tokens, cx));
         cx.notify();
@@ -655,8 +724,10 @@ impl SettingsModal {
             match self.active_page {
                 SettingsPage::General => self.render_general_page(),
                 SettingsPage::Appearance => self.render_appearance_page(cx),
+                SettingsPage::Terminal => self.render_terminal_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
                 SettingsPage::Providers => self.providers.clone().into_any_element(),
+                SettingsPage::Projects => self.projects.clone().into_any_element(),
                 SettingsPage::ScheduledTasks => self.scheduled_tasks.clone().into_any_element(),
                 SettingsPage::Keyboard => self.render_keyboard_page(),
             }
@@ -1129,6 +1200,9 @@ impl SettingsModal {
 
         // Orbit Nodes section (`Settings › Connections › Orbit Nodes`).
         let mut node_rows: Vec<AnyElement> = Vec::new();
+        let primary_agent_id =
+            conn_desktop::orbit::select_primary_agent_node(&self.orbit.fleet.nodes, None)
+                .map(|node| node.server_id.clone());
         for node in &self.orbit.fleet.nodes {
             let sid = node.server_id.clone();
             let is_active = self.orbit.active_server_id.as_deref() == Some(sid.as_str());
@@ -1184,7 +1258,7 @@ impl SettingsModal {
             }
             node_rows.push(orbit_node_row(
                 &title,
-                orbit_node_role_badge(node),
+                orbit_node_role_badge(node, primary_agent_id.as_deref()),
                 &subtitle,
                 btn.into_any_element(),
                 &self.tokens,
@@ -1267,10 +1341,43 @@ impl SettingsModal {
                     }));
             }
 
+            let is_linked = self.orbit.linked_instance_ids.contains(&sid);
+            let link_entity = cx.entity();
+            let link_sid = sid.clone();
+            let link_switch = pill_switch(
+                SharedString::from(format!("conn-settings-link-{sid}")),
+                is_linked,
+                &self.tokens,
+                move |_window, cx| {
+                    link_entity.update(cx, |this, cx| {
+                        let linked = !this.orbit.linked_instance_ids.contains(&link_sid);
+                        if linked {
+                            this.orbit.linked_instance_ids.push(link_sid.clone());
+                        } else {
+                            this.orbit.linked_instance_ids.retain(|id| id != &link_sid);
+                        }
+                        cx.emit(SettingsEvent::LinkInstance {
+                            server_id: link_sid.clone(),
+                            linked,
+                        });
+                        cx.notify();
+                    });
+                },
+            );
             instance_rows.push(settings_row(
                 &title,
-                Some(&subtitle),
-                btn.into_any_element(),
+                Some(&format!(
+                    "{subtitle} · {}",
+                    if is_linked { "linked" } else { "not linked" }
+                )),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(link_switch)
+                    .child(btn)
+                    .into_any_element(),
                 &self.tokens,
                 &self.geometry,
             ));
@@ -1844,6 +1951,57 @@ impl SettingsModal {
                 &self.geometry,
             ));
         }
+        // Linked environments (Conn: Settings › Connections, saved backends with a switch).
+        let mut linked_rows: Vec<AnyElement> = Vec::new();
+        for (idx, environment) in self.orbit.linked_environments.iter().enumerate() {
+            let state_text = match environment.state {
+                crate::orbit_sync::LinkedEnvironmentState::Connected => {
+                    format!("Connected · {} threads", environment.thread_count)
+                }
+                crate::orbit_sync::LinkedEnvironmentState::Connecting => "Connecting…".to_owned(),
+                crate::orbit_sync::LinkedEnvironmentState::Offline => format!(
+                    "Offline or asleep · showing {} saved threads",
+                    environment.thread_count
+                ),
+                crate::orbit_sync::LinkedEnvironmentState::Off => {
+                    "Switched off · its threads are not listed".to_owned()
+                }
+            };
+            let entity = cx.entity();
+            let switch = pill_switch(
+                SharedString::from(format!("conn-settings-linked-env-{}", environment.id)),
+                environment.enabled,
+                &self.tokens,
+                move |_window, cx| {
+                    entity.update(cx, |this, cx| {
+                        let Some(row) = this.orbit.linked_environments.get_mut(idx) else {
+                            return;
+                        };
+                        row.enabled = !row.enabled;
+                        cx.emit(SettingsEvent::LinkedEnvironmentEnabled {
+                            environment_id: row.id.clone(),
+                            enabled: row.enabled,
+                        });
+                        cx.notify();
+                    });
+                },
+            );
+            linked_rows.push(settings_row(
+                &environment.label,
+                Some(&state_text),
+                switch.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+        if !linked_rows.is_empty() {
+            page = page.child(settings_section(
+                "Linked environments",
+                linked_rows,
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
         if !instance_rows.is_empty() {
             page = page.child(settings_section(
                 "Orbit Instances",
@@ -2016,7 +2174,7 @@ impl Render for SettingsModal {
                     .child(modal),
             ),
         )
-        .with_priority(2)
+        .with_priority(crate::panels::chrome::MODAL_LAYER_PRIORITY)
     }
 }
 
@@ -2039,26 +2197,36 @@ fn over(top: conn_theme::Rgba, below: conn_theme::Rgba) -> conn_theme::Rgba {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OrbitNodeRoleBadge {
+    PrimaryAgent,
     Agent,
 }
 
 impl OrbitNodeRoleBadge {
     const fn label(self) -> &'static str {
         match self {
+            Self::PrimaryAgent => "Primary agent",
             Self::Agent => "Agent",
         }
     }
 }
 
+/// `Primary agent` on the fleet's agent entry (`select_primary_agent_node` without the local
+/// fallback), `Agent` on the other Nodes with the `agent` role.
 fn orbit_node_role_badge(
     node: &conn_desktop::orbit::OrbitServerTarget,
+    primary_agent_id: Option<&str>,
 ) -> Option<OrbitNodeRoleBadge> {
-    node.has_agent_role().then_some(OrbitNodeRoleBadge::Agent)
+    if primary_agent_id == Some(node.server_id.as_str()) {
+        Some(OrbitNodeRoleBadge::PrimaryAgent)
+    } else if node.has_agent_role() {
+        Some(OrbitNodeRoleBadge::Agent)
+    } else {
+        None
+    }
 }
 
 /// Renders an Orbit Node row inside `Settings › Connections`, placing a subtle Conn-styled
-/// `Agent` pill badge next to the node label when the Node carries the Orbit `agent` role (the
-/// Conn entry point).
+/// `Agent` / `Primary agent` pill badge next to the node label.
 fn orbit_node_row(
     title: &str,
     role_badge: Option<OrbitNodeRoleBadge>,
@@ -2087,6 +2255,11 @@ fn orbit_node_row(
 
     if let Some(badge) = role_badge {
         let (badge_bg, badge_border, badge_fg) = match badge {
+            OrbitNodeRoleBadge::PrimaryAgent => (
+                hsla_alpha(tokens.info, 0.14),
+                hsla_alpha(tokens.info, 0.30),
+                hsla(tokens.info_foreground),
+            ),
             OrbitNodeRoleBadge::Agent => (
                 hsla(tokens.shell_control_raised),
                 hsla(tokens.shell_control_raised_border),
@@ -2147,36 +2320,61 @@ fn orbit_node_row(
 
 #[cfg(test)]
 mod tests {
-    use conn_desktop::orbit::{OrbitServerTarget, OrbitTargetKind, OrbitTargetStatus};
+    use conn_desktop::orbit::{
+        OrbitServerTarget, OrbitTargetKind, OrbitTargetStatus, select_primary_agent_node,
+    };
 
     use super::{OrbitNodeRoleBadge, orbit_node_role_badge};
 
-    fn node_target(roles: &[&str]) -> OrbitServerTarget {
+    fn node_target(name: &str, roles: &[&str], is_primary_agent: bool) -> OrbitServerTarget {
         OrbitServerTarget {
-            server_id: "node-mini".to_owned(),
-            label: "mini".to_owned(),
+            server_id: format!("node-{name}"),
+            label: name.to_owned(),
             url: "http://10.44.0.8:3773".to_owned(),
             server_version: Some("0.1.7".to_owned()),
-            registered_by: Some("mini".to_owned()),
+            registered_by: Some(name.to_owned()),
             status: OrbitTargetStatus::Registered,
             cleanup_pending: false,
             kind: OrbitTargetKind::Node {
-                node_name: "mini".to_owned(),
+                node_name: name.to_owned(),
                 roles: roles.iter().map(|r| (*r).to_owned()).collect(),
+                is_primary_agent,
             },
         }
     }
 
-    #[test]
-    fn resolves_orbit_node_role_badges() {
-        let agent = node_target(&["router", "agent"]);
-        assert_eq!(
-            orbit_node_role_badge(&agent),
-            Some(OrbitNodeRoleBadge::Agent)
-        );
-        assert_eq!(OrbitNodeRoleBadge::Agent.label(), "Agent");
+    fn badges(nodes: &[OrbitServerTarget]) -> Vec<Option<OrbitNodeRoleBadge>> {
+        let primary = select_primary_agent_node(nodes, None).map(|n| n.server_id.as_str());
+        nodes
+            .iter()
+            .map(|node| orbit_node_role_badge(node, primary))
+            .collect()
+    }
 
-        let plain = node_target(&["router"]);
-        assert_eq!(orbit_node_role_badge(&plain), None);
+    #[test]
+    fn badges_follow_the_primary_agent_selection() {
+        use OrbitNodeRoleBadge::{Agent, PrimaryAgent};
+
+        let fleet = [
+            node_target("beast", &["router", "agent"], false),
+            node_target("mini", &["agent"], true),
+            node_target("nick", &["router"], false),
+        ];
+        assert_eq!(badges(&fleet), [Some(Agent), Some(PrimaryAgent), None]);
+
+        let one_agent = [
+            node_target("beast", &["agent"], false),
+            node_target("nick", &[], false),
+        ];
+        assert_eq!(badges(&one_agent), [Some(PrimaryAgent), None]);
+
+        let two_agents = [
+            node_target("beast", &["agent"], false),
+            node_target("mini", &["agent"], false),
+        ];
+        assert_eq!(badges(&two_agents), [Some(Agent), Some(Agent)]);
+
+        assert_eq!(PrimaryAgent.label(), "Primary agent");
+        assert_eq!(Agent.label(), "Agent");
     }
 }

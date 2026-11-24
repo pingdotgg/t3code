@@ -190,6 +190,74 @@ final class ConnSpikeUITests: XCTestCase {
         }
     }
 
+    /// The question panel on a thread whose (fake Grok) run waits for three answers. With
+    /// CONN_QUESTION_ANSWER=1 it answers every step, from the options and the composer.
+    func testQuestionPanelFlow() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let pairingURL = env["CONN_PAIRING_URL"], !pairingURL.isEmpty,
+              let title = env["CONN_QUESTION_THREAD_TITLE"], !title.isEmpty
+        else {
+            throw XCTSkip("Set CONN_PAIRING_URL and CONN_QUESTION_THREAD_TITLE")
+        }
+        let screensDir = env["CONN_SCREENS_DIR"]
+        let suffix = env["CONN_SCREEN_SUFFIX"] ?? ""
+        switch env["CONN_APPEARANCE"] {
+        case "dark": XCUIDevice.shared.appearance = .dark
+        case "light": XCUIDevice.shared.appearance = .light
+        default: break
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-session"]
+        app.launch()
+        let urlField = app.textFields["pairing.urlField"]
+        XCTAssertTrue(urlField.waitForExistence(timeout: 10), "Pairing URL field should appear")
+        urlField.tap()
+        urlField.typeText(pairingURL)
+        app.buttons["pairing.connectButton"].tap()
+
+        let threadRow = app.staticTexts[title].firstMatch
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 15), "The question thread should be listed")
+        threadRow.tap()
+
+        let panel = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'thread.question.'")).firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 15), "The question panel should open above the composer")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        saveScreenshot(named: "question-1\(suffix)", dir: screensDir)
+        guard env["CONN_QUESTION_ANSWER"] == "1" else { return }
+
+        // Step 1: a single-choice pick moves on by itself.
+        app.buttons["question.option.Postgres"].firstMatch.tap()
+        let clippy = app.buttons["question.option.clippy"].firstMatch
+        XCTAssertTrue(clippy.waitForExistence(timeout: 5), "The pick should move to step 2")
+        clippy.tap()
+        app.buttons["question.option.tests"].firstMatch.tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        saveScreenshot(named: "question-2\(suffix)", dir: screensDir)
+        app.buttons["question.next"].firstMatch.tap()
+
+        // Step 3: the composer's text is the answer; it shows as "Your answer" while typed.
+        XCTAssertTrue(
+            app.staticTexts["What should the branch be called?"].firstMatch.waitForExistence(timeout: 5),
+            "Next should move to step 3"
+        )
+        let composer = app.textViews.firstMatch.exists ? app.textViews.firstMatch : app.textFields.firstMatch
+        composer.tap()
+        composer.typeText("conn/cache-store")
+        XCTAssertTrue(app.staticTexts["Your answer"].firstMatch.waitForExistence(timeout: 5), "Typed text shows as the answer")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        saveScreenshot(named: "question-3\(suffix)", dir: screensDir)
+        app.buttons["Send"].firstMatch.tap()
+
+        // The answers reach the agent: the panel goes and the agent's reply names them.
+        let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "conn/cache-store")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 20), "The agent should reply with the answers")
+        XCTAssertFalse(panel.exists, "The panel should close once answered")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        saveScreenshot(named: "question-answered\(suffix)", dir: screensDir)
+    }
+
     func testCaptureExpoReferenceScreens() throws {
         let env = ProcessInfo.processInfo.environment
         guard env["CONN_CAPTURE_EXPO"] == "1" else {

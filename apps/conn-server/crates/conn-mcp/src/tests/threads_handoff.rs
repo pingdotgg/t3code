@@ -909,3 +909,182 @@ async fn handoff_reports_the_committed_continuation_when_the_caller_ends_during_
         json!({"status":"scheduled","delivery":"started"})
     );
 }
+
+/// T3 `cleanUpSettledThread` (`ThreadSettlementService.ts:700`): a settled thread's own
+/// worktree runs the project's `runOnSettle` script in a fresh `settle-` terminal; a delegate
+/// that shares its parent's checkout runs nothing. The host's settle effect, and its
+/// once-per-settlement rule, are proven in `conn-server`'s `host.rs`.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settled_worktree_thread_runs_its_settle_script_in_its_own_checkout() {
+    let mut f = fixture("settle-script");
+    let shell = f.dir.join("shell");
+    conn_support::test_util::executable(
+        &shell,
+        "#!/bin/sh\nexport HISTFILE=/dev/null\nexec /bin/sh \"$@\"\n",
+    )
+    .unwrap();
+    let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+        shells: vec![shell.to_string_lossy().into_owned()],
+        ..Default::default()
+    });
+    Arc::get_mut(&mut f.service)
+        .unwrap()
+        .config
+        .worktrees
+        .as_mut()
+        .unwrap()
+        .terminals = Some(terminals.clone());
+    git_project(&f).await;
+    f.service.config.engine.call("projects.mutate",json!({"type":"project.update","commandId":"settle-script","projectId":project_id(),"scripts":[{"id":"finish","name":"Finish","icon":"play","command":"printf 'ran\\n' >> settle-runs.txt; printf 'SETTLE-%s\\n' done","runOnSettle":true,"runOnWorktreeCreate":false}]})).await.unwrap();
+    let (parent, caller) = running_parent(&f).await;
+    let thread = parent["threadId"].as_str().unwrap().to_owned();
+    let mut agent = Client::open(&f.service, caller).await;
+    let moved = agent
+        .ok(
+            "conn_worktree_handoff",
+            json!({"branch":"feature/settle","startFromOrigin":false,"continuationPrompt":"hang"}),
+        )
+        .await;
+    let path = PathBuf::from(moved["worktreePath"].as_str().unwrap());
+    let mut operator = Client::open(&f.service, client(true)).await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId":thread,"runId":parent["runId"],"timeoutMs":10000}),
+        )
+        .await;
+    until_provider_turn(&f, &thread).await;
+
+    // A delegate in the parent's checkout: the checkout belongs to the parent.
+    let child = agent
+        .ok(
+            "delegate_task",
+            json!({"task":"done","mode":"wait","timeoutMs":5000}),
+        )
+        .await;
+    let child_id = child["childThreadId"].as_str().unwrap().to_owned();
+    let settle = |id: &str, n: u32| json!({"type":"thread.settle","commandId":format!("settle-{id}-{n}"),"threadId":id});
+    // The committed `settledAt` names a settlement.
+    let settled_at = |id: String| {
+        let engine = f.service.config.engine.clone();
+        async move {
+            let p = engine
+                .get_thread_projection(id.as_str().into())
+                .await
+                .unwrap();
+            p["thread"]["settledAt"].as_str().unwrap().to_owned()
+        }
+    };
+    dispatch(&f, settle(&child_id, 1)).await;
+    let child_settlement = settled_at(child_id.clone()).await;
+    assert_eq!(
+        f.service
+            .run_settle_script(&child_id, &child_settlement)
+            .await,
+        None
+    );
+
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId":thread}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId":thread,"timeoutMs":10000}),
+        )
+        .await;
+    dispatch(&f, settle(&thread, 1)).await;
+    let first = settled_at(thread.clone()).await;
+    let started = f
+        .service
+        .run_settle_script(&thread, &first)
+        .await
+        .expect("the settle script starts");
+    assert_eq!(started["status"], "started");
+    let terminal = started["terminalId"].as_str().unwrap();
+    assert!(terminal.starts_with("settle-finish-"), "{terminal}");
+    let mut output = terminals
+        .observe(
+            conn_contract::from_json(json!({"threadId":thread,"terminalId":terminal})).unwrap(),
+        )
+        .unwrap();
+    // Exit 0: the script's terminal closes once its shell is idle again.
+    let mut text = String::new();
+    loop {
+        match output.next().await {
+            conn_contract::TerminalAttachStreamEvent::Output(event) => text.push_str(&event.data),
+            conn_contract::TerminalAttachStreamEvent::Snapshot(event) => {
+                text.push_str(&event.snapshot.history)
+            }
+            conn_contract::TerminalAttachStreamEvent::Closed(_) => break,
+            _ => {}
+        }
+    }
+    assert!(text.contains("SETTLE-done"), "{text}");
+    let runs_file = path.join("settle-runs.txt");
+    let runs = tokio::task::spawn_blocking(move || std::fs::read_to_string(runs_file).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(runs, "ran\n");
+
+    // A new settlement whose script fails keeps its terminal for the user to read.
+    dispatch(
+        &f,
+        json!({"type":"thread.unsettle","commandId":"unsettle-1","threadId":thread,"reason":"user"}),
+    )
+    .await;
+    f.service.config.engine.call("projects.mutate",json!({"type":"project.update","commandId":"settle-script-2","projectId":project_id(),"scripts":[{"id":"finish","name":"Finish","icon":"play","command":"printf 'FAILED-%s\\n' now; exit 3","runOnSettle":true,"runOnWorktreeCreate":false}]})).await.unwrap();
+    dispatch(&f, settle(&thread, 3)).await;
+    // The undone settlement's cleanup, late, does nothing.
+    assert_eq!(f.service.run_settle_script(&thread, &first).await, None);
+    let second = settled_at(thread.clone()).await;
+    assert_ne!(second, first);
+    let started = f
+        .service
+        .run_settle_script(&thread, &second)
+        .await
+        .expect("the new settlement runs its script");
+    let terminal = started["terminalId"].as_str().unwrap().to_owned();
+    let observe = |terminal: &str| {
+        terminals
+            .observe(
+                conn_contract::from_json(json!({"threadId":thread,"terminalId":terminal})).unwrap(),
+            )
+            .unwrap()
+    };
+    let mut output = observe(&terminal);
+    let mut text = String::new();
+    while !text.contains("FAILED-now") {
+        match output.next().await {
+            conn_contract::TerminalAttachStreamEvent::Output(event) => text.push_str(&event.data),
+            conn_contract::TerminalAttachStreamEvent::Snapshot(event) => {
+                text.push_str(&event.snapshot.history)
+            }
+            conn_contract::TerminalAttachStreamEvent::Closed(_) => panic!("closed: {text}"),
+            _ => {}
+        }
+    }
+    // A round trip through the same shell after the failure: it is still open.
+    terminals
+        .write(
+            conn_contract::from_json(
+                json!({"threadId":thread,"terminalId":terminal,"data":"echo STILL-$((40+2))\r"}),
+            )
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    while !text.contains("STILL-42") {
+        match output.next().await {
+            conn_contract::TerminalAttachStreamEvent::Output(event) => text.push_str(&event.data),
+            conn_contract::TerminalAttachStreamEvent::Closed(_) => panic!("closed: {text}"),
+            _ => {}
+        }
+    }
+    assert!(
+        terminals.list().iter().any(|t| t.terminal_id == terminal),
+        "a failed settle script keeps its terminal"
+    );
+    terminals.shutdown().await;
+}

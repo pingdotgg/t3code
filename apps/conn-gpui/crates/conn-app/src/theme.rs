@@ -31,8 +31,8 @@ pub(crate) fn hsla_alpha(color: ThemeRgba, alpha: f32) -> Hsla {
 
 /// Synchronizes `gpui-kit`'s global theme with Conn's active [`Tokens`] so
 /// default kit colors and radii never leak into Conn surfaces.
-/// Conn's `--font-mono` resolves to `ui-monospace`, SF Mono (registered by `crate::fonts`).
-pub(crate) const MONO_FONT: &str = "SF Mono";
+/// The app's monospace family: JetBrains Mono (embedded and registered by `crate::fonts`).
+pub(crate) const MONO_FONT: &str = "JetBrains Mono";
 
 pub(crate) fn apply_kit_theme(tokens: &Tokens, cx: &mut App) {
     gpui_kit::component::Theme::update(cx, |theme| {
@@ -61,7 +61,8 @@ pub(crate) fn apply_kit_theme(tokens: &Tokens, cx: &mut App) {
         c.secondary_foreground = hsla(tokens.secondary_foreground);
         c.muted = hsla(tokens.muted);
         c.muted_foreground = hsla(tokens.muted_foreground);
-        c.popover = hsla(tokens.shell_overlay);
+        // Opaque: kit popups must not let content show through (Nick, #332).
+        c.popover = hsla(tokens.shell_overlay.with_alpha(1.0));
         c.popover_foreground = hsla(tokens.popover_foreground);
         c.sidebar = hsla(tokens.shell_panel);
         c.sidebar_foreground = hsla(tokens.sidebar_foreground);

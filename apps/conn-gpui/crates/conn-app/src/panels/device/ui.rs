@@ -23,7 +23,42 @@ use super::super::header::{CONTROL_RADIUS_PX, superhero_icon};
 use super::logic::{
     HostDiagnostic, HostView, active_tool_version, discovery_warning_text, platform_name,
 };
+use crate::a11y::ConnA11yExt as _;
 use crate::theme::MONO_FONT;
+
+/// The AX id of a Device control from its element id: `panel.device.<slug>`.
+fn ax_id_for(id: &ElementId) -> SharedString {
+    let raw = match id {
+        ElementId::Name(name) => name.to_string(),
+        other => format!("{other:?}"),
+    };
+    let mut slug = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    SharedString::from(format!("panel.device.{}", slug.trim_matches('-')))
+}
+
+/// A label for a control that shows only a glyph: the glyph's name (`superhero/close.svg` ->
+/// `Close`).
+fn icon_label(icon_path: &str) -> SharedString {
+    let stem = icon_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(icon_path)
+        .trim_end_matches(".svg")
+        .replace('-', " ");
+    let mut chars = stem.chars();
+    let label = match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+        None => "Button".to_owned(),
+    };
+    SharedString::from(label)
+}
 
 /// `Button size="sm"` (`sm:h-7` = 28px, `text-sm` = 14/20, `gap-1.5` = 6px, `px-[9px]`).
 pub(super) const SM_BUTTON_HEIGHT_PX: f32 = 28.0;
@@ -47,10 +82,14 @@ pub(super) fn outline_sm_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let (bg, hover_bg) = outline_fills(tokens);
     let shadow = outline_shadow(tokens);
     let mut button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(SM_BUTTON_HEIGHT_PX))
         .px(px(9.0))
@@ -74,7 +113,7 @@ pub(super) fn outline_sm_button(
     if let Some(path) = icon_path {
         button = button.child(superhero_icon(path, 16.0, to_hsla(tokens.muted_foreground)));
     }
-    button = button.child(label.into());
+    button = button.child(label);
 
     if disabled {
         button.opacity(0.64)
@@ -95,11 +134,15 @@ pub(super) fn primary_sm_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let bg = to_hsla(tokens.primary);
     let hover = chrome::alpha(tokens.primary, 0.90);
     let fg = to_hsla(tokens.primary_foreground);
     let mut button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(SM_BUTTON_HEIGHT_PX))
         .px(px(11.0))
@@ -117,7 +160,7 @@ pub(super) fn primary_sm_button(
     if let Some(path) = icon_path {
         button = button.child(superhero_icon(path, 14.0, fg));
     }
-    button = button.child(label.into());
+    button = button.child(label);
     if disabled {
         button.opacity(0.64)
     } else {
@@ -136,9 +179,13 @@ pub(super) fn ghost_sm_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let hover = to_hsla(tokens.shell_highlight);
     let button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(SM_BUTTON_HEIGHT_PX))
         .px(px(9.0))
@@ -150,7 +197,7 @@ pub(super) fn ghost_sm_button(
         .line_height(px(SM_LINE_HEIGHT_PX))
         .font_weight(FontWeight::MEDIUM)
         .text_color(to_hsla(tokens.foreground))
-        .child(label.into());
+        .child(label);
     if disabled {
         button.opacity(0.64)
     } else {
@@ -169,9 +216,13 @@ pub(super) fn outline_xs_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let (bg, hover_bg) = outline_fills(tokens);
     let button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(XS_BUTTON_HEIGHT_PX))
         .px(px(7.0))
@@ -186,7 +237,7 @@ pub(super) fn outline_xs_button(
         .line_height(px(XS_LINE_HEIGHT_PX))
         .font_weight(FontWeight::MEDIUM)
         .text_color(to_hsla(tokens.foreground))
-        .child(label.into());
+        .child(label);
     if disabled {
         button.opacity(0.64)
     } else {
@@ -205,9 +256,13 @@ pub(super) fn ghost_xs_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let hover = to_hsla(tokens.shell_highlight);
     let button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(XS_BUTTON_HEIGHT_PX))
         .px(px(7.0))
@@ -219,7 +274,7 @@ pub(super) fn ghost_xs_button(
         .line_height(px(XS_LINE_HEIGHT_PX))
         .font_weight(FontWeight::MEDIUM)
         .text_color(to_hsla(tokens.foreground))
-        .child(label.into());
+        .child(label);
     if disabled {
         button.opacity(0.64)
     } else {
@@ -239,9 +294,13 @@ pub(super) fn compact_outline_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let (bg, hover_bg) = outline_fills(tokens);
     let mut button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(SM_BUTTON_HEIGHT_PX))
         .px(px(7.0))
@@ -259,7 +318,7 @@ pub(super) fn compact_outline_button(
     if let Some(path) = icon_path {
         button = button.child(superhero_icon(path, 14.0, to_hsla(tokens.muted_foreground)));
     }
-    button = button.child(label.into());
+    button = button.child(label);
     if disabled {
         button.opacity(0.64)
     } else {
@@ -278,9 +337,13 @@ pub(super) fn micro_ghost_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    let ax_id = ax_id_for(&id);
     let hover = to_hsla(tokens.shell_highlight);
     let button = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .flex_shrink_0()
         .h(px(MICRO_BUTTON_HEIGHT_PX))
         .px(px(5.0))
@@ -292,7 +355,7 @@ pub(super) fn micro_ghost_button(
         .line_height(px(14.0))
         .font_weight(FontWeight::MEDIUM)
         .text_color(to_hsla(tokens.foreground))
-        .child(label.into());
+        .child(label);
     if disabled {
         button.opacity(0.64)
     } else {
@@ -310,9 +373,12 @@ pub(super) fn micro_icon_button(
     tokens: &Tokens,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let ax_id = ax_id_for(&id);
     let hover = to_hsla(tokens.shell_highlight);
     div()
         .id(id)
+        .a11y_button(ax_id, icon_label(icon_path))
         .flex()
         .flex_shrink_0()
         .size(px(MICRO_BUTTON_HEIGHT_PX))
@@ -345,6 +411,13 @@ pub(super) fn conn_switch(
     tokens: &Tokens,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let ax_id = ax_id_for(&id);
+    let switch_label = ax_id
+        .rsplit('.')
+        .next()
+        .unwrap_or("Toggle")
+        .replace('-', " ");
     let (track_w, track_h, thumb_px) = match size {
         SwitchSize::Default => (30.0, 18.0, 14.0),
         SwitchSize::Small => (26.0, 16.0, 12.0),
@@ -361,6 +434,7 @@ pub(super) fn conn_switch(
     };
     let track = h_flex()
         .id(id)
+        .a11y_switch(ax_id, switch_label, checked)
         .flex_shrink_0()
         .w(px(track_w))
         .h(px(track_h))
@@ -427,6 +501,8 @@ pub(super) fn select_trigger_xs(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let ax_id = ax_id_for(&id);
     let (bg, hover_bg) = outline_fills(tokens);
     let text_color = if placeholder {
         to_hsla(tokens.muted_foreground)
@@ -435,6 +511,7 @@ pub(super) fn select_trigger_xs(
     };
     let trigger = h_flex()
         .id(id)
+        .a11y_button(ax_id, label.clone())
         .w(px(width_px))
         .flex_shrink_0()
         .h(px(XS_BUTTON_HEIGHT_PX))
@@ -605,6 +682,8 @@ pub(super) fn rail_icon_button(
     disabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    let ax_id = ax_id_for(&id);
     let hover = to_hsla(tokens.shell_highlight);
     let pressed_bg = to_hsla(tokens.secondary);
     let glyph_color = if pressed {
@@ -614,6 +693,7 @@ pub(super) fn rail_icon_button(
     };
     let button = div()
         .id(id)
+        .a11y_button(ax_id, icon_label(icon_path))
         .flex()
         .flex_shrink_0()
         .size(px(ICON_SM_PX))

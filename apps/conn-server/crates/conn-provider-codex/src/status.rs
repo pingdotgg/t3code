@@ -244,10 +244,16 @@ fn lock(state: &Mutex<ClientState>) -> std::sync::MutexGuard<'_, ClientState> {
 }
 
 impl Client {
-    fn spawn(spec: &LaunchSpec) -> Result<Self, ProbeError> {
+    /// Starts the CLI off the runtime thread: `fork` and `exec` block.
+    async fn spawn(spec: &LaunchSpec) -> Result<Self, ProbeError> {
         let (tx, mut rx) = mpsc::channel(64);
-        let process = Process::spawn(spec, crate::client::MAX_LINE_BYTES, tx)
-            .map_err(|_| ProbeError::Spawn)?;
+        let spec = spec.clone();
+        let process = tokio::task::spawn_blocking(move || {
+            Process::spawn(&spec, crate::client::MAX_LINE_BYTES, tx)
+        })
+        .await
+        .map_err(|_| ProbeError::Spawn)?
+        .map_err(|_| ProbeError::Spawn)?;
         let writer = process.writer();
         let state = Arc::new(Mutex::new(ClientState::default()));
         let reader = Arc::clone(&state);
@@ -952,9 +958,13 @@ fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     Ordering::Equal
 }
 
-/// `resolveProviderCatalog` for the bundled manifest at `now_ms`.
-fn catalog(now_ms: i64) -> Option<Value> {
-    let mut catalog: Value = serde_json::from_str(MODEL_CATALOG).ok()?;
+/// `resolveProviderCatalog` for the current manifest at `now_ms`: the one the server accepted
+/// last, else the bundled one.
+fn catalog(now_ms: i64, manifest: &conn_provider::LiveManifest) -> Option<Value> {
+    let mut catalog: Value = match manifest.provider_catalog(DRIVER) {
+        None => serde_json::from_str(MODEL_CATALOG).ok()?,
+        Some(section) => resolve_catalog(&section?)?,
+    };
     for entry in catalog["models"].as_array_mut()? {
         let released = entry["releasedAt"]
             .as_str()
@@ -966,6 +976,68 @@ fn catalog(now_ms: i64) -> Option<Value> {
         }
     }
     Some(catalog)
+}
+
+/// A manifest's `providers.codex` in the shape of `model_catalog.json` (the mapping of
+/// `tools/gen-model-catalog.mjs`). `None` where `resolveProviderCatalog` returns `null`: a
+/// repeated slug, a missing profile, or a default that is not listed.
+fn resolve_catalog(section: &Value) -> Option<Value> {
+    let profiles = section.get("profiles");
+    let mut slugs: Vec<&str> = Vec::new();
+    let mut models = Vec::new();
+    for entry in section.get("models")?.as_array()? {
+        let slug = entry.get("slug")?.as_str()?;
+        if slugs.contains(&slug) {
+            return None;
+        }
+        slugs.push(slug);
+        let profile = match entry.get("profile").and_then(Value::as_str) {
+            Some(name) => Some(profiles?.get(name)?),
+            None => None,
+        };
+        let mut model = Map::new();
+        model.insert("slug".into(), json!(slug));
+        model.insert(
+            "name".into(),
+            entry.get("name").cloned().unwrap_or(Value::Null),
+        );
+        for key in ["shortName", "subProvider", "aliases", "releasedAt"] {
+            if let Some(value) = entry.get(key) {
+                model.insert(key.into(), value.clone());
+            }
+        }
+        model.insert(
+            "status".into(),
+            entry.get("status").cloned().unwrap_or(Value::Null),
+        );
+        model.insert(
+            "capabilities".into(),
+            profile
+                .and_then(|p| p.get("capabilities"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        let min_version = entry
+            .pointer("/adapter/codex/minVersion")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        model.insert("minVersion".into(), json!(min_version));
+        models.push(Value::Object(model));
+    }
+    let default = section.pointer("/defaults/chat").and_then(Value::as_str);
+    if default.is_some_and(|chat| !slugs.contains(&chat)) {
+        return None;
+    }
+    Some(json!({"defaultChatModel": default, "models": models}))
+}
+
+/// [`apply_catalog`] with the current manifest, on a whole entry (T3's
+/// `applyCodexModelCatalog(draft, currentCatalog)`).
+pub fn apply_model_catalog(entry: &mut Value, manifest: &conn_provider::LiveManifest, now_ms: i64) {
+    if let Some(entry) = entry.as_object_mut() {
+        apply_catalog(entry, catalog(now_ms, manifest).as_ref());
+    }
 }
 
 /// `catalogEntry` lookup: the slug, else its family.
@@ -1743,7 +1815,7 @@ fn build_entry(
         entry.insert("usageLimits".into(), usage);
     }
     let now = conn_support::time::millis_from_iso(input.checked_at).unwrap_or(0);
-    apply_catalog(&mut entry, catalog(now).as_ref());
+    apply_catalog(&mut entry, catalog(now, input.manifest).as_ref());
     entry.insert("instanceId".into(), json!(input.instance_id));
     entry.insert("driver".into(), json!(DRIVER));
     if let Some(name) = &input.settings.display_name {
@@ -1764,6 +1836,8 @@ struct EntryInput<'a> {
     settings: &'a StatusSettings,
     checked_at: &'a str,
     shared_home: String,
+    /// The manifest the server accepted last (T3's `ModelCatalog.current`).
+    manifest: &'a conn_provider::LiveManifest,
 }
 
 fn unknown_auth() -> Value {
@@ -1794,6 +1868,7 @@ pub fn pending_entry(
         settings,
         checked_at,
         shared_home: shared_home(config, host_env),
+        manifest: &config.model_manifest,
     };
     let probe = if settings.enabled {
         Probe {
@@ -1889,6 +1964,25 @@ fn account_status(
     ("ready", auth, None)
 }
 
+/// The probes' launch: the session's argv (`codexAppServerArgs`) and environment, plus
+/// `MISE_OFFLINE=1` and the instance's home, in the server's working folder.
+fn probe_spec(input: &ProbeInput<'_>) -> LaunchSpec {
+    let config = input.config;
+    let mut spec = launch::launch_spec(
+        config,
+        config.launch_args_env().as_deref(),
+        get(&input.host_env, launch::ORIGINATOR_ENV).is_some(),
+    );
+    spec.cwd = Some(input.cwd.to_string_lossy().into_owned());
+    spec.env_set.push(("MISE_OFFLINE".into(), "1".into()));
+    if let Some(home) = &config.home_path {
+        spec.env_set.retain(|(k, _)| k != "CODEX_HOME");
+        spec.env_set
+            .push(("CODEX_HOME".into(), home.to_string_lossy().into_owned()));
+    }
+    spec
+}
+
 /// `checkCodexProviderStatus` for one instance, as `CodexDriver` runs it.
 pub async fn check(input: ProbeInput<'_>) -> Value {
     let config = input.config;
@@ -1897,6 +1991,7 @@ pub async fn check(input: ProbeInput<'_>) -> Value {
         settings: input.settings,
         checked_at: &input.checked_at,
         shared_home: shared_home(config, &input.host_env),
+        manifest: &config.model_manifest,
     };
     let custom_only = || append_custom_models(vec![], &input.settings.custom_models);
     if !input.settings.enabled {
@@ -1911,23 +2006,10 @@ pub async fn check(input: ProbeInput<'_>) -> Value {
     let resolved = resolved_environment(config, &input.host_env);
     let timeout = probe_timeout(PROBE_TIMEOUT, &resolved);
     let binary = config.binary.to_string_lossy().into_owned();
-    // The launch: the session's argv (`codexAppServerArgs`) and environment, plus
-    // `MISE_OFFLINE=1`, in the server's working folder.
-    let mut spec = launch::launch_spec(
-        config,
-        config.launch_args_env().as_deref(),
-        get(&input.host_env, launch::ORIGINATOR_ENV).is_some(),
-    );
-    spec.cwd = Some(input.cwd.to_string_lossy().into_owned());
-    spec.env_set.push(("MISE_OFFLINE".into(), "1".into()));
-    if let Some(home) = &config.home_path {
-        spec.env_set.retain(|(k, _)| k != "CODEX_HOME");
-        spec.env_set
-            .push(("CODEX_HOME".into(), home.to_string_lossy().into_owned()));
-    }
+    let spec = probe_spec(&input);
     let started = tokio::time::Instant::now();
     let spawned_ms = i64::try_from(conn_support::time::now_ms()).unwrap_or(i64::MAX);
-    let outcome = match Client::spawn(&spec) {
+    let outcome = match Client::spawn(&spec).await {
         Err(error) => Some(Err(error)),
         Ok(client) => {
             let result = tokio::time::timeout(
@@ -2185,7 +2267,10 @@ mod tests {
             json!([{"slug": "gpt-6-sol", "name": "x", "isCustom": false, "capabilities": null},
                    {"slug": "gpt-6-astra", "name": "y", "isCustom": false, "capabilities": null}]),
         );
-        apply_catalog(&mut entry, catalog(0).as_ref());
+        apply_catalog(
+            &mut entry,
+            catalog(0, &conn_provider::LiveManifest::default()).as_ref(),
+        );
         assert_eq!(entry["models"][0]["isLegacy"], true);
         assert!(entry["models"][1].get("isLegacy").is_none());
         let required: Vec<&str> = entry["updateRequiredModels"]
@@ -2195,5 +2280,44 @@ mod tests {
             .filter_map(|m| m["slug"].as_str())
             .collect();
         assert_eq!(required, ["gpt-6-luna"]);
+    }
+
+    /// T3 classifies with `ModelCatalog.current`: a manifest the server accepted replaces the
+    /// bundled one, so its default and its legacy marks reach the entry.
+    #[test]
+    fn the_accepted_manifest_replaces_the_bundled_catalog() {
+        let entry = || {
+            json!({"models": [
+                {"slug": "gpt-6-astra", "name": "a", "isCustom": false, "isDefault": true,
+                 "aliases": ["default"], "capabilities": null},
+                {"slug": "gpt-6-luna", "name": "l", "isCustom": false, "capabilities": null}
+            ]})
+        };
+        let live = conn_provider::LiveManifest::default();
+        let mut bundled = entry();
+        apply_model_catalog(&mut bundled, &live, 0);
+        assert_eq!(bundled["models"][0]["isDefault"], true);
+        live.set(json!({"providers": {"codex": {
+            "profiles": {},
+            "defaults": {"chat": "gpt-6-luna"},
+            "models": [
+                {"slug": "gpt-6-astra", "name": "A", "status": "legacy"},
+                {"slug": "gpt-6-luna", "name": "L", "status": "current"}
+            ]
+        }}}));
+        let mut fetched = entry();
+        apply_model_catalog(&mut fetched, &live, 0);
+        assert!(fetched["models"][0].get("isDefault").is_none());
+        assert_eq!(fetched["models"][0]["isLegacy"], true);
+        assert_eq!(fetched["models"][1]["isDefault"], true);
+        assert_eq!(fetched["models"][1]["aliases"], json!(["default"]));
+        // `resolveProviderCatalog` returns null for a default that is not listed.
+        live.set(
+            json!({"providers": {"codex": {"profiles": {}, "defaults": {"chat": "x"},
+            "models": [{"slug": "gpt-6-luna", "name": "L", "status": "current"}]}}}),
+        );
+        let mut invalid = entry();
+        apply_model_catalog(&mut invalid, &live, 0);
+        assert_eq!(invalid["models"][0]["isDefault"], true);
     }
 }

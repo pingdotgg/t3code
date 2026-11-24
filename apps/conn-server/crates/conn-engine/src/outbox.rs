@@ -99,6 +99,7 @@ impl Effect {
             Self::StopBackgroundWork { .. } => "provider-turn.stop-background-work",
             Self::Respond { .. } => "runtime-request.respond",
             Self::CloseSession { .. } => "provider-session.detach",
+            Self::CloseThreadSessions { .. } => "provider-session.detach-thread",
             Self::ApplyModelSelection { .. } => "provider-session.apply-model-selection",
             Self::CleanupHtmlAttachments { .. } => "attachment.cleanup",
             Self::RemoteTaskChanged { .. } => "delegated-task.remote-changed",
@@ -118,6 +119,7 @@ impl Effect {
             | Self::StopBackgroundWork { thread_id, .. }
             | Self::Respond { thread_id, .. }
             | Self::CloseSession { thread_id }
+            | Self::CloseThreadSessions { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
             | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::RemoteTaskChanged { thread_id, .. }

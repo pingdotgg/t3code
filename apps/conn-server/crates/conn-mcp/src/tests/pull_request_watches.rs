@@ -49,6 +49,7 @@ fn guide() -> Value {
 fn with_host(base: Fixture, state: &'static str) -> Fixture {
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
+        listen_address: "0.0.0.0:4711".parse().unwrap(),
         preview: None,
         devices: None,
         refresh_provider: None,
@@ -71,7 +72,6 @@ fn with_host(base: Fixture, state: &'static str) -> Fixture {
         files: None,
         annotations: None,
     });
-    service.set_listen_address("0.0.0.0:4711".parse().unwrap());
     let dir = base.dir.clone();
     std::mem::forget(base);
     Fixture { service, dir }
