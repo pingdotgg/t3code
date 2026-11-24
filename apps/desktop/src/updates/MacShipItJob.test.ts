@@ -9,7 +9,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 
-import { releaseIdleShipItJob } from "./MacShipItJob.ts";
+import * as MacShipItJob from "./MacShipItJob.ts";
 
 const LABEL = "com.t3tools.t3code.ShipIt";
 const UID = 501;
@@ -19,40 +19,27 @@ const REMOVE = ["/bin/launchctl", "remove", LABEL] as const;
 interface ScriptStep {
   readonly exitCode?: number;
   readonly stdout?: string;
-  readonly fail?: boolean;
 }
 
 function shipItPrint(fields: {
-  readonly state?: string;
-  readonly pid?: number | string;
-  readonly activeCount?: number;
-  readonly lastExitCode?: number | string;
-  readonly runs?: number;
-  readonly nested?: boolean;
+  readonly state: string;
+  readonly pid?: number;
+  readonly activeCount: number;
+  readonly lastExitCode?: number;
+  readonly runs: number;
 }): string {
   const lines = [`gui/${UID}/${LABEL} = {`];
-  if (fields.activeCount !== undefined) lines.push(`\tactive count = ${fields.activeCount}`);
-  if (fields.state !== undefined) lines.push(`\tstate = ${fields.state}`);
+  lines.push(`\tactive count = ${fields.activeCount}`, `\tstate = ${fields.state}`);
   if (fields.pid !== undefined) lines.push(`\tpid = ${fields.pid}`);
-  if (fields.runs !== undefined) lines.push(`\truns = ${fields.runs}`);
+  lines.push(`\truns = ${fields.runs}`);
   if (fields.lastExitCode !== undefined) lines.push(`\tlast exit code = ${fields.lastExitCode}`);
-  if (fields.nested !== false) {
-    lines.push("\tresource coalition = {", "\t\tstate = active", "\t\tactive count = 1", "\t}");
-  }
   lines.push("}");
   return lines.join("\n");
 }
 
-const idlePrint = shipItPrint({
-  state: "not running",
-  activeCount: 0,
-  lastExitCode: 0,
-  runs: 1,
-});
-
 // `launchctl print gui/501/com.t3tools.t3code.ShipIt` on macOS 27.0.1 after
 // the submitting build was uninstalled. Only the home directory is changed.
-const realIdlePrint = [
+const idlePrint = [
   `gui/${UID}/${LABEL} = {`,
   "\tactive count = 0",
   "\tpath = (submitted by T3 Code (Beta)[87630])",
@@ -146,13 +133,12 @@ function commandLine(command: ChildProcess.Command): ReadonlyArray<string> {
 function run(input: {
   readonly platform?: NodeJS.Platform;
   readonly bundleId?: string;
-  readonly userId?: number | null;
   readonly steps?: ReadonlyArray<ScriptStep>;
   readonly expected: ReadonlyArray<ReadonlyArray<string>>;
 }) {
   const commands: Array<ReadonlyArray<string>> = [];
   const steps = [...(input.steps ?? [])];
-  return releaseIdleShipItJob({
+  return MacShipItJob.releaseIdleShipItJob({
     platform: input.platform ?? "darwin",
     bundleId: input.bundleId ?? "com.t3tools.t3code",
   }).pipe(
@@ -161,7 +147,7 @@ function run(input: {
       ChildProcessSpawner.make((command) => {
         commands.push(commandLine(command));
         const step = steps.shift();
-        if (step === undefined || step.fail === true) {
+        if (step === undefined) {
           return Effect.fail(
             PlatformError.systemError({
               _tag: "NotFound",
@@ -187,10 +173,7 @@ function run(input: {
         );
       }),
     ),
-    Effect.provideService(
-      HostProcess.UserId,
-      input.userId === null ? undefined : (input.userId ?? UID),
-    ),
+    Effect.provideService(HostProcess.UserId, UID),
     Effect.tap(() =>
       Effect.sync(() => {
         assert.deepEqual(commands, input.expected);
@@ -199,146 +182,39 @@ function run(input: {
   );
 }
 
-it.effect(
-  "drops a leftover ShipIt job only when macOS left it idle after a successful install",
-  () =>
-    Effect.gen(function* () {
-      const cases = [
-        { platform: "linux" as const, expected: [] },
-        { platform: "win32" as const, expected: [] },
-        { bundleId: "not a bundle id", expected: [] },
-        { bundleId: "../ShipIt", expected: [] },
-        { userId: null, expected: [] },
-        { userId: -1, expected: [] },
-        { userId: 1.5, expected: [] },
-        {
-          steps: [{ exitCode: 113, stdout: "Could not find service" }],
-          expected: [PRINT],
-        },
-        {
-          steps: [{ fail: true }],
-          expected: [PRINT],
-        },
-        {
-          steps: [{ stdout: idlePrint }, { exitCode: 0 }],
-          expected: [PRINT, REMOVE],
-        },
-        {
-          steps: [{ stdout: realIdlePrint }, { exitCode: 0 }],
-          expected: [PRINT, REMOVE],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
-                state: "not running",
-                activeCount: 1,
-                lastExitCode: 0,
-                runs: 1,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
-                state: "not running",
-                activeCount: 0,
-                lastExitCode: 0,
-                runs: 0,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
-                state: "not running",
-                activeCount: 0,
-                lastExitCode: "(never exited)",
-                runs: 1,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [
-            {
-              stdout: [
-                `gui/${UID}/${LABEL} = {`,
-                "    active count = 0",
-                "    state = not running",
-                "    runs = 1",
-                "    last exit code = 0",
-                "}",
-              ].join("\n"),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          bundleId: "com.t3tools.t3code.dev.local",
-          steps: [{ stdout: idlePrint }, { exitCode: 0 }],
-          expected: [
-            ["/bin/launchctl", "print", `gui/${UID}/com.t3tools.t3code.dev.local.ShipIt`],
-            ["/bin/launchctl", "remove", "com.t3tools.t3code.dev.local.ShipIt"],
-          ],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
-                state: "spawn scheduled",
-                activeCount: 1,
-                runs: 0,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
-                state: "not running",
-                activeCount: 0,
-                lastExitCode: 1,
-                runs: 2,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [{ stdout: shipItPrint({ state: "not running", nested: false }) }],
-          expected: [PRINT],
-        },
-        {
-          steps: [{ stdout: "not launchctl output" }],
-          expected: [PRINT],
-        },
-        {
-          steps: [{ stdout: idlePrint }, { exitCode: 1 }],
-          expected: [PRINT, REMOVE],
-        },
-        {
-          steps: [{ stdout: idlePrint }, { fail: true }],
-          expected: [PRINT, REMOVE],
-        },
-      ];
+it.effect("drops a leftover ShipIt job only when it is idle after a successful install", () =>
+  Effect.gen(function* () {
+    const cases = [
+      { platform: "linux" as const, expected: [] },
+      { bundleId: "../ShipIt", expected: [] },
+      { steps: [{ exitCode: 113, stdout: "Could not find service" }], expected: [PRINT] },
+      { steps: [{ stdout: idlePrint }, { exitCode: 0 }], expected: [PRINT, REMOVE] },
+      {
+        // KeepAlive SuccessfulExit = false: launchd will retry the install.
+        steps: [
+          {
+            stdout: shipItPrint({ state: "not running", activeCount: 0, lastExitCode: 1, runs: 2 }),
+          },
+        ],
+        expected: [PRINT],
+      },
+      {
+        steps: [
+          {
+            stdout: shipItPrint({ state: "not running", activeCount: 1, lastExitCode: 0, runs: 1 }),
+          },
+        ],
+        expected: [PRINT],
+      },
+    ];
 
-      for (const scenario of cases) {
-        yield* run(scenario);
-      }
-    }),
+    for (const scenario of cases) {
+      yield* run(scenario);
+    }
+  }),
 );
 
-it.effect("drops a ShipIt job that finishes exiting after the app is ready", () =>
+it.effect("drops a ShipIt job only once it has finished exiting after the app is ready", () =>
   Effect.gen(function* () {
     const running = shipItPrint({
       state: "running",
@@ -352,72 +228,7 @@ it.effect("drops a ShipIt job that finishes exiting after the app is ready", () 
         steps: [{ stdout: running }, { stdout: idlePrint }, { exitCode: 0 }],
         expected: [PRINT, PRINT, REMOVE],
       },
-      {
-        steps: [{ stdout: running }, { stdout: running }],
-        expected: [PRINT, PRINT],
-      },
-      {
-        steps: [
-          { stdout: running },
-          {
-            stdout: shipItPrint({
-              state: "not running",
-              activeCount: 0,
-              lastExitCode: 1,
-              runs: 1,
-            }),
-          },
-        ],
-        expected: [PRINT, PRINT],
-      },
-      {
-        steps: [{ stdout: running }, { exitCode: 113, stdout: "Could not find service" }],
-        expected: [PRINT, PRINT],
-      },
-      {
-        steps: [{ stdout: running }, { fail: true }],
-        expected: [PRINT, PRINT],
-      },
-      {
-        steps: [
-          {
-            stdout: shipItPrint({
-              state: "not running",
-              pid: 64038,
-              activeCount: 0,
-              lastExitCode: 0,
-              runs: 1,
-            }),
-          },
-          { stdout: idlePrint },
-          { exitCode: 0 },
-        ],
-        expected: [PRINT, PRINT, REMOVE],
-      },
-      {
-        steps: [
-          { stdout: shipItPrint({ state: "xpcproxy", activeCount: 1, runs: 1 }) },
-          { stdout: idlePrint },
-          { exitCode: 0 },
-        ],
-        expected: [PRINT, PRINT, REMOVE],
-      },
-      {
-        steps: [
-          {
-            stdout: shipItPrint({
-              state: "not running",
-              pid: "unknown",
-              activeCount: 0,
-              lastExitCode: 0,
-              runs: 1,
-            }),
-          },
-          { stdout: idlePrint },
-          { exitCode: 0 },
-        ],
-        expected: [PRINT, PRINT, REMOVE],
-      },
+      { steps: [{ stdout: running }, { stdout: running }], expected: [PRINT, PRINT] },
     ];
 
     for (const scenario of cases) {

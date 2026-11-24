@@ -38,7 +38,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopStartupRecovery from "./DesktopStartupRecovery.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
-import { releaseIdleShipItJob } from "../updates/MacShipItJob.ts";
+import * as MacShipItJob from "../updates/MacShipItJob.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
@@ -425,7 +425,7 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("app ready");
   // Started before an install can be submitted, in the background so a
   // still-exiting ShipIt does not gate the backend or window.
-  yield* releaseIdleShipItJob({
+  yield* MacShipItJob.releaseIdleShipItJob({
     platform: environment.platform,
     bundleId: environment.appUserModelId,
   }).pipe(Effect.forkScoped);
