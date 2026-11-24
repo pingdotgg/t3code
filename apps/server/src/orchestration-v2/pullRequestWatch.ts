@@ -163,7 +163,8 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      if (!checksBaseline || watch.checksPending === true) {
+      // The start rollup can be pending only because optional checks still run.
+      if (!checksBaseline || (watch.checksPending === true && settled)) {
         changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
       }
       owedChecks =
