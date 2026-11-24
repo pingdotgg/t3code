@@ -301,3 +301,115 @@ it.effect("inherited history stops at a missing fork ancestor", () =>
     assert.deepEqual(items, []);
   }),
 );
+
+it.effect("portable fork history stops at /clear (freshContext) and drops ancestor history", () =>
+  Effect.gen(function* () {
+    const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    const ancestorId = ThreadId.make("thread:ancestor-before-clear");
+    const sourceId = ThreadId.make("thread:source-with-clear");
+    const ancestorRunId = RunId.make("run:ancestor-1");
+    const beforeClearRunId = RunId.make("run:source-1");
+    const clearRunId = RunId.make("run:source-2-clear");
+    const makeRun = (id: RunId, threadId: ThreadId, ordinal: number, freshContext?: boolean) => ({
+      id,
+      threadId,
+      ordinal,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      providerThreadId: ProviderThreadId.make(`pt:${id}`),
+      userMessageId: MessageId.make(`msg:${id}`),
+      rootNodeId: null as never,
+      activeAttemptId: null,
+      status: "completed" as const,
+      queuePosition: null,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+      ...(freshContext ? { freshContext: true } : {}),
+    });
+    const makeUserItem = (
+      id: string,
+      threadId: ThreadId,
+      runId: RunId,
+      text: string,
+      ordinal: number,
+    ) =>
+      ({
+        ...importedItem({ role: "user", id, text, ordinal }),
+        threadId,
+        runId,
+      }) as OrchestrationV2TurnItem;
+    const baseThread = (
+      id: ThreadId,
+      forkedFrom: OrchestrationV2AppThread["forkedFrom"],
+    ): OrchestrationV2AppThread => ({
+      createdBy: "user",
+      creationSource: "web",
+      id,
+      projectId: ProjectId.make("project:clear-fork"),
+      title: id,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: ancestorId },
+      forkedFrom,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      deletedAt: null,
+    });
+    const sourceThread = baseThread(sourceId, {
+      type: "run",
+      threadId: ancestorId,
+      runId: ancestorRunId,
+    });
+    const sourceRuns = [
+      makeRun(beforeClearRunId, sourceId, 1),
+      makeRun(clearRunId, sourceId, 2, true),
+    ];
+    let ancestorLoaded = false;
+    const store = {
+      getThreadRecords: (threadId: ThreadId) => {
+        if (threadId === ancestorId) {
+          ancestorLoaded = true;
+          return Effect.succeed({
+            thread: baseThread(ancestorId, null),
+            runs: [makeRun(ancestorRunId, ancestorId, 1)],
+            attempts: [],
+            turnItems: [makeUserItem("anc", ancestorId, ancestorRunId, "ancestor secret", 1)],
+          } as never);
+        }
+        return Effect.succeed({
+          thread: sourceThread,
+          runs: sourceRuns,
+          attempts: [],
+          turnItems: [
+            makeUserItem("old", sourceId, beforeClearRunId, "before clear secret", 1),
+            makeUserItem("new", sourceId, clearRunId, "after clear prompt", 2),
+          ],
+        } as never);
+      },
+    };
+    const items = yield* ContextHandoffService.readForkHistoryItems(
+      store as never,
+      { thread: sourceThread, runs: sourceRuns, attempts: [] },
+      sourceRuns[1]!,
+    );
+    assert.isFalse(ancestorLoaded);
+    assert.deepEqual(
+      items.map((item) => (item.type === "user_message" ? item.text : "")),
+      ["after clear prompt"],
+    );
+  }),
+);

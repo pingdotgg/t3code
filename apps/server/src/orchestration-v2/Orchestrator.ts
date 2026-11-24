@@ -9454,15 +9454,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const mergeBackDeltaItems =
       mergeBackSourceProjection === null || mergeBackSourceRun === null
         ? []
-        : visibleConversationItems(
-            mergeBackSourceProjection,
-            yield* readHandoffItems(
+        : yield* Effect.gen(function* () {
+            const sourceRuns = mergeBackSourceProjection.runs.filter(
+              (run) => run.ordinal <= mergeBackSourceRun.ordinal,
+            );
+            const rawItems = yield* readHandoffItems(
               mergeBackSourceProjection.thread.id,
-              mergeBackSourceProjection.runs
-                .filter((run) => run.ordinal <= mergeBackSourceRun.ordinal)
-                .map((run) => run.id),
-            ),
-          );
+              sourceRuns.map((run) => run.id),
+            );
+            const boundary = contextBoundaryOrdinal({ runs: sourceRuns, turnItems: rawItems });
+            const boundedItems =
+              boundary === 0
+                ? rawItems
+                : (() => {
+                    const allowedRunIds = new Set(
+                      sourceRuns.filter((run) => run.ordinal >= boundary).map((run) => run.id),
+                    );
+                    return rawItems.filter(
+                      (item) => item.runId !== null && allowedRunIds.has(item.runId),
+                    );
+                  })();
+            return visibleConversationItems(mergeBackSourceProjection, boundedItems);
+          });
     const mergeBackHandoff =
       pendingMergeBackTransfer === undefined ||
       mergeBackSourceProjection === null ||
