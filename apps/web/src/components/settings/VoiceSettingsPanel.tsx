@@ -1001,12 +1001,24 @@ function SpeechModelBrowser(props: {
           <InputGroupAddon>
             <SearchIcon aria-hidden />
           </InputGroupAddon>
+          {/* Native search inputs clear on Escape even during IME composition. */}
           <InputGroupInput
-            type="search"
+            type="text"
+            role="searchbox"
             aria-label={gt("Search transcription models")}
             placeholder={gt("Search models")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+              const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+              if (!composing && !search && !event.repeat) return;
+              event.stopPropagation();
+              if (composing) return;
+              event.preventDefault();
+              setSearch("");
+            }}
           />
         </InputGroup>
         <Menu>
