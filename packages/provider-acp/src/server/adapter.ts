@@ -570,6 +570,10 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /** Moves what a flavor's agent names only in `_meta` (e.g. the files a review covers) into ACP fields. */
+  readonly normalizePermissionRequest?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => EffectAcpSchema.RequestPermissionRequest;
   /** Options T3 may answer with; the rest (e.g. Devin's bypass-permissions plan exit) are never sent. */
   readonly answerablePermissionOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -7520,13 +7524,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return { outcome: { outcome: "cancelled" } } as const;
               }
               const trackedTurn = yield* Ref.get(activeTurn);
+              const flavorParams =
+                flavor.normalizePermissionRequest?.(nativeParams) ?? nativeParams;
               const params =
                 trackedTurn !== null && nativeParams.sessionId === (yield* Ref.get(activeSessionId))
                   ? withTrackedPermissionToolCall(
-                      nativeParams,
+                      flavorParams,
                       trackedTurn.tools.get(nativeParams.toolCall.toolCallId),
                     )
-                  : nativeParams;
+                  : flavorParams;
               const transportRequestId = requestContext.requestId;
               const permissionQuestion = flavor.extractPermissionQuestion?.(params);
               if (permissionQuestion !== undefined) {

@@ -47,6 +47,7 @@ import {
   KIRO_MODEL_CONFIG_ID,
   kiroApprovalOptions,
   kiroAutopilotValue,
+  kiroNormalizePermissionRequest,
   kiroPermissionDisposition,
   makeKiroAcpRuntime,
 } from "./acpSupport.ts";
@@ -580,6 +581,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     cancelAfterPromptStarts: { isStart: isKiroPromptActivity, bound: KIRO_CANCEL_HOLD_BOUND },
     permissionDisposition: kiroPermissionDisposition,
     approvalOptions: kiroApprovalOptions,
+    normalizePermissionRequest: kiroNormalizePermissionRequest,
     compactSession: kiroCompactSession,
     steering: kiroSteering,
     forkFromTurn: kiroForkFromTurn,

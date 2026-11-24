@@ -1318,10 +1318,17 @@ export function parsePermissionRequest(
     { fallbackStatus: "pending" },
   );
   const kind = normalizeToolKind(params.toolCall.kind) ?? "unknown";
-  // A file tool's title is generic ("Changed files"), so the prompt also lists the paths it names.
-  const summary = toolCall?.title ?? toolCall?.detail;
+  const subjectCommand =
+    params.subject?.type === "command" && typeof params.subject.command === "string"
+      ? params.subject.command.trim() || undefined
+      : undefined;
+  // Presentation titles are generic ("Ran command", "Changed files"), so an execute request
+  // without a command keeps the agent's own title, and a file request lists its paths.
+  const agentTitle = kind === "execute" ? params.toolCall.title?.trim() || undefined : undefined;
+  const summary = agentTitle ?? toolCall?.title ?? toolCall?.detail;
   const paths = toolCallLocationPaths(toolCall).filter((path) => !summary?.includes(path));
   const detail =
+    subjectCommand ??
     toolCall?.command ??
     ([...(summary ? [summary] : []), ...paths].join("\n") ||
       (typeof params.sessionId === "string" ? `Session ${params.sessionId}` : undefined));

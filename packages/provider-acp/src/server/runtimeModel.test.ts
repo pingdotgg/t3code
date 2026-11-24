@@ -583,6 +583,25 @@ describe("AcpRuntimeModel", () => {
     expect(parsePermissionRequest(request).detail).toContain("kiro-permission-probe.txt");
   });
 
+  it("names the command an execute permission request asks to run", () => {
+    expect(
+      parsePermissionRequest({
+        sessionId: "session-1",
+        options: [],
+        toolCall: { toolCallId: "tool-1", title: "npm test", kind: "execute", status: "pending" },
+      }).detail,
+    ).toBe("npm test");
+    expect(
+      parsePermissionRequest({
+        sessionId: "session-1",
+        title: "Run tests",
+        subject: { type: "command", command: "npm test", cwd: "/workspace" },
+        options: [],
+        toolCall: { toolCallId: "tool-1", title: "Run tests", kind: "execute" },
+      }).detail,
+    ).toBe("npm test");
+  });
+
   it("keeps an explicit permission request kind over the tracked tool call's kind", () => {
     const request = withTrackedPermissionToolCall(
       {
