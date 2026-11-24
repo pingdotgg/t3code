@@ -36,7 +36,8 @@ an authenticated connection does not count as product use.
 - The sole exception is opt-in `agent.feedback`, which
   [`FeedbackService`](../../apps/server/src/feedback/FeedbackService.ts) scrubs of paths, private
   values, and secret-shaped strings, and only attaches bounded conversation traces when the user
-  explicitly previews and sends them.
+  explicitly previews and sends them. Each report is sent under its own id without `installId`, so
+  it links to no install; reports sent without a preview carry only their categories.
 - Delivery ([`AnalyticsService.ts`](../../apps/server/src/telemetry/AnalyticsService.ts)) attaches a
   UUID per event, backs off on failure, and drops batches after bounded retries so a stuck batch
   cannot loop forever.
