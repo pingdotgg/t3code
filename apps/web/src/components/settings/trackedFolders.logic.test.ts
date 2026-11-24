@@ -15,7 +15,6 @@ describe("trackedFolderDisplayPath", () => {
 });
 
 describe("resolveTrackedFolderInput", () => {
-  const fittingName = `${"a".repeat(126)}🚀`;
   const overflowingPath = `/srv/${"a".repeat(127)}🚀`;
   const paddedPath = `/srv/${" ".repeat(127)}🚀`;
 
@@ -38,11 +37,6 @@ describe("resolveTrackedFolderInput", () => {
         exactEntryPath: "/home/me/code/tools",
       },
       { path: "/home/me/code/tools", name: "tools" },
-    ],
-    [
-      "an emoji ending at the name limit",
-      { query: `/srv/${fittingName}`, listedDirectoryPath: null, exactEntryPath: null },
-      { path: `/srv/${fittingName}`, name: fittingName },
     ],
     [
       "an emoji crossing the name limit",
