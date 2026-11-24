@@ -11307,6 +11307,7 @@
   "282edfbcc2756917": "«{label}» ya tiene una paleta oscura. Elige otro nombre.",
   "39fab1cb0d3f7fef": "«{label}» ya tiene paletas clara y oscura. Elige otro nombre.",
   "58b59bad4e41c6fd": "Tema guardado, pero no se pudo activar. Inténtalo de nuevo.",
+  "1170e3688152bedb": "El nombre de un tema publicado puede tener como máximo {max} caracteres.",
   "a1b5b092e90ae375": "No se pudo guardar el tema.",
   "57ceba28c157beb1": "No se pudo crear el tema.",
   "aac6a640aa7ff886": "Nombre del tema",

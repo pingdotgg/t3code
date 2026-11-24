@@ -1,4 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { ENVIRONMENT_THEME_NAME_MAX_LENGTH } from "@t3tools/contracts";
 import {
   MousePointer2Icon,
   PaintbrushIcon,
@@ -789,6 +790,14 @@ export function ThemeEditorPanel({
   const handleSubmit = () => {
     if (!name.trim()) {
       setError(gt("Name your theme first."));
+      return;
+    }
+    if (onSaveToEnvironment && name.trim().length > ENVIRONMENT_THEME_NAME_MAX_LENGTH) {
+      setError(
+        gt("A published theme name can be at most {max} characters.", {
+          max: ENVIRONMENT_THEME_NAME_MAX_LENGTH,
+        }),
+      );
       return;
     }
 

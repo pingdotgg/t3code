@@ -11322,6 +11322,7 @@
   "282edfbcc2756917": "“{label}” already has a dark palette. Pick another name.",
   "39fab1cb0d3f7fef": "“{label}” already has light and dark palettes. Pick another name.",
   "58b59bad4e41c6fd": "Theme saved, but it could not be made active. Try again.",
+  "1170e3688152bedb": "A published theme name can be at most {max} characters.",
   "a1b5b092e90ae375": "Could not save the theme.",
   "57ceba28c157beb1": "Could not create the theme.",
   "aac6a640aa7ff886": "Theme name",

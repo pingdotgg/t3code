@@ -182,6 +182,28 @@ describe("ThemeEditorPanel", () => {
     ).toEqual(["dusk"]);
   });
 
+  it("refuses a published theme name longer than its file allows before saving", async () => {
+    const onSaveToEnvironment = vi.fn(async () => true);
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={() => {}}
+        onSaved={() => true}
+        onSaveToEnvironment={onSaveToEnvironment}
+        editingTheme={publishedThemeDefinitions([LOOK])[0]!}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    await userEvent.fill(screen.getByRole("textbox", { name: "Theme name" }), "x".repeat(49));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await expect
+      .element(screen.getByText("A published theme name can be at most 48 characters."))
+      .toBeVisible();
+    expect(onSaveToEnvironment).not.toHaveBeenCalled();
+  });
+
   it("keeps a published edit in place when its environment is unavailable", async () => {
     const store = useThemeEditorStore.getState();
     const storedThemes = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);

@@ -11312,6 +11312,7 @@
   "282edfbcc2756917": "« {label} » a déjà une palette sombre. Choisissez un autre nom.",
   "39fab1cb0d3f7fef": "« {label} » a déjà des palettes claire et sombre. Choisissez un autre nom.",
   "58b59bad4e41c6fd": "Thème enregistré, mais il n’a pas pu être activé. Réessayez.",
+  "1170e3688152bedb": "Le nom d’un thème publié peut comporter au plus {max} caractères.",
   "a1b5b092e90ae375": "Impossible d’enregistrer le thème.",
   "57ceba28c157beb1": "Impossible de créer le thème.",
   "aac6a640aa7ff886": "Nom du thème",

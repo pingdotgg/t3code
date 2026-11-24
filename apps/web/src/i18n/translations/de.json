@@ -11312,6 +11312,7 @@
   "282edfbcc2756917": "„{label}“ hat bereits eine dunkle Palette. Wähle einen anderen Namen.",
   "39fab1cb0d3f7fef": "„{label}“ hat bereits eine helle und eine dunkle Palette. Wähle einen anderen Namen.",
   "58b59bad4e41c6fd": "Design gespeichert, konnte aber nicht aktiviert werden. Versuch es erneut.",
+  "1170e3688152bedb": "Der Name eines veröffentlichten Designs darf höchstens {max} Zeichen lang sein.",
   "a1b5b092e90ae375": "Das Design konnte nicht gespeichert werden.",
   "57ceba28c157beb1": "Das Design konnte nicht erstellt werden.",
   "aac6a640aa7ff886": "Name des Designs",

@@ -11320,6 +11320,7 @@
   "282edfbcc2756917": "”{label}” har redan en mörk palett. Välj ett annat namn.",
   "39fab1cb0d3f7fef": "”{label}” har redan ljusa och mörka paletter. Välj ett annat namn.",
   "58b59bad4e41c6fd": "Temat sparades, men det kunde inte aktiveras. Försök igen.",
+  "1170e3688152bedb": "Namnet på ett publicerat tema får vara högst {max} tecken.",
   "a1b5b092e90ae375": "Kunde inte spara temat.",
   "57ceba28c157beb1": "Kunde inte skapa temat.",
   "aac6a640aa7ff886": "Temanamn",
