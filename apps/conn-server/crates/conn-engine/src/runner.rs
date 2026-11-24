@@ -1358,6 +1358,8 @@ impl Inner {
                 }
             };
             let Some(event) = event else { break };
+            #[cfg(test)]
+            self.test_pause("pump.event").await;
             let event = self.capture_app_event(&live, event).await;
             taken += 1;
             // T3's adapters offer a continuation to `ProviderContinuationRequests`, a queue apart

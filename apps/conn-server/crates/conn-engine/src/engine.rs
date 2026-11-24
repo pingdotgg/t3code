@@ -2769,8 +2769,8 @@ impl Inner {
         crate::lock(&self.live).len()
     }
 
-    /// Holds the first launch that reaches `point` until the test resumes it.
-    async fn test_pause(&self, point: &'static str) {
+    /// Holds the first launch or event pump that reaches `point` until the test resumes it.
+    pub(crate) async fn test_pause(&self, point: &'static str) {
         let pause = crate::lock(&self.pauses).remove(point);
         if let Some(pause) = pause {
             pause.reached.notify_one();
@@ -2785,8 +2785,9 @@ impl SqliteEngine {
         &self.inner
     }
 
-    /// Holds the next launch that reaches `point`: `launch.receipts-read`,
-    /// `launch.before-claim` or `launch.before-projection`.
+    /// Holds the next launch or pump that reaches `point`: `launch.receipts-read`,
+    /// `launch.before-claim`, `launch.before-projection`, or `pump.event` (an event received,
+    /// not stored yet).
     pub(crate) fn test_pause_at(&self, point: &'static str) -> Arc<TestPause> {
         let pause = Arc::new(TestPause::default());
         crate::lock(&self.inner.pauses).insert(point, pause.clone());

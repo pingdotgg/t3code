@@ -2710,10 +2710,23 @@ async fn a_close_keeps_a_stop_the_provider_already_confirmed() {
     dispatch(&engine, message("t1", "c2", "hang")).await;
     until_provider_turn(&mut thread).await;
     let inner = engine.inner();
-    tokio::join!(biased;
-        inner.clone().interrupt("t1".to_owned(), "run:t1:1".to_owned()),
-        inner.close_session("t1")
+    // The provider confirms the Stop: its events are sent before the close starts. The pump
+    // holds the first of them, received but not stored, while the session closes.
+    let pump = engine.test_pause_at("pump.event");
+    inner
+        .clone()
+        .interrupt("t1".to_owned(), "run:t1:1".to_owned())
+        .await;
+    pump.reached.notified().await;
+    assert_eq!(
+        row_status(&engine, "t1", "runs", "run:t1:1").await,
+        "running",
+        "nothing of the Stop is stored before the close"
     );
+    inner.close_session("t1").await;
+    pump.resume.notify_one();
+    // A Stop the close lost would detach the run as `failed` instead.
+    until_run_ends(&mut thread).await;
     assert_eq!(
         row_status(&engine, "t1", "runs", "run:t1:1").await,
         "interrupted"
