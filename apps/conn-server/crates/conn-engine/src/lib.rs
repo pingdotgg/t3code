@@ -268,6 +268,13 @@ pub trait EngineHost: Send + Sync {
     /// nothing to stop.
     fn cancel_preparation(&self, _thread_id: &str) {}
 
+    /// `restoreMissingWorktree` at turn start: recreates the thread's missing managed worktree
+    /// from its branch. The caller holds the worktree's lease. `true` when it is a checkout
+    /// again; the default restores nothing.
+    fn restore_worktree(&self, _worktree: ThreadWorktree) -> BoxFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
+    }
+
     /// The branch checked out in `cwd` (`GitWorkflowService.currentBranch`): `None` when HEAD
     /// is detached, the folder is no checkout, or git fails. A project-folder launch that
     /// names no branch records it. The default knows none.

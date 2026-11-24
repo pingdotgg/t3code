@@ -166,6 +166,8 @@ struct TurnContext {
     run: Value,
     message: Value,
     cwd: Option<String>,
+    /// The thread's own worktree, when the turn runs in it.
+    worktree: Option<crate::ThreadWorktree>,
     provider_thread: Option<Value>,
     /// The source to fork natively, on a fork's first turn.
     fork: Option<crate::fork::NativeFork>,
@@ -598,6 +600,31 @@ impl Inner {
         }
     }
 
+    /// T3's `restoreMissingWorktree` then `ProviderWorkspaceMissingError`, under the lease the
+    /// turn holds: a worktree folder that is gone, or that cleanup left only `node_modules` in,
+    /// gets its branch back; a folder that is still no directory fails the turn, naming it,
+    /// before a session starts in it.
+    async fn ensure_worktree(&self, worktree: crate::ThreadWorktree) -> Result<(), StartError> {
+        let path = std::path::PathBuf::from(&worktree.worktree_path);
+        if conn_vcs::worktree::needs_checkout(&path).await
+            && let Some(host) = &self.host
+        {
+            host.restore_worktree(worktree).await;
+        }
+        let folder = path.clone();
+        if tokio::task::spawn_blocking(move || folder.is_dir())
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        Err(StartError::Failed(format!(
+            "This thread's workspace folder no longer exists or is not a directory: {}. \
+             Restore the folder at this path before retrying.",
+            path.display()
+        )))
+    }
+
     async fn try_start_turn(
         self: &Arc<Self>,
         thread_id: &str,
@@ -619,10 +646,22 @@ impl Inner {
                         .entity(&tid, "messages", message_id)?
                         .unwrap_or(Value::Null);
                     let project = tx.project(thread["projectId"].as_str().unwrap_or_default())?;
-                    let cwd = thread["worktreePath"]
-                        .as_str()
-                        .or_else(|| project.as_ref().and_then(|p| p["workspaceRoot"].as_str()))
+                    let project_root = project
+                        .as_ref()
+                        .and_then(|p| p["workspaceRoot"].as_str())
                         .map(str::to_owned);
+                    let worktree =
+                        thread["worktreePath"]
+                            .as_str()
+                            .map(|path| crate::ThreadWorktree {
+                                worktree_path: path.to_owned(),
+                                branch: thread["branch"].as_str().map(str::to_owned),
+                                project_root: project_root.clone(),
+                            });
+                    let cwd = worktree
+                        .as_ref()
+                        .map(|w| w.worktree_path.clone())
+                        .or(project_root);
                     let instance = run["providerInstanceId"].as_str().unwrap_or_default();
                     let same_instance =
                         |pt: &Value| pt["providerInstanceId"].as_str() == Some(instance);
@@ -701,6 +740,7 @@ impl Inner {
                         run,
                         message,
                         cwd,
+                        worktree,
                         provider_thread,
                         fork,
                         handoffs,
@@ -718,6 +758,7 @@ impl Inner {
         };
         if let Some(cwd) = self.policy_override.as_ref().and_then(|p| p.cwd.clone()) {
             context.cwd = Some(cwd);
+            context.worktree = None;
         }
         if context.run["status"] != "starting" {
             return Err(StartError::Abandoned);
@@ -728,6 +769,9 @@ impl Inner {
             (Some(locks), Some(cwd)) => Some(locks.workspace(cwd).await),
             _ => None,
         };
+        if let Some(worktree) = context.worktree.take() {
+            self.ensure_worktree(worktree).await?;
+        }
 
         let model_selection: conn_contract::ModelSelection =
             from_json(context.run["modelSelection"].clone()).map_err(|e| e.to_string())?;

@@ -109,6 +109,37 @@ pub fn is_managed_worktree_path(dirs: &[PathBuf], path: &std::path::Path) -> boo
     })
 }
 
+/// `restoreMissingWorktree` (T3 `restoreMissingWorktree.ts`), for terminals and turn starts:
+/// whether the thread's worktree is a checkout again, recreated now as a managed worktree from
+/// its branch. The caller holds the worktree's lease.
+pub async fn restore_thread_worktree(
+    environment: &Environment,
+    worktree: &conn_engine::ThreadWorktree,
+) -> bool {
+    // A thread without a branch has a scratch folder, not a worktree to restore.
+    let (Some(branch), Some(root)) = (&worktree.branch, &worktree.project_root) else {
+        return false;
+    };
+    let path = PathBuf::from(&worktree.worktree_path);
+    let dirs = managed_worktree_dirs(environment);
+    let candidate = path.clone();
+    let managed = tokio::task::spawn_blocking(move || is_managed_worktree_path(&dirs, &candidate))
+        .await
+        .unwrap_or(false);
+    if !managed {
+        return false;
+    }
+    match conn_vcs::worktree::restore_missing_worktree(std::path::Path::new(root), &path, branch)
+        .await
+    {
+        Ok(restored) => restored,
+        Err(error) => {
+            eprintln!("conn-server: could not recreate a missing worktree: {error}");
+            false
+        }
+    }
+}
+
 /// The nearest existing ancestor's real path, plus the missing components.
 fn real_location(path: &std::path::Path) -> PathBuf {
     if let Ok(real) = std::fs::canonicalize(path) {
@@ -208,6 +239,10 @@ impl Host {
 }
 
 impl EngineHost for Host {
+    fn restore_worktree(&self, worktree: conn_engine::ThreadWorktree) -> BoxFuture<'_, bool> {
+        Box::pin(async move { restore_thread_worktree(&self.environment, &worktree).await })
+    }
+
     fn refresh_settings(&self) -> BoxFuture<'_, ()> {
         Box::pin(crate::settings::refresh(&self.environment))
     }

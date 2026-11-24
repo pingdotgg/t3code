@@ -4,11 +4,7 @@
 //! Inputs are checked against the contract's bounds here, as Effect's schema does in the T3
 //! server: a payload outside them is a defect, not a typed error.
 
-use std::{
-    future::Future,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{future::Future, path::PathBuf, sync::Arc};
 
 use conn_contract::{
     TerminalAttachInput, TerminalAttachStreamEvent, TerminalClearInput, TerminalCloseInput,
@@ -297,33 +293,14 @@ impl Restore {
         Some(self.locks.workspace(root).await)
     }
 
-    /// Whether `worktree` is a checkout again: recreated now, as a managed worktree whose
-    /// branch survives. The caller holds its lease.
+    /// Whether `worktree` is a checkout again (`host::restore_thread_worktree`). The caller
+    /// holds its lease.
     async fn restore(&self, worktree: Option<&ThreadWorktree>) -> bool {
-        let (Some(worktree), Some(environment)) = (worktree, &self.environment) else {
-            return false;
-        };
-        // A thread without a branch has a scratch folder, not a worktree to restore.
-        let (Some(branch), Some(root)) = (&worktree.branch, &worktree.project_root) else {
-            return false;
-        };
-        let path = PathBuf::from(&worktree.worktree_path);
-        let dirs = crate::host::managed_worktree_dirs(environment);
-        let candidate = path.clone();
-        let managed = tokio::task::spawn_blocking(move || {
-            crate::host::is_managed_worktree_path(&dirs, &candidate)
-        })
-        .await
-        .unwrap_or(false);
-        if !managed {
-            return false;
-        }
-        match conn_vcs::worktree::restore_missing_worktree(Path::new(root), &path, branch).await {
-            Ok(restored) => restored,
-            Err(error) => {
-                eprintln!("conn-server: could not recreate a missing worktree: {error}");
-                false
+        match (worktree, &self.environment) {
+            (Some(worktree), Some(environment)) => {
+                crate::host::restore_thread_worktree(environment, worktree).await
             }
+            _ => false,
         }
     }
 }

@@ -328,8 +328,11 @@ async fn ahead_of_base(cwd: &Path, branch: &str, remotes: Option<&repo::Remotes>
 }
 
 /// Fetches the remote of the current branch's upstream. Quiet, no tags, no auto gc, never
-/// prompts. Failures are the caller's to log.
+/// prompts. Failures are the caller's to log; a missing folder has nothing to fetch.
 pub async fn fetch_upstream_remote(cwd: &Path) -> VcsResult<()> {
+    if !repo::is_dir(cwd).await {
+        return Ok(());
+    }
     let Some(head) = repo::optional_text(git(
         "GitVcsDriver.fetch",
         cwd,

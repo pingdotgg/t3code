@@ -537,7 +537,10 @@ async fn metadata_binding_rejects_stale_worktrees_and_keeps_idle_continuations()
             .dispatch(conn_contract::from_json(value).unwrap())
     };
     assert!(dispatch(json!({"type":"thread.metadata.update","commandId":"stale","threadId":thread,"worktreePath":"/ignored","expectedWorktreePath":"/stale"})).await.is_err());
-    dispatch(json!({"type":"thread.metadata.update","commandId":"idle-move","threadId":thread,"branch":"feature","worktreePath":"/new","expectedWorktreePath":null,"continuation":{"messageId":"resume-idle","text":"hello"}})).await.unwrap();
+    // The continuation runs in the new folder, which must exist (`ProviderWorkspaceMissingError`).
+    let new = f.dir.join("new").to_string_lossy().into_owned();
+    std::fs::create_dir_all(&new).unwrap();
+    dispatch(json!({"type":"thread.metadata.update","commandId":"idle-move","threadId":thread,"branch":"feature","worktreePath":new,"expectedWorktreePath":null,"continuation":{"messageId":"resume-idle","text":"hello"}})).await.unwrap();
     let ended = outside
         .ok(
             "conn_thread_wait",
@@ -553,7 +556,7 @@ async fn metadata_binding_rejects_stale_worktrees_and_keeps_idle_continuations()
         .await
         .unwrap();
     assert_eq!(projection["runs"].as_array().unwrap().len(), 1);
-    assert_eq!(projection["thread"]["worktreePath"], "/new");
+    assert_eq!(projection["thread"]["worktreePath"], json!(new));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -626,25 +626,89 @@ pub async fn restore_missing_worktree(
     Ok(true)
 }
 
-/// Whether `path` needs a checkout: it does not exist, or held only leftovers (now removed).
-/// The folder itself stays: it may be a running process's working folder.
-fn clear_leftover_folder(path: &Path) -> std::io::Result<bool> {
+/// Whether `path` needs a checkout, by T3's rule in `restoreMissingWorktree`: it does not
+/// exist, or it holds no `.git` and only leftover folders. A folder that cannot be read counts
+/// as present, as T3's `exists` does on an error. Off the runtime thread.
+pub async fn needs_checkout(path: &Path) -> bool {
+    let folder = path.to_owned();
+    tokio::task::spawn_blocking(move || leftover_entries(&folder).is_some())
+        .await
+        .unwrap_or(false)
+}
+
+/// The entries to clear before a checkout at `path`: `Some(vec![])` when it does not exist,
+/// `None` when it is a checkout or holds anything but leftovers.
+fn leftover_entries(path: &Path) -> Option<Vec<std::fs::DirEntry>> {
     let entries = match std::fs::read_dir(path) {
-        Ok(entries) => entries.collect::<Result<Vec<_>, _>>()?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-        Err(_) => return Ok(false),
+        Ok(entries) => entries.collect::<Result<Vec<_>, _>>().ok()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
+        Err(_) => return None,
     };
     let leftover = entries.iter().all(|entry| {
         let name = entry.file_name();
         LEFTOVER_ENTRIES.iter().any(|l| name == *l) && entry.file_type().is_ok_and(|t| t.is_dir())
     });
-    if !leftover || path.join(".git").exists() {
+    (leftover && !path.join(".git").exists()).then_some(entries)
+}
+
+/// Whether `path` needs a checkout; leftovers are removed. The folder itself stays: it may be
+/// a running process's working folder.
+fn clear_leftover_folder(path: &Path) -> std::io::Result<bool> {
+    let Some(entries) = leftover_entries(path) else {
         return Ok(false);
-    }
+    };
     for entry in entries {
         std::fs::remove_dir_all(entry.path())?;
     }
     Ok(true)
+}
+
+/// Removes the stale registration of `path` alone, as `git worktree prune` would remove it:
+/// its `gitdir` names `<path>/.git`, which is gone, and it is not locked. A repository-wide
+/// prune would also drop worktrees whose folders are only away, such as on an unmounted drive.
+fn forget_stale_registration(common_dir: &Path, path: &Path) -> std::io::Result<()> {
+    let target = real_location(&path.join(".git"));
+    if target.exists() {
+        return Ok(());
+    }
+    let entries = match std::fs::read_dir(common_dir.join("worktrees")) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for entry in entries {
+        let admin = entry?.path();
+        let Ok(gitdir) = std::fs::read_to_string(admin.join("gitdir")) else {
+            continue;
+        };
+        let registered = Path::new(gitdir.trim());
+        if registered.is_absolute()
+            && real_location(registered) == target
+            && !admin.join("locked").exists()
+        {
+            std::fs::remove_dir_all(&admin)?;
+        }
+    }
+    Ok(())
+}
+
+/// The nearest existing ancestor's real path, plus the missing components: two spellings of a
+/// missing path (`/var` and `/private/var` on macOS) compare equal.
+fn real_location(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(current) {
+            return missing.iter().rev().fold(real, |acc, part| acc.join(part));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_owned());
+                current = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
 }
 
 /// `restoreMissingWorktree.recreate`: the local branch when it survives; else its pushed copy
@@ -652,9 +716,12 @@ fn clear_leftover_folder(path: &Path) -> std::io::Result<bool> {
 /// project's current branch, the remote's default commit, or `HEAD`.
 async fn recreate_worktree(project_root: &Path, path: &Path, branch: &str) -> VcsResult<()> {
     refuse_option_like(project_root, branch)?;
-    git(OPERATION, project_root, ["worktree", "prune"])
-        .run()
-        .await?;
+    let common = common_dir(project_root).await?;
+    let stale = path.to_owned();
+    tokio::task::spawn_blocking(move || forget_stale_registration(&common, &stale))
+        .await
+        .map_err(|e| invalid(project_root, e.to_string()))?
+        .map_err(|e| invalid(project_root, e.to_string()))?;
     let target = path.to_string_lossy().into_owned();
     let add = |args: Vec<String>| async move {
         let mut full = vec!["worktree".to_owned(), "add".to_owned()];

@@ -43,7 +43,7 @@ pub(crate) async fn optional_text(command: GitCommand) -> VcsResult<Option<Strin
 }
 
 /// `Path::is_dir` off the runtime thread: a stat can block on a slow or hung mount.
-async fn is_dir(path: &Path) -> bool {
+pub(crate) async fn is_dir(path: &Path) -> bool {
     let path = path.to_owned();
     tokio::task::spawn_blocking(move || path.is_dir())
         .await

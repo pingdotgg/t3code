@@ -1092,3 +1092,154 @@ async fn a_stopped_cleanup_removes_nothing() {
     assert_eq!(cleanup.sweep().await, vec![]);
     assert!(fx.worktree.exists());
 }
+
+impl Fixture {
+    /// A managed worktree (`<worktrees>/<project>/<name>`) on a new branch with one commit
+    /// the project lacks, then removed as storage cleanup removes it: its branch survives.
+    fn removed_managed_worktree(&self, branch: &str) -> (PathBuf, String) {
+        let path = self
+            .environment
+            .state_dir
+            .join("worktrees/project/feature-restore-0123456789abcdef");
+        git(
+            &self.project,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(path.join("thread.txt"), "thread work\n").unwrap();
+        git(&path, &["add", "-A"]);
+        git(&path, &["commit", "-qm", "thread tip"]);
+        let tip = git(&path, &["rev-parse", "HEAD"]).trim().to_owned();
+        std::fs::remove_dir_all(&path).unwrap();
+        (path, tip)
+    }
+
+    /// Sends a prompt and waits for its run to end: the run's status and its error item's
+    /// failure.
+    async fn turn(&self, id: &str, text: &str) -> (Value, Value) {
+        self.send(id, text).await;
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let projection = self
+                    .engine
+                    .get_thread_projection(conn_contract::ThreadId::from(id))
+                    .await
+                    .ok()
+                    .unwrap();
+                let run = projection["runs"]
+                    .as_array()
+                    .and_then(|runs| runs.last())
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let status = run["status"].clone();
+                if ["completed", "failed", "interrupted", "cancelled"]
+                    .iter()
+                    .any(|s| status == *s)
+                {
+                    let failure = projection["turnItems"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|item| item["type"] == "error" && item["runId"] == run["id"])
+                        .map_or(Value::Null, |item| item["failure"].clone());
+                    return (status, failure);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the run ends")
+    }
+}
+
+/// T3 `ProviderTurnStartService` runs `restoreMissingWorktree` before the session opens: a
+/// thread whose managed worktree storage cleanup removed gets it back from its kept branch,
+/// and its turn runs there.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_restores_a_removed_worktree_from_its_branch() {
+    let fx = Fixture::new();
+    let (path, tip) = fx.removed_managed_worktree("thread/restore");
+    fx.thread_on("thread-r", &path, "thread/restore").await;
+    let (status, failure) = fx.turn("thread-r", "hello").await;
+    assert_eq!(status, "completed", "{failure}");
+    assert_eq!(
+        git(&path, &["branch", "--show-current"]).trim(),
+        "thread/restore"
+    );
+    assert_eq!(git(&path, &["rev-parse", "HEAD"]).trim(), tip);
+    assert!(path.join("thread.txt").exists());
+}
+
+/// T3 "restores into a leftover worktree folder": cleanup removed the checkout but left
+/// `node_modules`. The folder exists, yet it is no checkout, so the turn restores the branch
+/// there (T3 clears the leftover first: `git worktree add` refuses a non-empty folder).
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_restores_a_worktree_cleanup_left_only_node_modules_in() {
+    let fx = Fixture::new();
+    let (path, tip) = fx.removed_managed_worktree("thread/restore");
+    std::fs::create_dir_all(path.join("node_modules/pkg")).unwrap();
+    std::fs::write(path.join("node_modules/pkg/index.js"), "x\n").unwrap();
+    fx.thread_on("thread-r", &path, "thread/restore").await;
+    let (status, failure) = fx.turn("thread-r", "hello").await;
+    assert_eq!(status, "completed", "{failure}");
+    assert!(path.join(".git").exists(), "a checkout again");
+    assert_eq!(git(&path, &["rev-parse", "HEAD"]).trim(), tip);
+    assert!(path.join("thread.txt").exists());
+}
+
+/// T3's `recreate` starts a lost branch again from the project's current branch, so a managed
+/// worktree whose branch is gone too comes back on a fresh branch and the turn runs.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_recreates_a_removed_worktree_whose_branch_is_gone() {
+    let fx = Fixture::new();
+    let (path, _) = fx.removed_managed_worktree("thread/restore");
+    git(&fx.project, &["worktree", "prune"]);
+    git(&fx.project, &["branch", "-q", "-D", "thread/restore"]);
+    let main = git(&fx.project, &["rev-parse", "main"]).trim().to_owned();
+    fx.thread_on("thread-r", &path, "thread/restore").await;
+    let (status, failure) = fx.turn("thread-r", "hello").await;
+    assert_eq!(status, "completed", "{failure}");
+    assert_eq!(
+        git(&path, &["branch", "--show-current"]).trim(),
+        "thread/restore"
+    );
+    assert_eq!(git(&path, &["rev-parse", "HEAD"]).trim(), main);
+}
+
+/// `ProviderWorkspaceMissingError`: a missing folder that is no managed worktree is never
+/// recreated, and its turn fails with a message that names the folder, not with a stopped
+/// session.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_in_a_missing_folder_it_cannot_restore_fails_clearly() {
+    let fx = Fixture::new();
+    let path = fx.dir.join("own-worktree");
+    git(
+        &fx.project,
+        &["worktree", "add", "-q", "-b", "own", path.to_str().unwrap()],
+    );
+    std::fs::remove_dir_all(&path).unwrap();
+    git(&fx.project, &["worktree", "prune"]);
+    git(&fx.project, &["branch", "-q", "-D", "own"]);
+    fx.thread_on("thread-m", &path, "own").await;
+    let (status, failure) = fx.turn("thread-m", "hello").await;
+    assert_eq!(status, "failed");
+    assert_eq!(
+        failure["message"],
+        format!(
+            "This thread's workspace folder no longer exists or is not a directory: {}. \
+             Restore the folder at this path before retrying.",
+            path.display()
+        ),
+        "{failure}"
+    );
+    assert!(
+        !path.exists(),
+        "nothing recreates a folder Conn does not manage"
+    );
+}
