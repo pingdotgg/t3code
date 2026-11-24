@@ -37,7 +37,6 @@ import {
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
-import { validateAndNormalizeImageBytes } from "@t3tools/shared/image";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -9211,21 +9210,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }),
               ),
             );
-            const validated = validateAndNormalizeImageBytes({
-              bytes,
-              declaredMimeType: attachment.mimeType,
-            });
-            if (!validated.ok) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver,
-                detail: `Attachment '${attachment.id}' is not a valid image: ${validated.reason}`,
-                reason: "attachment_unreadable",
-              });
-            }
             blocks.push({
               type: "image",
-              data: Buffer.from(validated.bytes).toString("base64"),
-              mimeType: validated.mimeType,
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
             });
           }
           return blocks;

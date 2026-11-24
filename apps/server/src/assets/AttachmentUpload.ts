@@ -6,7 +6,7 @@ import {
   type AttachmentCreateUploadUrlInput,
   AttachmentUploadSigningKeyError,
 } from "@t3tools/contracts";
-import { isSvgAttachment, validateAndNormalizeImageBytes } from "@t3tools/shared/image";
+import { isSvgAttachment } from "@t3tools/shared/image";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -32,6 +32,7 @@ import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerConfig from "../config.ts";
 import { inferImageExtension } from "../imageMime.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import { fileHeaderMimeType } from "../workspace/fileHeaderMimeType.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
@@ -201,23 +202,20 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
         detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
       } satisfies StoreAttachmentUploadResult;
     }
-    let persistedBytes = receivedBytes;
     if (claims.type === "image") {
-      const uploadedBytes = yield* fileSystem.readFile(partPath);
-      const validated = validateAndNormalizeImageBytes({
-        bytes: uploadedBytes,
-        declaredMimeType: claims.mimeType,
-      });
-      if (!validated.ok) {
+      // Providers reject the whole turn on undecodable images, which strands the thread.
+      const header = yield* fileSystem.stream(partPath, { bytesToRead: 16 }).pipe(
+        Stream.runFold(
+          () => new Uint8Array(0),
+          (head, chunk) => Buffer.concat([head, chunk]),
+        ),
+      );
+      if (fileHeaderMimeType(header) !== claims.mimeType) {
         return {
           ok: false,
           status: 400,
-          detail: validated.reason,
+          detail: `Body is not a ${claims.mimeType} image. Send the raw file bytes, not base64 or a data URL.`,
         } satisfies StoreAttachmentUploadResult;
-      }
-      if (validated.decodedFromBase64) {
-        yield* fileSystem.writeFile(partPath, validated.bytes);
-        persistedBytes = validated.bytes.byteLength;
       }
     }
     // Publishing without replacement keeps an upload and its cached text immutable.
@@ -248,7 +246,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
       }),
     );
     if (!published) {
-      if (Number((yield* fileSystem.stat(finalPath)).size) !== persistedBytes) {
+      if (Number((yield* fileSystem.stat(finalPath)).size) !== receivedBytes) {
         return { ok: false, status: 409, detail: "Attachment already uploaded." };
       }
       const hashes = yield* Effect.forEach([partPath, finalPath], (file) =>
