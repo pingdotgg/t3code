@@ -15,11 +15,10 @@ import type { UsageLimitDisplay } from "@t3tools/contracts/settings";
 import {
   type ResetCreditChoice,
   paceOf,
-  paceRemainingPercent,
   remainingPercent,
   limitPercent,
   resetCountdown,
-  shownPercent,
+  pacePercent,
   usedPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
@@ -69,15 +68,15 @@ function WindowRow(props: {
   const display = useUsageLimitDisplay();
   const remaining = remainingPercent(window);
   const fill = limitPercent(window, display);
-  const timeLeft = paceRemainingPercent(window, now);
+  const evenPace = pacePercent(window, now, display);
   const pace = paceOf(window, now);
   const m = useMessages();
   const resetsIn = resetLabels(window, now, m)?.full;
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
-    timeLeft === null || barWidth < 6
+    evenPace === null || barWidth < 6
       ? null
-      : Math.min(Math.max((barWidth * shownPercent(timeLeft, display)) / 100, 3), barWidth - 3);
+      : Math.min(Math.max((barWidth * evenPace) / 100, 3), barWidth - 3);
   const bar = (
     <View
       className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"

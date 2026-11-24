@@ -17,7 +17,8 @@ import {
   limitPercent,
   remainingPercent,
   type ResetCreditChoice,
-  shownPercent,
+  paceElapsedPercent,
+  pacePercent,
   usedPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
@@ -140,16 +141,14 @@ function WindowBar({
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const fill = limitPercent(window, display);
-  const [barRef, paceMark] = usePaceMark(
-    timeLeft === null ? null : shownPercent(timeLeft, display),
-  );
+  const [barRef, paceMark] = usePaceMark(pacePercent(window, now, display));
   const resetsIn = formatResetsIn(window, now, m);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)
     : null;
   const label = window.label;
   const used = usedPercent(window);
-  const elapsed = timeLeft === null ? null : 100 - timeLeft;
+  const elapsed = paceElapsedPercent(window, now);
   const summary =
     display === "used"
       ? elapsed === null

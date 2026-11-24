@@ -7,11 +7,10 @@ import {
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
-  paceRemainingPercent,
   limitPercent,
   remainingPercent,
   type ResetCreditChoice,
-  shownPercent,
+  pacePercent,
   usedPercent,
 } from "@t3tools/shared/usageLimits";
 import { T, useGT, useMessages } from "gt-react";
@@ -155,7 +154,7 @@ function SegmentPopover({
   const m = useMessages();
   const display = usePrimarySettings((settings) => settings.usageLimitDisplay);
   const remaining = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
+  const evenPace = pacePercent(window, now, display);
   const resetsIn = formatResetsIn(window, now, m, "in");
   const where =
     account.environments.length > 0
@@ -212,11 +211,11 @@ function SegmentPopover({
             {resetsIn ? ` · ${resetsIn}` : ""}
           </Row>
         ) : null}
-        {timeLeft !== null ? (
+        {evenPace !== null ? (
           <Row label={gt("Even pace")}>
             {display === "used"
-              ? gt("{used}% used by now", { used: 100 - timeLeft })
-              : gt("{timeLeft}% left by now", { timeLeft })}
+              ? gt("{used}% used by now", { used: evenPace })
+              : gt("{timeLeft}% left by now", { timeLeft: evenPace })}
           </Row>
         ) : null}
         {reset && reset.restoresPercent > 0 ? (
@@ -381,10 +380,8 @@ function SegmentTriggers({
   const display = usePrimarySettings((settings) => settings.usageLimitDisplay);
   const remaining = remainingPercent(window);
   const fill = limitPercent(window, display);
-  const timeLeft = paceRemainingPercent(window, now);
-  const [segmentRef, paceMark] = usePaceMark(
-    timeLeft === null ? null : shownPercent(timeLeft, display),
-  );
+  const evenPace = pacePercent(window, now, display);
+  const [segmentRef, paceMark] = usePaceMark(evenPace);
   // A reset gives back spent quota: the end of the empty track, or the end of a used fill.
   const refill = reset ? Math.min(display === "used" ? fill : 100 - remaining, refillPercent) : 0;
   const m = useMessages();
@@ -399,11 +396,11 @@ function SegmentTriggers({
       ? gt("{name}: {used}% used", { name, used: usedPercent(window) })
       : gt("{name}: {remaining}% left", { name, remaining }),
     resetsIn,
-    timeLeft === null
+    evenPace === null
       ? null
       : display === "used"
-        ? gt("{elapsed}% of the window passed", { elapsed: 100 - timeLeft })
-        : gt("{timeLeft}% of the window left", { timeLeft }),
+        ? gt("{elapsed}% of the window passed", { elapsed: evenPace })
+        : gt("{timeLeft}% of the window left", { timeLeft: evenPace }),
     credits
       ? gt(
           "{count, plural, one {{count} reset credit banked} other {{count} reset credits banked}}",

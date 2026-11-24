@@ -9,10 +9,9 @@ import {
   type LimitPace,
   type LimitPoolWindow,
   paceOf,
-  paceRemainingPercent,
   limitPercent,
   remainingPercent,
-  shownPercent,
+  pacePercent,
   usedPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
@@ -190,14 +189,14 @@ function LimitRow({
   const used = usedPercent(window);
   const shown = limitPercent(window, display);
   const pace = paceOf(window, now);
-  const timeLeft = paceRemainingPercent(window, now);
+  const evenPace = pacePercent(window, now, display);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
       label={window.label}
       fill={shown}
       tone={limitTone(left)}
-      tick={timeLeft === null ? null : shownPercent(timeLeft, display)}
+      tick={evenPace}
       value={`${shown}%`}
       ariaValue={display === "used" ? gt("{used}% used", { used }) : gt("{left}% left", { left })}
       opensUsage
@@ -208,12 +207,12 @@ function LimitRow({
               ? gt("{label}: {used}% used", { label: window.label, used })
               : gt("{label}: {left}% left", { label: window.label, left })}
           </span>
-          {pace && timeLeft !== null ? (
+          {pace && evenPace !== null ? (
             <span className="text-muted-foreground">
               {m(PACE_LABEL[pace])} ·{" "}
               {display === "used"
-                ? gt("{elapsed}% of the window passed", { elapsed: 100 - timeLeft })
-                : gt("{timeLeft}% of the window left", { timeLeft })}
+                ? gt("{elapsed}% of the window passed", { elapsed: evenPace })
+                : gt("{timeLeft}% of the window left", { timeLeft: evenPace })}
             </span>
           ) : null}
           {window.resetsAt && resetsAt > now ? (

@@ -791,9 +791,19 @@ export function paceRemainingPercent(
   return elapsed === null ? null : Math.round((1 - elapsed) * 100);
 }
 
-/** An even-pace left percent as the bar shows it: time left, or time passed. */
-export function shownPercent(left: number, display: UsageLimitDisplay): number {
-  return display === "used" ? 100 - left : left;
+// Rounded on its own, like usedPercent: 100 - paceRemainingPercent drops a point at .5 ties.
+export function paceElapsedPercent(window: ServerProviderUsageWindow, now: number): number | null {
+  const elapsed = elapsedShare(window, now);
+  return elapsed === null ? null : Math.round(elapsed * 100);
+}
+
+/** Even pace as the bar shows it: time left, or time passed. */
+export function pacePercent(
+  window: ServerProviderUsageWindow,
+  now: number,
+  display: UsageLimitDisplay,
+): number | null {
+  return display === "used" ? paceElapsedPercent(window, now) : paceRemainingPercent(window, now);
 }
 
 export type LimitPace = "ahead" | "on" | "under";

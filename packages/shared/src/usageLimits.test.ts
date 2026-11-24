@@ -21,7 +21,9 @@ import {
   collectLimitPools,
   elapsedShare,
   exhaustedUsageWindow,
+  limitPercent,
   paceOf,
+  pacePercent,
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
@@ -218,6 +220,12 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+  });
+  it("keeps an on-pace limit level with its pace mark at a half-percent tie", () => {
+    const onPace = { ...window, usedPercent: 12.5, resetsAt: "2026-09-03T16:22:30.000Z" };
+    expect(elapsedShare(onPace, now)).toBeCloseTo(0.125);
+    expect(pacePercent(onPace, now, "used")).toBe(limitPercent(onPace, "used"));
+    expect(pacePercent(onPace, now, "left")).toBe(limitPercent(onPace, "left"));
   });
 });
 

@@ -7,10 +7,9 @@ import {
   collectLimitAccounts,
   collectLimitPools,
   displayLimitWindows,
-  paceRemainingPercent,
   limitPercent,
   remainingPercent,
-  shownPercent,
+  pacePercent,
   usedPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -267,7 +266,7 @@ function PoolWindowCard({
             />
           );
         const { account, window } = member;
-        const timeLeft = paceRemainingPercent(window, now);
+        const evenPace = pacePercent(window, now, display);
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = resetLabels(window, now, m)?.compact;
         return (
@@ -276,7 +275,7 @@ function PoolWindowCard({
             accessibilityRole="button"
             accessibilityLabel={
               display === "used"
-                ? timeLeft === null
+                ? evenPace === null
                   ? gt("Segment {index}, {account}, {used}% used", {
                       index: index + 1,
                       account: accountName(account, m),
@@ -288,10 +287,10 @@ function PoolWindowCard({
                         index: index + 1,
                         account: accountName(account, m),
                         used: usedPercent(window),
-                        elapsed: 100 - timeLeft,
+                        elapsed: evenPace,
                       },
                     )
-                : timeLeft === null
+                : evenPace === null
                   ? gt("Segment {index}, {account}, {remaining}% left", {
                       index: index + 1,
                       account: accountName(account, m),
@@ -303,7 +302,7 @@ function PoolWindowCard({
                         index: index + 1,
                         account: accountName(account, m),
                         remaining: remainingPercent(window),
-                        timeLeft,
+                        timeLeft: evenPace,
                       },
                     )
             }
@@ -311,7 +310,7 @@ function PoolWindowCard({
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
           >
-            <PaceGap timeLeft={timeLeft === null ? null : shownPercent(timeLeft, display)}>
+            <PaceGap timeLeft={evenPace}>
               <View className="absolute inset-0 rounded-md bg-subtle" />
               <View className="absolute inset-0 overflow-hidden rounded-md">
                 <AccountSegment
@@ -680,11 +679,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     .find((candidate) => candidate.driver === account?.driver)
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
-  const evenPace = window ? paceRemainingPercent(window, now) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   const gt = useGT();
   const display = useUsageLimitDisplay();
+  const evenPace = window ? pacePercent(window, now, display) : null;
   return (
     <SettingsScreen title={gt("Account", { $context: "screen title" })}>
       <ScrollView
@@ -757,7 +756,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 <Text className="text-sm text-foreground-muted">
                   {display === "used" ? (
                     <T>
-                      Even pace: <Var>{100 - evenPace}</Var>% used by now
+                      Even pace: <Var>{evenPace}</Var>% used by now
                     </T>
                   ) : (
                     <T>
