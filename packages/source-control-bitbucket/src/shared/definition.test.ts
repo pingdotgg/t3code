@@ -116,13 +116,27 @@ describe("Bitbucket repository keys", () => {
     ).toBe(true);
   });
 
-  it("matches keys saved under Bitbucket Cloud's SSH hosts", () => {
-    expect(registry.canonicalRepositoryKey("ssh.bitbucket.org/workspace/repo")).toBe(
-      "bitbucket.org/workspace/repo",
-    );
-    expect(registry.canonicalRepositoryKey("altssh.bitbucket.org/workspace/repo")).toBe(
-      "bitbucket.org/workspace/repo",
-    );
+  it.each(["ssh.bitbucket.org", "altssh.bitbucket.org"])(
+    "matches pull requests for a key saved under %s",
+    (host) => {
+      const canonicalKey = `${host}/workspace/repo`;
+      expect(registry.canonicalRepositoryKey(canonicalKey)).toBe("bitbucket.org/workspace/repo");
+      const identity = {
+        canonicalKey,
+        displayName: "workspace/repo",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: `git@${host}:workspace/repo.git`,
+        },
+      };
+      const link = parse("https://bitbucket.org/workspace/repo/pull-requests/5")!;
+      expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+      expect(definition.canReadChangeRequestOnHost(identity, link)).toBe(true);
+    },
+  );
+
+  it("leaves self-hosted keys alone", () => {
     expect(registry.repositoryKeyFromRemote("git@bitbucket.example.com:team/repo.git")).toBe(
       "bitbucket.example.com/team/repo",
     );
