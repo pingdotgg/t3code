@@ -399,6 +399,7 @@ describe("ssh tunnel scripts", () => {
     try {
       const bin = NodePath.join(root, "bin");
       const release = NodePath.join(root, "release");
+      // sha256sum and shasum escape a newline in a file name they print, so the home path has one.
       const home = NodePath.join(root, "home\ncache");
       const archive = `t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
       NodeFS.mkdirSync(bin);
@@ -422,8 +423,8 @@ describe("ssh tunnel scripts", () => {
           NodePath.join(bin, tool),
         );
       }
-      // GNU tar runs gzip to unpack, while BSD tar reads gzip itself, so the host's tar
-      // would make this host behave differently on macOS.
+      // GNU tar runs gzip to unpack but BSD tar (macOS) does not, so a stub stands in
+      // for a tar that needs it whatever the host ships.
       const realTar = NodeChildProcess.execFileSync("sh", ["-c", "command -v tar"], {
         encoding: "utf8",
       }).trim();
