@@ -29,6 +29,8 @@ interface BufferedAnalyticsEvent {
   readonly event: string;
   readonly properties?: Readonly<Record<string, unknown>>;
   readonly capturedAt: string;
+  /** Sent under its own id, without the install id, so it links to nothing else. */
+  readonly anonymous?: true;
 }
 
 interface DeliveryState {
@@ -86,6 +88,7 @@ export class AnalyticsService extends Context.Service<
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
+      options?: { readonly anonymous?: boolean },
     ) => Effect.Effect<boolean>;
 
     readonly flush: Effect.Effect<void>;
@@ -168,7 +171,8 @@ export const make = Effect.gen(function* () {
   const enqueueBufferedEvent = (
     uuid: string,
     event: string,
-    properties?: Readonly<Record<string, unknown>>,
+    properties: Readonly<Record<string, unknown>> | undefined,
+    anonymous: boolean,
   ) =>
     Effect.flatMap(DateTime.now, (now) =>
       Ref.modify(bufferRef, (current) => {
@@ -179,6 +183,7 @@ export const make = Effect.gen(function* () {
             event,
             ...(properties ? { properties } : {}),
             capturedAt: DateTime.formatIso(now),
+            ...(anonymous ? { anonymous: true as const } : {}),
           } satisfies BufferedAnalyticsEvent,
         ];
 
@@ -207,10 +212,10 @@ export const make = Effect.gen(function* () {
       batch: events.map((event) => ({
         uuid: event.uuid,
         event: event.event,
-        distinct_id: distinctId,
+        distinct_id: event.anonymous ? event.uuid : distinctId,
         properties: {
           ...event.properties,
-          ...(installId === null ? {} : { installId }),
+          ...(installId === null || event.anonymous ? {} : { installId }),
           $process_person_profile: false,
           platform: hostPlatform,
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
@@ -311,14 +316,19 @@ export const make = Effect.gen(function* () {
   });
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
-    function* (event, properties) {
+    function* (event, properties, options) {
       if (!(yield* telemetryEnabled) || !distinctId) return false;
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       const uuid = yield* Effect.exit(crypto.uuidV7());
       if (Exit.isFailure(uuid)) return false;
 
-      const enqueueResult = yield* enqueueBufferedEvent(uuid.value, event, properties);
+      const enqueueResult = yield* enqueueBufferedEvent(
+        uuid.value,
+        event,
+        properties,
+        options?.anonymous === true,
+      );
       if (enqueueResult.dropped) {
         yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
           size: enqueueResult.size,

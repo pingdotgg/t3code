@@ -306,14 +306,39 @@ describe("AcpRegistrySupport", () => {
         "/workspace",
       );
 
-      expect(resolved.spawn).toEqual({
-        command: commandPath,
+      expect(resolved.spawn).toMatchObject({
         args: [],
         cwd: "/workspace",
         env: environment,
         shell: false,
       });
+      expect((yield* Path.Path).isAbsolute(resolved.spawn.command)).toBe(true);
+      expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
+        yield* fileSystem.realPath(commandPath),
+      );
       expect(resolved.agent).toBeUndefined();
+
+      yield* fileSystem.makeDirectory(`${cacheDir}/target/nested`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${cacheDir}/target/dsh wrapper`,
+        "#!/bin/sh\necho target\n",
+      );
+      yield* fileSystem.chmod(`${cacheDir}/target/dsh wrapper`, 0o755);
+      yield* fileSystem.symlink(`${cacheDir}/target/nested`, `${cacheDir}/link`);
+      const symlinkCommand = `${cacheDir}/link/../dsh wrapper`;
+      for (const command of [
+        symlinkCommand,
+        `${(yield* Path.Path).relative(process.cwd(), cacheDir)}/link/../dsh wrapper`,
+      ]) {
+        const throughSymlink = yield* resolver.resolve(
+          decodeAcpRegistrySettings({ source: "local", commandPath: command }),
+          "/workspace",
+        );
+        expect((yield* Path.Path).isAbsolute(throughSymlink.spawn.command)).toBe(true);
+        expect(yield* fileSystem.readFileString(throughSymlink.spawn.command)).toBe(
+          "#!/bin/sh\necho target\n",
+        );
+      }
 
       for (const extension of [".cmd", ".BAT"]) {
         const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({

@@ -301,3 +301,159 @@ it.effect("inherited history stops at a missing fork ancestor", () =>
     assert.deepEqual(items, []);
   }),
 );
+
+const clearNow = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+const clearAncestorId = ThreadId.make("thread:ancestor-before-clear");
+const clearSourceId = ThreadId.make("thread:source-with-clear");
+const clearAncestorRunId = RunId.make("run:ancestor-1");
+
+function clearRun(id: RunId, threadId: ThreadId, ordinal: number, freshContext?: boolean) {
+  return {
+    id,
+    threadId,
+    ordinal,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    providerThreadId: ProviderThreadId.make(`pt:${id}`),
+    userMessageId: MessageId.make(`msg:${id}`),
+    rootNodeId: null as never,
+    activeAttemptId: null,
+    status: "completed" as const,
+    queuePosition: null,
+    requestedAt: clearNow,
+    startedAt: clearNow,
+    completedAt: clearNow,
+    checkpointId: null,
+    contextHandoffId: null,
+    ...(freshContext ? { freshContext: true } : {}),
+  };
+}
+
+function clearUserItem(
+  id: string,
+  threadId: ThreadId,
+  runId: RunId,
+  text: string,
+  ordinal: number,
+  scheduledTaskId?: string,
+) {
+  return {
+    ...importedItem({ role: "user", id, text, ordinal }),
+    threadId,
+    runId,
+    ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
+  } as OrchestrationV2TurnItem;
+}
+
+function clearThread(
+  id: ThreadId,
+  forkedFrom: OrchestrationV2AppThread["forkedFrom"],
+): OrchestrationV2AppThread {
+  return {
+    createdBy: "user",
+    creationSource: "web",
+    id,
+    projectId: ProjectId.make("project:clear-fork"),
+    title: id,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: clearAncestorId },
+    forkedFrom,
+    createdAt: clearNow,
+    updatedAt: clearNow,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    deletedAt: null,
+  };
+}
+
+/** Portable fork history of a source forked from an ancestor, through its last run. */
+const readClearFork = Effect.fn(function* (
+  sourceRuns: ReadonlyArray<ReturnType<typeof clearRun>>,
+  sourceItems: ReadonlyArray<OrchestrationV2TurnItem>,
+) {
+  const sourceThread = clearThread(clearSourceId, {
+    type: "run",
+    threadId: clearAncestorId,
+    runId: clearAncestorRunId,
+  });
+  const store = {
+    getThreadRecords: (threadId: ThreadId) =>
+      Effect.succeed(
+        (threadId === clearAncestorId
+          ? {
+              thread: clearThread(clearAncestorId, null),
+              runs: [clearRun(clearAncestorRunId, clearAncestorId, 1)],
+              attempts: [],
+              turnItems: [
+                clearUserItem("anc", clearAncestorId, clearAncestorRunId, "ancestor history", 1),
+              ],
+            }
+          : {
+              thread: sourceThread,
+              runs: sourceRuns,
+              attempts: [],
+              turnItems: sourceItems,
+            }) as never,
+      ),
+  };
+  const items = yield* ContextHandoffService.readForkHistoryItems(
+    store as never,
+    { thread: sourceThread, runs: sourceRuns, attempts: [] } as never,
+    sourceRuns.at(-1)!,
+  );
+  return items.map((item) => (item.type === "user_message" ? item.text : ""));
+});
+
+it.effect("portable fork history stops at /clear (freshContext) and drops ancestor history", () =>
+  Effect.gen(function* () {
+    const before = RunId.make("run:source-1");
+    const clear = RunId.make("run:source-2-clear");
+    const texts = yield* readClearFork(
+      [clearRun(before, clearSourceId, 1), clearRun(clear, clearSourceId, 2, true)],
+      [
+        clearUserItem("old", clearSourceId, before, "before clear", 1),
+        clearUserItem("new", clearSourceId, clear, "after clear", 2),
+      ],
+    );
+    assert.deepEqual(texts, ["after clear"]);
+  }),
+);
+
+it.effect("portable fork history keeps history past a restarted scheduled fresh run", () =>
+  Effect.gen(function* () {
+    const before = RunId.make("run:source-1");
+    const scheduled = RunId.make("run:source-2-scheduled");
+    const after = RunId.make("run:source-3");
+    // A steering restart points userMessageId at the steer, which carries no scheduledTaskId.
+    const scheduledRun = {
+      ...clearRun(scheduled, clearSourceId, 2, true),
+      userMessageId: MessageId.make("message:steer"),
+    };
+    const texts = yield* readClearFork(
+      [clearRun(before, clearSourceId, 1), scheduledRun, clearRun(after, clearSourceId, 3)],
+      [
+        clearUserItem("old", clearSourceId, before, "before schedule", 1),
+        clearUserItem("sched", clearSourceId, scheduled, "scheduled prompt", 2, "task-1"),
+        clearUserItem("steer", clearSourceId, scheduled, "steer", 3),
+        clearUserItem("new", clearSourceId, after, "after schedule", 4),
+      ],
+    );
+    assert.deepEqual(texts, [
+      "ancestor history",
+      "before schedule",
+      "scheduled prompt",
+      "steer",
+      "after schedule",
+    ]);
+  }),
+);

@@ -272,6 +272,15 @@ function ThemeColorPicker({
   return (
     <Popover
       onOpenChange={(open, eventDetails) => {
+        // Base UI's dismiss skips composing keys but not a bare keyCode 229 from an IME.
+        if (
+          !open &&
+          eventDetails.reason === "escape-key" &&
+          eventDetails.event instanceof KeyboardEvent &&
+          eventDetails.event.keyCode === 229
+        ) {
+          return eventDetails.cancel();
+        }
         cancelledRef.current = !open && eventDetails.reason === "escape-key";
         if (open) {
           onEditStart?.();

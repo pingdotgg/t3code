@@ -2050,7 +2050,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         return {
           distribution: "local",
           spawn: {
-            command: path.resolve(command),
+            command: path.isAbsolute(command) ? command : `${process.cwd()}${path.sep}${command}`,
             args: settings.commandArgs,
             cwd,
             env,
