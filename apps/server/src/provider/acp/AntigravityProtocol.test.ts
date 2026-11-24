@@ -7,6 +7,7 @@ import {
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
+  antigravityToolOutlivesPrompt,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
@@ -252,17 +253,23 @@ describe("Antigravity permissions and questions", () => {
   });
 
   it("bounds question text without changing choice IDs", () => {
+    const title = "Q".repeat(7_994) + "🧪";
+    const label = "O".repeat(506) + "🧪";
     const request = {
       ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, title: "Question ".repeat(2_000) },
+      toolCall: { ...questionRequest.toolCall, title: title + "🚀 continued" },
       options: [
-        { optionId: "stable-choice", name: "Choice ".repeat(2_000), kind: "allow_once" as const },
+        { optionId: "stable-choice", name: label + "🚀 continued", kind: "allow_once" as const },
       ],
     };
     const question = extractAntigravityUserInputQuestion(request);
-    expect(question?.question.length).toBeLessThanOrEqual(8_000);
-    expect(question?.options[0]?.label.length).toBeLessThanOrEqual(512);
-    expect(question?.options[0]?.value).toBe("stable-choice");
+    expect(question?.question).toBe(title + "...");
+    expect(question?.options).toEqual([
+      { value: "stable-choice", label: label + "...", description: label + "..." },
+    ]);
+    expect(
+      makeAntigravityUserInputResponse(request, { interaction_9960062f: label + "..." }),
+    ).toEqual({ outcome: { outcome: "selected", optionId: "stable-choice" } });
   });
 });
 
@@ -491,24 +498,85 @@ describe("Antigravity tool results", () => {
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
   });
 
+  it.each([
+    { name: "a command", update: commandStarted.update, outlives: true },
+    {
+      name: "a daemon",
+      update: { ...commandStarted.update, rawInput: { CommandLine: "serve", IsDaemon: true } },
+      outlives: false,
+    },
+    // agy 1.5.13 keeps this call in progress until the wake fires.
+    {
+      name: "a scheduled wake",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_4902666363527503248",
+        status: "in_progress",
+        kind: "other",
+        title: "Run schedule",
+        rawInput: { DurationSeconds: 30, Prompt: "Reply only with the word DONE." },
+      },
+      outlives: true,
+    },
+    {
+      name: "another native tool",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_other",
+        status: "in_progress",
+        kind: "other",
+        title: "Run list_dir",
+        rawInput: { DirectoryPath: "/workspace" },
+      },
+      outlives: false,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    update: EffectAcpSchema.SessionNotification["update"];
+    outlives: boolean;
+  }>)("knows whether $name outlives the prompt", ({ update, outlives }) => {
+    const event = parseToolUpdate({ sessionId: "session-1", update });
+    expect(antigravityToolOutlivesPrompt(normalizeAntigravityToolCall(event.toolCall))).toBe(
+      outlives,
+    );
+  });
+
+  it("keeps the start of a long command line, where the program and target are", () => {
+    const head = "cat > notes.md <<'EOF'";
+    const commandLine = `${head}\n${"note line\n".repeat(1_000)}EOF`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandStarted,
+        update: { ...commandStarted.update, rawInput: { CommandLine: commandLine } },
+      }).toolCall,
+    );
+    expect(toolCall.command?.startsWith(head)).toBe(true);
+    expect(toolCall.command).not.toContain("[Earlier output truncated]");
+    expect((toolCall.data.rawInput as { CommandLine: string }).CommandLine.startsWith(head)).toBe(
+      true,
+    );
+  });
+
   it("keeps 1.5 command input and output valid Unicode when cut", () => {
     const tail = `${"x".repeat(7_982)}build completed\r\n`;
     const output = `Command output:\nprefix\r\n🚀${tail}`;
     const expected = `[Earlier output truncated]\n\n${tail}`;
+    const head = "x".repeat(7_999);
+    const expectedCommand = `${head}\n\n[Command truncated]`;
     const toolCall = normalizeAntigravityToolCall(
       parseToolUpdate({
         ...commandCompleted,
         update: {
           ...commandCompleted.update,
-          rawInput: { CommandLine: output },
+          rawInput: { CommandLine: `${head}🚀 --flag` },
           rawOutput: { output, exit_code: 0 },
           content: [{ type: "content", content: { type: "text", text: output } }],
         },
       }).toolCall,
     );
-    expect(toolCall.command).toBe(expected.trimEnd());
+    expect(toolCall.command).toBe(expectedCommand);
     expect(toolCall.data).toMatchObject({
-      rawInput: { CommandLine: expected },
+      rawInput: { CommandLine: expectedCommand },
       rawOutput: { output: expected },
       content: [{ content: { text: expected.trimEnd() } }],
     });
@@ -663,5 +731,39 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+
+  it("drops agy's toolSummary from T3 MCP call arguments only", () => {
+    const t3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_send",
+            title: "Run mcp_t3-code_send_to_user",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { message: "Hello", toolSummary: "Send greeting" },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const foreignCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_other",
+          title: "Run mcp_other_send_to_user",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { message: "Hello", toolSummary: "Send greeting" },
+        },
+      }).toolCall,
+    );
+    expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
   });
 });
