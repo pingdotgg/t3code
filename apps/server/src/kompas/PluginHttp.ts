@@ -2,13 +2,16 @@
  * The per-plugin MCP endpoint agents call with their thread credential, and the OAuth callback.
  * The endpoint is stateless streamable HTTP: one JSON-RPC message in, one JSON reply out.
  */
+import type { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { assertLiveCaller, loadCaller } from "../mcp/threadAccess.ts";
 import { PLUGIN_OAUTH_CALLBACK_PATH, PluginProxy, type PluginProxyError } from "./PluginProxy.ts";
 import { PluginService } from "./PluginService.ts";
 
@@ -21,7 +24,7 @@ const replyError = (id: unknown, code: number, message: string) =>
   HttpServerResponse.jsonUnsafe({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
 /** A tool call that can't reach the plugin is a tool error the agent reads, not a transport failure. */
-const toolError = (error: PluginProxyError) => ({
+const toolError = (error: PluginProxyError | OrchestratorMcpFailure) => ({
   isError: true,
   content: [{ type: "text", text: error.message }],
 });
@@ -77,17 +80,21 @@ const handleMcp = Effect.gen(function* () {
       if (typeof params.name !== "string") {
         return replyError(message.id, -32602, "tools/call needs a tool name.");
       }
-      return yield* proxy
-        .callTool(plugin, {
-          name: params.name,
-          arguments: Predicate.isObject(params.arguments)
-            ? (params.arguments as Record<string, unknown>)
-            : {},
-        })
-        .pipe(
-          Effect.map((result) => reply(message.id, result)),
-          Effect.catch((error) => Effect.succeed(reply(message.id, toolError(error)))),
-        );
+      const name = params.name;
+      const args = params.arguments;
+      // The rule `plugin_call` has: an agent whose run ended, or left this thread, changes nothing.
+      return yield* loadCaller().pipe(
+        Effect.flatMap(assertLiveCaller),
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.andThen(
+          proxy.callTool(plugin, {
+            name,
+            arguments: Predicate.isObject(args) ? (args as Record<string, unknown>) : {},
+          }),
+        ),
+        Effect.map((result) => reply(message.id, result)),
+        Effect.catch((error) => Effect.succeed(reply(message.id, toolError(error)))),
+      );
     }
     case "resources/list":
       return reply(message.id, { resources: [] });

@@ -105,6 +105,17 @@ const fakeUpstream = (options: {
                 response.writeHead(202);
                 return response.end();
               }
+              // A careless server: its error repeats the caller's credential.
+              if ((message.params?.arguments as { leak?: boolean } | undefined)?.leak === true) {
+                return json(response, 200, {
+                  jsonrpc: "2.0",
+                  id: message.id,
+                  error: {
+                    code: -32000,
+                    message: `Denied ${request.headers.authorization} at https://me:pw@docs.test/x?key=abc`,
+                  },
+                });
+              }
               const result =
                 message.method === "initialize"
                   ? {
@@ -113,7 +124,16 @@ const fakeUpstream = (options: {
                       serverInfo: { name: "fake", version: "1" },
                     }
                   : message.method === "tools/list"
-                    ? { tools: [{ name: "echo", inputSchema: { type: "object" } }] }
+                    ? {
+                        tools: [
+                          { name: "echo", inputSchema: { type: "object" } },
+                          {
+                            name: "redraw",
+                            inputSchema: { type: "object" },
+                            _meta: { ui: { visibility: ["app"] } },
+                          },
+                        ],
+                      }
                     : {
                         content: [
                           { type: "text", text: JSON.stringify(message.params?.arguments) },
@@ -203,6 +223,43 @@ describe("PluginProxy", () => {
       // A refused token is fixed by editing the header, not by an OAuth sign-in.
       assert.isFalse(refused.needsSignIn);
       assert.include(refused.message, "refused the saved Authorization header");
+    }).pipe(Effect.provide(layer), Effect.scoped),
+  );
+
+  it.effect("keeps a plugin's app-only tools from models, whether or not they were listed", () =>
+    Effect.gen(function* () {
+      const fake = yield* fakeUpstream({ oauth: false, authorized: () => true });
+      const proxy = yield* PluginProxy.PluginProxy;
+      const server = fakePlugin(`${fake.base}/mcp`);
+      const input = { name: "redraw", arguments: { q: "hi" } };
+
+      const refused = yield* proxy.callTool(server, input).pipe(Effect.flip);
+      assert.include(refused.message, "no tool redraw");
+      yield* proxy.listTools(server);
+      yield* proxy.callTool(server, input).pipe(Effect.flip);
+      assert.deepEqual(yield* proxy.callToolFromApp(server, input), {
+        content: [{ type: "text", text: '{"q":"hi"}' }],
+      });
+    }).pipe(Effect.provide(layer), Effect.scoped),
+  );
+
+  it.effect("repeats a server's error without what the user saved for it", () =>
+    Effect.gen(function* () {
+      const fake = yield* fakeUpstream({ oauth: false, authorized: () => true });
+      const proxy = yield* PluginProxy.PluginProxy;
+      const server = fakePlugin(`${fake.base}/mcp`, { Authorization: "Bearer k-secret" });
+      const leaked = yield* proxy
+        .callTool(server, { name: "echo", arguments: { leak: true } })
+        .pipe(Effect.flip);
+      assert.include(leaked.message, "Denied [hidden] at https://docs.test/x");
+      assert.notInclude(leaked.message, "k-secret");
+      assert.notInclude(leaked.message, "abc");
+
+      const gone = yield* proxy
+        .listTools(fakePlugin("http://127.0.0.1:9/mcp?key=k-secret"))
+        .pipe(Effect.flip);
+      assert.include(gone.message, "Could not reach Fake");
+      assert.notInclude(gone.message, "k-secret");
     }).pipe(Effect.provide(layer), Effect.scoped),
   );
 });

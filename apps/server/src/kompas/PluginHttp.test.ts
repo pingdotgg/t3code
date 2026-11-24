@@ -8,12 +8,16 @@ import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { KompasError, type Plugin, ThreadId } from "@t3tools/contracts";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PluginHttp from "./PluginHttp.ts";
 import { PluginProxy, PluginProxyError } from "./PluginProxy.ts";
 import { PluginService } from "./PluginService.ts";
 
 const calls: Array<{ readonly plugin: string; readonly input: unknown }> = [];
+
+let running = true;
 
 const docs: Plugin = {
   id: "docs",
@@ -31,10 +35,14 @@ const layerDependencies = Layer.mergeAll(
       Effect.succeed(
         token === "thread-token"
           ? ({
-              thread: { threadId: ThreadId.make("thread") },
+              thread: { threadId: ThreadId.make("thread"), providerInstanceId: "codex" },
             } as McpInvocationContext.McpThreadInvocationScope)
           : undefined,
       ),
+  }),
+  Layer.mock(ThreadManagement.ThreadManagementService)({
+    getThreadShell: (id) =>
+      Effect.sync(() => liveThreadShell(id, running ? {} : { activeRunId: null })),
   }),
   Layer.mock(PluginService)({
     forThread: (_threadId, id) => Effect.succeed(id === "docs" ? docs : undefined),
@@ -125,6 +133,18 @@ it.effect("serves a conversation's plugins to agents holding its thread credenti
       result: { isError: true, content: [{ type: "text", text: "Sign in first." }] },
     });
     assert.deepEqual(calls, [{ plugin: "docs", input: { name: "search", arguments: { q: "x" } } }]);
+
+    // An agent left running after its turn may still hold the credential.
+    running = false;
+    const late = yield* rpc("/mcp/shared/docs", {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "search", arguments: {} },
+    });
+    running = true;
+    assert.include(JSON.stringify(yield* late.json), "no longer owns an active thread run");
+    assert.lengthOf(calls, 1);
   }).pipe(Effect.scoped),
 );
 

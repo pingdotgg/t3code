@@ -110,7 +110,7 @@ const make = Effect.gen(function* () {
         return yield* fail(input.threadId, "tool-not-callable");
       }
       const result = yield* proxy
-        .callTool(owner.plugin, { name: input.name, arguments: { ...input.arguments } })
+        .callToolFromApp(owner.plugin, { name: input.name, arguments: { ...input.arguments } })
         .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
       return {
         content: Array.isArray(result.content) ? result.content : [],

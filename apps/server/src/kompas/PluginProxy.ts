@@ -21,6 +21,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { Plugin, PluginTool } from "@t3tools/contracts";
 import { MCP_APP_EXTENSION_ID, MCP_APP_MIME_TYPE } from "@t3tools/shared/mcpApp";
 import * as Clock from "effect/Clock";
@@ -64,6 +65,56 @@ const isUnauthorized = (cause: unknown) =>
   cause instanceof UnauthorizedError ||
   ((cause instanceof StreamableHTTPError || cause instanceof SseError) && cause.code === 401);
 
+const MAX_UPSTREAM_MESSAGE_CHARS = 300;
+
+const NETWORK_PROBLEMS: Record<string, string> = {
+  ECONNREFUSED: "nothing answers at its address",
+  ECONNRESET: "it closed the connection",
+  ENOENT: "its command was not found",
+  ENOTFOUND: "its address was not found",
+  ETIMEDOUT: "it did not answer in time",
+};
+
+const networkProblem = (cause: unknown): string | undefined => {
+  if (!(cause instanceof Error)) return undefined;
+  const code = "code" in cause && typeof cause.code === "string" ? cause.code : "";
+  // `fetch` hides the socket's error behind its own.
+  return NETWORK_PROBLEMS[code] ?? networkProblem(cause.cause);
+};
+
+/** Every value the user saved for a plugin that its server could echo back. */
+const savedSecrets = (plugin: Plugin, stored: StoredOAuth): ReadonlyArray<string> => {
+  const { transport } = plugin;
+  const tokens = Predicate.isObject(stored.tokens) ? Object.values(stored.tokens) : [];
+  const url = transport.type === "http" ? new URL(transport.url) : undefined;
+  return [
+    ...(transport.type === "http"
+      ? Object.values(transport.headers).flatMap((value) => [value, value.replace(/^\S+\s+/, "")])
+      : [...transport.args, ...Object.values(transport.env)]),
+    ...(url === undefined ? [] : [...url.searchParams.values(), url.username, url.password]),
+    ...tokens,
+  ].filter((value): value is string => typeof value === "string" && value.length >= 6);
+};
+
+/**
+ * What went wrong, in words a model and the user may read. Only an MCP error is the server's own
+ * text; every other cause is named, since its message can hold a URL, a header or a path.
+ */
+const upstreamProblem = (cause: unknown, secrets: ReadonlyArray<string>): string => {
+  if (cause instanceof McpError) {
+    return secrets
+      .toSorted((left, right) => right.length - left.length)
+      .reduce((text, secret) => text.replaceAll(secret, "[hidden]"), cause.message)
+      .replaceAll(/(https?:\/\/)[^\s/@]*@/g, "$1")
+      .replaceAll(/(https?:\/\/[^\s?#]*)[?#]\S*/g, "$1")
+      .slice(0, MAX_UPSTREAM_MESSAGE_CHARS);
+  }
+  if (cause instanceof StreamableHTTPError || cause instanceof SseError) {
+    if (cause.code !== undefined && cause.code > 0) return `it answered with HTTP ${cause.code}`;
+  }
+  return networkProblem(cause) ?? "the connection failed";
+};
+
 /** The request never reached the server: a dropped session or a dead connection. */
 const isStaleConnection = (cause: unknown) =>
   (cause instanceof StreamableHTTPError && (cause.code === 404 || cause.code === 400)) ||
@@ -89,7 +140,13 @@ export class PluginProxy extends Context.Service<
     readonly listAllTools: (
       plugin: Plugin,
     ) => Effect.Effect<ReadonlyArray<ListedTool>, PluginProxyError>;
+    /** A model's call: only to what `listTools` lists. */
     readonly callTool: (
+      plugin: Plugin,
+      input: { readonly name: string; readonly arguments: Record<string, unknown> },
+    ) => Effect.Effect<Awaited<ReturnType<Client["callTool"]>>, PluginProxyError>;
+    /** A call by the plugin's own app, which may use tools hidden from models. */
+    readonly callToolFromApp: (
       plugin: Plugin,
       input: { readonly name: string; readonly arguments: Record<string, unknown> },
     ) => Effect.Effect<Awaited<ReturnType<Client["callTool"]>>, PluginProxyError>;
@@ -136,7 +193,12 @@ const newClient = () =>
     },
   );
 
-type Upstream = { readonly fingerprint: string; readonly client: Promise<Client> };
+type Upstream = {
+  readonly fingerprint: string;
+  readonly client: Promise<Client>;
+  /** As last listed on this connection. */
+  modelTools?: ReadonlySet<string>;
+};
 type PendingSignIn = {
   readonly plugin: Plugin;
   readonly transport: StreamableHTTPClientTransport;
@@ -219,7 +281,7 @@ const make = Effect.gen(function* () {
     };
   };
 
-  const fail = (plugin: Plugin, cause: unknown) => {
+  const fail = (plugin: Plugin, cause: unknown, stored: StoredOAuth) => {
     const headers = plugin.transport.type === "http" ? plugin.transport.headers : {};
     // A refused token is fixed by editing the header; signing in with OAuth would not replace it.
     const tokenRefused =
@@ -232,9 +294,17 @@ const make = Effect.gen(function* () {
         ? `${plugin.label} refused the saved Authorization header. Update it in Settings → Plugins.`
         : isUnauthorized(cause)
           ? `Sign in to ${plugin.label} in Settings → Plugins.`
-          : `Could not reach ${plugin.label}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          : cause instanceof McpError
+            ? `${plugin.label}: ${upstreamProblem(cause, savedSecrets(plugin, stored))}`
+            : `Could not reach ${plugin.label}: ${upstreamProblem(cause, [])}.`,
     });
   };
+
+  /** Runs one exchange with a plugin; its failure never repeats what the user saved for it. */
+  const attempt = <A>(plugin: Plugin, exchange: () => Promise<A>) =>
+    Effect.flatMap(loadOAuth(plugin.id), (stored) =>
+      Effect.tryPromise({ try: exchange, catch: (cause) => fail(plugin, cause, stored) }),
+    );
 
   const connect = async (plugin: Plugin): Promise<Client> => {
     const { transport } = plugin;
@@ -309,21 +379,18 @@ const make = Effect.gen(function* () {
   );
 
   const withClient = <A>(plugin: Plugin, use: (client: Client) => Promise<A>) =>
-    Effect.tryPromise({
-      try: async () => {
-        try {
-          return await use(await clientFor(plugin));
-        } catch (error) {
-          if (!isStaleConnection(error)) throw error;
-          dropClient(plugin.id);
-          return await use(await clientFor(plugin));
-        }
-      },
-      catch: (cause) => fail(plugin, cause),
+    attempt(plugin, async () => {
+      try {
+        return await use(await clientFor(plugin));
+      } catch (error) {
+        if (!isStaleConnection(error)) throw error;
+        dropClient(plugin.id);
+        return await use(await clientFor(plugin));
+      }
     });
 
   const listAllTools = Effect.fn("PluginProxy.listAllTools")(function* (plugin: Plugin) {
-    return yield* withClient(plugin, async (client) => {
+    const listed = yield* withClient(plugin, async (client) => {
       const tools: Array<ListedTool> = [];
       let cursor: string | undefined;
       do {
@@ -333,6 +400,11 @@ const make = Effect.gen(function* () {
       } while (cursor !== undefined);
       return tools;
     });
+    const upstream = upstreams.get(plugin.id);
+    if (upstream !== undefined) {
+      upstream.modelTools = new Set(listed.filter(visibleToModel).map(({ name }) => name));
+    }
+    return listed;
   });
 
   const listTools = Effect.fn("PluginProxy.listTools")(function* (plugin: Plugin) {
@@ -350,7 +422,7 @@ const make = Effect.gen(function* () {
     }));
   });
 
-  const callTool = Effect.fn("PluginProxy.callTool")(function* (
+  const callToolFromApp = Effect.fn("PluginProxy.callToolFromApp")(function* (
     plugin: Plugin,
     input: { readonly name: string; readonly arguments: Record<string, unknown> },
   ) {
@@ -367,6 +439,25 @@ const make = Effect.gen(function* () {
         resetTimeoutOnProgress: true,
       }),
     );
+  });
+
+  const callTool = Effect.fn("PluginProxy.callTool")(function* (
+    plugin: Plugin,
+    input: { readonly name: string; readonly arguments: Record<string, unknown> },
+  ) {
+    const visible =
+      upstreams.get(plugin.id)?.modelTools?.has(input.name) === true ||
+      (yield* listAllTools(plugin)).some(
+        (tool) => tool.name === input.name && visibleToModel(tool),
+      );
+    if (!visible) {
+      return yield* new PluginProxyError({
+        plugin: plugin.label,
+        needsSignIn: false,
+        message: `${plugin.label} has no tool ${input.name} that a model may call.`,
+      });
+    }
+    return yield* callToolFromApp(plugin, input);
   });
 
   const readResource = Effect.fn("PluginProxy.readResource")(function* (
@@ -397,17 +488,15 @@ const make = Effect.gen(function* () {
     });
     const client = newClient();
     // An unauthorized connect is the expected path: the provider just recorded where to go.
-    const connected = yield* Effect.tryPromise({
-      try: () =>
-        client.connect(asTransport(transport)).then(
-          () => true,
-          (cause: unknown) => {
-            if (isUnauthorized(cause)) return false;
-            throw cause;
-          },
-        ),
-      catch: (cause) => fail(plugin, cause),
-    });
+    const connected = yield* attempt(plugin, () =>
+      client.connect(asTransport(transport)).then(
+        () => true,
+        (cause: unknown) => {
+          if (isUnauthorized(cause)) return false;
+          throw cause;
+        },
+      ),
+    );
     if (connected) {
       dropClient(plugin.id);
       upstreams.set(plugin.id, {
@@ -444,10 +533,7 @@ const make = Effect.gen(function* () {
         message: "This sign-in link has expired. Start it again from Settings → Plugins.",
       });
     }
-    yield* Effect.tryPromise({
-      try: () => entry.transport.finishAuth(code),
-      catch: (cause) => fail(entry.plugin, cause),
-    });
+    yield* attempt(entry.plugin, () => entry.transport.finishAuth(code));
     // The next request connects with the new tokens.
     dropClient(entry.plugin.id);
     return { plugin: entry.plugin };
@@ -457,6 +543,7 @@ const make = Effect.gen(function* () {
     listTools,
     listAllTools,
     callTool,
+    callToolFromApp,
     readResource,
     describeTools,
     startSignIn,
