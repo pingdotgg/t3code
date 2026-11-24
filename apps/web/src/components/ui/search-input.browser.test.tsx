@@ -1,9 +1,23 @@
 import { expect, it } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { Combobox, ComboboxSearchInput } from "./combobox";
-import { MenuSearchInput } from "./menu";
+import { Menu, MenuItem, MenuPopup, MenuSearchInput, MenuTrigger } from "./menu";
+
+function SearchableMenu() {
+  return (
+    <Menu defaultOpen>
+      <MenuTrigger>Filter</MenuTrigger>
+      <MenuPopup>
+        <MenuSearchInput aria-label="Search options" />
+        <MenuItem>Alpha</MenuItem>
+        <MenuItem>Beta</MenuItem>
+        <MenuItem>Gamma</MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
 
 it.each(["combobox", "menu"] as const)(
   "focuses the %s search when clicking anywhere in its row",
@@ -33,5 +47,53 @@ it.each(["combobox", "menu"] as const)(
     }
     await userEvent.keyboard("project");
     await expect.element(field).toHaveValue("project");
+  },
+);
+
+it("moves focus from MenuSearchInput to the last item on ArrowUp and the first on ArrowDown", async () => {
+  await using _screen = await render(<SearchableMenu />, {
+    router: false /* menu keyboard navigation does not involve routing */,
+  });
+
+  const search = page.getByRole("textbox", { name: "Search options" });
+  const first = page.getByRole("menuitem", { name: "Alpha" });
+  const last = page.getByRole("menuitem", { name: "Gamma" });
+
+  await userEvent.click(search);
+  await expect.element(search).toHaveFocus();
+
+  await userEvent.keyboard("{ArrowUp}");
+  await expect.element(last).toHaveFocus();
+  await expect.element(last).toHaveAttribute("data-highlighted");
+
+  await userEvent.click(search);
+  await expect.element(search).toHaveFocus();
+
+  await userEvent.keyboard("{ArrowDown}");
+  await expect.element(first).toHaveFocus();
+  await expect.element(first).toHaveAttribute("data-highlighted");
+});
+
+it.each(["ArrowUp", "ArrowDown"] as const)(
+  "keeps %s in MenuSearchInput while an IME is composing",
+  async (key) => {
+    await using _screen = await render(<SearchableMenu />, {
+      router: false /* menu keyboard navigation does not involve routing */,
+    });
+
+    const search = page.getByRole("textbox", { name: "Search options" });
+    await userEvent.click(search);
+    await expect.element(search).toHaveFocus();
+
+    const event = new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+    });
+    await act(() => search.element().dispatchEvent(event));
+
+    expect(event.defaultPrevented).toBe(false);
+    await expect.element(search).toHaveFocus();
   },
 );
