@@ -6,7 +6,7 @@ import {
   type AttachmentCreateUploadUrlInput,
   AttachmentUploadSigningKeyError,
 } from "@t3tools/contracts";
-import { isSvgAttachment } from "@t3tools/shared/image";
+import { isSvgAttachment, validateAndNormalizeImageBytes } from "@t3tools/shared/image";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -201,6 +201,25 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
         detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
       } satisfies StoreAttachmentUploadResult;
     }
+    let persistedBytes = receivedBytes;
+    if (claims.type === "image") {
+      const uploadedBytes = yield* fileSystem.readFile(partPath);
+      const validated = validateAndNormalizeImageBytes({
+        bytes: uploadedBytes,
+        declaredMimeType: claims.mimeType,
+      });
+      if (!validated.ok) {
+        return {
+          ok: false,
+          status: 400,
+          detail: validated.reason,
+        } satisfies StoreAttachmentUploadResult;
+      }
+      if (validated.decodedFromBase64) {
+        yield* fileSystem.writeFile(partPath, validated.bytes);
+        persistedBytes = validated.bytes.byteLength;
+      }
+    }
     // Publishing without replacement keeps an upload and its cached text immutable.
     const published = yield* fileSystem.link(partPath, finalPath).pipe(
       Effect.as(true),
@@ -229,7 +248,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
       }),
     );
     if (!published) {
-      if (Number((yield* fileSystem.stat(finalPath)).size) !== receivedBytes) {
+      if (Number((yield* fileSystem.stat(finalPath)).size) !== persistedBytes) {
         return { ok: false, status: 409, detail: "Attachment already uploaded." };
       }
       const hashes = yield* Effect.forEach([partPath, finalPath], (file) =>

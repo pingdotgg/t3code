@@ -42,10 +42,13 @@ const layerTest = AssetSigner.layer.pipe(
   ),
 );
 
+const VALID_PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const VALID_JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+
 const uploadInput = {
   name: "screenshot.png",
   mimeType: "image/png",
-  sizeBytes: 6,
+  sizeBytes: VALID_PNG_BYTES.byteLength,
 } as const;
 
 const LegacyAttachmentUploadClaims = Schema.Struct({
@@ -189,13 +192,74 @@ describe("AttachmentUpload", () => {
         ok: false,
         status: 400,
       });
-      expect(yield* storeAttachmentUpload(claims, new Uint8Array(6))).toEqual({ ok: true });
+      expect(yield* storeAttachmentUpload(claims, VALID_PNG_BYTES)).toEqual({ ok: true });
       expect(
         NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${issued.attachmentId}.png`)),
       ).toBe(true);
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
       ).toEqual([]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("decodes base64 and data URL image uploads into raw binary before persistence", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const base64Png = Buffer.from(VALID_PNG_BYTES).toString("base64");
+      for (const payload of [
+        new TextEncoder().encode(base64Png),
+        new TextEncoder().encode(`data:image/png;base64,${base64Png}`),
+      ]) {
+        const issued = yield* issueAttachmentUploadUrl({
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: payload.byteLength,
+        });
+        const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+        const claims = yield* validateAttachmentUploadToken(token);
+        if (!claims) throw new Error("Expected valid upload claims.");
+
+        expect(yield* storeAttachmentUpload(claims, payload)).toEqual({ ok: true });
+        expect(yield* storeAttachmentUpload(claims, payload)).toEqual({ ok: true });
+        const storedPath = NodePath.join(config.attachmentsDir, `${issued.attachmentId}.png`);
+        expect(NodeFS.readFileSync(storedPath)).toEqual(Buffer.from(VALID_PNG_BYTES));
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects malformed or MIME-mismatched image uploads with 400", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const garbage = new TextEncoder().encode("not a valid png payload");
+      const garbageIssued = yield* issueAttachmentUploadUrl({
+        name: "bad.png",
+        mimeType: "image/png",
+        sizeBytes: garbage.byteLength,
+      });
+      const garbageClaims = yield* validateAttachmentUploadToken(
+        garbageIssued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!garbageClaims) throw new Error("Expected valid upload claims.");
+      expect(yield* storeAttachmentUpload(garbageClaims, garbage)).toMatchObject({
+        ok: false,
+        status: 400,
+      });
+
+      const mismatchIssued = yield* issueAttachmentUploadUrl({
+        name: "actually-jpeg.png",
+        mimeType: "image/png",
+        sizeBytes: VALID_JPEG_BYTES.byteLength,
+      });
+      const mismatchClaims = yield* validateAttachmentUploadToken(
+        mismatchIssued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!mismatchClaims) throw new Error("Expected valid upload claims.");
+      expect(yield* storeAttachmentUpload(mismatchClaims, VALID_JPEG_BYTES)).toMatchObject({
+        ok: false,
+        status: 400,
+      });
+
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -6,6 +6,7 @@ import {
   type ProviderSendTurnInput,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { validateAndNormalizeImageBytes } from "@t3tools/shared/image";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -517,7 +518,17 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       );
     }
     if (image) {
-      blocks.push({ type: "image", data: Buffer.from(bytes).toString("base64"), mimeType });
+      const validated = validateAndNormalizeImageBytes({ bytes, declaredMimeType: mimeType });
+      if (!validated.ok) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          `Image '${attachment.name}' is malformed or unsupported: ${validated.reason}`,
+        );
+      }
+      blocks.push({
+        type: "image",
+        data: Buffer.from(validated.bytes).toString("base64"),
+        mimeType: validated.mimeType,
+      });
     } else if (audio) {
       blocks.push({ type: "audio", data: Buffer.from(bytes).toString("base64"), mimeType });
     } else {

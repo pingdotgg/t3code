@@ -373,6 +373,41 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect("rejects malformed image attachments before sending blocks to the provider", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      yield* fixture.write(imageAttachment, Buffer.from("not-a-real-png"));
+      const error = yield* buildAntigravityPrompt({
+        input: "Explain this image.",
+        attachments: [imageAttachment],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("malformed or unsupported");
+    }),
+  );
+
+  it.effect("recovers base64-encoded image files on disk before building ACP image blocks", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const base64Png =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII=";
+      yield* fixture.write(imageAttachment, Buffer.from(`data:image/png;base64,${base64Png}`));
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Explain this image.",
+        attachments: [imageAttachment],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
+
+      expect(prompt).toEqual([
+        { type: "text", text: "Explain this image." },
+        { type: "image", data: base64Png, mimeType: "image/png" },
+      ]);
+    }),
+  );
+
   it.effect.each(["utf8", "utf16le", "utf16be"] as const)(
     "embeds %s code from the selected environment and keeps the upload in place",
     (encoding) =>
