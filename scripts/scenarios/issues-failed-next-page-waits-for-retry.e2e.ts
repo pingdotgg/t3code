@@ -126,9 +126,11 @@ test(
         await screen.scrollUntilVisible(lastOfFirstPage, { direction: "down", momentum: "fast" });
         await screen.swipe({ direction: "down" });
       };
+      const retry = screen.getByRole("button", "Retry loading more issues");
       await toTheEnd();
       // Reaching the end asks for the next page, which fails.
-      await expect.poll(nextPageRequests).toBeGreaterThan(0);
+      await expect(retry).toBeVisible();
+      expect(await nextPageRequests()).toBe(1);
       await app.screenshot("end-of-the-list-after-the-next-page-failed");
 
       // Back toward the top and to the end again, without a tap.
@@ -137,9 +139,8 @@ test(
       await app.screenshot("back-toward-the-top");
       await toTheEnd();
       await app.screenshot("end-of-the-list-again");
-      expect(await nextPageRequests()).toBe(1);
-      const retry = screen.getByRole("button", "Retry loading more issues");
       await expect(retry).toBeVisible();
+      expect(await nextPageRequests()).toBe(1);
 
       await runPromise(Effect.flatMap(FileSystem.FileSystem, (fs) => fs.remove(fails)));
       await retry.tap();
