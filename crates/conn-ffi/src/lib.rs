@@ -8,7 +8,14 @@ mod approvals;
 mod coalesce;
 mod composer;
 mod core;
+mod feed;
+pub use feed::{
+    FfiChangedFileRow, FfiCodeSpan, FfiFeedDetail, FfiFilePatch, FfiPatchLine, FfiReviewExcerpt,
+    FfiSetupStage, FfiWorktreeSetup, WorktreeSetupFeed, changed_file_rows, highlight_code,
+};
+mod mcp_app;
 mod model_picker;
+pub use mcp_app::{FfiMcpToolInfo, ThreadMcpApp};
 mod offline;
 mod orbit;
 mod phone_tasks;
@@ -46,7 +53,7 @@ pub use crate::orbit::{
 };
 pub use crate::phone_tasks::{
     FfiPhoneNotice, FfiPhoneTaskLane, FfiPhoneTaskRow, FfiPhoneTasks, FfiPhoneTasksView,
-    FfiTaskDot, phone_tasks_error_text, phone_tasks_view,
+    FfiTaskDot, phone_tasks_error_text, phone_tasks_view, task_receipt_row,
 };
 pub use crate::questions::{
     FfiPendingQuestion, FfiQuestionDraft, FfiQuestionPanel, FfiQuestionPanelOption, FfiTextFits,

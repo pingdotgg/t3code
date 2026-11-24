@@ -307,6 +307,11 @@ fn status_label(task: &FfiTaskSummary) -> &str {
     &task.status_text
 }
 
+#[uniffi::export]
+pub fn task_receipt_row(task: FfiTaskSummary, now_ms: i64) -> FfiPhoneTaskRow {
+    task_row(&task, None, now_ms)
+}
+
 fn task_row(task: &FfiTaskSummary, duration_ms: Option<f64>, now_ms: i64) -> FfiPhoneTaskRow {
     let dot = task_dot(task);
     let counts = task.subtask_counts;

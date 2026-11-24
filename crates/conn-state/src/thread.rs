@@ -500,7 +500,9 @@ pub struct ThreadState {
     pub deleted: bool,
     /// Server request id of each approval entry, by entry id, for `runtime-request.respond`.
     pub approval_requests: HashMap<String, String>,
-    /// What each approval entry asks, by entry id (see [`ThreadState::approval_details`]).
+    /// Additional card content keyed by the original turn item id.
+    pub feed_details: HashMap<String, crate::thread_feed::FeedDetail>,
+    /// What each approval entry asks, by entry id.
     pub approval_details: HashMap<String, ApprovalDetails>,
     /// Runtime requests that are still `pending`, by server request id.
     pub pending_requests: HashMap<String, PendingRequest>,
@@ -891,6 +893,7 @@ impl ThreadState {
 
         self.approval_requests.clear();
         self.approval_details.clear();
+        self.feed_details.clear();
         self.pending_requests = projection
             .runtime_requests
             .iter()
@@ -929,6 +932,9 @@ impl ThreadState {
         let mut entry_index: HashMap<String, usize> = HashMap::with_capacity(capacity);
         let mut ingest = |mut item: ProjectionTurnItem| {
             hydrate_deduped_projection_item(&mut item, &message_texts, &subagent_bodies);
+            if let Some((id, detail)) = projection_feed_detail(&item) {
+                self.feed_details.insert(id, detail);
+            }
             if let ProjectionTurnItem::Subagent(sub) = &item {
                 self.subagent_of_entry
                     .insert(sub.id.clone(), sub.subagent_id.clone());
@@ -1013,6 +1019,7 @@ impl ThreadState {
 
         for row in rows {
             let item = row.item;
+            let feed_detail = projection_feed_detail(&item);
             let approval_pair = match &item {
                 ProjectionTurnItem::ApprovalRequest(i) => Some((
                     i.id.clone(),
@@ -1029,6 +1036,9 @@ impl ThreadState {
             };
             if existing_ids.contains(entry.id()) {
                 continue;
+            }
+            if let Some((id, detail)) = feed_detail {
+                self.feed_details.entry(id).or_insert(detail);
             }
             if let Some((id, request_id, details)) = approval_pair {
                 self.approval_details.entry(id.clone()).or_insert(details);
@@ -1372,6 +1382,14 @@ impl ThreadState {
                     TurnItem::UserMessage(i) => (i.run_id.clone(), Some(i.message_id.clone())),
                     _ => (None, None),
                 };
+                let detail = match &ev.payload {
+                    TurnItem::UserMessage(item) => crate::thread_feed::message_detail(item),
+                    TurnItem::DynamicTool(item) => crate::thread_feed::tool_detail(item),
+                    _ => None
+                };
+                let old = self.feed_details.remove(&item_id);
+                let detail_changed = old != detail;
+                if let Some(detail) = detail { self.feed_details.insert(item_id.clone(), detail); }
                 let mut compaction_changed = false;
                 if let TurnItem::Compaction(c) = &ev.payload {
                     compaction_changed = self.record_compaction(c);
@@ -1392,7 +1410,7 @@ impl ThreadState {
                     self.places.insert(id, place);
                 }
                 if let Some(entry) = map_turn_item(ev.payload) {
-                    let mut changed = compaction_changed;
+                    let mut changed = compaction_changed || detail_changed;
                     if matches!(entry, TimelineEntry::User { .. }) {
                         let before = self.entries.len();
                         self.entries.retain(|existing| match existing {
@@ -1730,6 +1748,20 @@ pub fn turn_item_detail(item: TurnItem) -> Option<String> {
     match map_turn_item(item)? {
         TimelineEntry::Tool { detail, .. } => detail,
         TimelineEntry::Thinking { text, .. } => non_empty(Some(text)),
+        _ => None,
+    }
+}
+
+fn projection_feed_detail(
+    item: &ProjectionTurnItem,
+) -> Option<(String, crate::thread_feed::FeedDetail)> {
+    match item {
+        ProjectionTurnItem::UserMessage(i) => {
+            Some((i.id.clone(), crate::thread_feed::message_detail(i)?))
+        }
+        ProjectionTurnItem::DynamicTool(i) => {
+            Some((i.id.clone(), crate::thread_feed::tool_detail(i)?))
+        }
         _ => None,
     }
 }

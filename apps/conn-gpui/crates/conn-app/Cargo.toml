@@ -27,7 +27,7 @@ conn-client.workspace = true
 conn-desktop.workspace = true
 conn-contract.workspace = true
 conn-state.workspace = true
-conn-theme.workspace = true
+conn-theme = { workspace = true, features = ["highlight"] }
 conn-web.workspace = true
 fancy-regex = "0.16"
 gpui-kit.workspace = true

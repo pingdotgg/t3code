@@ -17,7 +17,7 @@ enum WorkspaceTab: String, Hashable, CaseIterable {
 
 enum WorkspaceRoute: Hashable {
     case thread(String, scope: String)
-    case newThreadDraft(projectId: String?, title: String)
+    case newThreadDraft(projectId: String?, title: String, scope: String = "", prompt: String = "")
 }
 
 struct WorkspaceRootView: View {
@@ -126,20 +126,30 @@ struct WorkspaceRootView: View {
                             initialProjectTitle: projectTitle,
                             initialBranch: summary?.branch,
                             initialSettled: summary?.settled ?? false,
-                            onOpenThread: { childId in
-                                navigationPath.append(.thread(childId, scope: scope))
+                            onOpenThread: { childId, environment in
+                                if let environment, environment != owner.environmentId {
+                                    store.open(ThreadLink(environmentId: environment, threadId: childId))
+                                } else {
+                                    navigationPath.append(.thread(childId, scope: scope))
+                                }
+                            },
+                            onTemplate: { prompt in
+                                navigationPath.append(.newThreadDraft(projectId: summary?.projectId, title: projectTitle ?? "General", scope: scope, prompt: prompt))
                             }
                         )
                     }
-                case let .newThreadDraft(projectId, title):
+                case let .newThreadDraft(projectId, title, scope, prompt):
+                    if let owner = scope.isEmpty ? store : store.linked[scope] {
                     NewThreadDraftView(
-                        store: store,
+                        store: owner,
                         initialProjectId: projectId,
                         initialProjectTitle: title,
+                        initialPrompt: prompt,
                         onCreated: { newThreadId in
-                            navigationPath = [.thread(newThreadId, scope: "")]
+                            navigationPath = [.thread(newThreadId, scope: scope)]
                         }
                     )
+                    }
                 }
             }
         }

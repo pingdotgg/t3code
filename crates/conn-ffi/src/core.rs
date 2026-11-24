@@ -320,7 +320,7 @@ impl ConnCore {
             .map_err(FfiError::from)
     }
 
-    async fn call_json(
+    pub(crate) async fn call_json(
         &self,
         tag: &'static str,
         payload: serde_json::Value,
@@ -450,6 +450,76 @@ impl ConnCore {
     #[must_use]
     pub fn server_url(&self) -> String {
         self.server_url.clone()
+    }
+
+    pub fn worktree_setup(
+        &self,
+        thread_id: String,
+    ) -> Result<Arc<crate::WorktreeSetupFeed>, FfiError> {
+        self.ensure_connected()?;
+        Ok(crate::WorktreeSetupFeed::start(
+            self.connection.clone(),
+            thread_id,
+        ))
+    }
+
+    pub async fn turn_patch(
+        &self,
+        thread_id: String,
+        turn: i64,
+    ) -> Result<Vec<crate::feed::FfiFilePatch>, FfiError> {
+        if turn < 1 {
+            return Err(FfiError::InvalidInput {
+                message: "Missing checkpoint ordinal".into(),
+            });
+        }
+        let result = self
+            .call_json(
+                "orchestration.getTurnDiff",
+                serde_json::json!({
+                    "threadId":thread_id,"fromTurnCount":turn-1,"toTurnCount":turn
+                }),
+            )
+            .await?;
+        serde_json::from_value::<conn_contract::ThreadTurnDiff>(result)
+            .map(|r| crate::feed::file_patches(&r.diff))
+            .map_err(|err| FfiError::Rpc {
+                message: err.to_string(),
+            })
+    }
+
+    /// Mints the same scoped asset URL used by the web and mobile preview frames.
+    pub async fn attachment_url(
+        &self,
+        id: String,
+        name: String,
+        mime: String,
+        mcp_app: bool,
+    ) -> Result<String, FfiError> {
+        let mut resource = serde_json::json!({"_tag":"attachment","attachmentId":id,"fileName":name,"mimeType":mime,"disposition":"inline"});
+        if mcp_app {
+            resource["renderIntent"] = "mcp-app".into();
+        }
+        let result = self
+            .call_json("assets.createUrl", serde_json::json!({"resource":resource}))
+            .await?;
+        let relative = result["relativeUrl"]
+            .as_str()
+            .ok_or_else(|| FfiError::Rpc {
+                message: "Missing asset URL".into(),
+            })?;
+        let base = url::Url::parse(&self.server_url).map_err(|e| FfiError::InvalidUrl {
+            message: e.to_string(),
+        })?;
+        let url = base.join(relative).map_err(|e| FfiError::InvalidUrl {
+            message: e.to_string(),
+        })?;
+        if url.origin() != base.origin() {
+            return Err(FfiError::InvalidUrl {
+                message: "Unexpected asset origin".into(),
+            });
+        }
+        Ok(url.to_string())
     }
 
     /// Loads and subscribes to `thread_id`, emitting snapshots to [`CoreListener::on_thread`].
