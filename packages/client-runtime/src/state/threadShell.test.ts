@@ -483,6 +483,35 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("keeps finished tasks a linked environment ran out of the list once their parent is archived", () => {
+    const { registry, threads, snapshotAtom } = makeHarness([environmentId, remoteEnvironmentId]);
+    const parent = v2ThreadShell;
+    const finished = Array.from({ length: 3 }, (_, index) => ({
+      ...v2ThreadShell,
+      id: ThreadId.make(`mcp:launch:finished-${index}`),
+      creationSource: "mcp" as const,
+      status: "completed" as const,
+      settledAt: v2Now,
+      delegatedFrom: { environmentId, threadId: parent.id, title: parent.title },
+    }));
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent] });
+    registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: finished });
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const listed = () =>
+      registry
+        .get(threads.navigationThreadShellsAtom)
+        .map((thread) => `${thread.environmentId}/${thread.id}`);
+    expect(listed()).toEqual([`${environmentId}/${parent.id}`]);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...parent, archivedAt: v2Now }],
+    });
+    expect(listed()).toEqual([]);
+    dispose();
+    registry.dispose();
+  });
+
   it("brings an approval up a chain of tasks across three environments to its root", () => {
     const thirdEnvironmentId = EnvironmentId.make("third-environment-v2");
     const { registry, threads, snapshotAtom } = makeHarness([
