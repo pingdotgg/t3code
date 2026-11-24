@@ -484,7 +484,7 @@ export interface AcpAdapterV2Flavor {
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
     options?: { readonly lastCatalogKey?: string | null },
-  ) => Effect.Effect<string | void>;
+  ) => Effect.Effect<string | null | void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
     readonly url: string;
