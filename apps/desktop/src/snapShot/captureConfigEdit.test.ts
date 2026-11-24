@@ -104,9 +104,21 @@ describe("Hyprland capture config edits", () => {
   });
   it.each([
     "return {}",
+    "local M = {}\n  return M",
     '--[[\nhl.bind("CTRL + SHIFT + 2", hl.dsp.global("com.t3tools.T3Code:capture-window"))\n]]',
   ])("does not guess how to edit complex Lua", (source) => {
     expect(() => editCaptureConfig(source, "hyprland-lua", app, "install")).toThrow("manual edit");
+  });
+  it("edits Lua that returns early inside a function", () => {
+    const before =
+      'local function sync(window)\n  if window == nil then\n    return\n  end\n  hl.unbind("SUPER + Q")\nend\nhl.on("window.active", sync)\n';
+    const added = editCaptureConfig(before, "hyprland-lua", app, "install");
+    expect(added.after).toBe(
+      `${before}\n${captureConfigBinding("hyprland-lua", app, "Ctrl+Shift+2")}\n`,
+    );
+    expect(editCaptureConfig(added.after, "hyprland-lua", app, "remove").after.trim()).toBe(
+      before.trim(),
+    );
   });
   it.each(['Ctrl+"\nexec', "Ctrl+;", "2", "Mod+2"])(
     "rejects unsafe or ambiguous keys: %s",

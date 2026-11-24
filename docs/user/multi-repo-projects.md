@@ -143,6 +143,43 @@ What the commands can rely on, and what they must do:
 - **One command runs at a time per project**, so a command can update a shared file in the project
   folder without its own locking.
 - **Each command has ten minutes.**
+- **The commands run only for requests that may run commands on the host.** A client paired
+  without `orchestration:operate` and `terminal:operate`, and a thread started through a
+  [linked environment](remote-access.md#link-another-environment) paired below full access, get no worktree in a project
+  that declares a layout, and their cleanup leaves `remove` out.
+
+#### Approve the commands
+
+T3 Code runs `create` and `remove` only after you have approved them. The first time you start a
+worktree thread in the project from the web or desktop app, it shows both commands in full and asks.
+**Approve and continue** records the approval and starts the thread; **Cancel** leaves your draft as
+it was. You can also review, approve, and revoke each command under **Worktree layout** in the
+project's settings. Approving needs a client that can use the terminal (`terminal:operate`).
+
+An approval is kept on the environment, not in the repository, and covers the exact text of one
+command for one project. When the text in `t3.json` changes, for example after a pull, the command
+stops running until you approve the new text. An approval covers the command text only: when the
+command runs a script file, later changes to that file do not ask again.
+
+While a command is not approved:
+
+- **Nothing that needs `create` gets a worktree.** A worktree thread started from the mobile app,
+  by a scheduled task, or by an agent fails with a message that says so. Approve the command in the
+  web or desktop app, then start it again.
+- **A thread folder that went missing comes back as plain checkouts**, without the project's
+  `create`.
+- **Removing a thread's worktree skips `remove`** and removes the checkouts.
+
+Agents never approve a command, and an approval is not enough for one that works below Full access.
+When an agent hands its thread off to a worktree or starts a worktree thread, the commands run
+only if the thread that asked is in Full access when they are about to run. Below that, or where an
+administrator's [policy](managed-policy.md) does not allow Full access, a project that declares a
+layout gets no worktree from the agent. In any project, an action set to **Run automatically on worktree
+creation** does not run for a worktree an agent asked for below Full access. Start the worktree
+thread yourself, or switch the thread to Full access.
+
+An administrator can turn these commands off for a machine with
+[`worktreeLayoutCommands`](managed-policy.md#other-capabilities).
 
 A project with no other repository can declare a layout too. This example gives each thread
 a worktree with its submodules checked out. The command runs in `sh`, and in `cmd.exe` on Windows,

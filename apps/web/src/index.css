@@ -129,6 +129,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --chat-content-max-width: 46rem;
+  --html-preview-max-width: var(--chat-content-max-width);
   --thread-details-panel-width: 17.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
@@ -982,6 +983,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     max-width: var(--chat-content-max-width);
   }
 
+  /* ChatCanvas sets these only while HTML previews run wider than the chat column. */
+  .html-preview-lane {
+    width: var(--html-preview-lane-width, auto);
+    margin-inline-start: var(--html-preview-lane-offset, 0px);
+  }
+
   .messages-timeline-row-frame {
     padding-inline: 0;
   }
@@ -1736,7 +1743,8 @@ body {
   padding: 0;
 }
 
-[data-preview-url-input] {
+[data-preview-url-input],
+[data-script-command-input] {
   font-variant-ligatures: none;
 }
 
@@ -2077,6 +2085,17 @@ code {
   vertical-align: -0.125em;
 }
 
+/* Firefox resolves a drag over the sprite icon's <use> to the shared <symbol> and collapses the
+   selection there, or snaps an unselectable icon's point into the text before it. Passing the
+   pointer to the chip lands the selection at its label. Chromium keeps triple-click line
+   selection only without user-select: none here. */
+@supports (-moz-appearance: none) {
+  .chat-markdown-file-link > svg {
+    pointer-events: none;
+    user-select: none;
+  }
+}
+
 .chat-markdown-file-link > [data-slot="context-chip-label"] {
   display: inline;
 }
@@ -2366,6 +2385,16 @@ code {
   --chat-content-max-width: 100%;
 }
 
+/* HTML preview width setting. ChatCanvas measures this and never lays a
+   preview out narrower than the chat column. */
+:root[data-html-preview-width="wide"] {
+  --html-preview-max-width: 72rem;
+}
+
+:root[data-html-preview-width="full"] {
+  --html-preview-max-width: 100%;
+}
+
 :root[data-diff-color-scheme="blue-orange"] {
   --diff-addition: light-dark(var(--color-blue-600), var(--color-blue-400));
   --diff-deletion: light-dark(var(--color-orange-600), var(--color-orange-400));
@@ -2389,14 +2418,22 @@ code {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
-   The top inset clears the 32px sticky file header and its line counts. */
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens. */
 .diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
   --diffs-search-panel-modified: var(--primary);
   --diffs-header-font-fallback: var(--font-sans);
+}
+
+/* The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface:not(.file-preview-virtualizer) > [data-search-panel] {
   --diffs-search-panel-inset-top: 40px;
+}
+
+/* A headerless file preview stays on the code surface, as the editable file view does. */
+.diff-render-surface.file-preview-virtualizer {
+  --code-background: inherit;
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file

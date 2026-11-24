@@ -1205,6 +1205,45 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("backs off polling a steady command and still sees it exit within five seconds", () =>
+    Effect.gen(function* () {
+      const shell = { pid: 9000, ppid: 1, name: "zsh" };
+      let table = [shell, { pid: 200, ppid: 9000, name: "node" }];
+      let queries = 0;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
+        processTable: Effect.sync(() => {
+          queries += 1;
+          return table;
+        }),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const activity = Effect.map(getEvents, (events) =>
+        events.flatMap((event) =>
+          event.type === "activity" ? [event.hasRunningSubprocess ? event.label : null] : [],
+        ),
+      );
+      yield* manager.open(openInput());
+
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* activity).toEqual(["node"]);
+      expect(queries).toBeGreaterThanOrEqual(115);
+      expect(queries).toBeLessThanOrEqual(125);
+
+      table = [...table, { pid: 201, ppid: 200, name: "esbuild" }];
+      ptyAdapter.processes[0]!.emitData("rebuilt\r\n");
+      queries = 0;
+      yield* TestClock.adjust("1 second");
+      expect(queries).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      table = [shell];
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* activity).toEqual(["node", null]);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   // Answers process-table queries after `queryDuration`, honoring the caller's
   // timeout the way ProcessRunner's `timedOutResult` mode does.
   const slowProcessTable = (
@@ -1717,6 +1756,8 @@ it.layer(
       // BEL is DCS payload, not a terminator: only ST ends the string.
       process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("\u001b]11;rgb:44/55/66\u0007\u001b]12;rgb:A/BC/def\u001b\\");
+      process.emitData("\u001b]11;rgb:ffff/ffff/ffff\u0007\u001b]10;rgb:1/2/3\n;?\u0007");
       // Ghostty sets a colour beside a query, skips an LF, an empty field and a last index with no
       // colour in an OSC, and runs an OSC that CAN ends or that the next ESC cuts short.
       process.emitData("\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b]\n4;1;?;;2;?;3\u0018\u001b]4;3;?");
@@ -1732,6 +1773,7 @@ it.layer(
       expect(
         reopened.history.startsWith(
           'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
+            "\u001b]11;rgb:44/55/66\u0007\u001b]12;rgb:A/BC/def\u001b\\" +
             "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
             `\u001b[${"0".repeat(5000)}31mXdone\n`,
         ),

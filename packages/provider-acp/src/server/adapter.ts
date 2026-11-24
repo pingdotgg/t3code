@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -72,7 +73,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  formatReadToolLabel,
+  formatSearchToolLabel,
+  searchToolLabelParts,
+} from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
@@ -2803,6 +2808,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
         let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
+        let reportStartupPhase: (phase: string | undefined) => Effect.Effect<void> = () =>
+          Effect.void;
         // openSession configures the session itself; a late setup that lands
         // first waits here and is adopted once that configuration is in place.
         const lateSessionSetup: {
@@ -5035,6 +5042,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   break;
                 }
                 const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
+                const searchOutput = textFromUnknown(rawOutput);
+                const grepResults =
+                  path === undefined || searchOutput === undefined
+                    ? undefined
+                    : parseGrepOutput(searchOutput, path);
+                const pattern = searchToolLabelParts({ input: rawInputRecord }).query ?? path;
                 turnItem = {
                   ...base,
                   title:
@@ -5044,19 +5057,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ...(path === undefined ? {} : { pattern: path }),
                     }) ?? title,
                   type: "file_search",
-                  ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined ||
-                  (pathIsQuery && textFromUnknown(rawOutput) === undefined)
+                  ...(pattern === undefined ? {} : { pattern }),
+                  ...(path === undefined || (pathIsQuery && searchOutput === undefined)
                     ? {}
                     : {
-                        results: [
-                          {
-                            fileName: path,
-                            ...(textFromUnknown(rawOutput) === undefined
-                              ? {}
-                              : { preview: textFromUnknown(rawOutput) }),
-                          },
-                        ],
+                        results: grepResults
+                          ? [...grepResults]
+                          : [
+                              {
+                                fileName: path,
+                                ...(searchOutput === undefined ? {} : { preview: searchOutput }),
+                              },
+                            ],
                       }),
                 };
                 break;
@@ -8253,15 +8265,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           prepareTerminalEnvironment(mcpContext, sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
           const activated = yield* Effect.gen(function* () {
+            if (!canLoadSession && !canResumeSession) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: `ACP driver cannot load or resume session ${sessionId}`,
+              });
+            }
+            yield* reportStartupPhase("resume");
             return canLoadSession
               ? yield* runtime.loadSession(sessionId, activationOptions)
-              : canResumeSession
-                ? yield* runtime.resumeSession(sessionId, activationOptions)
-                : yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver,
-                    detail: `ACP driver cannot load or resume session ${sessionId}`,
-                  });
-          }).pipe(Effect.onError(() => Ref.set(loadingSessionId, null)));
+              : yield* runtime.resumeSession(sessionId, activationOptions);
+          }).pipe(
+            Effect.onError(() => Ref.set(loadingSessionId, null)),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
+          );
           rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
           return activated;
         });
@@ -8626,6 +8643,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ...capabilities,
               sessions: { ...capabilities.sessions, supportsModelSwitchInSession },
             },
+            updatedAt: yield* DateTime.now,
+          };
+          yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
+        });
+        reportStartupPhase = Effect.fn("AcpAdapterV2.reportStartupPhase")(function* (
+          phase: string | undefined,
+        ) {
+          if (providerSession.startupPhase === phase) return;
+          const { startupPhase: _reported, ...reported } = providerSession;
+          providerSession = {
+            ...reported,
+            ...(phase === undefined ? {} : { startupPhase: phase }),
             updatedAt: yield* DateTime.now,
           };
           yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
@@ -9204,13 +9233,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageText: string,
           attachments: ReadonlyArray<ChatAttachment>,
         ) {
-          if (!supportsImagePrompts && attachments.some(isProviderNativeImageAttachment)) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver,
-              detail: "ACP driver did not negotiate image prompt support",
-            });
+          // Without image prompts the saved path already in the message text is how the agent
+          // reaches the image; a flavor's own builder checks the capabilities it is handed.
+          if (!flavor.buildAttachmentPrompt) {
+            return supportsImagePrompts ? yield* imageAttachmentBlocks(attachments) : [];
           }
-          if (!flavor.buildAttachmentPrompt) return yield* imageAttachmentBlocks(attachments);
           const setup = yield* Ref.get(activeSessionSetup);
           return yield* flavor
             .buildAttachmentPrompt({

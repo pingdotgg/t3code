@@ -18,6 +18,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import { type AgentResult, WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -52,7 +54,12 @@ const setup = Effect.fn("setup")(function* (
   yield* fileSystem.makeDirectory(directory);
   yield* fileSystem.writeFileString(at("hold.ts"), hold);
   const database = NodeSqliteClient.layer({ filename: path.join(home, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(
+    Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
+      Effect.andThen(WorkflowRunTagsMigration),
+    ),
+    database,
+  );
   const made = WorkflowRuntime.make(
     Effect.succeed(
       (definitions: ReadonlyArray<WorkflowDefinition>) =>
@@ -332,6 +339,29 @@ it.effect("a file that never finishes loading is given up on, and later files st
       loaded.map((definition) => definition.name),
       ["greet"],
     );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a file loads whatever kinds its asks name, and only a malformed `asks` is refused", () =>
+  Effect.gen(function* () {
+    const { at, fileSystem } = yield* setup();
+    const sorter = (asks: string) => `const { workflow, ask } = T3;
+workflow("sorter", { version: 1, payload: Schema.Struct({})${asks} }, () =>
+  ask("sort", { kind: "feture", title: "Which way?", choices: ["Yes", "No"] }),
+);
+`;
+    // A kind the workflow does not declare, and one on a workflow that declares none.
+    for (const asks of [', asks: { feature: "Feature wanted?" }', ""]) {
+      yield* fileSystem.writeFileString(at("sorter.ts"), sorter(asks));
+      const loaded = yield* WorkflowRuntime.loadDefinitions(at("sorter.ts"), asks.length);
+      assert.deepStrictEqual(
+        loaded.map((definition) => Object.keys(definition.asks)),
+        [asks === "" ? [] : ["feature"]],
+      );
+    }
+    yield* fileSystem.writeFileString(at("sorter.ts"), sorter(', asks: { feature: "" }'));
+    const refused = yield* WorkflowRuntime.loadDefinitions(at("sorter.ts"), 1).pipe(Effect.flip);
+    assert.include(String(refused.cause), 'asks gives the kind "feature" no label');
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

@@ -509,13 +509,15 @@ export const agent = Object.assign(orPause, {
 /**
  * A question a person answers with one of `choices`; `None` when the timeout passes first. The run
  * holds nothing while it waits. `data` is the same facts as the title, for whatever lays the
- * question out.
+ * question out. `kind` is one of the kinds the workflow declares in `asks`, which lists filter by;
+ * a question of any other kind is asked the same and listed as Other.
  */
 export const ask = <const Choices extends ReadonlyArray<string>>(
   name: string,
   options: {
     readonly title: string;
     readonly choices: Choices;
+    readonly kind?: string;
     readonly data?: Schema.Json;
     readonly timeout?: Parameters<typeof waitAs>[2]["timeout"];
   },
@@ -525,7 +527,13 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
   InRun
 > =>
   Effect.suspend(() => {
-    checkOptions(`ask("${name}")`, options, ["title", "choices", "data", "timeout"]);
+    checkOptions(`ask("${name}")`, options, ["title", "choices", "kind", "data", "timeout"]);
+    const kind = options.kind;
+    if (kind !== undefined && typeof kind !== "string") {
+      throw new Error(
+        `ask("${name}")'s kind is the name of one of the workflow's \`asks\`, as text.`,
+      );
+    }
     return Effect.orDie(
       waitAs("ask", name, {
         returns: Schema.Struct({
@@ -536,6 +544,7 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
         request: {
           title: options.title,
           choices: [...options.choices],
+          ...(kind === undefined ? {} : { kind }),
           ...(options.data === undefined ? {} : { data: options.data }),
         },
       }),

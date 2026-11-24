@@ -29,6 +29,13 @@ model.
   over authenticated HTTP so long-lived tokens never appear in socket URLs. DPoP RPC tickets stay
   proof-key bound at upgrade. A successful handshake grants no extra authority: every RPC declares
   and checks its required scope in [`RpcAuthorization.ts`](../../apps/server/src/auth/RpcAuthorization.ts).
+- **Secret references need `providers:manage`.** A request that names a secret for the server to
+  read needs `providers:manage` on top of its method's scope, whether the reference is saved in
+  settings or used once, as in a secret request answered with a reference. Typed values need only
+  the method's scope. Clients hide the secret provider picker from sessions without it.
+- **Project scripts need `orchestration:operate`.** The host runs a saved project script itself,
+  on worktree creation and on settle, so saving one needs `orchestration:operate` on top of
+  `settings:write`, whether it arrives in a settings patch or a project update.
 - **Backward-compatible scope evolution.** Token exchange intersects requested scopes with the
   pairing grant, dropping retired/unknown names and failing before consuming a link if none remain.
   Stored grants are never expanded when scopes split. Auth responses preserve legacy `scopes`
@@ -48,7 +55,23 @@ model.
   `mcp-client` sessions (except the read-only thread relay and client-pairing routes restricted to
   [peer links](./05_remote.md#peer-links)). Every MCP tool must statically declare its access level in
   [`McpToolAccess.ts`](../../apps/server/src/mcp/McpToolAccess.ts), and thread-only tools must still
-  refuse outside callers in handlers—hiding from tool listings is only discovery.
+  refuse outside callers in handlers—hiding from tool listings is only discovery. A workflow run
+  picks its own modes, so only a caller at the broadest mode a thread may run in here (full access,
+  or an administrator's ceiling below it) can start or change runs, change what workflows store, or
+  read webhook paths. Narrower callers can still read runs.
+- **A project's worktree layout commands run only as a person approved them.** The commands come
+  from the project folder's `t3.json` and run as the server's OS user, so each runs only after a
+  client session holding `terminal:operate` approved its exact text for that project.
+  [`TaskFolders`](../../apps/server/src/workspace/TaskFolders.ts) is the only place they run and
+  checks the approval, managed policy, and who asked at every run. Recording an approval is a
+  client RPC only: `t3code/no-layout-command-approval-writes` keeps the write side out of every
+  other module, MCP tools included. For an agent's own worktree request, a thread below Full access
+  gets neither these commands nor the project's setup script, approved or not. The asking thread's
+  modes are read when each is about to run, a thread recorded above the administrator's
+  `maxRuntimeMode` is not in Full access, and neither is an asking thread that can no longer be
+  read. A command that waited for another one's turn is checked again, who asked, file and
+  approval, before it starts; one refused then ran nothing, so the project's `remove` does not run
+  for it either.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather
