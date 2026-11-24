@@ -470,8 +470,8 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
-  // Typing or a pushed view drops the palette's highlight until the user moves it, so a
-  // list that auto-highlights falls back to Base UI's first row, and any other list shows none.
+  // Typing or a pushed view drops the highlight until the user moves it; auto-highlighting
+  // lists then fall back to their first row.
   const highlightClearedRef = useRef(viewStack.length > 0);
   // Entering or leaving browse mode remounts the input; carry the caret across it.
   const remountSelectionRef = useRef<PendingInputSelection | null>(null);
