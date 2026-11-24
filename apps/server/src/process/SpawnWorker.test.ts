@@ -274,15 +274,13 @@ describe("SpawnWorker", () => {
         );
         childExited = Option.isSome(exitCode);
         expect(childExited).toBe(true);
+        expect(isPidAlive(pid)).toBe(false);
         const stdinSettled = yield* Stream.empty.pipe(
           Stream.run(child.stdin),
           Effect.result,
           Effect.timeoutOption("2 seconds"),
         );
         expect(Option.isSome(stdinSettled)).toBe(true);
-        yield* Effect.promise(() =>
-          expect.poll(() => isPidAlive(pid), { timeout: 2_000 }).toBe(false),
-        );
       }).pipe(
         Effect.ensuring(
           Effect.gen(function* () {

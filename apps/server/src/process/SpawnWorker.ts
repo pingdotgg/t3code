@@ -289,19 +289,7 @@ class WorkerChild
     this.worker.syncRef();
   }
 
-  exit(code: number | null, signal: NodeJS.Signals | null): void {
-    if (this.exited) return;
-    this.exited = true;
-    this.exitCode = code;
-    this.signalCode = signal;
-    // Node destroys stdin on exit; the Effect sink may already have removed its error listener.
-    this.stdin?.on("error", () => {});
-    this.stdin?.destroy();
-    this.emit("exit", code, signal);
-  }
-
-  /** The worker is gone: end output so readers finish, and let the exit report the kill. */
-  abandon(): void {
+  #settlePendingStdin(): void {
     const pipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
     for (const stream of this.stdio) {
       if (stream && !("push" in stream) && stream.listenerCount("error") === 0) {
@@ -314,6 +302,23 @@ class WorkerChild
     this.#writes.clear();
     for (const callback of this.#finals.values()) callback(pipeError);
     this.#finals.clear();
+  }
+
+  exit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.exited) return;
+    this.exited = true;
+    this.exitCode = code;
+    this.signalCode = signal;
+    // Node destroys stdin on exit; the Effect sink may already have removed its error listener.
+    this.stdin?.on("error", () => {});
+    this.#settlePendingStdin();
+    this.stdin?.destroy();
+    this.emit("exit", code, signal);
+  }
+
+  /** The worker is gone: end output so readers finish, and let the exit report the kill. */
+  abandon(): void {
+    this.#settlePendingStdin();
     // Not destroy(error): Effect leaves an unread stderr's pipe without an error listener.
     for (const stream of this.stdio) {
       if (stream && "push" in stream && !stream.readableEnded) stream.push(null);
@@ -331,6 +336,7 @@ class SpawnWorker {
   /** Launches sent but not yet answered; the worker is inside CreateProcess for one of them. */
   launching = 0;
   closed = false;
+  #terminated = false;
 
   constructor(pool: SpawnWorkerPool) {
     this.pool = pool;
@@ -400,6 +406,7 @@ class SpawnWorker {
         child.spawned = true;
         child.pid = message.pid;
         child.emit("spawn");
+        if (this.closed) this.#killForClose(child);
         break;
       case "error":
         if (!child.spawned) {
@@ -437,7 +444,21 @@ class SpawnWorker {
   release(child: WorkerChild): void {
     this.children.delete(child.id);
     this.syncRef();
+    if (this.closed) {
+      if (this.children.size === 0 && this.launching === 0) this.#terminate();
+      return;
+    }
     this.pool.release(this);
+  }
+
+  #killForClose(child: WorkerChild): void {
+    if (child.exited || !child.spawned) return;
+    child.killed = true;
+    if (this.pool.platform === "win32" && child.pid !== undefined) {
+      this.pool.killTree(child.pid, () => {});
+    } else if (!this.#terminated) {
+      this.worker.postMessage({ type: "kill", id: child.id, signal: "SIGKILL" });
+    }
   }
 
   #cleanupChildren(error: Error): void {
@@ -464,18 +485,27 @@ class SpawnWorker {
   }
 
   fail(error: Error): void {
-    if (this.closed) return;
+    if (this.#terminated) return;
     this.#terminate();
     this.#cleanupChildren(error);
   }
 
   close(): void {
     if (this.closed) return;
-    this.#terminate();
-    this.#cleanupChildren(new Error("The process launcher closed."));
+    this.closed = true;
+    this.pool.workers.delete(this);
+    if (this.children.size === 0 && this.launching === 0) {
+      this.#terminate();
+      return;
+    }
+    // Keep the worker alive until live children exit and are reaped, then terminate in release().
+    this.worker.unref();
+    for (const child of this.children.values()) this.#killForClose(child);
   }
 
   #terminate(): void {
+    if (this.#terminated) return;
+    this.#terminated = true;
     this.closed = true;
     this.pool.workers.delete(this);
     void this.worker.terminate().then(() => {
