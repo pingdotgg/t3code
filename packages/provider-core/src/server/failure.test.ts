@@ -250,6 +250,16 @@ it("reports disk-full evidence without exposing provider output or retrying auto
       { class: "provider_error", message, code: "provider_storage_full", retryable: false },
     );
   }
+  const mixedStderr =
+    "ENOSPC: System limit for number of file watchers reached, watch '/private/project'\nSQLITE_FULL: database is full";
+  assert.deepEqual(
+    makeProviderFailure({
+      cause: { _tag: "AcpProcessExitedError", code: 2, stderr: mixedStderr },
+      retryable: true,
+    }),
+    { class: "provider_error", message, code: "provider_storage_full", retryable: false },
+  );
+  assert.equal(providerProcessExitGuidance(mixedStderr), message);
 });
 
 it("keeps auth, quota, watcher limits, and ordinary exits distinct from disk-full failures", () => {
@@ -277,6 +287,15 @@ it("keeps auth, quota, watcher limits, and ordinary exits distinct from disk-ful
     }).message,
     "Provider turn failed.",
   );
+  const forwardedWatcherMessage = "ENOSPC: watch '/private/project'";
+  const forwardedWatcherFailure = makeProviderFailure({
+    message: forwardedWatcherMessage,
+    cause: { code: "ENOSPC", syscall: "watch" },
+    retryable: true,
+  });
+  assert.equal(forwardedWatcherFailure.message, forwardedWatcherMessage);
+  assert.equal(forwardedWatcherFailure.code, "ENOSPC");
+  assert.equal(forwardedWatcherFailure.retryable, true);
   const watcherMessage = "ENOSPC: System limit for number of file watchers reached";
   assert.equal(
     makeProviderFailure({ code: "ENOSPC", message: watcherMessage }).message,

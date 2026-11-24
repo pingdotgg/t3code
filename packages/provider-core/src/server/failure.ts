@@ -50,12 +50,34 @@ const WATCH_LIMIT_OUTPUT = /\bSystem limit for number of file watchers reached\b
 function isStorageFullOutput(output: unknown): boolean {
   return (
     typeof output === "string" &&
-    STORAGE_FULL_OUTPUT.test(output) &&
-    !WATCH_LIMIT_OUTPUT.test(output)
+    output
+      .split(/\r?\n/u)
+      .some((line) => STORAGE_FULL_OUTPUT.test(line) && !WATCH_LIMIT_OUTPUT.test(line))
   );
 }
 
+function hasWatchLimitSyscall(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (typeof cause !== "object") return false;
+      const syscall = stringField(cause, "syscall");
+      if (syscall === "watch" || syscall === "inotify_add_watch") return true;
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 function hasStorageFullCause(cause: unknown): boolean {
+  if (hasWatchLimitSyscall(cause)) return false;
   const seen = new Set<unknown>();
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
@@ -68,8 +90,6 @@ function hasStorageFullCause(cause: unknown): boolean {
       const error = cause as Record<string, unknown>;
       const message = stringField(cause, "message");
       const code = stringField(cause, "code");
-      const syscall = stringField(cause, "syscall");
-      if (syscall === "watch" || syscall === "inotify_add_watch") return false;
       if (
         isStorageFullOutput(message) ||
         ((code === "ENOSPC" || code === "SQLITE_FULL") &&
