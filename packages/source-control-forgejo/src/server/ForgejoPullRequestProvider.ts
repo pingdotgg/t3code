@@ -121,7 +121,7 @@ export const make = Effect.gen(function* () {
             detail: error.detail,
             cause: error,
             reason:
-              error.reason === "missing-cli"
+              error.reason === "missing-cli" || error.reason === "wrong-cli"
                 ? "missing-tool"
                 : error.reason === "authentication"
                   ? "unauthenticated"

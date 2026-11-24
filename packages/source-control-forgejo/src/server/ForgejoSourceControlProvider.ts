@@ -204,11 +204,9 @@ export const makeDiscovery = Effect.gen(function* () {
             remoteUrl: input.context.remoteUrl,
           }).pipe(
             Effect.catchIf(
-              // An absent CLI holds no login, and neither does another program named gt, whose
-              // error carries no spawn failure. Any other failure leaves the remote unknown.
-              (error) =>
-                isMissingExecutable(error.cause) ||
-                (error.reason === "missing-cli" && error.cause === undefined),
+              // An absent CLI holds no login, and neither does another program named gt. Any
+              // other failure leaves the remote unknown.
+              (error) => isMissingExecutable(error.cause) || error.reason === "wrong-cli",
               () => Effect.succeed([]),
             ),
             Effect.result,

@@ -12,6 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as NodePath from "node:path";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { VcsProcessExitError } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -22,6 +23,7 @@ import type { SourceControlProviderContext } from "@t3tools/source-control-core/
 const API_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("ForgejoCliError", {
   command: Schema.Literals(["fj", "gt"]),
@@ -31,6 +33,8 @@ export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("Forg
   reason: Schema.optional(
     Schema.Literals([
       "missing-cli",
+      // The executable on PATH is another program of the CLI's name.
+      "wrong-cli",
       "authentication",
       "forbidden",
       "not-found",
@@ -385,19 +389,21 @@ export const make = Effect.gen(function* () {
       // With --json gt exits 0 even signed out. One that also rejects `version` is another
       // program of that name, such as Graphite's CLI; a Gitea CLI that answers it is broken.
       const version = yield* execute({ cwd: input.cwd, args: ["version"] }).pipe(Effect.result);
-      return yield* Result.isFailure(version)
-        ? new ForgejoCliError({
-            command: "gt",
-            cwd: input.cwd,
-            reason: "missing-cli",
-            detail:
-              "The `gt` on this server's PATH is not the Gitea CLI. Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`gt` 2.0 or later) and retry.",
-          })
-        : new ForgejoCliError({
-            command: "gt",
-            cwd: input.cwd,
-            detail: "`gt auth status` failed. Run it on the T3 Code server to see what gt reports.",
-          });
+      if (Result.isSuccess(version))
+        return yield* new ForgejoCliError({
+          command: "gt",
+          cwd: input.cwd,
+          detail: "`gt auth status` failed. Run it on the T3 Code server to see what gt reports.",
+        });
+      // Only a rejected command says so; a gt that could not be asked fails as it did.
+      if (!isVcsProcessExitError(version.failure.cause)) return yield* version.failure;
+      return yield* new ForgejoCliError({
+        command: "gt",
+        cwd: input.cwd,
+        reason: "wrong-cli",
+        detail:
+          "The `gt` on this server's PATH is not the Gitea CLI. Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`gt` 2.0 or later) and retry.",
+      });
     }
     const logins = parseForgejoLogins(accounts.stdout);
     const remote = input.remoteUrl ? parseForgejoRemote(input.remoteUrl) : null;

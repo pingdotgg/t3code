@@ -1929,14 +1929,14 @@ it.effect("asks gt for the SSH alias of every server that is not named after the
 it.effect(
   "treats a gt that is not the Gitea CLI as not installed, and a broken one as unknown",
   () => {
-    let foreign = true;
+    let version: "rejected" | "answered" | "timed out" = "rejected";
     return Effect.gen(function* () {
       const cli = yield* ForgejoCli.make;
       const resolved = yield* cli
         .resolveRepository({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project" })
         .pipe(Effect.result);
       assert.strictEqual(resolved._tag, "Failure");
-      if (resolved._tag === "Failure") assert.strictEqual(resolved.failure.reason, "missing-cli");
+      if (resolved._tag === "Failure") assert.strictEqual(resolved.failure.reason, "wrong-cli");
       const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
         Effect.provideService(ForgejoCli.ForgejoCli, cli),
       );
@@ -1960,7 +1960,7 @@ it.effect(
       };
       assert.isNull(yield* spec.refineUnknownRemote(unknownRemote));
       // The Gitea CLI answers `version`, so its failing account list is a failure to report.
-      foreign = false;
+      version = "answered";
       const broken = yield* cli
         .resolveRepository({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project" })
         .pipe(Effect.result);
@@ -1971,6 +1971,15 @@ it.effect(
       }
       const refined = yield* spec.refineUnknownRemote(unknownRemote).pipe(Effect.result);
       assert.strictEqual(refined._tag, "Failure");
+      // A gt that could not be asked says nothing about which program it is.
+      version = "timed out";
+      const unasked = yield* cli
+        .resolveRepository({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project" })
+        .pipe(Effect.result);
+      assert.strictEqual(unasked._tag, "Failure");
+      if (unasked._tag === "Failure") assert.isUndefined(unasked.failure.reason);
+      const unsettled = yield* spec.refineUnknownRemote(unknownRemote).pipe(Effect.result);
+      assert.strictEqual(unsettled._tag, "Failure");
     }).pipe(
       Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
       Effect.provideService(SpawnExecutableResolution, (command) =>
@@ -1992,8 +2001,17 @@ it.effect(
             run: (input) => {
               if (input.command === "git") return Effect.succeed(processOutput(""));
               assert.strictEqual(input.command, "gt");
-              if (!foreign && input.args[0] === "version")
+              if (version === "answered" && input.args[0] === "version")
                 return Effect.succeed(processOutput("gt version 2.0.0 (2026-11-18)"));
+              if (version === "timed out" && input.args[0] === "version")
+                return Effect.fail(
+                  new VcsProcessTimeoutError({
+                    operation: input.operation,
+                    command: input.command,
+                    cwd: input.cwd,
+                    timeoutMs: 30_000,
+                  }),
+                );
               // Graphite's gt prints its help and exits 1 for every command gt is asked.
               return input.allowNonZeroExit
                 ? Effect.succeed(
