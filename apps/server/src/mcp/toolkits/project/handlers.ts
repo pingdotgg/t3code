@@ -7,6 +7,7 @@ import {
   ProjectId,
   type TaskFolderError,
   type Project as ProjectRecord,
+  type ProjectScript,
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
@@ -210,6 +211,19 @@ const withSavedProjectSettings = Effect.gen(function* () {
     };
   };
 });
+
+// Once project settings are folded, actions resolve from Settings only, as the app's editor saves them.
+const saveProjectScripts = (projectId: ProjectId, scripts: readonly ProjectScript[] | undefined) =>
+  scripts === undefined
+    ? Effect.void
+    : ServerSettings.ServerSettingsService.pipe(
+        Effect.flatMap((service) =>
+          service.updateSettings({
+            projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } },
+          }),
+        ),
+        Effect.asVoid,
+      );
 
 // The project is already committed, so a failed Settings read must not report the create as failed.
 const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
@@ -586,6 +600,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const created = yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
           .pipe(Effect.mapError(projectFailure));
+        yield* saveProjectScripts(created.id, input.scripts).pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message:
+                  "The project was created, but its scripts could not be saved; set them with t3_project_update.",
+              }),
+          ),
+        );
         return (yield* withSavedProjectSettingsAfterCreate)(created);
       }),
     // Linked work may bring the repository it works in; an existing
@@ -598,6 +622,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const updated = yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
+      yield* saveProjectScripts(updated.id, input.scripts).pipe(Effect.mapError(unavailable));
       return (yield* withSavedProjectSettings)(updated);
     }),
   ),

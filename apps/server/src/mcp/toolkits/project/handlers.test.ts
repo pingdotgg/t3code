@@ -1076,26 +1076,30 @@ it.effect("a project created through MCP keeps its actions once project settings
       launched: [],
     });
     const created: Array<ProjectRecord> = [];
-    const dependencies = Layer.merge(
-      harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        create: (input) => {
-          const project = {
-            id: input.projectId,
-            title: input.title,
-            workspaceRoot: input.workspaceRoot,
-            defaultModelSelection: null,
-            scripts: input.scripts ?? [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            deletedAt: null,
-          } as unknown as ProjectRecord;
-          created.push(project);
-          return Effect.succeed(project);
-        },
-        getById: (id) => Effect.succeed(Option.fromNullishOr(created.find((p) => p.id === id))),
-      }),
+    // Built once so the create and the read share one Settings store, as on a real server.
+    const context = yield* Layer.build(
+      Layer.merge(
+        harness.dependencies,
+        Layer.mock(Project.ProjectService)({
+          create: (input) => {
+            const project = {
+              id: input.projectId,
+              title: input.title,
+              workspaceRoot: input.workspaceRoot,
+              defaultModelSelection: null,
+              scripts: input.scripts ?? [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              deletedAt: null,
+            } as unknown as ProjectRecord;
+            created.push(project);
+            return Effect.succeed(project);
+          },
+          getById: (id) => Effect.succeed(Option.fromNullishOr(created.find((p) => p.id === id))),
+        }),
+      ),
     );
+    const dependencies = Layer.succeedContext(context);
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
@@ -1116,7 +1120,7 @@ it.effect("a project created through MCP keeps its actions once project settings
       .handle("t3_project_read", { projectId })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
     expect(read.at(-1)?.result).toMatchObject({ scripts });
-  }),
+  }).pipe(Effect.scoped),
 );
 
 it.effect("an agent's clone is not cut off while git is still transferring", () =>
