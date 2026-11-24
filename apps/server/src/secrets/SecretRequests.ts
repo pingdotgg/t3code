@@ -59,10 +59,16 @@ function answerValues(
     return "secret" in answer ? [[undefined, answer.secret]] : undefined;
   if (!("values" in answer)) return undefined;
   const { values } = answer;
-  if (Object.keys(values).length !== item.fields.length) return undefined;
+  if (Object.keys(values).some((key) => !item.fields?.some((field) => field.name === key))) {
+    return undefined;
+  }
   const entries: Array<readonly [string, string]> = [];
   for (const field of item.fields) {
-    const value = Object.hasOwn(values, field.name) ? values[field.name] : undefined;
+    const value = Object.hasOwn(values, field.name)
+      ? values[field.name]
+      : field.optional === true
+        ? ""
+        : undefined;
     if (value === undefined) return undefined;
     entries.push([field.name, value]);
   }

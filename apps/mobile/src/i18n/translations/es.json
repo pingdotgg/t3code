@@ -162,6 +162,7 @@
   "81f613bb68d85bb7": "Fuera del chat, en un archivo privado que los comandos de este agente pueden leer durante 24 horas",
   "07b56c0c12bd2de1": "Fuera del chat, en archivos privados que los comandos de este agente pueden leer durante 24 horas",
   "8c2d901183b4e219": "Pega el secreto",
+  "d8fb763eb069ba1d": "Opcional",
   "610aea624f895a78": "Guardado de forma segura y privada",
   "329b7854b7e0546e": "Usa una referencia de 1Password como {example}.",
   "d68b539295c009d3": "{count, plural, one {Delegó {count} tarea} other {Delegó {count} tareas}}",
