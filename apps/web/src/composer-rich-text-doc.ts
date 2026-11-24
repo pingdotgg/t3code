@@ -16,7 +16,7 @@ import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
-import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic";
+import { Italic, starInputRegex } from "@tiptap/extension-italic";
 import {
   combineTransactionSteps,
   getChangedRanges,
@@ -24,7 +24,6 @@ import {
   type Editor,
   InputRule,
   markInputRule,
-  markPasteRule,
   mergeAttributes,
 } from "@tiptap/core";
 import { isHistoryTransaction } from "@tiptap/pm/history";
@@ -53,6 +52,7 @@ import {
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
+import { markdownMathRanges } from "~/markdown/wordsHast";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -350,9 +350,6 @@ export function surroundSelectionWithMark(
 export const ComposerItalicExtension = Italic.extend({
   addInputRules() {
     return [markInputRuleOutsideCode(starInputRegex, this.type)];
-  },
-  addPasteRules() {
-    return [markPasteRule({ find: starPasteRegex, type: this.type })];
   },
 });
 
@@ -934,7 +931,7 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = composerMathRanges(remainder);
+  const formulas = composerMathRanges(remainder, markdownMathRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {

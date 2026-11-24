@@ -55,29 +55,37 @@ function formatElapsed(seconds: number) {
 
 function RecordingStatus(props: {
   level: number;
+  preparing: boolean;
   recordingStartedAt?: number | null | undefined;
   recordingLimitSeconds?: number | undefined;
 }) {
-  const { recordingStartedAt } = props;
+  const { preparing, recordingStartedAt } = props;
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
     recordingStartedAt ? Math.max(0, Math.floor((Date.now() - recordingStartedAt) / 1_000)) : 0,
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the timer displaying the native recording duration
   useEffect(() => {
+    if (preparing) return;
     const startedAt = recordingStartedAt ?? Date.now();
     const timer = window.setInterval(
       () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000)),
       250,
     );
     return () => window.clearInterval(timer);
-  }, [recordingStartedAt]);
+  }, [preparing, recordingStartedAt]);
 
   return (
     <>
-      <span aria-hidden className="size-2 shrink-0 rounded-full bg-destructive" />
+      <span
+        aria-hidden
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          preparing ? "bg-muted-foreground/40" : "bg-destructive",
+        )}
+      />
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-        {formatElapsed(elapsedSeconds)}
+        {formatElapsed(preparing ? 0 : elapsedSeconds)}
         {props.recordingLimitSeconds !== undefined
           ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
           : ""}
@@ -174,7 +182,9 @@ export function ComposerSpeechRecordingPill(props: {
   const presentation = resolveSpeechPresentation(props.state, props.progress, m);
   if (!presentation.active) return null;
   const recording = phase === "recording";
-  const trailing = recording || phase === "post-processing";
+  const starting = phase === "preparing" && props.progress === null;
+  const showRecordingLayout = starting || recording;
+  const trailing = showRecordingLayout || phase === "post-processing";
 
   return (
     <VoiceInputPill size={props.size}>
@@ -200,12 +210,16 @@ export function ComposerSpeechRecordingPill(props: {
         aria-live={recording ? "off" : "polite"}
         aria-label={presentation.status ?? undefined}
       >
-        {recording ? (
-          <RecordingStatus
-            level={props.level}
-            recordingStartedAt={props.recordingStartedAt}
-            recordingLimitSeconds={props.recordingLimitSeconds}
-          />
+        {showRecordingLayout ? (
+          <>
+            {starting && <span className="sr-only">{presentation.status}</span>}
+            <RecordingStatus
+              preparing={starting}
+              level={starting ? 0 : props.level}
+              recordingStartedAt={props.recordingStartedAt}
+              recordingLimitSeconds={props.recordingLimitSeconds}
+            />
+          </>
         ) : (
           <>
             <Spinner aria-hidden size="sm" tone="muted" className="shrink-0" />
@@ -226,17 +240,18 @@ export function ComposerSpeechRecordingPill(props: {
         >
           {gt("Skip", { $context: "verb, skips cleaning up the transcript" })}
         </Button>
-      ) : recording ? (
+      ) : showRecordingLayout ? (
         <ShortcutTooltip label={gt("Finish voice input")} shortcut={props.finishShortcutLabel}>
           <Button
             type="button"
             size={compact ? "icon-xs" : "icon-sm-pill"}
             aria-label={gt("Finish voice input")}
+            disabled={starting}
             onPointerDown={keepFocus}
             onClick={props.onStop}
             className="shrink-0"
           >
-            <CheckIcon />
+            {starting ? <Spinner aria-hidden /> : <CheckIcon />}
           </Button>
         </ShortcutTooltip>
       ) : null}

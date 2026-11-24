@@ -202,7 +202,7 @@ describe("SchemaCompiler", () => {
   })
 
   it("installs encoders on the flipped AST", () => {
-    const schema = Schema.FiniteFromString
+    const schema = Schema.FiniteFromString.annotate({ title: "installed encoder" })
     SchemaCompiler.set(SchemaAST.flip(schema.ast), {
       decode: () => "aot",
       decodeEffect: () => Effect.succeed("detailed")
