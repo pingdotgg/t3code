@@ -2191,6 +2191,7 @@
   "93eb8ae0bf209025": "Lendo log de falhas…",
   "4429ccae147b2b2f": "Cole o relatório em uma issue do GitHub. Ele contém a versão do app, a mensagem de erro do JavaScript e a pilha de componentes. As mensagens de erro podem citar valores do app, então revise antes de compartilhar.",
   "58df920ec2681250": "Quando o app falha ou encontra um erro, ele envia a mensagem de erro, o stack trace, a versão do app e o modelo e a versão do sistema do dispositivo à equipe do T3 Code. Cada inicialização também envia os tempos de inicialização. Os relatórios levam um ID aleatório desta instalação.",
+  "e78e3d92c5840886": "Ao desativar, o app também para de enviar os traces de conexão usados para diagnosticar o T3 Connect.",
   "9544305f2964486f": "Não foi possível exibir o diff",
   "a488d0f5de859d6b": "Tente carregar a visualização do diff novamente.",
   "0c72282254a37568": "Tentar o diff novamente",
