@@ -147,7 +147,10 @@ export class EnvironmentThemeService extends Context.Service<
     }) => Effect.Effect<void, EnvironmentThemeRefusedError>;
 
     /** Stops publishing `themeId`: removes its file and any background image beside it. */
-    readonly remove: (themeId: string) => Effect.Effect<void, EnvironmentThemeRefusedError>;
+    readonly remove: (
+      themeId: string,
+      expectedRevision?: string,
+    ) => Effect.Effect<void, EnvironmentThemeRefusedError>;
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -303,7 +306,12 @@ export const readPublishedThemes = Effect.fn(function* (
     }
 
     const background = findThemeBackground(themesDir, id, entryNames);
-    themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
+    themes.push({
+      id,
+      ...file,
+      revision: environmentThemeRevision({ id, ...file, background: background?.revision }),
+      ...(background ? { background: background.revision } : {}),
+    });
   }
   if (listedFileMissing) yield* onPathMissing;
   return themes;
@@ -311,11 +319,13 @@ export const readPublishedThemes = Effect.fn(function* (
 
 export function environmentThemeRevision({
   id: _id,
-  background: _background,
+  background,
   revision: _revision,
   ...file
 }: EnvironmentTheme): string {
-  return NodeCrypto.createHash("sha256").update(stableStringify(file)).digest("hex");
+  return NodeCrypto.createHash("sha256")
+    .update(stableStringify({ ...file, ...(background ? { background } : {}) }))
+    .digest("hex");
 }
 
 const make = Effect.gen(function* () {
@@ -532,10 +542,7 @@ const make = Effect.gen(function* () {
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* requirePublished(themeId);
-        if (
-          expectedRevision !== undefined &&
-          expectedRevision !== environmentThemeRevision(current)
-        ) {
+        if (expectedRevision !== undefined && expectedRevision !== current.revision) {
           return yield* new EnvironmentThemeRefusedError({
             themeId,
             problem: "changed since you opened the editor. Reopen it before saving.",
@@ -549,10 +556,16 @@ const make = Effect.gen(function* () {
 
   const remove: EnvironmentThemeService["Service"]["remove"] = Effect.fn(
     "EnvironmentThemeService.remove",
-  )(function* (themeId) {
+  )(function* (themeId, expectedRevision) {
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        yield* requirePublished(themeId);
+        const current = yield* requirePublished(themeId);
+        if (expectedRevision !== undefined && expectedRevision !== current.revision) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: "changed since you opened the confirmation. Reopen it before removing.",
+          });
+        }
         const removalError = (cause: unknown) =>
           new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause });
         yield* refreshSemaphore

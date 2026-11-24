@@ -4,11 +4,11 @@ import { subscribeAtomChanges } from "../rpc/atomRegistry";
 import {
   environmentThemeDefinitionsAtom,
   storePublishedEnvironmentThemes,
-  type ThemeDefinition,
+  type PublishedThemeDefinition,
 } from "../themePalette";
 import { refreshTheme } from "./useTheme";
 
-export function useEnvironmentThemeDefinitions(): ReadonlyArray<ThemeDefinition> {
+export function useEnvironmentThemeDefinitions(): ReadonlyArray<PublishedThemeDefinition> {
   return useAtomValue(environmentThemeDefinitionsAtom);
 }
 

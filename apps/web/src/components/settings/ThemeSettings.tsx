@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CheckIcon,
   CopyIcon,
@@ -605,7 +606,7 @@ export function ThemeLibrary({
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
     /** Published by the environment, so removing it deletes the server's file. */
-    published: boolean;
+    published?: { environmentId: EnvironmentId; expectedRevision: string };
   } | null>(null);
   const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
   const removalConfirmation = useRef(0);
@@ -650,9 +651,13 @@ export function ThemeLibrary({
   const handleRemoveTheme = (
     customTheme: ThemeDefinition,
     collectionThemes: ReadonlyArray<ThemeDefinition>,
-    published = false,
+    published?: { environmentId: EnvironmentId; expectedRevision: string },
   ) => {
-    setThemeRemovalTarget({ theme: customTheme, collectionThemes, published });
+    setThemeRemovalTarget({
+      theme: customTheme,
+      collectionThemes,
+      ...(published && { published }),
+    });
     setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
     changeRemovalOpen(true);
   };
@@ -662,13 +667,15 @@ export function ThemeLibrary({
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
     const confirmation = removalConfirmation.current;
-    const removesPublished = themeRemovalTarget.published;
-    if (removesPublished) {
-      if (editableEnvironmentId === null) return;
+    const published = themeRemovalTarget.published;
+    if (published) {
       setIsRemovingTheme(true);
       const removed = await removeEnvironmentTheme({
-        environmentId: editableEnvironmentId,
-        input: { themeId: themeRemovalTarget.theme.id },
+        environmentId: published.environmentId,
+        input: {
+          themeId: themeRemovalTarget.theme.id,
+          expectedRevision: published.expectedRevision,
+        },
       });
       setIsRemovingTheme(false);
       if (removed._tag === "Failure") {
@@ -682,6 +689,7 @@ export function ThemeLibrary({
       if (removalConfirmation.current === confirmation) changeRemovalOpen(false);
       const themeId = themeRemovalTarget.theme.id;
       if (
+        appAtomRegistry.get(themeServerEditableEnvironmentIdAtom) === published.environmentId &&
         !getCustomThemes().some(({ id }) => id === themeId) &&
         !clearRemovedThemeSelection(themeId)
       ) {
@@ -885,59 +893,71 @@ export function ThemeLibrary({
             // Saved themes win id resolution; show only their card to avoid duplicate keys.
             (environmentTheme) => !customThemes.some((theme) => theme.id === environmentTheme.id),
           )
-          .map((environmentTheme) => (
-            <ThemeLibraryCard
-              activeModes={pickedModesFor(environmentTheme.id)}
-              isActive={false}
-              key={environmentTheme.id}
-              onDownload={() =>
-                downloadThemeFile(
-                  `${environmentTheme.id}.json`,
-                  serializeThemeFile(environmentTheme),
-                )
-              }
-              onDuplicate={() =>
-                openThemeEditor({
-                  editingThemeId: null,
-                  seedThemeId: environmentTheme.id,
-                  seedName: `${environmentTheme.label} copy`,
-                  initialAppearance,
-                })
-              }
-              {...(editableEnvironmentId === null
-                ? {}
-                : {
-                    onEdit: () => {
-                      const liveEnvironmentId = appAtomRegistry.get(
-                        themeServerEditableEnvironmentIdAtom,
-                      );
-                      if (liveEnvironmentId !== editableEnvironmentId) return;
-                      const liveTheme = appAtomRegistry
-                        .get(themeServerEnvironmentThemesAtom)
-                        ?.find(({ id }) => id === environmentTheme.id);
-                      if (!liveTheme?.revision) return;
-                      openThemeEditor({
-                        editingThemeId: null,
-                        published: {
-                          environmentId: editableEnvironmentId,
-                          theme: environmentThemeDefinition(liveTheme),
-                        },
-                        seedThemeId: null,
-                        seedName: null,
-                        initialAppearance,
-                      });
-                    },
-                    onRemove: () => handleRemoveTheme(environmentTheme, [environmentTheme], true),
-                  })}
-              onUse={() => {
-                const half = singleAppearanceOf(environmentTheme);
-                if (half === null) persistTheme(environmentTheme.id);
-                else assignHalf(half, environmentTheme.id);
-              }}
-              onUseMode={handlePairPick(environmentTheme.id)}
-              theme={getThemeCardDefinition(environmentTheme)}
-            />
-          ))}
+          .map((environmentTheme) => {
+            const expectedRevision = environmentTheme.publishedRevision;
+            return (
+              <ThemeLibraryCard
+                activeModes={pickedModesFor(environmentTheme.id)}
+                isActive={false}
+                key={environmentTheme.id}
+                onDownload={() =>
+                  downloadThemeFile(
+                    `${environmentTheme.id}.json`,
+                    serializeThemeFile(environmentTheme),
+                  )
+                }
+                onDuplicate={() =>
+                  openThemeEditor({
+                    editingThemeId: null,
+                    seedThemeId: environmentTheme.id,
+                    seedName: `${environmentTheme.label} copy`,
+                    initialAppearance,
+                  })
+                }
+                {...(editableEnvironmentId === null
+                  ? {}
+                  : {
+                      onEdit: () => {
+                        const liveEnvironmentId = appAtomRegistry.get(
+                          themeServerEditableEnvironmentIdAtom,
+                        );
+                        if (liveEnvironmentId !== editableEnvironmentId) return;
+                        const liveTheme = appAtomRegistry
+                          .get(themeServerEnvironmentThemesAtom)
+                          ?.find(({ id }) => id === environmentTheme.id);
+                        if (!liveTheme?.revision) return;
+                        openThemeEditor({
+                          editingThemeId: null,
+                          published: {
+                            environmentId: editableEnvironmentId,
+                            theme: environmentThemeDefinition(liveTheme),
+                          },
+                          seedThemeId: null,
+                          seedName: null,
+                          initialAppearance,
+                        });
+                      },
+                      ...(expectedRevision
+                        ? {
+                            onRemove: () => {
+                              handleRemoveTheme(environmentTheme, [environmentTheme], {
+                                environmentId: editableEnvironmentId,
+                                expectedRevision,
+                              });
+                            },
+                          }
+                        : {}),
+                    })}
+                onUse={() => {
+                  const half = singleAppearanceOf(environmentTheme);
+                  if (half === null) persistTheme(environmentTheme.id);
+                  else assignHalf(half, environmentTheme.id);
+                }}
+                onUseMode={handlePairPick(environmentTheme.id)}
+                theme={getThemeCardDefinition(environmentTheme)}
+              />
+            );
+          })}
         {customThemeCollections.map(([collectionId, themes]) => (
           <CustomThemeCollectionCard
             activeModesFor={pickedModesFor}

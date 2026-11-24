@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentTheme as PublishedEnvironmentTheme,
   EnvironmentThemeFile,
   ServerSettingsError,
   THEME_CSS_MAX_LENGTH,
@@ -22,6 +23,10 @@ import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+function withRevision(theme: PublishedEnvironmentTheme) {
+  return { ...theme, revision: EnvironmentTheme.environmentThemeRevision(theme) };
+}
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 /** Writes non-ASCII characters as `\uXXXX` escapes, as encoders such as Python's json.dumps do. */
@@ -530,7 +535,9 @@ describe("environment theme", () => {
           .apply({ themeId: REFUSED_THEME_ID, theme: { ...NIGHTFALL_THEME, name: "Changed" } })
           .pipe(Effect.flip);
         assert.strictEqual(refused._tag, "EnvironmentThemeNotSelectedError");
-        assert.deepEqual(yield* themes.current, [{ id: REFUSED_THEME_ID, ...NIGHTFALL_THEME }]);
+        assert.deepEqual(yield* themes.current, [
+          withRevision({ id: REFUSED_THEME_ID, ...NIGHTFALL_THEME }),
+        ]);
       }),
     ),
   );
@@ -575,7 +582,7 @@ describe("environment theme", () => {
 
         yield* themes.apply({ themeId: "look", theme: NIGHTFALL_THEME });
         assert.strictEqual(yield* fs.readFileString(outside), "keep");
-        assert.deepEqual(yield* themes.current, [{ id: "look", ...NIGHTFALL_THEME }]);
+        assert.deepEqual(yield* themes.current, [withRevision({ id: "look", ...NIGHTFALL_THEME })]);
       }),
     ),
   );
@@ -605,7 +612,9 @@ describe("environment theme", () => {
         const css =
           "/* from url(https://example.com/guide) */ [data-chat-header] { border-bottom: 1px solid red; }";
         yield* themes.apply({ themeId: "agent-look", theme: { ...NIGHTFALL_THEME, css } });
-        assert.deepEqual(yield* themes.current, [{ id: "agent-look", ...NIGHTFALL_THEME, css }]);
+        assert.deepEqual(yield* themes.current, [
+          withRevision({ id: "agent-look", ...NIGHTFALL_THEME, css }),
+        ]);
 
         const leaky = yield* themes
           .apply({
@@ -679,7 +688,9 @@ describe("environment theme", () => {
           expectedRevision: EnvironmentTheme.environmentThemeRevision(current),
           theme: { ...updated, name: "Renamed" },
         });
-        assert.deepEqual(yield* themes.current, [{ id: "look", ...updated, name: "Renamed" }]);
+        assert.deepEqual(yield* themes.current, [
+          withRevision({ id: "look", ...updated, name: "Renamed" }),
+        ]);
       }),
     ),
   );
@@ -696,7 +707,7 @@ describe("environment theme", () => {
           colors: { canvas: "#101010", accent: "#ff8800" },
         };
         yield* themes.save({ themeId: "look", theme: edited });
-        assert.deepEqual(yield* themes.current, [{ id: "look", ...edited }]);
+        assert.deepEqual(yield* themes.current, [withRevision({ id: "look", ...edited })]);
 
         const refused = yield* themes
           .save({ themeId: "dark", theme: NIGHTFALL_THEME })
@@ -732,6 +743,28 @@ describe("environment theme", () => {
 
         const missing = yield* themes.remove("look").pipe(Effect.flip);
         assert.match(missing.message, /not a published theme/);
+      }),
+    ),
+  );
+
+  it.effect("refuses to remove a theme that changed after confirmation opened", () =>
+    withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "png" },
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const [original] = yield* themes.current;
+        assert.ok(original?.revision);
+
+        yield* themes.apply({ themeId: "look", theme: { ...NIGHTFALL_THEME, name: "Renamed" } });
+        const refused = yield* themes.remove("look", original.revision).pipe(Effect.flip);
+        assert.match(refused.message, /changed since you opened the confirmation/);
+
+        const [current] = yield* themes.current;
+        assert.equal(current?.name, "Renamed");
+        assert.equal(current?.background, original.background);
+        assert.ok(current?.revision);
+        yield* themes.remove("look", current.revision);
+        assert.deepEqual(yield* themes.current, []);
       }),
     ),
   );
@@ -889,13 +922,13 @@ describe("environment theme", () => {
         const served = Effect.map(themes.current, (all) =>
           all.find((theme) => theme.id === "zz-look"),
         );
-        assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
+        assert.deepEqual(yield* served, withRevision({ id: "zz-look", ...NIGHTFALL_THEME }));
 
         const refused = yield* themes
           .apply({ themeId: "zz-look", theme: large("Too much") })
           .pipe(Effect.flip);
         assert.match(refused.message, /could not be published/);
-        assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
+        assert.deepEqual(yield* served, withRevision({ id: "zz-look", ...NIGHTFALL_THEME }));
 
         // A new theme that sorts first fits, and the last large one no longer does.
         const before = (yield* themes.current).map((theme) => theme.id);

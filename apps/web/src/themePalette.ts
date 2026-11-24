@@ -396,7 +396,7 @@ const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> | n
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
-function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+function readStoredEnvironmentThemes(): ReadonlyArray<PublishedThemeDefinition> {
   try {
     const parsed: unknown = JSON.parse(
       window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
@@ -416,7 +416,7 @@ export const environmentThemeDefinitionsAtom = Atom.make((get) => {
   const published = get(publishedThemesAtom);
   const definitions =
     published === null ? readStoredEnvironmentThemes() : publishedThemeDefinitions(published);
-  const previous = Option.getOrNull(get.self<ReadonlyArray<ThemeDefinition>>());
+  const previous = Option.getOrNull(get.self<ReadonlyArray<PublishedThemeDefinition>>());
   return previous !== null && Equal.equals(previous, definitions) ? previous : definitions;
 }).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
 

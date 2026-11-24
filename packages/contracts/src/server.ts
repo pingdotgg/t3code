@@ -688,7 +688,10 @@ export const EnvironmentThemeSaveInput = Schema.Struct({
 });
 export type EnvironmentThemeSaveInput = typeof EnvironmentThemeSaveInput.Type;
 
-export const EnvironmentThemeRemoveInput = Schema.Struct({ themeId: EnvironmentThemeId });
+export const EnvironmentThemeRemoveInput = Schema.Struct({
+  themeId: EnvironmentThemeId,
+  expectedRevision: EnvironmentThemeRevision,
+});
 export type EnvironmentThemeRemoveInput = typeof EnvironmentThemeRemoveInput.Type;
 
 /** The server refused to save or remove a published theme; `detail` says why. */

@@ -2856,9 +2856,9 @@ export const layerWsRpc = (
           environmentTheme
             .save(input)
             .pipe(Effect.mapError((error) => new EnvironmentThemeError({ detail: error.message }))),
-        [WS_METHODS.serverRemoveEnvironmentTheme]: ({ themeId }) =>
+        [WS_METHODS.serverRemoveEnvironmentTheme]: ({ themeId, expectedRevision }) =>
           environmentTheme
-            .remove(themeId)
+            .remove(themeId, expectedRevision)
             .pipe(Effect.mapError((error) => new EnvironmentThemeError({ detail: error.message }))),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
@@ -3608,12 +3608,7 @@ export const layerWsRpc = (
                       Stream.map((themes) => ({
                         version: 1 as const,
                         type: "environmentThemesUpdated" as const,
-                        payload: {
-                          themes: themes.map((theme) => ({
-                            ...theme,
-                            revision: EnvironmentTheme.environmentThemeRevision(theme),
-                          })),
-                        },
+                        payload: { themes },
                       })),
                     )
                   : Stream.empty;
