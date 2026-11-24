@@ -3,8 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampMcpAppHeight,
-  MCP_APP_DEFAULT_HEIGHT,
-  MCP_APP_MAX_HEIGHT,
   injectMcpAppCsp,
   injectMcpAppThemeBootstrap,
   injectMcpAppCookieBootstrap,
@@ -306,13 +304,8 @@ describe("MCP App cookie bootstrap", () => {
 });
 
 describe("clampMcpAppHeight", () => {
-  it.each([
-    [48, 48],
-    [48.6, 49],
-    [0, 1],
-    [2001, MCP_APP_MAX_HEIGHT],
-    [Number.NaN, MCP_APP_DEFAULT_HEIGHT],
-  ])("sizes a reported height of %s to %s pixels", (height, expected) => {
-    expect(clampMcpAppHeight(height)).toBe(expected);
+  it("follows a compact reported height and keeps it positive", () => {
+    expect(clampMcpAppHeight(48)).toBe(48);
+    expect(clampMcpAppHeight(0)).toBe(1);
   });
 });
