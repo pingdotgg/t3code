@@ -98,7 +98,7 @@ describe("command palette shortcuts", () => {
     expect(escape.defaultPrevented).toBe(true);
   });
 
-  it("keep a child search open on a repeated Escape", async () => {
+  it("keeps a child search open on a repeated Escape", async () => {
     setup();
     await using screen = await render(
       <>
