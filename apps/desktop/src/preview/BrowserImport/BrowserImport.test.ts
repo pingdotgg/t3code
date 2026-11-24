@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Builds an encrypted Chromium cookie database fixture.
-import * as NodeCrypto from "node:crypto";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { BrowserImportSource } from "@t3tools/contracts";
@@ -10,6 +9,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Cipher from "effect/crypto/Cipher";
+import * as Digest from "effect/crypto/Digest";
+import * as Kdf from "effect/crypto/Kdf";
 import { vi } from "vite-plus/test";
 
 import * as BrowserSession from "../BrowserSession.ts";
@@ -109,20 +111,19 @@ describe("BrowserImport.importCookies", () => {
           `${root}/Local State`,
           JSON.stringify({ profile: { info_cache: { Default: { name: "Personal" } } } }),
         );
+        const kdf = yield* Kdf.Kdf;
+        const cipher = yield* Cipher.Cipher;
+        const keyBytes = yield* kdf.derive(
+          Kdf.pbkdf2({ hash: Digest.sha1, iterations: platform === "darwin" ? 1003 : 1 }),
+          Buffer.from(platform === "darwin" ? chromiumKeychainSecret : "peanuts"),
+          { salt: Buffer.from("saltysalt"), length: 16 },
+        );
+        const key = yield* Cipher.key(Cipher.aes128Cbc, keyBytes);
+        const ciphertext = yield* cipher.encrypt(key, Buffer.from("fixture-session"), {
+          iv: Buffer.alloc(16, 0x20),
+        });
+        const value = Buffer.concat([Buffer.from("v10"), ciphertext]);
         yield* Effect.sync(() => {
-          const key = NodeCrypto.pbkdf2Sync(
-            platform === "darwin" ? chromiumKeychainSecret : "peanuts",
-            "saltysalt",
-            platform === "darwin" ? 1003 : 1,
-            16,
-            "sha1",
-          );
-          const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
-          const value = Buffer.concat([
-            Buffer.from("v10"),
-            cipher.update("fixture-session"),
-            cipher.final(),
-          ]);
           using database = new NodeSqlite.DatabaseSync(`${root}/Default/${cookiePath}`);
           database.exec(`
             create table meta (key text primary key, value text not null);
@@ -208,7 +209,7 @@ describe("BrowserImport.importCookies", () => {
         assert.isTrue(flushed);
       }).pipe(
         Effect.provideService(LinuxBrowserSecretPath, undefined),
-        Effect.provide(NodeServices.layer),
+        Effect.provide([NodeServices.layer, NodeCrypto.layerKdf, NodeCrypto.layerCipher]),
         Effect.scoped,
       ),
   );
