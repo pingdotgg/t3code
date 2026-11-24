@@ -5,21 +5,21 @@ description: Main and branch integration boundaries and fork compatibility excep
 tags: [upstream, fork, integration]
 status: stable
 generated:
-  by: codex/gpt-6.2-astra
-  at: 2026-11-24T02:07:29+00:00
+  by: opencode/gpt-6.2-astra
+  at: 2026-11-24T17:06:17+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-23T17:12:38+00:00
+    at: 2026-11-24T17:06:17+00:00
 snapshot:
-  at: 2026-11-23T17:12:38+00:00
-  fork_main: 19d173f5cb31d27a9cf34838edbddf75b438f95b
-  upstream_main: 990412468340b8362f82610de0eae70a5171abb7
-  shared_baseline: 667d8a120aa72e8c37795c9e391596acb141170b
-  last_main_integration: 19d173f5cb31d27a9cf34838edbddf75b438f95b
-  last_main_upstream: 667d8a120aa72e8c37795c9e391596acb141170b
-  missing_upstream_on_main: 574
-  branch_integration: fc1b0831fc053b7a8a5fc23a0072f7e68a1d9b4c
-  branch_code_tip: 2a2cc2bb26419f91da8b5ba46503ae07b4182464
+  at: 2026-11-24T17:06:17+00:00
+  fork_main: d978ce37d2fc8c12628046c847ee2bb32b8624eb
+  upstream_main: b197474104a260470d4473aa6d249552c1e145e2
+  shared_baseline: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
+  last_main_integration: d978ce37d2fc8c12628046c847ee2bb32b8624eb
+  last_main_upstream: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
+  missing_upstream_on_main: 280
+  branch_integration: c812354785c9d02822d04458d87f310af0b0c712
+  branch_code_tip: 8b7ee4396873f639d7bd1b9a81e658c8df66f62f
   missing_upstream_on_branch: 0
 sources:
   - id: upstream-nov23-policy
@@ -442,6 +442,10 @@ sources:
 ---
 
 # Upstream integration
+
+The November 24 candidate merges all 280 upstream commits from `fa2ee196b5` through [upstream `b197474104`](https://github.com/pingdotgg/t3code/commit/b197474104a260470d4473aa6d249552c1e145e2). PR attribution uses the fork’s shared Git/Jujutsu creation path. Worktree recovery retains the fork’s workspace service and hands a recreated checkout to upstream’s setup runner.
+
+## November 23 sync
 
 The November 23 candidate integrates all 574 commits from fork `main`’s shared baseline through [upstream `9904124683`](https://github.com/pingdotgg/t3code/commit/990412468340b8362f82610de0eae70a5171abb7). Git and Jujutsu share the upstream multi-repository flows; the Git clean-HEAD checkpoint shortcut remains Git-only. Upstream’s notification text truncation fix lives in the fork’s shared direct/relay sanitizer.[^november-23-upstream]
 
