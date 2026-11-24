@@ -774,8 +774,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
-  /** Reports the step the CLI is on before the turn can start, such as `mcp`. */
-  readonly onStartupPhase?: (phase: string) => Effect.Effect<void>;
+  /** Reports the step the CLI is on before the turn can start, such as `mcp`; `undefined` ends it. */
+  readonly onStartupPhase?: (phase: string | undefined) => Effect.Effect<void>;
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -1860,7 +1860,8 @@ export const layerQueryRunner: Layer.Layer<
                       orElse: timedOut("initialize"),
                     }),
                   );
-                  if (input.onStartupPhase !== undefined) yield* input.onStartupPhase("mcp");
+                  const onStartupPhase = input.onStartupPhase ?? (() => Effect.void);
+                  yield* onStartupPhase("mcp");
                   // Errors and mcp_status can echo headers; log only server names.
                   const failed = yield* Effect.tryPromise({
                     try: () => queryRuntime.setMcpServers(mcpServers),
@@ -1872,6 +1873,8 @@ export const layerQueryRunner: Layer.Layer<
                       duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
                       orElse: timedOut("setMcpServers"),
                     }),
+                    // A timed-out registration reopens the CLI, which boots before it registers again.
+                    Effect.ensuring(Effect.suspend(() => onStartupPhase(undefined))),
                   );
                   if (failed.length > 0) {
                     yield* Effect.logWarning("orchestration-v2.claude-mcp-servers-unavailable", {
