@@ -10902,6 +10902,78 @@ async fn a_detached_session_that_exits_interrupts_its_native_subagents() {
     assert_orphans_ended(&engine, "interrupted").await;
 }
 
+/// Counts the sessions the engine says left, as worktree cleanup hears of them.
+#[derive(Default)]
+struct ReleaseHost {
+    released: std::sync::atomic::AtomicUsize,
+    changed: tokio::sync::Notify,
+}
+
+impl crate::EngineHost for ReleaseHost {
+    fn provision_worktree(
+        &self,
+        _request: crate::WorktreeRequest,
+    ) -> crate::BoxFuture<'_, Result<crate::ProvisionedWorktree, String>> {
+        Box::pin(std::future::ready(Err("no worktrees here".into())))
+    }
+    fn session_released(&self) {
+        self.released
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.changed.notify_one();
+    }
+}
+
+/// #310's review: a busy session a fresh schedule moved aside still runs in the thread's
+/// folder, so worktree cleanup must count it after the replacement session closes (T3 checks
+/// liveness by provider session, `storageCleanup.ts`). When it then exits on its own, cleanup
+/// hears of it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_detached_session_keeps_its_folder_in_use_until_it_exits() {
+    let db = TempDb::new("detached-cwd");
+    let exit = Arc::new(tokio::sync::Notify::new());
+    let host = Arc::new(ReleaseHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers =
+        vec![Arc::new(FakeProvider::new("claudeAgent").with_process_exit(exit.clone()))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, fire("c3", "second")).await;
+    until_run_ends(&mut thread).await;
+    // The replacement session closes; the one moved aside still runs its background work.
+    engine.inner().close_session("t1").await;
+    assert_eq!(engine.open_session_cwds().await.unwrap(), [ROOT]);
+    let before = host.released.load(std::sync::atomic::Ordering::SeqCst);
+    exit.notify_waiters();
+    timeout(Duration::from_secs(5), async {
+        while host.released.load(std::sync::atomic::Ordering::SeqCst) == before {
+            host.changed.notified().await;
+        }
+    })
+    .await
+    .expect("cleanup hears that the detached session ended");
+    assert!(engine.open_session_cwds().await.unwrap().is_empty());
+}
+
 /// Force stop ends every session of the thread: the current one and one a fresh schedule
 /// moved aside while it still ran background work.
 #[tokio::test(flavor = "current_thread")]

@@ -1586,16 +1586,21 @@ impl Inner {
                 && map.remove(&thread_id).is_some()
         };
         // During shutdown `close_all_sessions` owns the detached ones and closes them.
+        let mut left_detached = false;
         if !self.shutting_down() {
-            lock(&self.detached).retain(|(_, detached)| !Arc::ptr_eq(detached, &live));
+            let mut detached = lock(&self.detached);
+            let before = detached.len();
+            detached.retain(|(_, entry)| !Arc::ptr_eq(entry, &live));
+            left_detached = detached.len() < before;
         }
-        if removed && !self.shutting_down() {
+        // Either way its folder may be free now.
+        if (removed || left_detached) && !self.shutting_down() {
             self.session_released();
         }
     }
 
-    /// A live session left `live`: its folder no longer holds a worktree (T3's cleanup wakes on
-    /// `provider-session.updated` stopped).
+    /// A session left `live` or `detached`: its folder no longer holds a worktree (T3's cleanup
+    /// wakes on `provider-session.updated` stopped).
     fn session_released(&self) {
         if let Some(host) = &self.host {
             host.session_released();

@@ -708,7 +708,15 @@ impl SqliteEngine {
     /// The folders open provider sessions work in. A session can outlive its run, so a
     /// worktree it works in is still in use (`ProviderSessionManager.isLive`).
     pub async fn open_session_cwds(&self) -> Result<Vec<String>, String> {
-        let threads: Vec<String> = crate::lock(&self.inner.live).keys().cloned().collect();
+        // A session a fresh run moved aside still runs in its folder (T3 checks each provider
+        // session, `storageCleanup.ts`).
+        let mut threads: std::collections::BTreeSet<String> =
+            crate::lock(&self.inner.live).keys().cloned().collect();
+        threads.extend(
+            crate::lock(&self.inner.detached)
+                .iter()
+                .map(|(thread, _)| thread.clone()),
+        );
         if threads.is_empty() {
             return Ok(Vec::new());
         }
