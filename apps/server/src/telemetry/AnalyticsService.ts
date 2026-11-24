@@ -213,22 +213,29 @@ export const make = Effect.gen(function* () {
         uuid: event.uuid,
         event: event.event,
         distinct_id: event.anonymous ? event.uuid : distinctId,
-        properties: {
-          ...event.properties,
-          ...(installId === null || event.anonymous ? {} : { installId }),
-          $process_person_profile: false,
-          platform: hostPlatform,
-          wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
-          arch: hostArchitecture,
-          t3CodeVersion: packageJson.version,
-          telemetryChannel: ServerConfig.telemetryChannel,
-          clientType,
-          serverOs: serverOsFromNodePlatform(hostPlatform),
-          serverArch: hostArchitecture,
-          serverWslDistro: Option.getOrUndefined(telemetryConfig.wslDistroName),
-          serverAppVersion: packageJson.version,
-          serverMode: serverConfig.mode,
-        },
+        properties: event.anonymous
+          ? {
+              ...event.properties,
+              $process_person_profile: false,
+              t3CodeVersion: packageJson.version,
+              telemetryChannel: ServerConfig.telemetryChannel,
+            }
+          : {
+              ...event.properties,
+              ...(installId === null ? {} : { installId }),
+              $process_person_profile: false,
+              platform: hostPlatform,
+              wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
+              arch: hostArchitecture,
+              t3CodeVersion: packageJson.version,
+              telemetryChannel: ServerConfig.telemetryChannel,
+              clientType,
+              serverOs: serverOsFromNodePlatform(hostPlatform),
+              serverArch: hostArchitecture,
+              serverWslDistro: Option.getOrUndefined(telemetryConfig.wslDistroName),
+              serverAppVersion: packageJson.version,
+              serverMode: serverConfig.mode,
+            },
         timestamp: event.capturedAt,
       })),
     };
@@ -241,9 +248,13 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // An anonymous event goes out alone, or the ingest could link it to the other events by request.
   const takeBatch = Ref.modify(bufferRef, (current) => {
-    const nextBatch = current.slice(0, telemetryConfig.flushBatchSize);
-    return [nextBatch, current.slice(nextBatch.length)] as const;
+    const next = current.findIndex((event) => event.anonymous);
+    if (next === 0) return [current.slice(0, 1), current.slice(1)] as const;
+    const linked = current.slice(0, next === -1 ? current.length : next);
+    const batch = linked.slice(0, telemetryConfig.flushBatchSize);
+    return [batch, current.slice(batch.length)] as const;
   });
 
   // Back off even after dropping rejected batches so bad API keys cannot drain the queue in a tight loop.
