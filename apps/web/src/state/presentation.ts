@@ -25,6 +25,15 @@ const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | 
   Atom.withLabel("web-environment-presentation:empty"),
 );
 
+/** The catalog has loaded without an enabled connection to the environment, so none of its data can load. */
+export const environmentUnreachableAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) => {
+    if (environmentId === null) return false;
+    const catalog = get(environmentCatalog.catalogValueAtom);
+    return catalog.isReady && catalog.entries.get(environmentId)?.enabled !== true;
+  }),
+);
+
 export function useEnvironmentPresentation(environmentId: EnvironmentId | null) {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const presentation = useAtomValue(
