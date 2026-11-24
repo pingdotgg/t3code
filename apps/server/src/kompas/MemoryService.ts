@@ -45,7 +45,7 @@ export class MemoryService extends Context.Service<
       readonly approve: boolean;
     }) => Effect.Effect<void, KompasError>;
     readonly removeScope: (scope: string) => Effect.Effect<void, KompasError>;
-    /** The memory block a new session starts with. */
+    /** The memory a new session starts with, as one block of data. */
     readonly promptBlock: (workstreamId: string | null) => Effect.Effect<string, KompasError>;
   }
 >()("t3/kompas/MemoryService") {}
@@ -66,6 +66,11 @@ const usageOf = (scope: string, entries: ReadonlyArray<MemoryEntry>) => {
 
 const entryLines = (entries: ReadonlyArray<MemoryEntry>) =>
   entries.map((entry) => `- [${entry.id}] ${entry.text}`).join("\n");
+
+// Saved text stays inside its line of its block: it can neither close the tag nor add a heading.
+const asData = (text: string) => text.replaceAll("<", "&lt;").replaceAll(/\s*\n\s*/g, " ");
+const promptLines = (entries: ReadonlyArray<MemoryEntry>) =>
+  entries.map((entry) => `- [${entry.id}] ${asData(entry.text)}`).join("\n");
 
 const SECTION_TITLES = { user: "User profile", notes: "Assistant notes" } as const;
 
@@ -245,13 +250,14 @@ const make = Effect.gen(function* () {
     const saved = (yield* list).filter((entry) => entry.status === "saved");
     const section = (scope: string, title: string) => {
       const entries = saved.filter((entry) => entry.scope === scope);
-      return `## ${title} (${usageOf(scope, entries)})\n${entries.length === 0 ? "(empty)" : entryLines(entries)}`;
+      return `## ${title} (${usageOf(scope, entries)})\n${entries.length === 0 ? "(empty)" : promptLines(entries)}`;
     };
-    return [
+    const sections = [
       section("user", SECTION_TITLES.user),
       section("notes", SECTION_TITLES.notes),
       ...(workstreamId === null ? [] : [section(projectScope(workstreamId), "Project memory")]),
-    ].join("\n\n");
+    ];
+    return `<user-memory>\n${sections.join("\n\n")}\n</user-memory>`;
   });
 
   return MemoryService.of({
