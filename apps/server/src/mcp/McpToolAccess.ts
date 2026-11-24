@@ -339,8 +339,19 @@ export const writesEnvironment = <P, A, E, R>(
      * everything already here as it was.
      */
     readonly linkedCallers?: "allowed";
+    /**
+     * Whether a conversation may make it below full access, as for the app's look: the user
+     * asked there, and it reaches none of their files. Conversations do not run in full access.
+     */
+    readonly conversations?: "allowed";
   },
 ) => {
+  const requiresFullAccess = ({ scope, limits }: Caller) =>
+    !(
+      options?.conversations === "allowed" &&
+      limits.interactionMode === "default" &&
+      (scope.thread?.profile === "chat" || scope.thread?.profile === "coordinator")
+    );
   const check = orchestratingCaller.pipe(
     Effect.tap((caller) =>
       options?.linkedCallers === "allowed"
@@ -348,7 +359,9 @@ export const writesEnvironment = <P, A, E, R>(
         : assertNotLinked(caller, changesEnvironment),
     ),
     Effect.tap((caller) =>
-      assertFullAccessNamingLink(caller, fullAccessRequired, changesEnvironment),
+      requiresFullAccess(caller)
+        ? assertFullAccessNamingLink(caller, fullAccessRequired, changesEnvironment)
+        : Effect.void,
     ),
   );
   return declare(

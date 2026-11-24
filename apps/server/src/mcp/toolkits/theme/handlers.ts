@@ -43,44 +43,46 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       };
     }),
   ),
-  t3_theme_set: McpToolAccess.writesEnvironment(({ themeId, theme, appearance }, check) =>
-    Effect.gen(function* () {
-      const input =
-        themeId !== undefined
-          ? { themeId, theme, appearance }
-          : theme === undefined && appearance !== undefined
-            ? { appearance }
-            : undefined;
-      if (input === undefined) {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "Give `themeId`, `appearance`, or both. `theme` needs a `themeId`.",
+  t3_theme_set: McpToolAccess.writesEnvironment(
+    ({ themeId, theme, appearance }, check) =>
+      Effect.gen(function* () {
+        const input =
+          themeId !== undefined
+            ? { themeId, theme, appearance }
+            : theme === undefined && appearance !== undefined
+              ? { appearance }
+              : undefined;
+        if (input === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Give `themeId`, `appearance`, or both. `theme` needs a `themeId`.",
+          });
+        }
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const set = Effect.gen(function* () {
+          // The turn may have ended, or the thread's modes changed, while this waited for the lock.
+          yield* check;
+          yield* themes.apply(input).pipe(
+            Effect.catchTags({
+              EnvironmentThemeRefusedError: (error) =>
+                Effect.fail(
+                  new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+                ),
+              EnvironmentThemeNotSelectedError: () => Effect.fail(unavailable()),
+            }),
+          );
+          return {
+            ...(themeId === undefined ? {} : { themeId }),
+            ...(appearance === undefined ? {} : { appearance }),
+            published: theme !== undefined,
+          };
         });
-      }
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const themes = yield* EnvironmentTheme.EnvironmentThemeService;
-      const set = Effect.gen(function* () {
-        // The turn may have ended, or the thread's modes changed, while this waited for the lock.
-        yield* check;
-        yield* themes.apply(input).pipe(
-          Effect.catchTags({
-            EnvironmentThemeRefusedError: (error) =>
-              Effect.fail(
-                new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
-              ),
-            EnvironmentThemeNotSelectedError: () => Effect.fail(unavailable()),
-          }),
-        );
-        return {
-          ...(themeId === undefined ? {} : { themeId }),
-          ...(appearance === undefined ? {} : { appearance }),
-          published: theme !== undefined,
-        };
-      });
-      return yield* scope.thread === undefined
-        ? set
-        : executor.withLock(scope.thread.threadId, set);
-    }),
+        return yield* scope.thread === undefined
+          ? set
+          : executor.withLock(scope.thread.threadId, set);
+      }),
+    { conversations: "allowed" },
   ),
 });

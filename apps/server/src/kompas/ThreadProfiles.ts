@@ -13,6 +13,7 @@ import { KompasSettingsStore } from "./KompasSettingsStore.ts";
 import { MemoryService } from "./MemoryService.ts";
 import { PluginStore } from "./PluginStore.ts";
 import {
+  APPEARANCE_PROMPT,
   CHAT_PROMPT,
   coordinatorPrompt,
   MEMORY_PROMPT,
@@ -112,6 +113,7 @@ const make = Effect.gen(function* () {
               ? coordinatorPrompt(workstream, library)
               : workerPrompt(workstream, library),
           ]),
+      ...(profile === "worker" ? [] : [APPEARANCE_PROMPT]),
       memorySearchEnabled ? `${MEMORY_PROMPT}\n${SESSION_SEARCH_PROMPT}` : MEMORY_PROMPT,
       yield* memory.promptBlock(workstream?.id ?? null),
     ].join("\n\n");

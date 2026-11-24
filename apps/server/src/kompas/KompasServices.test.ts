@@ -255,5 +255,8 @@ describe("profileAllowsTool", () => {
     assert.isFalse(profileAllowsTool("developer", "quiz", true));
     assert.isFalse(profileAllowsTool("chat", "plugin_call", true));
     assert.isTrue(profileAllowsTool("chat", "plugin_call", false));
+    assert.isTrue(profileAllowsTool("chat", "t3_theme_set", true));
+    assert.isTrue(profileAllowsTool("coordinator", "t3_theme_set", true));
+    assert.isFalse(profileAllowsTool("worker", "t3_theme_set", true));
   });
 });

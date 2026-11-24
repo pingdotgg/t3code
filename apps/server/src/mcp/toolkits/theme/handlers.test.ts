@@ -8,6 +8,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { vi } from "vite-plus/test";
 
 import {
   EnvironmentThemeRefusedError,
@@ -94,4 +95,69 @@ it.effect("applies the theme through the service and reports a refusal as an inv
       ),
     );
   }),
+);
+
+it.effect.each([
+  { profile: "chat", runtimeMode: "auto-accept-edits", interactionMode: "default", applied: true },
+  {
+    profile: "coordinator",
+    runtimeMode: "approval-required",
+    interactionMode: "default",
+    applied: true,
+  },
+  { profile: "chat", runtimeMode: "auto-accept-edits", interactionMode: "plan", applied: false },
+  {
+    profile: "worker",
+    runtimeMode: "auto-accept-edits",
+    interactionMode: "default",
+    applied: false,
+  },
+  {
+    profile: undefined,
+    runtimeMode: "auto-accept-edits",
+    interactionMode: "default",
+    applied: false,
+  },
+] as const)(
+  "below full access, only a conversation restyles the app: %j",
+  ({ profile, runtimeMode, interactionMode, applied }) => {
+    const apply = vi.fn(() => Effect.void);
+    const layerDependencies = Layer.mergeAll(
+      ThreadCommandExecutor.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId,
+        requestNamespace: "provider:theme",
+        thread: {
+          threadId,
+          providerSessionId: "provider:theme",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          ...(profile === undefined ? {} : { profile }),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration" as const]),
+        issuedAt: 0,
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () =>
+          Effect.succeed(liveThreadShell(threadId, { runtimeMode, interactionMode })),
+      }),
+      Layer.mock(EnvironmentThemeService)({ apply }),
+    );
+    return Effect.gen(function* () {
+      const toolkit = yield* ThemeToolkit;
+      const parts = yield* toolkit
+        .handle("t3_theme_set", { appearance: "dark" })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(parts.at(-1)?.result).toMatchObject(
+        applied ? { appearance: "dark" } : { code: "capability_denied" },
+      );
+      expect(apply).toHaveBeenCalledTimes(applied ? 1 : 0);
+    }).pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ThemeHandlers.layer).pipe(
+          Layer.provideMerge(layerDependencies),
+        ),
+      ),
+    );
+  },
 );
