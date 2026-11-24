@@ -2183,6 +2183,589 @@ async fn launch_thread_creates_and_starts_in_one_call() {
     );
 }
 
+/// Pauses the command `command_id` inside its transaction, runs `call` until it gets there,
+/// aborts the call (a closed socket aborts its handler), then lets the commit go on.
+async fn abort_inside_commit<T: Send + 'static>(
+    engine: &SqliteEngine,
+    command_id: &str,
+    call: impl std::future::Future<Output = T> + Send + 'static,
+) {
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    *crate::lock(&engine.inner().commit_pause) = Some(crate::engine::CommitPause {
+        command_id: command_id.into(),
+        paused: paused_tx,
+        release: release_rx,
+    });
+    let call = tokio::spawn(call);
+    tokio::task::spawn_blocking(move || paused_rx.recv())
+        .await
+        .unwrap()
+        .expect("the commit paused");
+    call.abort();
+    assert!(call.await.is_err_and(|e| e.is_cancelled()));
+    release_tx.send(()).unwrap();
+}
+
+/// A closed socket aborts a launch while its first message commits. The commit goes through,
+/// and so does the provider start it holds: exactly one session opens and the run completes.
+#[tokio::test(flavor = "current_thread")]
+async fn an_aborted_launch_still_starts_its_committed_run() {
+    let db = TempDb::new("launch-aborted");
+    let (engine, provider) = open(&db);
+    let engine = Arc::new(engine);
+    let input = json!({
+        "commandId": "A", "threadId": "t1", "projectId": project_id(), "title": "Launched",
+        "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+        "runtimeMode": "full-access", "interactionMode": "default",
+        "workspaceStrategy": {"type": "root"},
+        "initialMessage": {"messageId": "m-a", "text": "hi", "attachments": []},
+    });
+    let launcher = engine.clone();
+    abort_inside_commit(&engine, "A:initial-message", async move {
+        launcher.launch_thread(input).await
+    })
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+/// The same for a command that is not a launch: an aborted archive still closes the thread
+/// on the host, once.
+#[tokio::test(flavor = "current_thread")]
+async fn an_aborted_archive_still_closes_the_thread() {
+    let db = TempDb::new("archive-aborted");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.host = Some(host.clone());
+    let engine = Arc::new(SqliteEngine::open(config).unwrap());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut shell = engine
+        .subscribe_shell(from_json(json!({"requestCompletionMarker": true})).unwrap())
+        .await
+        .unwrap();
+    next(&mut shell).await;
+    next(&mut shell).await;
+    let archiver = engine.clone();
+    abort_inside_commit(&engine, "a1", async move {
+        archiver
+            .dispatch(
+                from_json(json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}))
+                    .unwrap(),
+            )
+            .await
+    })
+    .await;
+    // The commit publishes itself: a connected client sees the archive without the caller.
+    let row = next(&mut shell).await;
+    assert_eq!(row["kind"], "thread.updated");
+    assert_eq!(row["location"], "archive");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while host.closed.lock().unwrap().is_empty() {
+            host.closed_event.notified().await;
+        }
+    })
+    .await
+    .expect("the host hears of the archive");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [("t1".to_owned(), crate::ThreadClose::Archived)]
+    );
+}
+
+/// Archives `t1` and stops its `thread.closed` effect after it ran, before its settlement.
+/// Returns the release.
+async fn archive_up_to_settlement(engine: &SqliteEngine) -> tokio::sync::oneshot::Sender<()> {
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&engine.inner().worker_hooks).settle_pause =
+        Some(("thread.closed", paused_tx, release_rx));
+    dispatch(
+        engine,
+        json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+    )
+    .await;
+    timeout(Duration::from_secs(5), paused_rx)
+        .await
+        .expect("the archive effect ran")
+        .unwrap();
+    release_tx
+}
+
+/// The status of the thread's `thread.closed` row.
+async fn archive_row(engine: &SqliteEngine) -> (String, Option<String>) {
+    engine
+        .inner()
+        .db(|store| {
+            store.raw().query_row(
+                "SELECT status, last_error FROM effect_outbox WHERE effect_type = 'thread.closed'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+        })
+        .await
+        .unwrap()
+}
+
+/// T3's "terminalizes a process-bound claim when success settlement fails"
+/// (`EffectWorker.test.ts`), and the gate's probe: a settlement write that fails once must not
+/// hold the thread. The row ends `failed`, the effect does not run again, and the thread's next
+/// turn starts.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_settlement_frees_the_thread_without_running_the_effect_again() {
+    // One failed write, and (the second gate's probe) two in a row.
+    for faults in [1, 2] {
+        let db = TempDb::new(&format!("settle-fault-{faults}"));
+        let host = Arc::new(RecordingHost::default());
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: ROOT.into(),
+        }];
+        config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+        config.host = Some(host.clone());
+        let engine = SqliteEngine::open(config).unwrap();
+        dispatch(&engine, create("t1", "c1")).await;
+        let release = archive_up_to_settlement(&engine).await;
+        engine
+            .inner()
+            .db(move |store| store.settle_faults.set(faults))
+            .await;
+        release.send(()).unwrap();
+        dispatch(&engine, message("t1", "c2", "after")).await;
+        let p = run_to_end(&engine, "t1", "run:t1:1").await;
+        assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+        let (status, error) = archive_row(&engine).await;
+        assert_eq!(status, "failed");
+        let error = error.unwrap();
+        assert!(error.contains("after execution started"), "{error}");
+        assert!(error.contains("injected settlement fault"), "{error}");
+        assert_eq!(host.closed.lock().unwrap().len(), 1, "the effect ran once");
+    }
+}
+
+/// The round-3 gate's probe: a settlement that keeps failing (here every write fails) stops
+/// trying once another engine took the store, even though this engine was never dropped.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settlement_stops_retrying_once_another_engine_owns_the_store() {
+    let db = TempDb::new("settle-owner-changed");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let release = archive_up_to_settlement(&engine).await;
+    engine
+        .inner()
+        .db(|store| store.settle_faults.set(u32::MAX))
+        .await;
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE meta SET value = value + 1 WHERE key = 'engine_epoch'",
+            [],
+        )
+        .unwrap();
+    release.send(()).unwrap();
+    let faults = || engine.inner().db(|store| store.settle_faults.get());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let first = faults().await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(
+        faults().await,
+        first,
+        "no settlement after the owner changed"
+    );
+}
+
+/// T3's "keeps requeueing a failed claim while the database is locked" (`retryWhileLocked`),
+/// and the second gate's probe: another connection holds the write lock while the worker
+/// settles. The settlement waits for the lock, then the row succeeds and the next turn starts.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settlement_waits_out_a_locked_store() {
+    let db = TempDb::new("settle-locked");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let release = archive_up_to_settlement(&engine).await;
+    engine
+        .inner()
+        .db(|store| store.raw().busy_timeout(Duration::from_millis(1)))
+        .await
+        .unwrap();
+    let locker = rusqlite::Connection::open(db.path()).unwrap();
+    locker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let (busy_tx, busy_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&engine.inner().worker_hooks).settle_busy = Some(busy_tx);
+    release.send(()).unwrap();
+    timeout(Duration::from_secs(5), busy_rx)
+        .await
+        .expect("the settlement met the lock")
+        .unwrap();
+    locker.execute_batch("COMMIT").unwrap();
+    engine
+        .inner()
+        .db(|store| store.raw().busy_timeout(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "c2", "after")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+    assert_eq!(archive_row(&engine).await, ("succeeded".to_owned(), None));
+    assert_eq!(host.closed.lock().unwrap().len(), 1, "the effect ran once");
+}
+
+/// Beside T3's "prunes settled effects past retention in batches and keeps the rest"
+/// (`outbox/tests.rs`): the prune lets the store go between batches, so a read that comes
+/// while it prunes runs before the last batch.
+#[tokio::test(flavor = "current_thread")]
+async fn a_read_gets_in_between_prune_batches() {
+    let db = TempDb::new("prune-batches");
+    let clock = Arc::new(crate::ManualClock::at(1_000_000_000_000));
+    let mut config = EngineConfig::new(db.path());
+    config.clock = clock.clone();
+    // Opened off the runtime, so no worker or prune loop of its own runs beside this one.
+    let engine = std::thread::spawn(move || SqliteEngine::open(config).unwrap())
+        .join()
+        .unwrap();
+    let inner = engine.inner().clone();
+    let total = 2 * crate::outbox::PRUNE_BATCH + 200;
+    let count = || {
+        inner.db(|store| {
+            store
+                .raw()
+                .query_row("SELECT COUNT(*) FROM effect_outbox", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap() as usize
+        })
+    };
+    let settled_at = conn_support::time::iso_from_ms(crate::Clock::now_millis(clock.as_ref()));
+    inner
+        .db(move |store| {
+            store.raw().execute(
+                "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1)
+                 INSERT INTO effect_outbox (thread_id, lane, effect_type, payload, status,
+                   created_at, updated_at, completed_at)
+                 SELECT 't', 'thread', 'thread.closed', '{}', 'succeeded', ?2, ?2, ?2 FROM n",
+                rusqlite::params![total as i64, settled_at],
+            )
+        })
+        .await
+        .unwrap();
+    // The rows age past retention.
+    clock.advance(Duration::from_millis(
+        crate::outbox::SETTLED_RETENTION_MS + 60_000,
+    ));
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&inner.worker_hooks).prune_pause = Some((paused_tx, release_rx));
+    let prune = tokio::spawn({
+        let inner = inner.clone();
+        async move { inner.prune_settled_effects().await }
+    });
+    timeout(Duration::from_secs(5), paused_rx)
+        .await
+        .expect("the prune paused between batches")
+        .unwrap();
+    assert_eq!(count().await, total - crate::outbox::PRUNE_BATCH);
+    release_tx.send(()).unwrap();
+    assert_eq!(prune.await.unwrap().unwrap(), total);
+    assert_eq!(count().await, 0);
+}
+
+/// The gate's probe: opening the engine reads and migrates the store, and waits on its write
+/// lock. On the server's one runtime thread that blocks every task, so the open runs on the
+/// blocking pool: another task keeps running while it waits.
+#[tokio::test(flavor = "current_thread")]
+async fn opening_the_engine_does_not_block_the_runtime() {
+    let db = TempDb::new("open-blocking");
+    drop(SqliteEngine::open(EngineConfig::new(db.path())).unwrap());
+    let locker = rusqlite::Connection::open(db.path()).unwrap();
+    locker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ticker = tokio::spawn({
+        let ticks = ticks.clone();
+        async move {
+            loop {
+                ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    });
+    let unlock = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        locker.execute_batch("COMMIT").unwrap();
+    });
+    let before = ticks.load(std::sync::atomic::Ordering::SeqCst);
+    let engine = SqliteEngine::start(EngineConfig::new(db.path()))
+        .await
+        .unwrap();
+    let during = ticks.load(std::sync::atomic::Ordering::SeqCst) - before;
+    unlock.join().unwrap();
+    ticker.abort();
+    drop(engine);
+    assert!(
+        during >= 5,
+        "the runtime ran {during} ticks while the engine opened"
+    );
+}
+
+/// The round-3 gate's probe: a start the server gave up on (its future dropped) still runs on
+/// the blocking pool. When it gets to the lease after a newer engine opened, it must not take
+/// the store from that engine.
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_never_takes_the_lease_of_a_newer_engine() {
+    let db = TempDb::new("abandoned-start");
+    drop(open(&db));
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let mut config = EngineConfig::new(db.path());
+    config.open_pause = Some(crate::engine::OpenPause {
+        paused: paused_tx,
+        release: release_rx,
+        finished: finished_tx,
+    });
+    let abandoned = tokio::spawn(SqliteEngine::start(config));
+    tokio::task::spawn_blocking(move || paused_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    abandoned.abort();
+    assert!(abandoned.await.is_err_and(|e| e.is_cancelled()));
+    let (engine, _) = open(&db);
+    release_tx.send(()).unwrap();
+    tokio::task::spawn_blocking(move || finished_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    // The newer engine still owns the store: its commands commit.
+    dispatch(&engine, create("t1", "c1")).await;
+}
+
+/// One engine per store: a second open while the first lives gets "store in use" and changes
+/// nothing; the first goes on as before.
+#[tokio::test(flavor = "current_thread")]
+async fn a_second_engine_on_a_live_store_is_refused() {
+    let db = TempDb::new("store-lock");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let epoch = || -> i64 {
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'engine_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let before = (epoch(), engine.test_events("t1").await.len());
+    let Err(error) = SqliteEngine::start(EngineConfig::new(db.path())).await else {
+        panic!("a second engine opened the store");
+    };
+    assert_eq!(error, crate::STORE_IN_USE);
+    assert_eq!((epoch(), engine.test_events("t1").await.len()), before);
+    dispatch(&engine, message("t1", "c2", "still here")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+}
+
+/// The lock follows the database file, not its spelling: an open through a symlink to a live
+/// store, and the reverse, is refused and leaves the live engine's lease alone.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_opened_through_a_symlink_is_refused() {
+    let db = TempDb::new("store-lock-symlink");
+    let link = db.0.join("link.sqlite");
+    std::os::unix::fs::symlink(db.path(), &link).unwrap();
+    let epoch = || -> i64 {
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'engine_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    // The first open creates the file: its lock must already be the one the target takes.
+    for (first, second) in [(link.clone(), db.path()), (db.path(), link.clone())] {
+        let engine = SqliteEngine::open(EngineConfig::new(&first)).unwrap();
+        let before = epoch();
+        let Err(error) = SqliteEngine::start(EngineConfig::new(&second)).await else {
+            panic!(
+                "{} opened the store {} holds",
+                second.display(),
+                first.display()
+            );
+        };
+        assert_eq!(error, crate::STORE_IN_USE);
+        assert_eq!(epoch(), before);
+        drop(engine);
+        std::fs::remove_file(db.path()).unwrap();
+    }
+}
+
+/// Once the engine is dropped, its store opens again, and the new engine recovers what the
+/// first left: its cut turn is continued.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_opens_again_after_its_engine_drops_and_recovers() {
+    let db = TempDb::new("store-lock-reopen");
+    die_during_a_turn(&db, "c2").await;
+    let (engine, _) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "completed");
+}
+
+/// A row a previous process left running does not hold its thread after a restart: the start
+/// cancels it, and the next command's effects run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_row_left_running_does_not_hold_its_thread_after_a_restart() {
+    let db = TempDb::new("outbox-restart");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        engine.test_hold_lane("t1").await;
+    }
+    let (engine, _) = open(&db);
+    dispatch(&engine, message("t1", "c2", "after")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+}
+
+/// A title generator that answers only when the test lets it.
+#[derive(Default)]
+struct HeldTitles {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl crate::TitleGenerator for HeldTitles {
+    fn generate(&self, _: crate::TitleRequest) -> crate::BoxFuture<'_, Result<String, String>> {
+        Box::pin(async move {
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok("Held title".to_owned())
+        })
+    }
+}
+
+fn title_config(db: &TempDb, titles: Option<Arc<HeldTitles>>) -> EngineConfig {
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    // The engine that holds a title is the one the test drops: its idle sessions close soon,
+    // so its tasks end and the test can wait for them. The next engine keeps the default.
+    if titles.is_some() {
+        config.idle_session = Some(Duration::from_millis(20));
+    }
+    config.title_generator = titles.map(|t| t as Arc<dyn crate::TitleGenerator>);
+    config
+}
+
+/// Creates thread `t1` and asks for a title, which the held generator now holds. Returns a
+/// handle on the engine's state that lives as long as one of its tasks.
+async fn hold_a_title(
+    engine: &SqliteEngine,
+    titles: &HeldTitles,
+) -> std::sync::Weak<crate::engine::Inner> {
+    dispatch(engine, create("t1", "c1")).await;
+    dispatch(engine, message("t1", "c2", "fonts")).await;
+    run_to_end(engine, "t1", "run:t1:1").await;
+    dispatch(
+        engine,
+        json!({"type": "thread.metadata.update", "commandId": "r1", "threadId": "t1", "regenerateTitle": true}),
+    )
+    .await;
+    timeout(Duration::from_secs(5), titles.entered.notified())
+        .await
+        .expect("the title effect runs");
+    Arc::downgrade(engine.inner())
+}
+
+/// The thread's title events, oldest first.
+async fn title_events(engine: &SqliteEngine) -> Vec<(String, Value)> {
+    let mut events = engine.test_events("t1").await;
+    events.retain(|(kind, _)| kind.contains("title"));
+    events
+}
+
+/// Waits until no task of a dropped engine is left.
+async fn old_tasks_end(old: std::sync::Weak<crate::engine::Inner>) {
+    timeout(Duration::from_secs(5), async {
+        while old.strong_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the dropped engine's tasks end");
+}
+
+/// A dropped engine's running effect never writes, even with no newer engine on the store.
+#[tokio::test(flavor = "current_thread")]
+async fn a_dropped_engine_s_running_effect_writes_nothing() {
+    let db = TempDb::new("fence-drop");
+    let titles = Arc::new(HeldTitles::default());
+    let engine = SqliteEngine::open(title_config(&db, Some(titles.clone()))).unwrap();
+    let old = hold_a_title(&engine, &titles).await;
+    let before = title_events(&engine).await;
+    drop(engine);
+    titles.release.notify_one();
+    old_tasks_end(old).await;
+    let engine = SqliteEngine::open(title_config(&db, None)).unwrap();
+    assert_eq!(title_events(&engine).await, before);
+    assert_eq!(
+        projection(&engine, "t1").await["thread"]["title"],
+        "New thread"
+    );
+}
+
+/// T3's "does not reclaim a running effect after its process-local lease expires", for a
+/// newer engine, and the gate's probe: an engine replaced while its effect runs must not write
+/// into the new engine's store. Before the fence, the old task committed its title with a stale sequence
+/// and the new engine's next command failed on `events.seq`.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replaced_engine_s_running_effect_writes_nothing() {
+    let db = TempDb::new("fence-replace");
+    let titles = Arc::new(HeldTitles::default());
+    let engine = SqliteEngine::open(title_config(&db, Some(titles.clone()))).unwrap();
+    let old = hold_a_title(&engine, &titles).await;
+    drop(engine);
+    let engine = SqliteEngine::open(title_config(&db, None)).unwrap();
+    titles.release.notify_one();
+    old_tasks_end(old).await;
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "completed");
+    assert_eq!(p["thread"]["title"], "New thread");
+}
+
 /// `ThreadLaunchService.launch` for a scheduled run: the first message carries the task id
 /// (the client's timeline marks it) and the launch's own actor.
 #[tokio::test(flavor = "current_thread")]
@@ -7369,35 +7952,57 @@ async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
     }
 }
 
-/// A thread's effects run in the order their lane slots were taken, not the order they were
-/// started (review finding 2.1: dispatch takes the slot inside the store closure, so lane order
-/// is commit order). A slot given up without running (its commit failed) keeps that order.
+/// A thread's effects run in the order their writes committed (T3's outbox claims by row
+/// order). A write that rolled back leaves no row and holds nothing.
 #[tokio::test(flavor = "current_thread")]
-async fn lane_order_is_reservation_order() {
-    let db = TempDb::new("lane-reserve");
+async fn lane_order_is_commit_order() {
+    let db = TempDb::new("lane-commit");
     let host = Arc::new(RecordingHost::default());
     let mut config = EngineConfig::new(db.path());
     config.host = Some(host.clone());
     let engine = SqliteEngine::open(config).unwrap();
-    let inner = engine.inner();
     let close = |reason| crate::commands::Effect::ThreadClosed {
         thread_id: "t1".into(),
         reason,
     };
-    let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
-    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled {
-        settled_at: String::new(),
-    }));
-    let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
-    drop(given_up);
-    last.start();
+    let hold = engine.test_hold_lane("t1").await;
+    let inner = engine.inner().clone();
+    let effects = [
+        (close(crate::ThreadClose::Archived), true),
+        (
+            close(crate::ThreadClose::Settled {
+                settled_at: String::new(),
+            }),
+            false,
+        ),
+        (close(crate::ThreadClose::Deleted), true),
+    ];
+    for (effect, commits) in effects {
+        inner
+            .db(move |store| {
+                let mut tx = store.tx().unwrap();
+                tx.enqueue(None, &[effect]).unwrap();
+                if commits {
+                    tx.commit(None).unwrap();
+                } else {
+                    tx.rollback();
+                }
+            })
+            .await;
+    }
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(
         host.closed.lock().unwrap().is_empty(),
-        "waits for the first"
+        "waits for the running row"
     );
-    first.start();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    engine.test_release_lane(hold).await;
+    timeout(Duration::from_secs(5), async {
+        while host.closed.lock().unwrap().len() < 2 {
+            host.closed_event.notified().await;
+        }
+    })
+    .await
+    .expect("both rows ran");
     assert_eq!(
         *host.closed.lock().unwrap(),
         [
@@ -7560,13 +8165,7 @@ async fn stop_before_the_start_runs_never_starts_the_provider() {
     dispatch(&engine, create("t1", "c1")).await;
     dispatch(&engine, message("t1", "c2", "hello")).await;
     run_to_end(&engine, "t1", "run:t1:1").await;
-    let inner = engine.inner();
-    let blocker = inner.reserve_effect(crate::commands::Effect::ThreadClosed {
-        thread_id: "t1".into(),
-        reason: crate::ThreadClose::Settled {
-            settled_at: String::new(),
-        },
-    });
+    let blocker = engine.test_hold_lane("t1").await;
     dispatch(&engine, message("t1", "c3", "hello again")).await;
     dispatch(&engine, stop("t1", "c4")).await;
     let p = projection(&engine, "t1").await;
@@ -7575,7 +8174,7 @@ async fn stop_before_the_start_runs_never_starts_the_provider() {
         item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
         "Run interrupted before provider start"
     );
-    blocker.start();
+    engine.test_release_lane(blocker).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     let calls = crate::lock(&provider.calls).clone();
     assert!(!calls.iter().any(|c| c == "start run:t1:2"), "{calls:?}");

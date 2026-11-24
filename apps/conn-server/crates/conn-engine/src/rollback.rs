@@ -304,16 +304,19 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 /// The `provider-thread.rollback` effect.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RollbackRequest {
     pub(crate) thread_id: String,
     pub(crate) command_id: String,
     pub(crate) provider_thread_id: String,
     pub(crate) checkpoint_id: String,
     pub(crate) scope_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) restore_files: Option<bool>,
     /// The provider's answer a previous process stored before it stopped: the rollback goes on
     /// from the file restore and sends no provider rollback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) resume_snapshot: Option<Value>,
 }
 
@@ -428,6 +431,9 @@ enum RollbackFailure {
     Invalid(&'static str),
     Shared,
     Failed(String),
+    /// This engine may not send the provider rollback: another engine owns the store, or the
+    /// rollback is not in the phase this run left it in. It stops and writes nothing.
+    Fenced,
 }
 
 fn read_context(
@@ -547,6 +553,8 @@ struct RollbackProgress {
     /// The provider's answer: the row to commit, and the live session to move to it once the
     /// commit is done.
     provider: Option<(Value, Option<ProviderUpdate>)>,
+    /// This run moved the rollback to `provider`; a retry goes on from there.
+    provider_sent: bool,
     files_restored: bool,
     refs_deleted: bool,
 }
@@ -562,6 +570,7 @@ impl RollbackFailure {
             Self::Invalid(reason) => (*reason).to_owned(),
             Self::Shared => "shared-workspace".to_owned(),
             Self::Failed(detail) => detail.clone(),
+            Self::Fenced => "fenced".to_owned(),
         }
     }
 }
@@ -580,6 +589,13 @@ impl Inner {
         let outcome = loop {
             match self.try_rollback(&request, &mut progress).await {
                 Ok(()) => break Ok(()),
+                Err(RollbackFailure::Fenced) => {
+                    eprintln!(
+                        "conn-engine: rollback {} of {} is no longer this engine's",
+                        request.checkpoint_id, request.thread_id
+                    );
+                    return;
+                }
                 Err(failure) if attempt < ROLLBACK_ATTEMPTS => {
                     eprintln!(
                         "conn-engine: rollback {} of {} failed (attempt {attempt}), retrying: {}",
@@ -607,7 +623,8 @@ impl Inner {
                 }
                 RollbackFailure::Invalid(_)
                 | RollbackFailure::Shared
-                | RollbackFailure::Failed(_) => ROLLBACK_FAILED_MESSAGE,
+                | RollbackFailure::Failed(_)
+                | RollbackFailure::Fenced => ROLLBACK_FAILED_MESSAGE,
             };
             self.record_rollback_failure(&request, message).await;
         }
@@ -679,11 +696,22 @@ impl Inner {
         } else {
             let live = self.rollback_session(&context).await?;
             live.touch(self.clock.now_millis());
-            // From here a restart cannot tell whether the provider rolled back.
+            // From here a restart cannot tell whether the provider rolled back. Exactly one
+            // engine moves the rollback on, once; any other stops before the provider.
             let id = request.command_id.clone();
-            self.db(move |store| store.set_rollback_phase(&id, "provider", None))
+            let from = if progress.provider_sent {
+                "provider"
+            } else {
+                "admitted"
+            };
+            let moved = self
+                .db(move |store| store.advance_rollback(&id, from, "provider", None))
                 .await
                 .map_err(RollbackFailure::Failed)?;
+            if !moved {
+                return Err(RollbackFailure::Fenced);
+            }
+            progress.provider_sent = true;
             let snapshot = live
                 .session()
                 .rollback_thread(RollbackThreadInput {
@@ -701,11 +729,18 @@ impl Inner {
             let row = to_json(&snapshot.provider_thread);
             let (id, stored) = (request.command_id.clone(), row.clone());
             let kept = self
-                .db(move |store| store.set_rollback_phase(&id, "provider_done", Some(&stored)))
+                .db(move |store| {
+                    store.advance_rollback(&id, "provider", "provider_done", Some(&stored))
+                })
                 .await;
-            if let Err(e) = kept {
+            match kept {
+                Ok(true) => {}
+                // Another engine owns the rollback now, and records how it ended.
+                Ok(false) => return Err(RollbackFailure::Fenced),
                 // A restart then records a failure instead of finishing the rollback.
-                eprintln!("conn-engine: could not keep a provider rollback's answer: {e}");
+                Err(e) => {
+                    eprintln!("conn-engine: could not keep a provider rollback's answer: {e}")
+                }
             }
             progress.provider = Some((row.clone(), Some((live, snapshot.provider_thread))));
             row
@@ -714,6 +749,27 @@ impl Inner {
         let cwd = context.scope["cwd"].as_str().unwrap_or_default().to_owned();
         if let Some(checkpoints) = &self.checkpoints {
             let _held = checkpoints.workspace(&cwd).await;
+            // The store stays locked until the files and refs are done, even if the engine
+            // drops meanwhile. A dropped engine's rollback touches nothing.
+            let Some(_store) = self.store_lock.upgrade() else {
+                return Err(RollbackFailure::Fenced);
+            };
+            // The lock may have waited: an engine replaced meanwhile touches no file.
+            let owned = self
+                .db(|store| store.owns_store())
+                .await
+                .map_err(RollbackFailure::Failed)?;
+            if !owned {
+                return Err(RollbackFailure::Fenced);
+            }
+            #[cfg(test)]
+            {
+                let pause = crate::lock(&self.worker_hooks).restore_pause.take();
+                if let Some((paused, release)) = pause {
+                    let _ = paused.send(());
+                    let _ = release.await;
+                }
+            }
             let path = PathBuf::from(&cwd);
             if restore_files && !progress.files_restored {
                 let reference = context.checkpoint["ref"].as_str().unwrap_or_default();

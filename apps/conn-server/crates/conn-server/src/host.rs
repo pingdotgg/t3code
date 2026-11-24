@@ -1004,6 +1004,8 @@ mod tests {
         {}
         previous.begin_shutdown();
         previous.shutdown().await;
+        // The store's lock goes with the engine.
+        drop(previous);
 
         // The next start, in `serve`'s order.
         let host = Arc::new(Host {
