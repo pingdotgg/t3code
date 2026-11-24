@@ -27,6 +27,7 @@ import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
 import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
+import { Meter } from "../ui/meter";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
@@ -138,19 +139,13 @@ export function VoiceInputSetup(props: {
                   </p>
                   {props.downloading ? (
                     <div role="status" className="space-y-1.5">
-                      <div
+                      <Meter
                         role="progressbar"
                         aria-label={gt("Speech model download progress")}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
                         aria-valuenow={progress ?? undefined}
-                        className="h-1 overflow-hidden rounded-full bg-muted"
-                      >
-                        <div
-                          className="h-full bg-primary transition-[width] duration-200"
-                          style={{ width: `${progress ?? 0}%` }}
-                        />
-                      </div>
+                        value={progress ?? 0}
+                        max={100}
+                      />
                       <p className="text-meta text-muted-foreground tabular-nums">
                         {model.state === "verifying"
                           ? gt("Verifying…")

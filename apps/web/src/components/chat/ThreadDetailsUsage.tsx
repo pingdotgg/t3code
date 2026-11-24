@@ -5,9 +5,6 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  resolveProviderLimitPool,
-  resolveProviderUsageLimits,
-  displayLimitWindows,
   type LimitPace,
   type LimitPoolWindow,
   limitPoolNotice,
@@ -37,6 +34,14 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./threadDetailsPanelStyles";
+import {
+  foldLimitRows,
+  limitTone,
+  nextPoolReset,
+  poolSources,
+  resolveThreadDetailsLimits,
+} from "./ThreadDetailsUsage.logic";
 
 const USAGE_ROW_CLASS =
   "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
@@ -48,15 +53,17 @@ const PACE_LABEL: Record<LimitPace, string> = {
 };
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
+  readonly model: string | null;
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
-type UsageTone = "error" | "warning" | null;
+type UsageTone = ReturnType<typeof limitTone>;
 
 /** Provider limits share the canvas's icon and label columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
+  model,
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
@@ -64,23 +71,34 @@ export function ThreadDetailsUsage({
   const m = useMessages();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const limits =
-    providerInstanceId !== null
-      ? resolveProviderUsageLimits(providerInstanceId, providers, sources)
-      : undefined;
-  const ownNotice = limits
-    ? limitsNotice(limits, m)
-    : gt("This provider has not reported usage limits.");
-  const pool =
-    providerInstanceId !== null && ownNotice !== null
-      ? resolveProviderLimitPool(providerInstanceId, providers, sources, now)
-      : undefined;
+  // The hub a model routes to pools the accounts it spends, when the instance reads none of its own.
+  const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const limits = resolved?.kind === "instance" ? resolved.limits : undefined;
+  const ownNotice =
+    resolved === null
+      ? gt("This provider has not reported usage limits.")
+      : limits
+        ? limitsNotice(limits, m)
+        : null;
+  const pool = resolved?.kind === "pool" ? resolved.windows : undefined;
+  const driver = providers.find((provider) => provider.instanceId === providerInstanceId)?.driver;
+  const [folded, setFolded] = useLocalStorage(
+    "thread-details:collapsed:Other limits",
+    true,
+    Schema.Boolean,
+  );
   const rows = pool
-    ? displayLimitWindows(pool).map((pooled) => ({
-        window: pooledWindow(pooled, now),
-        accounts: pooled.members.length,
-      }))
-    : (limits?.windows ?? []).map((window) => ({ window, accounts: 1 }));
+    ? pool.map((pooled) => {
+        const from = poolSources(pooled);
+        return {
+          driver: pooled.members[0]?.account.driver ?? driver,
+          window: pooledWindow(pooled, now),
+          accounts: pooled.members.length,
+          sources: [...from.hubs, ...(from.signedIn ? [gt("Signed-in accounts")] : [])],
+        };
+      })
+    : (limits?.windows ?? []).map((window) => ({ driver, window, accounts: 1, sources: [] }));
+  const fold = foldLimitRows(rows, model);
   const poolNotice =
     providerInstanceId !== null && ownNotice !== null && !pool
       ? limitPoolNotice(providerInstanceId, providers, sources)
@@ -104,9 +122,30 @@ export function ThreadDetailsUsage({
         />
       ) : (
         <>
-          {rows.map(({ window, accounts }) => (
-            <LimitRow key={window.id} window={window} now={now} pooledAccounts={accounts} />
+          {(folded ? fold.shown : rows).map(({ window, accounts, sources }) => (
+            <LimitRow
+              key={window.id}
+              window={window}
+              now={now}
+              pooledAccounts={accounts}
+              sources={sources}
+            />
           ))}
+          {fold.hidden.length > 0 ? (
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              tone="muted"
+              aria-expanded={!folded}
+              onClick={() => setFolded(!folded)}
+              className="col-span-full"
+            >
+              <span className={cn("ms-3", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                {folded ? gt("Show {count} more", { count: fold.hidden.length }) : gt("Show fewer")}
+              </span>
+            </ThreadDetailsControl>
+          ) : null}
         </>
       )}
     </ThreadDetailsSection>
@@ -211,44 +250,40 @@ export function ThreadDetailsContext({
           </span>
         </div>
         <CollapsiblePanel className="col-span-full">
-          <div className="px-0.5 pb-0.5">
-            <div className="surface-composer rounded-lg p-0.5">
-              <dl className="text-meta">
-                {contextWindowSegments(usage, m).map((segment) => (
-                  <div
-                    key={segment.label}
-                    className="flex h-8 items-center justify-between gap-2 px-2.5"
-                  >
-                    <dt className="flex min-w-0 items-center gap-2">
-                      <span
-                        aria-hidden
-                        className={cn("size-2 shrink-0 rounded-xs", segment.color)}
-                      />
-                      {segment.label}
-                    </dt>
-                    <dd className="text-caption tabular-nums text-muted-foreground">
-                      {segment.tokens.toLocaleString(locale)}
-                    </dd>
-                  </div>
-                ))}
-                <div className="flex min-h-8 items-center justify-between gap-2 px-2.5">
-                  <dt>
-                    {maxTokens !== null
-                      ? gt("Used / max", { $context: "context window tokens" })
-                      : gt("Used", { $context: "context window tokens" })}
-                  </dt>
-                  <dd className="text-caption tabular-nums text-muted-foreground">
-                    {maxTokens !== null
-                      ? gt("{used} / {max}", {
-                          used: usage.usedTokens.toLocaleString(locale),
-                          max: maxTokens.toLocaleString(locale),
-                        })
-                      : usage.usedTokens.toLocaleString(locale)}
-                  </dd>
-                </div>
-              </dl>
+          {/* Matches the usage grid's 1rem icon track + gap-x-1.5 without widening its label track. */}
+          <dl className="text-meta">
+            {contextWindowSegments(usage, m).map((segment) => (
+              <div key={segment.label} className="flex h-8 items-center justify-between gap-2">
+                <dt className="flex min-w-0 items-center gap-1.5">
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    <span aria-hidden className={cn("size-2 rounded-xs", segment.color)} />
+                  </span>
+                  <span className="truncate">{segment.label}</span>
+                </dt>
+                <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
+                  {segment.tokens.toLocaleString(locale)}
+                </dd>
+              </div>
+            ))}
+            <div className="flex min-h-8 items-center justify-between gap-2">
+              <dt className="flex min-w-0 items-center gap-1.5">
+                <span aria-hidden className="size-4 shrink-0" />
+                <span className="truncate">
+                  {maxTokens !== null
+                    ? gt("Used / max", { $context: "context window tokens" })
+                    : gt("Used", { $context: "context window tokens" })}
+                </span>
+              </dt>
+              <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
+                {maxTokens !== null
+                  ? gt("{used} / {max}", {
+                      used: usage.usedTokens.toLocaleString(locale),
+                      max: maxTokens.toLocaleString(locale),
+                    })
+                  : usage.usedTokens.toLocaleString(locale)}
+              </dd>
             </div>
-          </div>
+          </dl>
         </CollapsiblePanel>
       </Collapsible>
     </ThreadDetailsSection>
@@ -262,7 +297,7 @@ function pooledWindow(pooled: LimitPoolWindow, now: number): ServerProviderUsage
     kind: pooled.kind,
     label: pooled.label,
     usedPercent: 100 - pooled.remainingPercent,
-    resetsAt: pooled.resets.find((reset) => reset.at > now)?.member.window.resetsAt,
+    resetsAt: nextPoolReset(pooled, now)?.member.window.resetsAt,
   };
 }
 
@@ -287,10 +322,12 @@ function LimitRow({
   window,
   now,
   pooledAccounts,
+  sources,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
   readonly pooledAccounts: number;
+  readonly sources: ReadonlyArray<string>;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -312,8 +349,8 @@ function LimitRow({
       shortLabel={weekly && !modelLabel ? window.label.replace(/\s*·\s*Weekly$/i, "") : undefined}
       icon={modelLabel ? <BoxIcon /> : weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
+      tone={limitTone(left)}
       tick={timeLeft}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
@@ -351,6 +388,9 @@ function LimitRow({
                 Across <Var>{pooledAccounts}</Var> accounts
               </T>
             </span>
+          ) : null}
+          {sources.length > 0 ? (
+            <span>{gt("From {sources}", { sources: sources.join(", ") })}</span>
           ) : null}
         </>
       }

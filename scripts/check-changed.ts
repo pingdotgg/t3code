@@ -433,6 +433,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       file === ".pnpmfile.cjs" ||
       file.startsWith("patches/") ||
       file.startsWith("apps/mobile/deps/") ||
+      file.startsWith("apps/web/deps/") ||
       path.basename(file) === "package.json",
   );
 
@@ -479,7 +480,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           if (yield* fs.exists(inRoot(manifest))) yield* copy(manifest);
         }
       }
-      for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
+      for (const extra of ["apps/mobile/deps", "apps/web/deps", "patches", ".pnpmfile.cjs"]) {
         if (yield* fs.exists(inRoot(extra))) yield* copy(extra);
       }
       const result = yield* vp(["install", "--lockfile-only", "--ignore-scripts"], temp);
@@ -513,6 +514,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       : []),
     ...(code.length > 0
       ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
+      : []),
+    // Lint compares each file with its ceiling; only the last pushed table shows a raise.
+    ...(files.includes("lint-ceilings.json")
+      ? [command("lint ceilings", ["exec", "node", "scripts/lint-ceilings.ts", "--check"])]
       : []),
     ...(runKnip
       ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))

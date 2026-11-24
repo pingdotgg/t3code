@@ -9,6 +9,7 @@ import {
   COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
   COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME,
 } from "./ComposerPrimaryActions";
+import { contextMenuSourceOf } from "~/contextMenuSource";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
@@ -199,6 +200,7 @@ export function ComposerSpeechButton(props: {
         { id: "cancel", label: cancelLabel },
       ] as const,
       { x: event.clientX, y: event.clientY },
+      contextMenuSourceOf(event),
     );
     if (clicked === "finish") dictation.onStop();
     else if (clicked === "cancel") dictation.onCancel();

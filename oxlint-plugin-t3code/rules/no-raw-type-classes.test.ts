@@ -22,6 +22,12 @@ describe("t3code/no-raw-type-classes", () => {
     `const el = <Text variant="label" tone="muted">Hi</Text>;`,
   );
 
+  rule.valid(
+    "does not count a line its disable comment names",
+    `// oxlint-disable-next-line t3code/no-raw-type-classes -- 16px keeps iOS from zooming.
+const a = "text-base";`,
+  );
+
   rule.invalid(
     "reports a Tailwind size and weight",
     `const el = <span className="text-sm font-medium text-foreground" />;`,
@@ -63,5 +69,9 @@ describe("t3code/no-raw-type-classes maxOccurrences", () => {
     (output) => {
       assert.match(output, /Raw type classes \(font-medium\)/);
     },
+  );
+
+  ceiling.invalid("reports a ceiling above the file's count", `const a = "text-meta";`, (output) =>
+    assert.match(output, /Debt ceiling 1, file has 0: lower it to 0/),
   );
 });

@@ -1,19 +1,27 @@
 /* oxlint-disable t3code/no-untranslated-copy -- Dev-only design catalog (loaded behind import.meta.env.DEV); its sample copy stays English. */
+import { SURFACE_STYLES, type SurfaceStyle } from "@t3tools/contracts";
 import {
   ArchiveIcon,
+  ArrowRightLeftIcon,
   ArrowUpIcon,
   BellIcon,
   BotIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
+  CircleStopIcon,
   CopyIcon,
+  EraserIcon,
   FileIcon,
   FilePenIcon,
   FolderIcon,
   GitBranchIcon,
+  GitForkIcon,
   GlobeIcon,
   HammerIcon,
   ListTodoIcon,
+  MaximizeIcon,
   MicIcon,
+  MinusIcon,
   PaletteIcon,
   PaperclipIcon,
   PinIcon,
@@ -57,6 +65,17 @@ import {
   WorkLogList,
   WorkLogRow,
 } from "../chat/WorkLog";
+import {
+  SettingResetButton,
+  SettingsEmptyState,
+  SettingsLoadingRows,
+  SettingsNoMatches,
+  SettingsNote,
+  SettingsRow,
+  SettingsSearchField,
+  SettingsSection,
+  SettingsToolbar,
+} from "../settings/settingsLayout";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import {
   AlertDialog,
@@ -69,6 +88,7 @@ import {
 } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button, type ButtonSize, type ButtonVariant, InlineButton } from "../ui/button";
+import { CardSection } from "../ui/card-section";
 import { Checkbox } from "../ui/checkbox";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import {
@@ -98,6 +118,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { FloatingToolbar } from "../ui/floating-toolbar";
 import { Group, GroupSeparator } from "../ui/group";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupUnit } from "../ui/input-group";
@@ -117,6 +138,7 @@ import {
   MenuShortcut,
   MenuTrigger,
 } from "../ui/menu";
+import { Meter } from "../ui/meter";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -124,6 +146,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+import { PanelFrame } from "../ui/panel-frame";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { ScrollArea } from "../ui/scroll-area";
@@ -207,12 +230,15 @@ export function DesignSystemPage() {
           page.
         </Text>
         <FoundationsSection />
+        <SurfacesGridSection />
         <ButtonsSection />
         <ControlsSection />
         <InputsSection />
         <BadgesSection />
         <StatusSection />
         <GroupsSection />
+        <PanelsSection />
+        <SettingsCatalogSection />
         <OverlaysSection />
         <PaletteSection />
         <FeedbackSection />
@@ -454,6 +480,199 @@ function FoundationsSection() {
             <Logo aria-hidden className="size-6 text-foreground" />
           </Cell>
         ))}
+      </Specimen>
+    </Section>
+  );
+}
+
+/* Surfaces grid */
+
+const SURFACE_STYLE_LABELS: Record<SurfaceStyle, string> = {
+  "gradient-rim": "Standard",
+  flat: "Flat",
+  "soft-gradient": "Soft",
+  "aqua-gloss-full": "Gloss",
+  "aqua-blue": "Accent gloss",
+  "gradient-rim-everywhere": "Outline",
+};
+
+const ALL_SURFACE_UTILITIES = [
+  ["surface-raised", "h-8 w-full rounded-control border border-transparent surface-raised"],
+  [
+    "surface-raised-hover",
+    "h-8 w-full rounded-control border border-transparent surface-raised surface-raised-hover",
+  ],
+  [
+    "surface-danger-hover",
+    "h-8 w-full rounded-control border border-transparent surface-raised surface-danger-hover",
+  ],
+  ["surface-lit", "h-8 w-full rounded-control border border-transparent surface-lit"],
+  [
+    "surface-lit-hover",
+    "h-8 w-full rounded-control border border-transparent surface-lit surface-lit-hover",
+  ],
+  [
+    "surface-destructive",
+    "h-8 w-full rounded-control border border-transparent surface-destructive",
+  ],
+  [
+    "surface-destructive-hover",
+    "h-8 w-full rounded-control border border-transparent surface-destructive surface-destructive-hover",
+  ],
+  ["surface-dismiss", "h-8 w-full rounded-control border surface-dismiss"],
+  ["surface-pill", "h-7 w-full rounded-full border border-transparent surface-pill"],
+  [
+    "surface-neutral-pill",
+    "h-7 w-full rounded-full border border-transparent surface-neutral-pill",
+  ],
+  ["surface-well", "h-8 w-full rounded-control border border-transparent surface-well"],
+  [
+    "surface-ghost-field",
+    "h-8 w-full rounded-control border border-transparent surface-ghost-field",
+  ],
+  [
+    "surface-ghost-field-focus",
+    "h-8 w-full rounded-control border border-transparent surface-ghost-field-focus",
+  ],
+  ["surface-well-switch", "h-5.5 w-10 rounded-full border border-transparent surface-well-switch"],
+  [
+    "surface-focus",
+    "h-8 w-full rounded-control border border-transparent surface-well surface-focus",
+  ],
+  [
+    "surface-invalid",
+    "h-8 w-full rounded-control border border-transparent surface-well surface-invalid",
+  ],
+  [
+    "surface-invalid-focus",
+    "h-8 w-full rounded-control border border-transparent surface-well surface-invalid-focus",
+  ],
+  ["surface-tint", "h-8 w-full rounded-control surface-tint [--surface-tint:var(--info)]"],
+  [
+    "surface-tint-fill",
+    "h-8 w-full rounded-control surface-tint-fill [--surface-tint:var(--warning)]",
+  ],
+  ["surface-tint-rim", "h-8 w-full rounded-control surface-tint-rim [--surface-tint:var(--info)]"],
+  ["surface-popover", "h-8 w-full rounded-card surface-popover"],
+  ["surface-tooltip", "h-8 w-full rounded-control surface-tooltip"],
+  ["surface-palette", "h-8 w-full rounded-card surface-palette"],
+  ["surface-dialog", "h-8 w-full rounded-card surface-dialog"],
+  ["surface-card", "h-8 w-full rounded-card surface-card"],
+  ["surface-card-fill", "h-8 w-full rounded-card surface-card-fill"],
+  ["surface-card-settings", "h-8 w-full rounded-card surface-card-settings"],
+  ["surface-card-settings-rim", "h-8 w-full rounded-card surface-card-settings-rim"],
+  ["surface-panel", "h-8 w-full rounded-card surface-panel"],
+  ["surface-tray", "h-8 w-full rounded-card surface-tray"],
+  ["surface-composer-banner", "h-8 w-full rounded-card surface-composer-banner"],
+  ["surface-app-panel", "h-8 w-full rounded-card surface-app-panel"],
+  ["surface-outline", "h-8 w-full rounded-control border surface-outline"],
+  ["surface-badge", "h-6 w-full rounded-badge surface-badge"],
+  ["surface-floating", "h-8 w-full rounded-control border surface-floating"],
+  [
+    "surface-floating-hover",
+    "h-8 w-full rounded-control border surface-floating surface-floating-hover",
+  ],
+  ["surface-media-control", "size-7 rounded-full surface-media-control"],
+  ["surface-search-separator", "h-0 w-full border-b surface-search-separator"],
+  ["surface-divider-rule", "h-px w-full surface-divider-rule"],
+  ["surface-divider-rule-danger", "h-px w-full surface-divider-rule-danger"],
+  ["surface-command-input", "h-8 w-full rounded-control surface-command-input"],
+  ["surface-command-footer", "h-8 w-full rounded-control surface-command-footer"],
+  ["surface-composer", "h-8 w-full rounded-card surface-composer"],
+  ["surface-bubble", "h-8 w-full rounded-card surface-bubble"],
+  ["surface-bubble-quote", "h-8 w-full rounded-card surface-bubble-quote"],
+  ["surface-kbd", "h-6 w-12 rounded-kbd surface-kbd"],
+  ["surface-ghost-hover", "h-8 w-full rounded-control surface-ghost-hover"],
+  ["surface-selected", "h-8 w-full rounded-control surface-selected"],
+  ["surface-selected-soft", "h-8 w-full rounded-control surface-selected-soft"],
+  ["surface-pane-tab", "h-7 w-full rounded-control surface-pane-tab"],
+  ["surface-sidebar-row-hover", "h-7 w-full rounded-row surface-sidebar-row-hover"],
+  ["surface-sidebar-row-selected", "h-7 w-full rounded-row surface-sidebar-row-selected"],
+  ["surface-sidebar-row-active", "h-7 w-full rounded-row surface-sidebar-row-active"],
+  ["surface-timeline-divider", "h-px w-full surface-timeline-divider"],
+  ["surface-timeline-inspector", "h-8 w-full rounded-card surface-timeline-inspector"],
+  ["surface-gloss-on", "h-5.5 w-10 rounded-full surface-gloss-on"],
+  ["surface-gloss-thumb", "size-5 rounded-full surface-gloss-thumb"],
+  ["surface-gloss-off-thumb", "size-5 rounded-full surface-gloss-off-thumb"],
+  ["surface-grain", "h-8 w-full rounded-card surface-card surface-grain"],
+] as const;
+
+function SurfacesGridSection() {
+  return (
+    <Section
+      id="surfaces"
+      title="Surfaces"
+      layer="tokens"
+      description="Every surface-* utility rendered under all six surface styles via a local preview wrapper. Compare how rims, gradients, shadows and flat fills repaint each role."
+    >
+      <Specimen
+        label="Surface utilities across every surface style"
+        source="surface-* under data-surface-preview"
+      >
+        <div className="w-full overflow-x-auto rounded-card surface-card">
+          <table className="w-full min-w-[52rem] table-fixed border-collapse text-left">
+            <colgroup>
+              <col className="w-48" />
+              {SURFACE_STYLES.map((style) => (
+                <col key={style} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr className="border-b border-divider">
+                <th className="px-3 py-2 font-mono text-caption text-dim-foreground">Utility</th>
+                {SURFACE_STYLES.map((style) => (
+                  <th key={style} className="px-2 py-2 text-center">
+                    <div className="truncate text-meta text-foreground">
+                      {SURFACE_STYLE_LABELS[style]}
+                    </div>
+                    <div className="truncate font-mono text-2xs text-dim-foreground">{style}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-divider">
+              <tr>
+                <td className="px-3 py-2 font-mono text-caption text-muted-foreground">
+                  Buttons (reference)
+                </td>
+                {SURFACE_STYLES.map((style) => (
+                  <td key={style} className="px-2 py-2">
+                    <div
+                      data-surface-preview={style}
+                      data-surface-style={style}
+                      className="flex items-center justify-center gap-1.5"
+                    >
+                      <Button render={<span />} size="xs">
+                        Ok
+                      </Button>
+                      <Button render={<span />} size="xs" variant="secondary">
+                        Btn
+                      </Button>
+                    </div>
+                  </td>
+                ))}
+              </tr>
+              {ALL_SURFACE_UTILITIES.map(([name, swatchClass]) => (
+                <tr key={name}>
+                  <td className="px-3 py-1.5 font-mono text-caption text-muted-foreground">
+                    {name}
+                  </td>
+                  {SURFACE_STYLES.map((style) => (
+                    <td key={style} className="px-2 py-1.5">
+                      <div
+                        data-surface-preview={style}
+                        data-surface-style={style}
+                        className="flex min-h-9 items-center justify-center px-1"
+                      >
+                        <div className={swatchClass} />
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Specimen>
     </Section>
   );
@@ -1020,6 +1239,30 @@ function StatusSection() {
           <StatusDot size="md" tone="success" label="Connected" />
         </Cell>
       </Specimen>
+      <Specimen label="Meter" source="<Meter value max tone size>" stack>
+        <div className="flex w-72 flex-col gap-3">
+          {(
+            [
+              ["neutral", 64],
+              ["success", 88],
+              ["warning", 45],
+              ["destructive", 92],
+            ] as const
+          ).map(([tone, value]) => (
+            <div key={tone} className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <Caption>{tone}</Caption>
+                <Caption>{value}%</Caption>
+              </div>
+              <Meter value={value} max={100} tone={tone} aria-label={`${tone} meter`} />
+            </div>
+          ))}
+          <div className="flex flex-col gap-1">
+            <Caption>size sm</Caption>
+            <Meter value={72} max={100} size="sm" aria-label="Small meter" />
+          </div>
+        </div>
+      </Specimen>
       <Specimen label="Skeleton" source="<Skeleton shape>" stack>
         <div className="flex w-72 items-center gap-3">
           <Skeleton shape="pill" className="size-8" />
@@ -1083,6 +1326,33 @@ function GroupsSection() {
           <Button variant="secondary">Create</Button>
         </Group>
       </Specimen>
+      <Specimen label="Floating toolbar" source="<FloatingToolbar density orientation>">
+        <Cell caption="compact (zoom controls)">
+          <FloatingToolbar density="compact">
+            <Button size="icon-xs" variant="ghost" aria-label="Zoom out">
+              <MinusIcon />
+            </Button>
+            <Separator orientation="vertical" className="h-3.5" />
+            <Button size="icon-xs" variant="ghost" aria-label="Zoom in">
+              <PlusIcon />
+            </Button>
+            <Separator orientation="vertical" className="h-3.5" />
+            <Button size="icon-xs" variant="ghost" aria-label="Fit to view">
+              <MaximizeIcon />
+            </Button>
+          </FloatingToolbar>
+        </Cell>
+        <Cell caption="default (canvas mode switch)">
+          <FloatingToolbar>
+            <Button variant="secondary" size="xs" aria-pressed>
+              3D
+            </Button>
+            <Button variant="ghost" size="xs" aria-pressed={false}>
+              Flat
+            </Button>
+          </FloatingToolbar>
+        </Cell>
+      </Specimen>
       <Specimen label="Collapsible section header" source="<CollapsibleSectionHeader tone>" stack>
         <div className="w-72">
           <CollapsibleSectionHeader
@@ -1123,6 +1393,254 @@ function GroupsSection() {
           Left
           <Separator orientation="vertical" />
           Right
+        </div>
+      </Specimen>
+    </Section>
+  );
+}
+
+/* Panels */
+
+function PanelsSection() {
+  return (
+    <Section
+      id="panels"
+      title="Panels"
+      layer="composed"
+      description="Structured frames for data tables, diffs, maps and inspectors. PanelFrame owns the card surface, radius, toolbar fill, notice strip and hairline dividers."
+    >
+      <Specimen
+        label="Panel frame (default density)"
+        source="<PanelFrame.Root> <Toolbar> <Notice> <Body> <Footer>"
+      >
+        <div className="w-full max-w-xl">
+          <PanelFrame.Root>
+            <PanelFrame.Toolbar className="justify-between">
+              <span className="text-label text-foreground">Diff preview</span>
+              <Button size="xs" variant="secondary">
+                Refresh
+              </Button>
+            </PanelFrame.Toolbar>
+            <PanelFrame.Notice>
+              <span className="min-w-0 flex-1">
+                Showing tracked changes. Checking untracked files…
+              </span>
+              <Button size="xs" variant="secondary">
+                Retry
+              </Button>
+            </PanelFrame.Notice>
+            <PanelFrame.Body>
+              <p className="p-3 text-body text-muted-foreground">
+                Panel body fills the remaining height without painting its own border or radius.
+              </p>
+            </PanelFrame.Body>
+            <PanelFrame.Footer>
+              <span>3 files changed</span>
+              <span>HEAD</span>
+            </PanelFrame.Footer>
+          </PanelFrame.Root>
+        </div>
+      </Specimen>
+      <Specimen label="Panel frame (compact density)" source='<PanelFrame.Root density="compact">'>
+        <div className="w-full max-w-xl">
+          <PanelFrame.Root density="compact">
+            <PanelFrame.Toolbar className="justify-between">
+              <span className="text-meta text-foreground">metrics.csv</span>
+              <span>42 rows</span>
+            </PanelFrame.Toolbar>
+            <PanelFrame.Notice render={<p />}>
+              This preview exceeds the size limit. Changes shown are incomplete.
+            </PanelFrame.Notice>
+            <PanelFrame.Body>
+              <p className="p-3 text-meta text-muted-foreground">
+                Compact density pairs caption notices and tight toolbars for dense panes.
+              </p>
+            </PanelFrame.Body>
+            <PanelFrame.Footer>
+              <span>UTF-8</span>
+              <span>4 columns</span>
+            </PanelFrame.Footer>
+          </PanelFrame.Root>
+        </div>
+      </Specimen>
+      <Specimen label="Card section" source='<CardSection divided="top" padding>'>
+        <div className="w-full max-w-xl rounded-card surface-card">
+          <CardSection>
+            <div className="text-label text-foreground">t3-workstation</div>
+            <p className="text-meta text-muted-foreground">This machine, connected (0.1.11)</p>
+          </CardSection>
+          <CardSection divided="top">
+            <div className="space-y-1.5">
+              <div className="text-label text-foreground">Linked machines</div>
+              <p className="text-meta text-muted-foreground">
+                Sections inside a card separate with border-divider rather than hand-rolled borders.
+              </p>
+            </div>
+          </CardSection>
+        </div>
+      </Specimen>
+    </Section>
+  );
+}
+
+/* Settings */
+
+function SettingsCatalogSection() {
+  const [autoPull, setAutoPull] = useState(true);
+  const [mode, setMode] = useState("worktree");
+  const [search, setSearch] = useState("");
+  return (
+    <Section
+      id="settings"
+      title="Settings"
+      layer="meta"
+      description="SettingsSection, SettingsRow, SettingsNote, SettingsLoadingRows, SettingsEmptyState and SettingsNoMatches. Settings screens compose these rather than building cards by hand."
+    >
+      <Specimen
+        label="Grouped section with every control kind and notes"
+        source='<SettingsSection variant="grouped"> <SettingsRow> <SettingsNote>'
+        stack
+      >
+        <div className="w-full max-w-2xl">
+          <SettingsSection
+            title="Workspace defaults"
+            warning="Applies to newly created threads on this machine."
+            headerAction={
+              <Button size="xs" variant="secondary">
+                Reset all
+              </Button>
+            }
+          >
+            <SettingsNote>
+              SettingsNote sits flush with rows inside a grouped card for quiet section guidance.
+            </SettingsNote>
+            <SettingsRow
+              leading={<GlobeIcon />}
+              title="Auto-pull default branch"
+              description="Fetch and fast-forward before starting a new worktree."
+              resetAction={
+                <SettingResetButton ariaLabel="Reset auto-pull" onClick={() => setAutoPull(true)} />
+              }
+              control={
+                <Switch
+                  aria-label="Auto-pull default branch"
+                  checked={autoPull}
+                  onCheckedChange={setAutoPull}
+                />
+              }
+            />
+            <SettingsRow
+              title="Default reasoning effort"
+              description="Select control inside a settings row."
+              control={
+                <Select defaultValue="high" items={EFFORT_ITEMS}>
+                  <SelectTrigger size="sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {EFFORT_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+            <SettingsRow
+              title="Checkout root"
+              description="Text input control inside a settings row."
+              control={<Input size="sm" defaultValue="~/Development/t3" className="w-44" />}
+            />
+            <SettingsRow
+              title="Retain logs"
+              description="NumberField control inside a settings row."
+              control={
+                <NumberField defaultValue={30} min={1} className="w-36">
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement />
+                    <NumberFieldInput />
+                    <NumberFieldIncrement />
+                  </NumberFieldGroup>
+                </NumberField>
+              }
+            />
+            <SettingsRow
+              title="Thread environment"
+              description="Segmented ToggleGroup inside a settings row."
+              control={
+                <ToggleGroup value={[mode]} onValueChange={(next) => next[0] && setMode(next[0])}>
+                  <Toggle value="local">Local</Toggle>
+                  <Toggle value="worktree">Worktree</Toggle>
+                </ToggleGroup>
+              }
+            />
+            <SettingsRow
+              title="Authorized clients"
+              description="Action button control inside a settings row."
+              status={
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusDot tone="success" />1 authorized client
+                </span>
+              }
+              control={
+                <Button size="sm" variant="secondary">
+                  Manage
+                </Button>
+              }
+            />
+            <SettingsRow
+              title="Advanced diagnostics"
+              description="Navigation row with a trailing chevron."
+              trailing={<ChevronRightIcon aria-hidden className="size-4 text-muted-foreground" />}
+            />
+            <SettingsNote icon={<TriangleAlertIcon className="text-warning-foreground" />}>
+              SettingsNote with an icon leads a one-line warning or caveat.
+            </SettingsNote>
+          </SettingsSection>
+        </div>
+      </Specimen>
+      <Specimen
+        label="Plain section and toolbar"
+        source='<SettingsSection variant="plain"> <SettingsToolbar> <SettingsSearchField>'
+        stack
+      >
+        <div className="w-full max-w-2xl">
+          <SettingsSection title="Filterable list" variant="plain">
+            <SettingsToolbar>
+              <SettingsSearchField
+                value={search}
+                onChange={setSearch}
+                placeholder="Search items…"
+              />
+              <Button size="sm" variant="secondary">
+                Add item
+              </Button>
+            </SettingsToolbar>
+            <SettingsNoMatches onClear={() => setSearch("")}>
+              No settings match “{search || "telemetry"}”.
+            </SettingsNoMatches>
+          </SettingsSection>
+        </div>
+      </Specimen>
+      <Specimen label="Loading rows" source="<SettingsLoadingRows count>" stack>
+        <div className="w-full max-w-2xl">
+          <SettingsSection title="Connected machines">
+            <SettingsLoadingRows label="Loading connected machines" count={3} />
+          </SettingsSection>
+        </div>
+      </Specimen>
+      <Specimen label="Empty state" source="<SettingsEmptyState>" stack>
+        <div className="w-full max-w-2xl rounded-card surface-card p-4">
+          <SettingsEmptyState
+            icon={<GlobeIcon />}
+            title="No linked environments"
+            description="Link another machine so agents can run threads there."
+          >
+            <Button size="sm" variant="secondary">
+              Add environment
+            </Button>
+          </SettingsEmptyState>
         </div>
       </Specimen>
     </Section>
@@ -1433,6 +1951,35 @@ function FeedbackSection() {
           </Alert>
         ))}
       </Specimen>
+      <Specimen
+        label="Strip alerts (inside a card)"
+        source='<Alert variant density="strip" edge>'
+        stack
+      >
+        <div className="w-full max-w-lg overflow-clip rounded-card surface-card">
+          <CardSection>
+            <div className="text-label text-foreground">Diff panel</div>
+            <p className="text-meta text-muted-foreground">
+              Full-width tinted strips sit flush inside cards and panels with no outer radius.
+            </p>
+          </CardSection>
+          {(["warning", "error", "info"] as const).map((variant) => (
+            <Alert key={variant} variant={variant} density="strip" edge="top">
+              {variant === "info" ? <BellIcon /> : <TriangleAlertIcon />}
+              {variant === "warning"
+                ? "Diff too large to display."
+                : variant === "error"
+                  ? "Could not reach the device host."
+                  : "Showing tracked changes only."}
+              <AlertAction>
+                <Button size="xs" variant="secondary">
+                  Retry
+                </Button>
+              </AlertAction>
+            </Alert>
+          ))}
+        </div>
+      </Specimen>
       <Specimen label="Toasts" source="toastManager.add({ type })">
         {(["success", "error", "info", "warning", "loading"] as const).map((type) => (
           <Button
@@ -1564,8 +2111,28 @@ function WorkLogSection() {
               </WorkLogDetails>
             </WorkLogRow>
           </WorkLogBlock>
-          <TimelineSystemDivider label="Context compacted" detail="92k → 14k tokens" />
-          <TimelineSystemDivider label="Run interrupted" tone="danger" />
+          <WorkLogBlock>
+            <TimelineSystemDivider
+              placement="turn"
+              label="Run interrupted"
+              detail="Stopped by user"
+              icon={CircleStopIcon}
+              wrapDetail
+            />
+          </WorkLogBlock>
+          <TimelineSystemDivider
+            label="Forked from conversation"
+            icon={GitForkIcon}
+            actionLabel="Open source conversation"
+            onAction={() => {}}
+          />
+          <TimelineSystemDivider label="New session" icon={EraserIcon} />
+          <TimelineSystemDivider
+            label="Context handoff"
+            detail="Claude → Codex"
+            icon={ArrowRightLeftIcon}
+            tone="danger"
+          />
         </Stage>
       </Specimen>
     </Section>

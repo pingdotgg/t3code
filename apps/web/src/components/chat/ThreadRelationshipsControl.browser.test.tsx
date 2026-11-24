@@ -42,9 +42,16 @@ vi.mock(import("../../state/entities"), () => ({
   useAnyEnvironmentHiding: (() => false) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
+  // The click rule reads the client setting, whose module asks for these.
+  useEnvironments: (() => []) as never,
+  usePrimaryEnvironment: (() => null) as never,
   useEnvironment: (() => null) as never,
   useEnvironmentMachines: (() => new Map()) as never,
   useEnvironmentProviders: (() => new Map()) as never,
+}));
+vi.mock(import("../../state/peerLinks"), () => ({
+  peerLinkEnvironment: { readThread: {} } as never,
+  useLinkedEnvironments: (() => new Map()) as never,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({
@@ -58,7 +65,11 @@ vi.mock(import("../../state/use-atom-command"), () => ({
       : AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
 }));
 
-import { render } from "../../../test/render";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+
+import { fakeTimers, render } from "../../../test/render";
+import { isMacPlatform } from "../../lib/utils";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ScrollArea } from "../ui/scroll-area";
 import { ToastProvider } from "../ui/toast";
@@ -68,6 +79,7 @@ const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("fork");
 
 function setup() {
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
@@ -168,7 +180,7 @@ it.each([
   }
 });
 
-it("opens an idle child from Lineage when its shell has not been loaded", async () => {
+it("opens an idle child beside the thread, and in its place with the modifier", async () => {
   setup();
   const projection = makeThreadProjectionFixture();
   const childId = ThreadId.make("omitted-child");
@@ -214,10 +226,68 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
   await expect.element(previousAgents).toHaveAttribute("aria-expanded", "true");
   const child = screen.getByRole("button", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
+  const panelRef = scopeThreadRef(environmentId, projection.thread.id);
+  const panel = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, panelRef);
   await child.click();
+  expect(panel()).toMatchObject({
+    isOpen: true,
+    activeSurfaceId: "thread:omitted-child",
+    surfaces: [{ kind: "thread", threadId: childId }],
+  });
+  expect(screen.router?.state.location.pathname).toBe("/");
+  // Idle children can be omitted from the shell; the route loads the child's own detail.
+  // The menu can stay open after a pick; reopen it only if it closed.
+  if (previousAgents.element().getAttribute("aria-expanded") !== "true") {
+    await previousAgents.click();
+  }
+  await child.click({ modifiers: [isMacPlatform(navigator.platform) ? "Meta" : "Control"] });
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
   );
+  expect(panel().surfaces).toHaveLength(1);
+});
+
+it("keeps focus on the list when Show more pages reveal the last rows", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const environmentId = EnvironmentId.make("local");
+  const { updatedAt } = projection.thread;
+  state.projection = {
+    ...projection,
+    subagents: Array.from({ length: 7 }, (_, index) => ({
+      id: NodeId.make(`agent-${index}`),
+      threadId: projection.thread.id,
+      runId: null,
+      parentNodeId: NodeId.make("parent"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: projection.thread.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: ThreadId.make(`omitted-child-${index}`),
+      nativeTaskRef: null,
+      prompt: `Inspect the change part ${index}`,
+      title: `Agent ${index}`,
+      model: null,
+      status: "completed",
+      result: null,
+      startedAt: null,
+      completedAt: updatedAt,
+      updatedAt,
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Show 1 more" }).click();
+  await expect.element(screen.getByRole("list", { name: "Related threads" })).toHaveFocus();
 });
 
 it("shows a lineage thread's full title in its tooltip", async () => {
@@ -338,12 +408,65 @@ it("folds a finished remote subagent into previous agents with its full title in
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
+  // This client is not connected there, so the row reads the thread through this environment.
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM with a long machine name in the office. Connect to it to open the thread there.",
+    "Read the thread on Remote VM with a long machine name in the office",
   );
 
   await row.click({ force: true });
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+it("shows how long a running remote subagent has been running, as a local one does", async () => {
+  setup();
+  const remoteTitle = "Remote subagent running on a linked machine";
+  using _timers = fakeTimers();
+  vi.setSystemTime(new Date("2026-11-23T12:12:00.000Z"));
+  const startedAt = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    subagents: [
+      {
+        id: NodeId.make("remote-agent"),
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "remote",
+        providerInstanceId: "provider",
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Run remote task",
+        title: remoteTitle,
+        model: null,
+        status: "running",
+        result: null,
+        startedAt,
+        completedAt: null,
+        updatedAt: startedAt,
+        remoteChild: {
+          environmentId: EnvironmentId.make("remote-env"),
+          threadId: ThreadId.make("remote-thread"),
+          label: "127x05",
+        },
+      },
+    ],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  // Assert synchronously: expect.element polls on timers this test fakes.
+  const row = screen.getByRole("button", { name: new RegExp(remoteTitle) });
+  expect(row.element().textContent).toContain("12m");
 });
 
 it("explains why Merge back is unavailable before the fork completes a run", async () => {
@@ -482,4 +605,28 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   viewport.scrollTop = 0;
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
+});
+
+it("hides the Lineage card when an active session has no relatives", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.projection = {
+    ...projection,
+    thread: {
+      ...projection.thread,
+      id: threadId,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+    },
+    providerSessions: [{ id: "session", status: "ready" }],
+  };
+  await using _screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+  await expect.element(page.getByRole("region", { name: "Lineage" })).not.toBeInTheDocument();
 });

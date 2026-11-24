@@ -1,4 +1,6 @@
+import { contextMenuSourceOf } from "../contextMenuSource";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { useQuietThreadShell } from "~/state/entities";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneContext";
 import { beginLayoutTabDrag } from "../layout/layoutDrag";
@@ -62,7 +64,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { scrollTabStripFromRow } from "../motion/gesture";
+import { scrollLeftByWheel, scrollTabStripFromRow } from "../motion/gesture";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { useTheme } from "~/hooks/useTheme";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -136,6 +138,10 @@ export interface RightPanelTabsProps {
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
+  /** Moves a subagent, side chat or linked thread tab to the main screen. */
+  onOpenInMainView?: (
+    surface: Extract<RightPanelSurface, { kind: "thread" | "linked-thread" }>,
+  ) => void;
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
@@ -143,6 +149,7 @@ export interface RightPanelTabsProps {
   onCopyFilePath: (relativePath: string) => void;
   /** Escape on the empty pane's chooser closes the pane; the sheet closes itself. */
   onClose?: () => void;
+  onDuplicateBrowser?: (surface: RightPanelSurface) => void;
   onAddBrowser: () => void;
   /** Keep separate from the DOM click handler so a MouseEvent cannot become a profile id. */
   onAddBrowserInProfile: (profileId: string) => void;
@@ -186,8 +193,10 @@ const SURFACE_DISABLED_REASONS = {
 } as const;
 
 type TabContextMenuAction =
+  | "open-in-main-view"
   | "rename"
   | "copy-path"
+  | "duplicate"
   | "toggle-mute"
   | "close"
   | "close-others"
@@ -517,7 +526,7 @@ function RightPanelTab(
     disabled: dragDisabled,
   });
   const sideChatShell = useQuietThreadShell(
-    surface.kind === "side-chat" && props.environmentId !== null
+    surface.kind === "thread" && props.environmentId !== null
       ? scopeThreadRef(props.environmentId, surface.threadId)
       : null,
   );
@@ -527,7 +536,13 @@ function RightPanelTab(
       : (findLayoutTab(state.layout, (tab) => tab.id === layoutTabId)?.tab ?? null),
   );
   const layoutLabel = useLayoutTabLabel(layoutTab ?? NO_LAYOUT_TAB);
-  const title = layoutTab ? layoutLabel.title : (sideChatShell?.title ?? props.title);
+  const shellTitle =
+    sideChatShell === null
+      ? props.title
+      : sideChatShell.lineage.sideChat === true
+        ? sideChatShell.title
+        : formatSubagentDisplayTitle(sideChatShell.title);
+  const title = layoutTab ? layoutLabel.title : shellTitle;
   const tooltip = layoutTab
     ? layoutLabel.tooltip
     : [title, threadTitle, previewUrl, surface.kind === "file" ? surface.relativePath : null]
@@ -848,6 +863,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         { x: event.clientX, y: event.clientY },
         props.keybindings,
         () => setRenamingDevice(surface.id),
+        contextMenuSourceOf(event),
       );
       return;
     }
@@ -859,6 +875,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (surfaceIndex < 0) return;
 
     const items: ContextMenuItem<TabContextMenuAction>[] = [];
+    if ((surface.kind === "thread" || surface.kind === "linked-thread") && props.onOpenInMainView) {
+      items.push({ id: "open-in-main-view", label: gt("Open in main view") });
+    }
     if (surface.kind === "device" && props.onRenameDevice)
       items.push({ id: "rename", label: gt("Rename") });
     if (surface.kind === "file" && surface.attachment === undefined) {
@@ -868,6 +887,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const menuOverlay = menuPreviewTabId ? (props.desktopByTabId[menuPreviewTabId] ?? null) : null;
     const menuMuted = menuOverlay?.audioMuted ?? false;
     if (surface.kind === "preview") {
+      items.push({
+        id: "duplicate",
+        label: gt("Duplicate"),
+        disabled: !props.browserAvailable || !menuPreviewTabId || !props.onDuplicateBrowser,
+      });
       items.push({
         id: "toggle-mute",
         ...tabMuteMenuItem(
@@ -898,8 +922,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       },
     );
 
-    const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
+    const action = await api.contextMenu.show(
+      items,
+      { x: event.clientX, y: event.clientY },
+      contextMenuSourceOf(event),
+    );
     switch (action) {
+      case "open-in-main-view":
+        if (surface.kind === "thread" || surface.kind === "linked-thread") {
+          props.onOpenInMainView?.(surface);
+        }
+        break;
       case "rename":
         setRenamingDevice(surface.id);
         break;
@@ -907,6 +940,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         if (surface.kind === "file" && surface.attachment === undefined) {
           props.onCopyFilePath(surface.relativePath);
         }
+        break;
+      case "duplicate":
+        props.onDuplicateBrowser?.(surface);
         break;
       case "toggle-mute": {
         const runtimeTabId =
@@ -979,11 +1015,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
 
-      const previousScrollLeft = viewport.scrollLeft;
-      viewport.scrollLeft += delta;
-      if (viewport.scrollLeft === previousScrollLeft) return;
+      if (!scrollLeftByWheel(viewport, event, delta)) return;
       event.preventDefault();
-      update();
     };
 
     const content = viewport.firstElementChild;

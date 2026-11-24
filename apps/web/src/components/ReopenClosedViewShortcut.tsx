@@ -7,7 +7,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { linkOptions, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -35,6 +35,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { serverEnvironment } from "../state/server";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readThreadShell } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
@@ -58,6 +59,12 @@ import { findLayoutTabByContent, isLayoutPageContent } from "../layout/layoutMod
 import { useLayoutStore } from "../layout/layoutStore";
 import { layoutPageHref } from "../layout/pageNavigation";
 
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    reopenedViewId?: string;
+  }
+}
+
 const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
   "workspace.focusPrevious",
@@ -77,6 +84,7 @@ const isGlobalIssues = (ref: ScopedThreadRef) =>
 export function ReopenClosedViewShortcut() {
   const gt = useGT();
   const navigate = useNavigate();
+  const router = useRouter();
   const params = useParams({ strict: false });
   const target = resolveThreadRouteTarget(params);
   const draft = useComposerDraftStore((state) =>
@@ -99,8 +107,10 @@ export function ReopenClosedViewShortcut() {
   const hasHistory = useClosedViewStore((state) => state.entries.length > 0);
   const openPreview = useAtomCommand(previewEnvironment.open);
   const pending = useRef(Promise.resolve());
+  type ReopenNavigation = { location: typeof router.history.location };
+  const reopenNavigation = useRef<ReopenNavigation | null>(null);
 
-  const reopenNext = useEffectEvent(async () => {
+  const reopenNext = useEffectEvent(async (request: ReopenNavigation) => {
     const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
     const drafts = useComposerDraftStore.getState();
     const panelsByThread = useRightPanelStore.getState().byThreadKey;
@@ -131,8 +141,11 @@ export function ReopenClosedViewShortcut() {
               drafts.getDraftSession(entry.draftId) !== null),
         sideChatExists:
           entry.kind !== "panel-tab" ||
-          entry.surface.kind !== "side-chat" ||
-          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null,
+          entry.surface.kind !== "thread" ||
+          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null ||
+          // The shell leaves idle subagents out, so one it does not list may still exist.
+          appAtomRegistry.get(serverEnvironment.configValueAtom(ref.environmentId))
+            ?.shellThreadFamilies === true,
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
@@ -157,6 +170,7 @@ export function ReopenClosedViewShortcut() {
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    if (router.history.location !== request.location) return;
     if (restore.kind === "page") {
       const content = findLayoutTabByContent(useLayoutStore.getState().layout, {
         kind: restore.page,
@@ -165,43 +179,73 @@ export function ReopenClosedViewShortcut() {
         await navigate({ href: layoutPageHref(content) });
       return;
     }
+
+    let destination;
     if (restore.kind === "chat") {
       const target = closedChatTarget(restore);
-      if (target.kind === "draft")
-        await navigate({
-          to: "/draft/$draftId",
-          params: buildDraftThreadRouteParams(target.draftId),
-        });
-      else
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(target.threadRef),
-        });
-      return;
-    }
-    if (globalPullRequests) {
+      destination =
+        target.kind === "draft"
+          ? linkOptions({
+              to: "/draft/$draftId",
+              params: buildDraftThreadRouteParams(target.draftId),
+            })
+          : linkOptions({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(target.threadRef),
+            });
+    } else if (globalPullRequests) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
         ref,
       );
-      await navigate({
+      destination = linkOptions({
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
     } else if (globalIssues) {
-      await navigate({ to: "/issues", search: readIssueListPreferences() });
-    } else if (!isThreadlessSurfacesRef(ref)) {
+      destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
+    } else if (isThreadlessSurfacesRef(ref)) {
       // A threadless surface has no route; its tab shows it.
+      return;
+    } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
-      if (draftId !== null)
-        await navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) });
-      else await navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+      destination =
+        draftId !== null
+          ? linkOptions({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) })
+          : linkOptions({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
     }
+
+    const { history } = router;
+    if (router.buildLocation(destination).publicHref === history.location.href) {
+      const { reopenedViewId } = history.location.state;
+      await navigate({ ...destination, state: reopenedViewId ? { reopenedViewId } : {} });
+      return;
+    }
+
+    // An allowing blocker can defer the commit. Only the reopen's first history hop extends the queue.
+    const unsubscribe = history.subscribe(({ location, action }) => {
+      if (location === request.location) return;
+      unsubscribe();
+      if (action.type === "PUSH" && location.state.reopenedViewId === restore.id) {
+        request.location = location;
+      }
+    });
+    try {
+      await navigate({ ...destination, state: { reopenedViewId: restore.id } });
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
+    unsubscribe();
   });
 
   const enqueueReopen = useEffectEvent(() => {
+    const location = router.history.location;
+    const previous = reopenNavigation.current;
+    const request = previous?.location === location ? previous : { location };
+    reopenNavigation.current = request;
     pending.current = pending.current
-      .then(() => reopenNext())
+      .then(() => reopenNext(request))
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",

@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestAction, PullRequestSummary } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react";
-import { createContext, use, type ReactNode } from "react";
+import { createContext, use, useState, type ReactNode } from "react";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 
 import { m } from "~/i18n/messages";
@@ -32,15 +32,7 @@ export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntr
   readonly reply?: PullRequestSummary | undefined;
 }
 
-export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
-  entry,
-  hostActions,
-  terminology,
-  onActed,
-  closing = false,
-  sweeping = false,
-  onCloseSweepStart,
-}: {
+interface PullRequestSpeedActionsProps<Entry> {
   entry: Entry;
   hostActions: ReadonlySet<PullRequestAction>;
   terminology: ChangeRequestTerminology;
@@ -48,7 +40,31 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   closing?: boolean;
   sweeping?: boolean;
   onCloseSweepStart?: (entry: Entry, event: PointerEvent) => void;
-}) {
+}
+
+/**
+ * Hidden until Shift is held or a close runs, so a row mounts without them. Once shown they stay
+ * mounted: an action started in speed mode keeps its pending state after Shift is let go.
+ */
+export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>(
+  props: PullRequestSpeedActionsProps<Entry>,
+) {
+  const speedMode = use(PullRequestSpeedModeContext);
+  const wanted = speedMode || props.closing === true || props.sweeping === true;
+  const [shown, setShown] = useState(wanted);
+  if (wanted && !shown) setShown(true);
+  return shown || wanted ? <PullRequestSpeedActionButtons {...props} /> : null;
+}
+
+function PullRequestSpeedActionButtons<Entry extends PullRequestSpeedActionEntry>({
+  entry,
+  hostActions,
+  terminology,
+  onActed,
+  closing = false,
+  sweeping = false,
+  onCloseSweepStart,
+}: PullRequestSpeedActionsProps<Entry>) {
   const gt = useGT();
   const resolve = useMessages();
   const canWrite = useAtomValue(

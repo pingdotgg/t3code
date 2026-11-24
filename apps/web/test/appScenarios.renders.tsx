@@ -440,7 +440,7 @@ it("app-switch-settings-section", async () => {
 // Keep git scenarios last: the status they leave cached adds renders to later scenarios.
 it("app-git-file-counts-with-side-chat", async () => {
   using _clock = frozenClock();
-  useRightPanelStore.getState().openSideChat(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
+  useRightPanelStore.getState().openThread(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
   await using _app = (await openThread(WARM)).screen;
   await expect.element(lastAnswer(SIDE_CHAT.id)).toBeVisible();
   const gitStatus = vcsEnvironment.status({
@@ -482,7 +482,7 @@ it("app-git-file-counts-with-side-chat", async () => {
 // ChatView re-renders when the tree goes dirty or clean; the composer and side chat timeline should not.
 it("app-git-status-updates-with-side-chat", async () => {
   using _clock = frozenClock();
-  useRightPanelStore.getState().openSideChat(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
+  useRightPanelStore.getState().openThread(scopeThreadRef(ENVIRONMENT_ID, WARM), SIDE_CHAT.id);
   await using _app = (await openThread(WARM)).screen;
   await expect.element(lastAnswer(SIDE_CHAT.id)).toBeVisible();
   const local = (insertions: number) => ({

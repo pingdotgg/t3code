@@ -175,6 +175,7 @@ const decodeKeybindingRuleExit = Schema.decodeUnknownExit(KeybindingRule);
 const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybindingFromConfig);
 const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
 const encodeRawKeybindingsEntriesPrettyJson = Schema.encodeEffect(RawKeybindingsEntriesPrettyJson);
+const isSameResolvedKeybindingRule = Schema.toEquivalence(ResolvedKeybindingRule);
 
 export interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -682,15 +683,34 @@ const make = Effect.gen(function* () {
           const customConfig = yield* loadWritableCustomKeybindingsConfig();
           const rule = keybindingRuleFromInput(input);
           const replaceTarget = replaceTargetFromUpsertInput(input);
-          const siblingDefaults =
-            rule.when === "false" &&
-            replaceTarget &&
-            !customConfig.some(({ rule: entry }) => entry?.command === rule.command)
-              ? DEFAULT_KEYBINDINGS.filter(
-                  (entry) =>
-                    entry.command === rule.command && !isSameKeybindingRule(entry, replaceTarget),
-                ).map((entry) => ({ value: entry, rule: entry }))
-              : [];
+          // A saved rule overrides every inherited default for its command.
+          let siblingDefaults: ReadonlyArray<KeybindingRule> = [];
+          if (
+            (!replaceTarget ||
+              (replaceTarget.command === rule.command &&
+                DEFAULT_KEYBINDINGS.some((entry) => isSameKeybindingRule(entry, replaceTarget)))) &&
+            !customConfig.some(({ rule: entry }) => entry?.command === rule.command) &&
+            decodeResolvedKeybindingFromConfigExit(rule)._tag === "Success"
+          ) {
+            const customRules = customConfig.flatMap(({ rule: entry }) => (entry ? [entry] : []));
+            const visibleBindings = mergeWithDefaultKeybindings(
+              compileResolvedKeybindingsConfig(customRules),
+            ).filter((entry) => entry.command === rule.command);
+            siblingDefaults = DEFAULT_KEYBINDINGS.filter((entry) => {
+              if (
+                entry.command !== rule.command ||
+                (replaceTarget && isSameKeybindingRule(entry, replaceTarget)) ||
+                isSameKeybindingRule(entry, rule)
+              ) {
+                return false;
+              }
+              const resolved = compileResolvedKeybindingRule(entry);
+              return (
+                resolved &&
+                visibleBindings.some((binding) => isSameResolvedKeybindingRule(binding, resolved))
+              );
+            });
+          }
           const retainedConfig = customConfig.filter(({ rule: entry }) => {
             if (!entry) return true;
             return (
@@ -698,11 +718,20 @@ const make = Effect.gen(function* () {
               !isSameKeybindingRule(entry, rule)
             );
           });
-          const availableSlots = MAX_KEYBINDINGS_COUNT - siblingDefaults.length - 1;
+          const availableSlots = MAX_KEYBINDINGS_COUNT - 1;
+          if (
+            siblingDefaults.length > 0 &&
+            retainedConfig.length + siblingDefaults.length > availableSlots
+          ) {
+            return yield* new KeybindingsConfigError({
+              configPath: keybindingsConfigPath,
+              detail: "Not enough room to save this shortcut and its inherited shortcuts.",
+            });
+          }
           const nextConfig = [
             ...siblingDefaults,
-            ...retainedConfig.slice(-availableSlots),
-            { value: rule, rule },
+            ...retainedConfig.slice(-availableSlots).map(({ value }) => value),
+            rule,
           ];
           if (retainedConfig.length > availableSlots) {
             yield* Effect.logWarning("truncating keybindings config to max entries", {
@@ -710,7 +739,7 @@ const make = Effect.gen(function* () {
               maxEntries: MAX_KEYBINDINGS_COUNT,
             });
           }
-          yield* writeConfigAtomically(nextConfig.map(({ value }) => value));
+          yield* writeConfigAtomically(nextConfig);
           return yield* reloadAndEmit;
         }),
       ),

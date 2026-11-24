@@ -126,9 +126,11 @@ export function PullRequestSearchInput({
       <InputGroupAddon>
         {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
         value={draft ?? value}
         onFocus={() => setDraft(value)}
         onBlur={() => setDraft(null)}
@@ -140,9 +142,16 @@ export function PullRequestSearchInput({
           }
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-            onSubmit(event.currentTarget.value);
-          }
+          const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+          if (event.key === "Enter" && !composing) onSubmit(event.currentTarget.value);
+          if (event.key !== "Escape" || event.defaultPrevented) return;
+          if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+          if (!composing && !event.currentTarget.value) return;
+          // The pull requests page leaves on an Escape that reaches it.
+          event.stopPropagation();
+          if (composing) return;
+          setDraft("");
+          onChange("");
         }}
         placeholder={placeholder}
         aria-label={label}

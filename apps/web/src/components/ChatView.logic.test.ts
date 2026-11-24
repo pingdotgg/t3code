@@ -17,12 +17,13 @@ import {
   withMessageContext,
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
+  resolveProactiveTurnDiffAction,
 } from "./ChatView.logic";
 import {
   isThreadEnvironmentLocked,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
-  threadErrorIsServerRuntime,
+  resolveThreadErrorBanner,
 } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -33,6 +34,7 @@ import {
   terminalContextReference,
 } from "../lib/composerContextRecords";
 import {
+  CheckpointScopeId,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -1344,6 +1346,7 @@ describe("planComposerTurn", () => {
     sendEnvMode: "worktree" as const,
     worktreePath: null,
     activeThreadBranch: "main",
+    projectIsGitRepo: true,
     isScratchProject: false,
     resumeCompactionTokens: null,
     keepFullHistory: false,
@@ -1365,6 +1368,10 @@ describe("planComposerTurn", () => {
       missingWorktreeBaseBranch: true,
       baseBranchForWorktree: null,
     });
+    // A plain folder that tracks repositories has no branch of its own to start from.
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, projectIsGitRepo: false }),
+    ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
     expect(
       planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
     ).toMatchObject({
@@ -1446,6 +1453,54 @@ describe("boundAttachmentIds", () => {
     expect(
       boundAttachmentIds([{ id: "upload-1" }, {}], [{ id: "local-1" }, { id: "local-2" }]),
     ).toEqual(["upload-1", "local-2"]);
+  });
+});
+
+describe("resolveProactiveTurnDiffAction", () => {
+  const file = { path: "src/a.ts", kind: "modified", additions: 60, deletions: 0 };
+  const repository = (files: ReadonlyArray<typeof file>) => ({
+    scopeId: CheckpointScopeId.make("scope-api"),
+    name: "api",
+    repositoryPath: "/work/api",
+    cwd: "/work/api",
+    files,
+    baselineMissing: files.length === 0,
+  });
+
+  it("opens for repository changes in a folder that is not a Git repository", () => {
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [], repositories: [repository([file])] },
+        isGitRepo: false,
+      }),
+    ).toBe("open");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [], repositories: [repository([])] },
+        isGitRepo: false,
+      }),
+    ).toBe("ignore");
+  });
+
+  it("keeps waiting on a missing checkpoint and ignores a folder without Git", () => {
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "missing", files: [] },
+        isGitRepo: true,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "ready", files: [file] },
+        isGitRepo: false,
+      }),
+    ).toBe("ignore");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: { status: "ready", files: [file] },
+        isGitRepo: true,
+      }),
+    ).toBe("open");
   });
 });
 
@@ -1664,38 +1719,58 @@ describe("prepareRevertedMessageAttachments", () => {
   });
 });
 
-describe("threadErrorIsServerRuntime", () => {
-  it("is true for a server thread's runtime error, and for a local copy of that same error", () => {
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: null,
-        runtimeError: "E",
-      }),
-    ).toBe(true);
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: "E",
-        runtimeError: "E",
-      }),
-    ).toBe(true);
-  });
+describe("resolveThreadErrorBanner", () => {
+  const base = {
+    isServerThread: true,
+    localServerError: null,
+    localDraftError: null,
+    runtimeError: null,
+    runtimeErrorSource: null,
+  };
 
-  it("is false for a local error that differs from the runtime error, and for draft threads", () => {
-    expect(
-      threadErrorIsServerRuntime({
-        isServerThread: true,
-        localServerError: "E2",
-        runtimeError: "E",
-      }),
-    ).toBe(false);
-    expect(
-      threadErrorIsServerRuntime({
+  it.each([
+    {
+      name: "server runtime error",
+      input: { ...base, runtimeError: "Turn failed", runtimeErrorSource: "item-1" },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local copy of the runtime error",
+      input: {
+        ...base,
+        localServerError: "Turn failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: {
+        threadError: "Turn failed",
+        sessionDismissal: { error: "Turn failed", source: "item-1" },
+      },
+    },
+    {
+      name: "local server error over a different runtime error",
+      input: {
+        ...base,
+        localServerError: "Upload failed",
+        runtimeError: "Turn failed",
+        runtimeErrorSource: "item-1",
+      },
+      expected: { threadError: "Upload failed", sessionDismissal: null },
+    },
+    {
+      name: "draft error",
+      input: {
+        ...base,
         isServerThread: false,
-        localServerError: null,
-        runtimeError: "E",
-      }),
-    ).toBe(false);
+        localDraftError: "Worktree failed",
+        runtimeError: "Turn failed",
+      },
+      expected: { threadError: "Worktree failed", sessionDismissal: null },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(resolveThreadErrorBanner(input)).toEqual(expected);
   });
 });

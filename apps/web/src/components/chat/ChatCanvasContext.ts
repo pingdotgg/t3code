@@ -31,3 +31,6 @@ export const ChatCanvasTimelineContext = createContext<
 >(null);
 
 export const useRegisterChatCanvasTimeline = () => useContext(ChatCanvasTimelineContext);
+
+/** How far a floating preview over the chat's lower half covers it from the bottom, else 0. */
+export const ChatCanvasBottomCoverContext = createContext(0);

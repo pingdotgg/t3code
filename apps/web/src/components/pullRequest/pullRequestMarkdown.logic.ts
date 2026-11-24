@@ -1,132 +1,67 @@
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-references";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
-  changeRequestReferenceAutolinker,
-  expandGithubEmojiAliases,
-  resolveChangeRequestMediaUrl,
-} from "@t3tools/client-runtime/pull-request-markdown";
-import {
-  sourceControlClients,
-  type ReferenceAutolink,
-} from "@t3tools/client-runtime/source-control-clients";
-import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  chatMarkdownImageSources,
-} from "@t3tools/shared/markdownPipeline";
+  chatMarkdownImageSource,
+  type ChatMarkdownImageProperties,
+} from "@t3tools/shared/markdownHast";
 import type { Nodes } from "hast";
-import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
-import { unified, type PluggableList } from "unified";
-import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 
-export {
-  splitPullRequestBody,
+import {
+  splitPullRequestBody as splitBody,
   type PullRequestBodySegment,
 } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  markdownReferenceDefinitions,
+  wordsHast,
+  type MarkdownExtensions,
+} from "~/markdown/wordsHast";
 
-type MarkdownNode = {
-  type: string;
-  value?: string;
-  children?: MarkdownNode[];
-  url?: string;
-  data?: unknown;
-};
+export type { PullRequestBodySegment };
 
-const AUTOLINK_IGNORED_TYPES = new Set(["link", "linkReference"]);
-
-export function remarkPullRequestAutolinks(options: {
-  readonly autolinks: (text: string) => ReadonlyArray<ReferenceAutolink>;
-}) {
-  const visit = (node: MarkdownNode): void => {
-    const children = node.children;
-    if (children === undefined) return;
-    for (let index = 0; index < children.length; index += 1) {
-      const child = children[index]!;
-      if (AUTOLINK_IGNORED_TYPES.has(child.type)) continue;
-      if (child.type !== "text" || child.value === undefined) {
-        visit(child);
-        continue;
-      }
-      const value = child.value;
-      const links = options.autolinks(value);
-      if (links.length === 0) continue;
-      const replacements: MarkdownNode[] = [];
-      let start = 0;
-      for (const link of links) {
-        if (start < link.index) {
-          replacements.push({ type: "text", value: value.slice(start, link.index) });
-        }
-        replacements.push({
-          type: "link",
-          url: link.url,
-          data: { hProperties: { dataPullRequestAutolink: link.kind } },
-          children: [{ type: "text", value: link.label }],
-        });
-        start = link.index + link.text.length;
-      }
-      if (start < value.length) replacements.push({ type: "text", value: value.slice(start) });
-      children.splice(index, 1, ...replacements);
-      index += replacements.length - 1;
-    }
-  };
-  return (tree: MarkdownNode) => visit(tree);
+export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+  return splitBody(body, markdownReferenceDefinitions);
 }
 
-function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: string }) {
-  const visit = (node: MarkdownNode): void => {
-    if ((node.type === "image" || node.type === "definition") && node.url !== undefined) {
-      node.url = resolveChangeRequestMediaUrl(node.url, options.changeRequestUrl);
-    }
-    node.children?.forEach(visit);
-  };
-  return (tree: MarkdownNode) => visit(tree);
-}
-
-/** GitHub renders `:alias:` emoji in prose; code keeps them, being `inlineCode`/`code`, not `text`. */
-function remarkGithubEmoji() {
-  const visit = (node: MarkdownNode): void => {
-    if (node.type === "text" && node.value !== undefined)
-      node.value = expandGithubEmojiAliases(node.value);
-    node.children?.forEach(visit);
-  };
-  return (tree: MarkdownNode) => visit(tree);
-}
-
-const NO_PLUGINS: PluggableList = [];
-const markdownPlugins = new Map<string, PluggableList>();
+const NO_EXTENSIONS: MarkdownExtensions = {};
+const markdownExtensions = new Map<string, MarkdownExtensions>();
 
 /**
- * One plugin list per repository, so every comment of a pull request shares one markdown
+ * One extension object per repository, so every comment of a pull request shares one markdown
  * renderer and its parse cache instead of parsing again on each render.
  */
-export function pullRequestMarkdownPlugins(
+export function pullRequestMarkdownExtensions(
   changeRequest: { readonly provider: string; readonly url: string } | null,
-): PluggableList {
-  if (changeRequest === null) return NO_PLUGINS;
+): MarkdownExtensions {
+  if (changeRequest === null) return NO_EXTENSIONS;
   const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
     .repositoryUrl;
-  if (repositoryUrl === undefined) return NO_PLUGINS;
+  if (repositoryUrl === undefined) return NO_EXTENSIONS;
   const key = `${changeRequest.provider}\u0000${repositoryUrl}`;
-  let plugins = markdownPlugins.get(key);
-  if (plugins === undefined) {
-    const autolinks = changeRequestReferenceAutolinker(changeRequest);
-    plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
-    if (changeRequest.provider === "github") plugins.push(remarkGithubEmoji);
-    if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
-    markdownPlugins.set(key, plugins);
+  let extensions = markdownExtensions.get(key);
+  if (extensions === undefined) {
+    extensions = {
+      changeRequest: {
+        repositoryUrl,
+        autolinks: changeRequestReferenceAutolinker(changeRequest),
+      },
+      githubEmoji: changeRequest.provider === "github",
+    };
+    markdownExtensions.set(key, extensions);
   }
-  return plugins;
+  return extensions;
 }
 
-const commentPreviewProcessor = (plugins: PluggableList) =>
-  unified()
-    .use(remarkParse)
-    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-    .use(plugins)
-    .use(remarkRehype, { allowDangerousHtml: true })
-    .use(CHAT_MARKDOWN_REHYPE_PLUGINS)
-    .freeze();
-const commentPreview = commentPreviewProcessor(NO_PLUGINS);
-const githubCommentPreview = commentPreviewProcessor([remarkGithubEmoji]);
+const PREVIEW_MARKDOWN = {
+  math: false,
+  breaks: false,
+  escapeHtml: false,
+  insights: false,
+  extensions: NO_EXTENSIONS,
+};
+const GITHUB_PREVIEW_MARKDOWN = {
+  ...PREVIEW_MARKDOWN,
+  extensions: { githubEmoji: true },
+};
 
 const PREVIEW_BLOCK_TAGS = new Set([
   "blockquote",
@@ -166,10 +101,36 @@ function commentPreviewText(node: Nodes): string {
 }
 
 export function pullRequestCommentPreview(body: string, provider: string): string {
-  const processor = provider === "github" ? githubCommentPreview : commentPreview;
-  const tree = processor.runSync(processor.parse(body), body);
-  return commentPreviewText(tree).replace(/\s+/gu, " ").trim();
+  const options = provider === "github" ? GITHUB_PREVIEW_MARKDOWN : PREVIEW_MARKDOWN;
+  return commentPreviewText(wordsHast(body, options)).replace(/\s+/gu, " ").trim();
 }
+
+/** Every image source in the markdown, with each theme variant. */
+function markdownImageSources(markdown: string): Array<string> {
+  const sources: Array<string> = [];
+  const visit = (node: Nodes) => {
+    if (node.type === "element" && node.tagName === "img") {
+      const properties = node.properties as ChatMarkdownImageProperties;
+      const fallback = chatMarkdownImageSource(properties);
+      if (fallback) sources.push(fallback.classifiedSrc);
+      for (const [theme, variant] of [
+        ["dark", properties.dataDarkSrc],
+        ["light", properties.dataLightSrc],
+      ] as const) {
+        if (typeof variant !== "string") continue;
+        const source = chatMarkdownImageSource(properties, theme);
+        if (source) sources.push(source.classifiedSrc);
+      }
+    }
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(wordsHast(markdown, PREVIEW_MARKDOWN));
+  return sources;
+}
+
+// Markdown shows an image only from `![` or a raw `<img>` (or `<image>`, which HTML reads as one),
+// so text without either skips the parse, which costs a whole chat markdown pass.
+const MAY_HOLD_IMAGE = /!\[|<im/iu;
 
 export function pullRequestAttachments(body: string) {
   const attachments: Array<{ url: string; media: "image" | "video"; caption: string }> = [];
@@ -189,8 +150,8 @@ export function pullRequestAttachments(body: string) {
         if (segment.media !== "unknown") add(segment.url, segment.media, "");
       } else if (segment.kind === "table") {
         for (const cell of segment.rows.flat()) collect(cell.segments);
-      } else {
-        for (const url of chatMarkdownImageSources(segment.text)) add(url, "image", "");
+      } else if (MAY_HOLD_IMAGE.test(segment.text)) {
+        for (const url of markdownImageSources(segment.text)) add(url, "image", "");
       }
     }
   };

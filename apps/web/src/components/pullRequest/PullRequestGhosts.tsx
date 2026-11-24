@@ -1,4 +1,4 @@
-import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
+import type { PullRequestListEntry, PullRequestSummary, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
   ChevronRightIcon,
@@ -14,7 +14,7 @@ import {
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
 
-import { readLocalApi } from "~/localApi";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { RelativeTime } from "~/components/RelativeTime";
 
@@ -109,6 +109,7 @@ export function PullRequestDetailGhost({
   number,
   onBack,
   onClose,
+  threadRef = null,
 }: {
   seed?: PullRequestListEntry | null;
   summary?: PullRequestSummary | null;
@@ -118,9 +119,11 @@ export function PullRequestDetailGhost({
   number?: number;
   onBack?: (() => void) | undefined;
   onClose?: (() => void) | undefined;
+  threadRef?: ScopedThreadRef | null | undefined;
 }) {
   const gt = useGT();
   const resolve = useMessages();
+  const openLink = useOpenLink(threadRef);
   const tabs = requestedTabs ?? resolveFilterOptions(DEFAULT_DETAIL_TABS, resolve);
   const seed = summary
     ? {
@@ -181,7 +184,10 @@ export function PullRequestDetailGhost({
             {seed ? (
               <>
                 <InlineButton
-                  onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
+                  onClick={(event) => void openLink(seed.url, { event }).catch(console.error)}
+                  onAuxClick={(event) => {
+                    if (event.button === 1) void openLink(seed.url, { event }).catch(console.error);
+                  }}
                   aria-label={gt(
                     "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
                     {
@@ -319,7 +325,11 @@ export function PullRequestDetailGhost({
         </nav>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div
+        tabIndex={-1}
+        data-workspace-focus-default
+        className="min-h-0 flex-1 overflow-hidden outline-none"
+      >
         {/* The readiness card's geometry: checks, reviews and conflicts rows over the merge. */}
         <section className="px-4 pt-3 pb-4">
           <div className="overflow-hidden rounded-card border border-border surface-card">

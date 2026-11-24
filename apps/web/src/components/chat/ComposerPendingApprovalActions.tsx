@@ -4,7 +4,7 @@ import {
   type RuntimeRequestId,
 } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react";
-import type { ReactElement } from "react";
+import type { KeyboardEvent, ReactElement } from "react";
 import { ShieldIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -109,8 +109,34 @@ export function ComposerPendingApprovalActions({
       node
     );
 
+  const onActionsKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (
+      (event.key !== "ArrowLeft" && event.key !== "ArrowRight") ||
+      event.defaultPrevented ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const buttons = [
+      ...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+    ];
+    const index = buttons.indexOf(target);
+    if (index < 0 || buttons.length < 2) return;
+    event.preventDefault();
+    const step = event.key === "ArrowRight" ? 1 : -1;
+    buttons[(index + step + buttons.length) % buttons.length]?.focus();
+  };
+
   return (
-    <div className="flex min-w-0 grow basis-72 flex-wrap items-center justify-end gap-2">
+    <div
+      className="flex min-w-0 grow basis-72 flex-wrap items-center justify-end gap-2"
+      onKeyDown={onActionsKeyDown}
+    >
       {sessionOption ? (
         <Button
           size="sm"

@@ -30,6 +30,7 @@ import { Button, InlineButton } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+import { StatusDot } from "../ui/status-dot";
 import { toastManager } from "../ui/toast";
 import { incompleteListings } from "../device/DeviceSetup";
 import { DeviceHostEditor } from "./DeviceHostEditor";
@@ -734,8 +735,10 @@ function PlatformIcon(props: {
         {partial ? (
           <span
             aria-hidden
-            className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-warning ring-2 ring-background"
-          />
+            className="absolute top-0.5 right-0.5 flex rounded-full ring-2 ring-background"
+          >
+            <StatusDot tone="warning" />
+          </span>
         ) : null}
       </PopoverTrigger>
       <PopoverPopup side="top" align="end" width="sm">

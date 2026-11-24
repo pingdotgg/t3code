@@ -113,6 +113,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         useUiStateStore.getState().projectOrder,
         lastUsedProjectKey,
         appAtomRegistry.get(defaultProjectFallbackReadyAtom(lastUsedProjectKey)),
+        selectProjectGroupingSettings(getClientSettings()),
       ),
       handleNewThread,
     };
@@ -161,6 +162,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     readRouteTarget() !== null ||
     router.state.location.pathname === "/pull-requests" ||
     router.state.location.pathname === "/issues" ||
+    router.state.location.pathname === "/workflows" ||
     (router.state.location.pathname === "/" && readProjects().length > 0);
   const layoutCommand =
     (action: () => void, allowRepeat = false): CommandHandler =>
@@ -247,7 +249,13 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "preview.zoomIn": zoomCommand("zoom-in"),
       "preview.zoomOut": zoomCommand("zoom-out"),
       "preview.resetZoom": zoomCommand("reset-zoom"),
-      "preview.find": previewCommand("find"),
+      // Unclaimed, the browser's own find runs when no thread handles panel find.
+      "preview.find": (event) => {
+        const environmentId = readRouteEnvironmentId();
+        if (!environmentId || !canOperatePreview(environmentId)) return false;
+        claim(event);
+        dispatchPreviewAction("find");
+      },
     },
     {
       when: () =>

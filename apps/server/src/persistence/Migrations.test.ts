@@ -42,33 +42,11 @@ describe("runMigrations", () => {
 
         yield* runMigrations();
 
-        assert.deepStrictEqual((yield* history).slice(-25), [
-          [78, "DropOrchestrationEventCorrelationIndex"],
-          [79, "DelegatedRecoveryIndexes"],
-          [80, "ScheduledTaskThreadMode"],
-          [81, "ProjectionMessageSearchText"],
-          [82, "TurnItemConversationIndex"],
-          [83, "CommandReadIndexes"],
-          [84, "LastExecutedRunIndex"],
-          [85, "TurnItemCounts"],
-          [86, "QueuedTurnInputIndex"],
-          [87, "ProjectionProjectsCustomTitle"],
-          [88, "TurnItemTypeStatusIndex"],
-          [89, "ShellThreadReadIndexes"],
-          [90, "AuthConnectDevices"],
-          [91, "AuthConnectDeniedRequests"],
-          [92, "QueuedTurnInputIndexJsonValid"],
-          [93, "ProviderTurnAttemptIndex"],
-          [94, "TurnItemMessageOrdinalIndex"],
-          [95, "TurnItemInlineWorkOutput"],
-          [96, "RepairStaleTitleRegeneration"],
-          [97, "IssueTrackerBindings"],
-          [98, "ActiveShellIndexIndexes"],
-          [99, "BackgroundRecoveryIndexes"],
-          [100, "TurnStartReadIndexes"],
-          [101, "DelegatedTaskReadIndexes"],
-          [102, "ThreadItemCounts"],
-        ]);
+        // Every migration from the oldest recorded Bots id on runs, including upstream's at that id.
+        assert.deepStrictEqual(
+          (yield* history).filter(([migrationId]) => migrationId >= 78),
+          migrationManifest.filter(([migrationId]) => migrationId >= 78),
+        );
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

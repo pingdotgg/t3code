@@ -11,7 +11,7 @@ import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useGT } from "gt-react";
 import { FolderIcon } from "lucide-react";
 
-import { contextMenuSourceOf } from "../../contextMenuSource";
+import { contextMenuSourceOf, openContextMenuFromKeyboard } from "../../contextMenuSource";
 import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
@@ -21,6 +21,7 @@ import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
 import { ContextChip } from "../ContextChip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { useSharedTooltip, withSharedTooltip } from "../ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { FileTagChipContent } from "./FileTagChip";
 import {
@@ -338,85 +339,88 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   const layoutDragThreadRef =
     threadRef && panelPath && !useBrowserPrimaryAction && !nativeDrag.draggable ? threadRef : null;
 
+  const tooltipContent = (
+    <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
+  );
+  const sharedTooltip = useSharedTooltip({
+    render: () => tooltipContent,
+    contentKey: `${iconPath}\u0000${targetPath}`,
+    variant: "code",
+  });
+  const chip = hasPrimaryAction ? (
+    <ContextChip
+      {...nativeDrag}
+      kind={chipKind}
+      dir="ltr"
+      render={<a href={href} {...(layoutDragThreadRef ? { draggable: false } : {})} />}
+      className={MARKDOWN_FILE_LINK_CLASS_NAME}
+      data-markdown-copy={copyMarkdown}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
+          handleOpenInEditor();
+          return;
+        }
+        if (useBrowserPrimaryAction) {
+          handleOpenInBrowser();
+          return;
+        }
+        handleOpenInFilePreview();
+      }}
+      onContextMenu={handleContextMenu}
+      onKeyDown={openContextMenuFromKeyboard}
+      onPointerDown={(event) => {
+        if (!layoutDragThreadRef || !panelPath) return;
+        beginLayoutContentDrag(event, {
+          kind: "surface",
+          threadRef: layoutDragThreadRef,
+          surface: fileSurface(panelPath, line ?? null, 0),
+          resolve: async () => fileSurface(await resolvePanelPath(panelPath), line ?? null, 0),
+        });
+      }}
+    >
+      <FileTagChipContent
+        icon={
+          isAppBundle ? <AppBundleIcon environmentId={environmentId} path={iconPath} /> : undefined
+        }
+        path={iconPath}
+        environmentId={environmentId}
+        label={label}
+        theme={theme}
+      />
+    </ContextChip>
+  ) : (
+    <ContextChip
+      {...nativeDrag}
+      kind={chipKind}
+      dir="ltr"
+      render={<button type="button" />}
+      aria-label={gt("File options for {label}", { label })}
+      aria-haspopup="menu"
+      className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
+      data-markdown-copy={copyMarkdown}
+      onClick={handleContextMenu}
+      onContextMenu={handleContextMenu}
+      onKeyDown={openContextMenuFromKeyboard}
+    >
+      <FileTagChipContent
+        icon={
+          isAppBundle ? <AppBundleIcon environmentId={environmentId} path={iconPath} /> : undefined
+        }
+        path={iconPath}
+        environmentId={environmentId}
+        label={label}
+        theme={theme}
+      />
+    </ContextChip>
+  );
+  if (sharedTooltip) return withSharedTooltip(chip, sharedTooltip);
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          hasPrimaryAction ? (
-            <ContextChip
-              {...nativeDrag}
-              kind={chipKind}
-              dir="ltr"
-              render={<a href={href} draggable={layoutDragThreadRef ? false : undefined} />}
-              className={MARKDOWN_FILE_LINK_CLASS_NAME}
-              data-markdown-copy={copyMarkdown}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
-                  handleOpenInEditor();
-                  return;
-                }
-                if (useBrowserPrimaryAction) {
-                  handleOpenInBrowser();
-                  return;
-                }
-                handleOpenInFilePreview();
-              }}
-              onContextMenu={handleContextMenu}
-              onPointerDown={(event) => {
-                if (!layoutDragThreadRef || !panelPath) return;
-                beginLayoutContentDrag(event, {
-                  kind: "surface",
-                  threadRef: layoutDragThreadRef,
-                  surface: fileSurface(panelPath, line ?? null, 0),
-                  resolve: async () =>
-                    fileSurface(await resolvePanelPath(panelPath), line ?? null, 0),
-                });
-              }}
-            >
-              <FileTagChipContent
-                icon={
-                  isAppBundle ? (
-                    <AppBundleIcon environmentId={environmentId} path={iconPath} />
-                  ) : undefined
-                }
-                path={iconPath}
-                environmentId={environmentId}
-                label={label}
-                theme={theme}
-              />
-            </ContextChip>
-          ) : (
-            <ContextChip
-              {...nativeDrag}
-              kind={chipKind}
-              dir="ltr"
-              render={<button type="button" />}
-              aria-label={gt("File options for {label}", { label })}
-              aria-haspopup="menu"
-              className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
-              data-markdown-copy={copyMarkdown}
-              onClick={handleContextMenu}
-              onContextMenu={handleContextMenu}
-            >
-              <FileTagChipContent
-                icon={
-                  isAppBundle ? (
-                    <AppBundleIcon environmentId={environmentId} path={iconPath} />
-                  ) : undefined
-                }
-                path={iconPath}
-                environmentId={environmentId}
-                label={label}
-                theme={theme}
-              />
-            </ContextChip>
-          )
-        }
-      />
-      <TooltipPopup side="top" variant="code">
-        <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
+      <TooltipTrigger render={chip} />
+      <TooltipPopup side="top" variant="code" className="pointer-events-auto">
+        {tooltipContent}
       </TooltipPopup>
     </Tooltip>
   );

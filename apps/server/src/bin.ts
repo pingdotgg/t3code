@@ -58,6 +58,10 @@ if (
   const launcherOptions = launcher?.parseServiceLauncherArgs(process.argv.slice(3));
   if (launcher !== undefined && launcherOptions !== undefined) {
     await launcher.runServiceLauncherCli(launcherOptions);
+  } else if (process.argv[2] === "__process-launcher") {
+    // Single executables host the launcher here; other builds start process-launcher.mjs directly.
+    const { runProcessLauncher } = await import("./process/processLauncherWorker.ts");
+    runProcessLauncher();
   } else {
     const { runCliCommand } = await loadCliMain();
     await runCliCommand();

@@ -19,6 +19,8 @@ import {
   findLayoutTabByContent,
   ghostLoneLayoutChats,
   isLayoutTabInFocusedGroup,
+  layoutTabContentKey,
+  selectFocusedTab,
   keepLayoutTab,
   focusAdjacentLayoutTab,
   focusLayoutColumnEdge,
@@ -200,13 +202,31 @@ const layoutDeferredStorage = createDeferredStorage<StorageValue<LayoutPersisted
   typeof window !== "undefined" ? window.localStorage : undefined,
   (value) => JSON.stringify(value),
 );
+// The persist middleware saves after every set, also the session-only ones (on-screen keys, hints).
+let lastSaved: StorageValue<LayoutPersistedState> | null = null;
 const layoutPersistStorage: PersistStorage<LayoutPersistedState> = {
   getItem: (name) => {
     const raw = layoutDeferredStorage.getItem(name);
     return typeof raw === "string" ? (JSON.parse(raw) as StorageValue<LayoutPersistedState>) : null;
   },
-  setItem: (name, value) => layoutDeferredStorage.setItem(name, value),
-  removeItem: (name) => layoutDeferredStorage.removeItem(name),
+  setItem: (name, value) => {
+    const saved = lastSaved;
+    // Every persisted field, so one added to partialize later is compared too.
+    const fields = Object.keys(value.state) as (keyof LayoutPersistedState)[];
+    if (
+      saved !== null &&
+      saved.version === value.version &&
+      fields.every((field) => saved.state[field] === value.state[field])
+    ) {
+      return;
+    }
+    lastSaved = value;
+    layoutDeferredStorage.setItem(name, value);
+  },
+  removeItem: (name) => {
+    lastSaved = null;
+    layoutDeferredStorage.removeItem(name);
+  },
 };
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => layoutDeferredStorage.flush());
@@ -257,6 +277,8 @@ interface LayoutStoreState {
    * Session state: a restart shows the whole layout again.
    */
   maximizedTabId: string | null;
+  /** Content keys retain Fill window across tab swaps, including replaced ghost tabs. */
+  filledContentKeys: ReadonlySet<string>;
   toggleMaximizedTab: (tabId: string) => void;
   /**
    * The share a thread's surfaces reopen at beside (`panel`) or below
@@ -370,11 +392,6 @@ interface LayoutStoreState {
 export const useLayoutStore = create<LayoutStoreState>()(
   persist(
     (set) => {
-      // Focus that leaves a maximized pane's group brings the other panes back.
-      const keepMaximized = (layout: LayoutState, maximizedTabId: string | null) =>
-        maximizedTabId !== null && isLayoutTabInFocusedGroup(layout, maximizedTabId)
-          ? maximizedTabId
-          : null;
       // Columns that open, close, move or resize are arranged at the window's
       // width now; a resize drag is arranged at the width it measures in.
       const apply = (update: (layout: LayoutState) => LayoutState, keepArrangement = false) => {
@@ -386,7 +403,11 @@ export const useLayoutStore = create<LayoutStoreState>()(
           const updated = update(intended);
           if (updated === state.layout) return state;
           const layout = keepArrangement ? updated : arrangeLayoutChange(state.layout, updated);
-          const maximizedTabId = keepMaximized(layout, state.maximizedTabId);
+          const focused = selectFocusedTab(layout);
+          const maximizedTabId =
+            focused && state.filledContentKeys.has(layoutTabContentKey(focused.content))
+              ? focused.id
+              : null;
           return maximizedTabId === state.maximizedTabId ? { layout } : { layout, maximizedTabId };
         });
       };
@@ -485,12 +506,16 @@ export const useLayoutStore = create<LayoutStoreState>()(
           }),
         newTabRequest: null,
         maximizedTabId: null,
+        filledContentKeys: new Set(),
         toggleMaximizedTab: (tabId) =>
           set((state) => {
-            if (state.maximizedTabId === tabId) return { maximizedTabId: null };
-            return isLayoutTabInFocusedGroup(state.layout, tabId)
-              ? { maximizedTabId: tabId }
-              : state;
+            const focused = selectFocusedTab(state.layout);
+            if (!focused || !isLayoutTabInFocusedGroup(state.layout, tabId)) return state;
+            const key = layoutTabContentKey(focused.content);
+            const filledContentKeys = new Set(state.filledContentKeys);
+            if (filledContentKeys.has(key)) filledContentKeys.delete(key);
+            else filledContentKeys.add(key);
+            return { filledContentKeys, maximizedTabId: filledContentKeys.has(key) ? tabId : null };
           }),
         companionShares: {},
         forgetCompanionShares: () =>
@@ -555,7 +580,8 @@ export const useLayoutStore = create<LayoutStoreState>()(
         requestCenter: () => set((state) => ({ centerRequest: state.centerRequest + 1 })),
         commitDerived: (from, to, derive) =>
           apply((layout) => (layout === from ? to : derive(layout))),
-        reset: () => set({ layout: createLayoutState() }),
+        reset: () =>
+          set({ layout: createLayoutState(), maximizedTabId: null, filledContentKeys: new Set() }),
       };
     },
     {

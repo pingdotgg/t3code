@@ -26,7 +26,6 @@ export function WorkItemListColumn({
   filtersMenu,
   savedViewsMenu,
   rightPanelOpen,
-
   maximizedAway,
   split,
   listBody,
@@ -46,7 +45,6 @@ export function WorkItemListColumn({
   filtersMenu: ReactNode;
   savedViewsMenu: ReactNode;
   rightPanelOpen: boolean;
-
   maximizedAway: boolean;
   /** Whether the list sits beside an open review as its own pane. */
   split: boolean;

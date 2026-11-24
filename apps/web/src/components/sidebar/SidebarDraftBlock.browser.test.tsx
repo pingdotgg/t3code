@@ -6,7 +6,33 @@ import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { SidebarDraftBlock } from "./SidebarDraftBlock";
+import { SidebarDraftBlock, useSidebarDrafts } from "./SidebarDraftBlock";
+
+const NO_TERMINAL_LABELS: ReadonlyMap<string, string> = new Map();
+
+function DraftBlock(props: {
+  routeDraftId?: string | null;
+  terminalLabels?: ReadonlyMap<string, string>;
+  environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
+}) {
+  const routeDraftId = props.routeDraftId ?? null;
+  const terminalLabels = props.terminalLabels ?? NO_TERMINAL_LABELS;
+  const { draftIds, routeDraftComposer } = useSidebarDrafts(null, routeDraftId, terminalLabels);
+  return (
+    <SidebarDraftBlock
+      draftIds={draftIds}
+      routeDraftComposer={routeDraftComposer}
+      terminalLabels={terminalLabels}
+      jumpLabelByDraftId={null}
+      projectByKey={new Map()}
+      projectDisplayNameByKey={new Map()}
+      {...(props.environmentLabelById ? { environmentLabelById: props.environmentLabelById } : {})}
+      routeDraftId={routeDraftId}
+      onNavigateToDraft={vi.fn()}
+      onDraftContextMenu={vi.fn()}
+    />
+  );
+}
 
 it("keeps draft previews current through edits, promotion and removal", async () => {
   const initial = useComposerDraftStore.getState();
@@ -22,19 +48,12 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   const projectRef = scopeProjectRef(environmentId, ProjectId.make("draft-preview-project"));
   const draftId = DraftId.make("draft-preview");
   const threadId = ThreadId.make("draft-preview-thread");
+  const environmentLabelById = new Map([[environmentId, "workstation"]]);
   const onRender = vi.fn();
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
-        <SidebarDraftBlock
-          projectByKey={new Map()}
-          projectDisplayNameByKey={new Map()}
-          scopedProjectKeys={null}
-          routeDraftId={null}
-          routeDraftRow={null}
-          onNavigateToDraft={vi.fn()}
-          onDraftContextMenu={vi.fn()}
-        />
+        <DraftBlock environmentLabelById={environmentLabelById} />
       </ul>
     </Profiler>,
   );
@@ -46,6 +65,8 @@ it("keeps draft previews current through edits, promotion and removal", async ()
     initial.setPrompt(draftId, "First draft preview");
   });
   await expect.element(row).toHaveAccessibleName("First draft preview, Unsent draft");
+  await expect.element(row.getByText("workstation")).toBeVisible();
+  await expect.element(row.getByText("Draft")).toBeVisible();
 
   const rendersBeforeOtherComposer = onRender.mock.calls.length;
   await act(() =>
@@ -82,4 +103,43 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await expect.element(row).toHaveAccessibleName("Next draft preview, Unsent draft");
   await act(() => initial.clearDraftThread(nextDraftId));
   await expect.element(row).not.toBeInTheDocument();
+});
+
+it("lists empty drafts by terminal label while their terminal exists, active or not", async () => {
+  const initial = useComposerDraftStore.getState();
+  using _store = {
+    [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
+  };
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {},
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+  const environmentId = EnvironmentId.make("draft-terminal-environment");
+  const terminalDraftId = DraftId.make("draft-with-terminal");
+  initial.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("terminal-project")),
+    terminalDraftId,
+    { threadId: ThreadId.make("terminal-thread") },
+  );
+  initial.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("idle-project")),
+    DraftId.make("draft-without-terminal"),
+    { threadId: ThreadId.make("idle-thread") },
+  );
+
+  const terminalLabels = new Map([[`${environmentId}:terminal-thread`, "dev"]]);
+  const block = (routeDraftId: string | null) => (
+    <ul>
+      <DraftBlock routeDraftId={routeDraftId} terminalLabels={terminalLabels} />
+    </ul>
+  );
+  await using screen = await render(block(terminalDraftId));
+  const rows = screen.getByTestId("sidebar-draft-row");
+  await expect.element(rows).toHaveAccessibleName("dev, Unsent draft");
+  expect(rows.elements()).toHaveLength(1);
+
+  await screen.rerender(block(null));
+  await expect.element(rows).toHaveAccessibleName("dev, Unsent draft");
+  expect(rows.elements()).toHaveLength(1);
 });

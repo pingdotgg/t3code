@@ -67,11 +67,10 @@ function threadInput(threadId: string, branch: string) {
 type ThreadInput = ReturnType<typeof threadInput>;
 
 it.each([
-  { remote: false, approval: false, link: "Open question" },
-  { remote: true, approval: false, link: "Open question" },
-  { remote: true, approval: false, link: "Child" },
-  { remote: true, approval: true, link: "Open approval" },
-])("opens the child in its environment ($remote, $link)", async ({ remote, approval, link }) => {
+  { remote: false, link: "Open question" },
+  { remote: true, link: "Open question" },
+  { remote: true, link: "Child" },
+])("opens the child in its environment ($remote, $link)", async ({ remote, link }) => {
   setup();
   const parent = threadInput("parent", "main");
   const childEnvironmentId = remote ? EnvironmentId.make("remote") : environmentId;
@@ -80,7 +79,7 @@ it.each([
       id: ThreadId.make("child"),
       environmentId: childEnvironmentId,
       title: "Child",
-      hasPendingApprovals: approval,
+      hasPendingApprovals: false,
       lineage: { sideChat: false },
     } as EnvironmentThreadShell,
   ];
@@ -99,6 +98,33 @@ it.each([
       `/${encodeURIComponent(childEnvironmentId)}/child`,
     ),
   );
+});
+
+it("keeps approval-only child threads out of the composer notice", async () => {
+  setup();
+  const parent = threadInput("parent", "main");
+  state.childThreadInputs = [
+    {
+      id: ThreadId.make("child"),
+      environmentId: EnvironmentId.make("remote"),
+      title: "Child",
+      hasPendingApprovals: true,
+      hasPendingUserInput: false,
+      lineage: { sideChat: false },
+    } as EnvironmentThreadShell,
+  ];
+  await using screen = await render(
+    <RestoreBranchHarness
+      thread={parent}
+      currentRouteThreadKeyRef={{ current: parent.routeThreadKey }}
+      refreshGitStatus={() => undefined}
+      focusComposer={() => undefined}
+    />,
+    { router: "/environment:test/parent" },
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Open approval", exact: true }))
+    .not.toBeInTheDocument();
 });
 
 function RestoreBranchHarness(props: {

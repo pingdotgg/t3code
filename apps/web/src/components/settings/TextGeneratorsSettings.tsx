@@ -662,13 +662,24 @@ function TextGeneratorModelList({
   return (
     <div className="grid gap-2">
       {models.length > 8 ? (
+        // Native search inputs clear on Escape even during IME composition.
         <Input
-          type="search"
+          type="text"
+          role="searchbox"
+          enterKeyHint="search"
           placeholder={gt("Search models")}
           aria-label={gt("Search models")}
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape" && (query || event.repeat)) {
+              event.preventDefault();
+              event.stopPropagation();
+              setQuery("");
+            }
+          }}
         />
       ) : null}
       <SettingsGroup className="max-h-80 overflow-y-auto">

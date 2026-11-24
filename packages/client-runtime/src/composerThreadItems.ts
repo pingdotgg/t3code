@@ -26,8 +26,8 @@ export interface ComposerThreadItem {
 }
 
 /**
- * Threads from this server and linked machines, excluding subagents and other threads'
- * side chats. A bare `@` stays a file picker; `#` lists recent threads.
+ * Threads from this server and linked machines, excluding subagents and other threads' side
+ * chats. A bare `@` stays a file picker; `#` lists recent threads.
  */
 export function matchComposerThreadItems<Candidate extends ComposerThreadCandidate>(
   input: {
@@ -109,13 +109,15 @@ export interface ComposerEnvironmentItem {
 }
 
 /**
- * The user's machines the `@` picker offers, so the agent can link or work there. The
- * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
- * file picker.
+ * The machines the `@` picker offers, so the agent can link or work there: the client's paired
+ * machines and those the composer's environment links to. The composer's own environment is
+ * left out. Like threads, they need a query: bare `@` stays a file picker.
  */
 export function matchComposerEnvironmentItems(
   input: {
     environments: ReadonlyArray<ComposerEnvironmentCandidate>;
+    /** The machines the composer's environment links to, by name. */
+    linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
     environmentId: EnvironmentId;
     query: string;
   },
@@ -123,7 +125,13 @@ export function matchComposerEnvironmentItems(
 ): ComposerEnvironmentItem[] {
   const query = input.query.trim().toLowerCase();
   if (query.length === 0) return [];
-  return input.environments
+  const paired = new Set(input.environments.map((environment) => environment.environmentId));
+  const linkedOnly = Array.from(input.linkedEnvironments, ([environmentId, label]) => ({
+    environmentId,
+    label,
+    machine: "server" as const,
+  })).filter((environment) => !paired.has(environment.environmentId));
+  return [...input.environments, ...linkedOnly]
     .filter(
       (environment) =>
         environment.environmentId !== input.environmentId &&

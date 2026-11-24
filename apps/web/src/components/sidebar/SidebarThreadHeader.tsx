@@ -1,8 +1,9 @@
 import { useGT } from "gt-react";
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -17,8 +18,7 @@ export interface SidebarThreadHeaderProps {
   /** Without projects there is nothing to scope, so the scope picker stays out. */
   hasProjects: boolean;
   projectScope: ReactNode;
-  onNewProject: () => void;
-  onNewThread: () => void;
+  onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
   searchInputRef: RefObject<HTMLInputElement | null>;
@@ -34,7 +34,6 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   hasProjects,
   projectScope,
-  onNewProject,
   onNewThread,
   newThreadDisabled,
   newThreadShortcutLabel,
@@ -105,12 +104,8 @@ export function SidebarThreadHeader({
           </InputGroupAddon>
         ) : null}
       </InputGroup>
-      {/* Three 28px controls with 4px gaps (pen s8qVFu). */}
       <div className="flex shrink-0 items-center gap-1">
         {hasProjects ? projectScope : null}
-        <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
-          <FolderPlusIcon />
-        </SidebarHeaderIconButton>
         <SidebarHeaderIconButton
           label={gt("New thread")}
           tooltip={newThreadLabel}

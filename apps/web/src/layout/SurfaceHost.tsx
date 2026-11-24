@@ -24,6 +24,7 @@ import { cn } from "../lib/utils";
 import {
   layoutChordHeld,
   listenLayoutWheel,
+  scrollLeftByWheel,
   scrollTabStripFromRow,
   sidewaysWheelStripScroll,
   WHEEL_STREAM_IDLE_MS,
@@ -51,6 +52,7 @@ import {
   type WorkspaceStack,
 } from "../motion/workspaceSwitch";
 import { LayoutResizeHandles } from "./ColumnResizeHandle";
+import { markPaneCutsLit } from "./PaneTabs";
 import { LayoutStripHint } from "./LayoutHint";
 import { LayoutOnboarding } from "./LayoutOnboarding";
 import { LayoutKeyboard } from "./LayoutShortcutsOverlay";
@@ -127,6 +129,8 @@ const OVERVIEW_RENDER_MIN_PX = 120;
  * holds a ChatView's DOM and memory, and every focus move re-renders them.
  */
 const RENDERED_RECENT_CHATS = 8;
+/** Surface tabs (file, diff, terminal) kept rendered, hidden, off the shown workspace. */
+const KEPT_HIDDEN_SURFACES = 4;
 /** An off-screen chat past the cap unmounts once it has stayed past it this long. */
 const UNRENDER_DELAY_MS = 1500;
 
@@ -181,6 +185,7 @@ function UnseenPeekDot({ side, tabId }: { side: "left" | "right"; tabId: string 
 
 /** Pen R49C1s: neighboring panes share an 8px gutter, independent of the window inset. */
 const HALF_PANE_GAP = "4px";
+const HALF_PANE_GAP_PX = 4;
 
 const FULL_RECT = { left: 0, top: 0, width: 1, height: 1 };
 const FULL_SLOT: LayoutPaneSlot = {
@@ -209,6 +214,74 @@ type ClosingTab = { placed: { slot: LayoutPaneSlot; style: React.CSSProperties }
   | { kind: "bare" }
 );
 const NO_GHOSTS: ReadonlyMap<string, ClosingTab> = new Map();
+const DRAG_SLOTS: ReadonlyMap<string, { slot: LayoutPaneSlot }> = new Map();
+
+/** A shown surface tab, by the pane and thread it shows in. */
+interface SurfaceMountRequest {
+  readonly tabId: string;
+  readonly paneId: string;
+  readonly threadKey: string;
+}
+
+/** The element a shown surface tab renders in: kept across a switch among its pane's tabs. */
+interface SurfaceMount {
+  readonly key: string;
+  readonly paneId: string;
+  readonly threadKey: string;
+}
+const NO_SURFACE_MOUNTS: ReadonlyMap<string, SurfaceMount> = new Map();
+
+/**
+ * Which element each shown surface tab renders in, by tab id. A tab keeps its
+ * own, also into another pane; a tab newly shown in a pane takes the element
+ * its pane's last tab of the same thread showed in, so its header and strip
+ * stay and only the content changes, as a right panel's header does.
+ */
+export function selectSurfaceMounts(
+  previous: ReadonlyMap<string, SurfaceMount>,
+  shown: readonly SurfaceMountRequest[],
+): ReadonlyMap<string, SurfaceMount> {
+  const next = new Map<string, SurfaceMount>();
+  const claimed = new Set<string>();
+  const take = (tabId: string, paneId: string, threadKey: string, key: string) => {
+    next.set(tabId, { key, paneId, threadKey });
+    claimed.add(key);
+  };
+  const waiting: SurfaceMountRequest[] = [];
+  for (const entry of shown) {
+    const own = previous.get(entry.tabId);
+    if (own && !claimed.has(own.key)) take(entry.tabId, entry.paneId, entry.threadKey, own.key);
+    else waiting.push(entry);
+  }
+  const fresh: SurfaceMountRequest[] = [];
+  for (const entry of waiting) {
+    const pane = [...previous.values()].find(
+      (mount) =>
+        mount.paneId === entry.paneId &&
+        mount.threadKey === entry.threadKey &&
+        !claimed.has(mount.key),
+    );
+    if (pane) take(entry.tabId, entry.paneId, entry.threadKey, pane.key);
+    else fresh.push(entry);
+  }
+  // A new element never reuses a key that was just in use: React would keep that element.
+  const used = new Set([...claimed, ...[...previous.values()].map((mount) => mount.key)]);
+  for (const { tabId, paneId, threadKey } of fresh) {
+    let key = tabId;
+    for (let n = 2; used.has(key); n += 1) key = `${tabId}#${n}`;
+    used.add(key);
+    take(tabId, paneId, threadKey, key);
+  }
+  const unchanged =
+    next.size === previous.size &&
+    [...next].every(([tabId, mount]) => {
+      const was = previous.get(tabId);
+      return (
+        was?.key === mount.key && was.paneId === mount.paneId && was.threadKey === mount.threadKey
+      );
+    });
+  return unchanged ? previous : next;
+}
 
 /**
  * Whether a pane sits under the window's caption buttons: unset reads the
@@ -251,6 +324,17 @@ function slotStyle(slot: LayoutPaneSlot, stripPx?: number): React.CSSProperties 
     width: `calc(${right} - ${left})`,
     height: `calc(${bottom} - ${top})`,
   };
+}
+
+/**
+ * `slotStyle` while a resize drag grows the stage each frame: across in whole
+ * pixels of the strip, so only the panes that resize or move get new styles.
+ */
+function dragSlotStyle(slot: LayoutPaneSlot, stripPx: number): React.CSSProperties {
+  const edge = (has: boolean) => (has ? HALF_PANE_GAP_PX : 0);
+  const left = Math.round(slot.rect.left * stripPx + edge(slot.hasLeft));
+  const right = Math.round((slot.rect.left + slot.rect.width) * stripPx - edge(slot.hasRight));
+  return { ...slotStyle(slot), left: `${left}px`, width: `${right - left}px` };
 }
 
 /** One workspace in the stack a switch moves (see motion/workspaceSwitch.ts). */
@@ -498,6 +582,7 @@ function useSurfacePlacement(
   narrow: boolean,
   maximizedTabId: string | null,
   windowWidth: number,
+  dragging: boolean,
 ) {
   const overviewPhase = useOverviewPhase();
   const workspaceStack = useWorkspaceStack();
@@ -589,7 +674,9 @@ function useSurfacePlacement(
       return byId;
     }
     for (const slot of slots) {
-      if (slot.activeTabId !== null) byId.set(slot.activeTabId, { slot, style: slotStyle(slot) });
+      if (slot.activeTabId === null) continue;
+      const style = dragging ? dragSlotStyle(slot, stripWidth * viewportWidth) : slotStyle(slot);
+      byId.set(slot.activeTabId, { slot, style });
     }
     return byId;
   })();
@@ -679,6 +766,7 @@ export function LayoutSurfaceHost({
     narrow,
     maximizedTabId,
     window.innerWidth,
+    preview !== null,
   );
   // One pane is focused. A focused surface tab's chat is only related: it
   // answers its thread's pane toggles (cmd+J, alt+cmd+B) and holds the
@@ -897,6 +985,63 @@ export function LayoutSurfaceHost({
     });
   }, [backgroundRef, scrollingWorkspaces, stageGapRef, stagedRef, stripShownRef]);
 
+  const navigationFeedbackRef = useRef<HTMLSpanElement | null>(null);
+  // A double-click on the bare chrome beside the panes, or in a gutter between them, moves focus
+  // one column toward that side of the focused pane; the reveal below brings it on screen.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens on the document: the window's inset margin is chrome outside this host
+  useEffect(() => {
+    if (!active || !scrollingWorkspaces) return;
+    let feedback: Animation | null = null;
+    const navigationAt = (event: MouseEvent) => {
+      const root = rootRef.current;
+      const scroller = scrollerRef.current;
+      const target = event.target;
+      if (!root || !scroller || !(target instanceof Element)) return null;
+      if (!stripShownRef.current) return null;
+      const gutter =
+        target.contains(root) ||
+        target === scroller ||
+        target === stageRef.current ||
+        (root.contains(target) && target.closest("[data-layout-gutter]") !== null);
+      if (!gutter) return null;
+      const view = scroller.getBoundingClientRect();
+      if (event.clientY < view.top || event.clientY > view.bottom) return null;
+      const focused = scroller.querySelector('[data-layout-pane-focused="true"]');
+      const rect = focused?.getBoundingClientRect() ?? view;
+      const direction = event.clientX >= rect.left + rect.width / 2 ? "right" : "left";
+      const current = selectFocusedWorkspace(useLayoutStore.getState().layout);
+      const index = current.columns.findIndex((column) =>
+        column.panes.some((pane) => pane.id === current.focusedPaneId),
+      );
+      if (!current.columns[index + (direction === "right" ? 1 : -1)]) return null;
+      return { direction, view } as const;
+    };
+    const onDoubleClick = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      const destination = navigationAt(event);
+      if (!destination) return;
+      const indicator = navigationFeedbackRef.current;
+      if (indicator) {
+        feedback?.cancel();
+        indicator.style.left = `${event.clientX - 2}px`;
+        indicator.style.top = `${Math.max(destination.view.top, Math.min(destination.view.bottom - 64, event.clientY - 32))}px`;
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        feedback = indicator.animate([{ opacity: 0.3 }, { opacity: 0 }], {
+          duration: 150,
+          easing: reduced
+            ? "steps(1, end)"
+            : getComputedStyle(indicator).getPropertyValue("--ease-out").trim() || "ease-out",
+        });
+      }
+      useLayoutStore.getState().focusDirection(destination.direction);
+    };
+    document.addEventListener("dblclick", onDoubleClick);
+    return () => {
+      feedback?.cancel();
+      document.removeEventListener("dblclick", onDoubleClick);
+    };
+  }, [active, scrollingWorkspaces]);
+
   // Before the reveal below: leaving the overview hands the strip its scroll
   // back first, so the reveal finds the focused pane in place, not a strip
   // still at 0 that it would spring sideways.
@@ -1025,7 +1170,7 @@ export function LayoutSurfaceHost({
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(delta, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(delta, event));
     };
     root.parentElement?.append(chrome);
     const stop = observeResize([root, scroller, stage], update);
@@ -1058,7 +1203,7 @@ export function LayoutSurfaceHost({
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(event.deltaX, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(event.deltaX, event));
     };
     // Decided once per wheel stream, as the browser latches a scroll to one target.
     let stream: { at: number; scroll: "native" | "script" | null } | null = null;
@@ -1085,7 +1230,7 @@ export function LayoutSurfaceHost({
       // Past a code block that ends the browser's scroll chain, script moves the strip.
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(delta, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(delta, event));
     };
     // The strip itself moved right after a sideways wheel: the user's scroll.
     const onScroll = () => {
@@ -1292,6 +1437,79 @@ export function LayoutSurfaceHost({
   const surfaceSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = surfaceTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
+  });
+  // A surface rendered near the window stays rendered, hidden, once its
+  // workspace is left (the few most recent), as chats do: coming back reveals
+  // it instead of mounting it anew, which re-parses and re-measures a whole
+  // file. Not a browser tab: its webview follows a slot it would have to measure.
+  const placedPaneIds = new Set([...slotByTabId.values()].map(({ slot }) => slot.paneId));
+  const hiddenSurfacePaneIds = new Map(
+    shown.workspaces.flatMap((candidate) =>
+      candidate.columns.flatMap((column) =>
+        column.panes.flatMap((pane) => {
+          const content = pane.activeTabId === null ? null : surfaceTabsById.get(pane.activeTabId);
+          return pane.activeTabId !== null &&
+            content &&
+            !placedPaneIds.has(pane.id) &&
+            !content.surfaceId.startsWith("browser:")
+            ? [[pane.activeTabId, pane.id] as const]
+            : [];
+        }),
+      ),
+    ),
+  );
+  const renderedSurfaceIds = surfaceSlots.flatMap(({ tabId }) =>
+    nearTabIds.has(tabId) || focusedTab?.id === tabId ? [tabId] : [],
+  );
+  const [keptSurfaceIds, setKeptSurfaceIds] = useState<readonly string[]>([]);
+  const nextKeptSurfaceIds = [
+    ...renderedSurfaceIds,
+    ...keptSurfaceIds.filter((id) => hiddenSurfacePaneIds.has(id)).slice(0, KEPT_HIDDEN_SURFACES),
+  ];
+  if (
+    nextKeptSurfaceIds.length !== keptSurfaceIds.length ||
+    nextKeptSurfaceIds.some((id, index) => id !== keptSurfaceIds[index])
+  ) {
+    setKeptSurfaceIds(nextKeptSurfaceIds);
+  }
+  const hiddenSurfaces = nextKeptSurfaceIds.flatMap((tabId) => {
+    const paneId = hiddenSurfacePaneIds.get(tabId);
+    const content = surfaceTabsById.get(tabId);
+    return paneId !== undefined && content ? [{ tabId, paneId, content }] : [];
+  });
+  const [surfaceMounts, setSurfaceMounts] = useState(NO_SURFACE_MOUNTS);
+  const nextSurfaceMounts = selectSurfaceMounts(surfaceMounts, [
+    ...surfaceSlots.map(({ tabId, placed, content }) => ({
+      tabId,
+      paneId: placed.slot.paneId,
+      threadKey: scopedThreadKey(content.threadRef),
+    })),
+    ...hiddenSurfaces.map(({ tabId, paneId, content }) => ({
+      tabId,
+      paneId,
+      threadKey: scopedThreadKey(content.threadRef),
+    })),
+  ]);
+  if (nextSurfaceMounts !== surfaceMounts) setSurfaceMounts(nextSurfaceMounts);
+  // One list in a stable order: a surface moving between shown and hidden
+  // keeps its element and its place among its siblings.
+  const surfaceElements = [
+    ...surfaceSlots.map(({ placed, tabId, content }) => ({
+      tabId,
+      content,
+      placed,
+      paneId: placed.slot.paneId,
+    })),
+    ...hiddenSurfaces.map(({ tabId, paneId, content }) => ({
+      tabId,
+      content,
+      placed: null,
+      paneId,
+    })),
+  ].toSorted((a, b) => {
+    const keyA = nextSurfaceMounts.get(a.tabId)?.key ?? a.tabId;
+    const keyB = nextSurfaceMounts.get(b.tabId)?.key ?? b.tabId;
+    return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
   });
   const launcherSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = launcherTabsById.get(tabId);
@@ -1506,7 +1724,9 @@ export function LayoutSurfaceHost({
                   }
           }
         >
-          <PaneMotionSnapshot stageRef={stageRef} slots={slotByTabId} />
+          {/* Pane motion is off for a drag and cannot animate its release, so the drag's frames
+              take no snapshot for it. */}
+          <PaneMotionSnapshot stageRef={stageRef} slots={dragging ? DRAG_SLOTS : slotByTabId} />
           {renderedTabIds.map((tabId) => {
             const entry = chatTabsById.get(tabId);
             const ghost = entry ? null : ghosts.get(tabId);
@@ -1619,19 +1839,21 @@ export function LayoutSurfaceHost({
               />
             ) : null,
           )}
-          {surfaceSlots.map(({ placed, tabId, content }) => (
+          {surfaceElements.map(({ placed, tabId, content, paneId }) => (
             <LayoutSurfaceTabSurface
-              key={tabId}
+              key={nextSurfaceMounts.get(tabId)?.key ?? tabId}
               active={active}
               tabId={tabId}
               content={content}
               placed={placed}
-              near={nearTabIds.has(tabId) || focusedTab?.id === tabId}
-              focused={focusedTab?.id === tabId}
-              atWindowStart={atWindowStart(placed.slot.paneId)}
-              atWindowEnd={atWindowEnd(placed.slot.paneId)}
+              paneId={paneId}
+              paneStyle={paneStyleById.get(paneId)}
+              near={placed === null || nearTabIds.has(tabId) || focusedTab?.id === tabId}
+              focused={placed !== null && focusedTab?.id === tabId}
+              atWindowStart={atWindowStart(paneId)}
+              atWindowEnd={atWindowEnd(paneId)}
               split={split}
-              staged={still(placed.slot.paneId)}
+              staged={placed !== null && still(paneId)}
               overview={staged}
             />
           ))}
@@ -1680,6 +1902,12 @@ export function LayoutSurfaceHost({
         </>
       ) : null}
       {active && !split && !staged ? <LonePaneCorners /> : null}
+      <span
+        ref={navigationFeedbackRef}
+        aria-hidden="true"
+        data-layout-navigation-feedback=""
+        className="pointer-events-none fixed z-50 h-16 w-1 rounded-full bg-strong-foreground opacity-0"
+      />
     </SidebarInset>
   );
 }
@@ -1789,18 +2017,21 @@ function LayoutChatSurface({
         closing && "pointer-events-none",
         // Off screen: skip its rendering but keep its layout state, so the
         // timeline's scroll position and the terminal's size survive. Moved out
-        // of the window: Electron keeps applying its stale window drag regions.
-        !visible &&
-          "pointer-events-none -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
+        // of the window (Electron keeps its stale drag regions), so presses miss
+        // it with no inherited pointer-events, which would restyle all of it.
+        !visible && "-translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
         !visible && (paneStyle === undefined ? "inset-0" : "top-0 left-0"),
         visible && (split || staged) && "overflow-clip rounded-pane pane-surface",
         // A lone pane paints flat before its chat does, not the inset's grain behind it.
         visible && !(split || staged) && "bg-background",
       )}
       style={windowEndStyle(placed?.style ?? paneStyle, atWindowEnd)}
-      // Not inert mid-switch: flipping inert restyles a whole rendered chat,
-      // and the panes leaving go hidden (and inert) as soon as it lands.
-      inert={!visible || overview || closing}
+      // Not inert while placed or hidden: flipping inert restyles a whole
+      // rendered chat. Hidden, content-visibility keeps focus out and
+      // aria-hidden tells focus code to skip it; under the overview the
+      // overview owns the keyboard and the pointer and drops focus under it.
+      inert={closing}
+      aria-hidden={!visible || overview || undefined}
       onPointerDownCapture={claimFocus}
     >
       <LayoutChatSurfaceBody
@@ -1982,12 +2213,15 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
 /**
  * A surface tab's slot: positioned like any pane, a press inside focuses it,
  * and focus that lands on it from the keyboard moves into it. It renders
- * while on screen and near the camera.
+ * while on screen and near the camera, and stays rendered, hidden, a while
+ * after its workspace is left (`placed` null).
  */
 function LayoutSurfaceTabSurface({
   tabId,
   content,
   placed,
+  paneId,
+  paneStyle,
   near,
   focused,
   atWindowStart,
@@ -1999,7 +2233,10 @@ function LayoutSurfaceTabSurface({
 }: {
   tabId: string;
   content: LayoutSurfaceContent;
-  placed: { slot: LayoutPaneSlot; style: React.CSSProperties };
+  placed: { slot: LayoutPaneSlot; style: React.CSSProperties } | null;
+  paneId: string;
+  /** Hidden, it keeps its pane's size, so coming back changes nothing inside it. */
+  paneStyle: React.CSSProperties | undefined;
   near: boolean;
   focused: boolean;
   atWindowStart: boolean | undefined;
@@ -2010,45 +2247,38 @@ function LayoutSurfaceTabSurface({
   overview: boolean;
   active: boolean;
 }) {
-  const { slot } = placed;
-  const leadingEdge = atWindowStart ?? (!slot.hasLeft && !slot.hasAbove);
-  const trailingEdge = atTrailingEdge(slot, atWindowEnd);
+  const slot = placed?.slot ?? null;
+  const leadingEdge = slot ? (atWindowStart ?? (!slot.hasLeft && !slot.hasAbove)) : true;
+  const trailingEdge = slot ? atTrailingEdge(slot, atWindowEnd) : true;
   const paneState = {
     tabId,
-    paneId: slot.paneId,
+    paneId,
     split: split || staged,
     narrow: false,
     leadingEdge,
     trailingEdge,
     focused: focused && !staged,
     related: false,
-    visible: active,
+    visible: active && slot !== null,
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const focusOrigin = useRef(document.activeElement);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its pane unmounts.
-  useLayoutEffect(() => {
-    const host = slotRef.current;
-    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
-  }, []);
-  // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
-  // click on its tab) moves the keyboard in.
-  usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);
   return (
     <div
       ref={slotRef}
       tabIndex={-1}
       data-layout-tab-id={tabId}
-      data-layout-pane-id={slot.paneId}
+      data-layout-pane-id={slot ? paneId : undefined}
       data-layout-surface={content.surfaceId}
       data-layout-pane-focused={focused ? "true" : undefined}
       className={cn(
         "absolute flex min-h-0 min-w-0 flex-col outline-none",
         (split || staged) && "overflow-clip rounded-pane pane-surface",
+        // Hidden as a chat off screen is (see LayoutChatSurface).
+        !slot && "top-0 left-0 -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
       )}
-      style={windowEndStyle(placed.style, atWindowEnd)}
-      inert={staged}
+      style={windowEndStyle(placed?.style ?? paneStyle, atWindowEnd)}
+      aria-hidden={!slot || overview || undefined}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
       <LayoutPaneContext value={paneState}>
@@ -2057,15 +2287,39 @@ function LayoutSurfaceTabSurface({
         ) : overview ? (
           <PaneThumbnail
             tab={tab}
-            paneId={slot.paneId}
+            paneId={paneId}
             leadingEdge={leadingEdge}
             trailingEdge={trailingEdge}
           />
         ) : null}
       </LayoutPaneContext>
-      {split && !staged ? <PaneCuts /> : null}
+      {slot && split && !staged ? <PaneCuts /> : null}
+      <SurfaceTabFocus key={tabId} slotRef={slotRef} focused={focused && !staged} />
     </div>
   );
+}
+
+/**
+ * Keyboard focus for each tab shown in a surface's element, as when every tab
+ * mounted its own: focus that lands on the pane (cmd+J, alt+cmd+B, a
+ * launcher's letter, a click on its tab) moves the keyboard in, and the
+ * control that gave the tab focus gets it back as the tab leaves.
+ */
+function SurfaceTabFocus({
+  slotRef,
+  focused,
+}: {
+  slotRef: React.RefObject<HTMLDivElement | null>;
+  focused: boolean;
+}) {
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its tab leaves the pane.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, [slotRef]);
+  usePaneKeyboard(slotRef, focused, surfaceKeyboardTarget);
+  return null;
 }
 
 /** Where the keyboard goes in each kind of pane that takes layout focus. */
@@ -2143,7 +2397,7 @@ function afterPressRelease(run: () => void): (() => void) | undefined {
 /** Preserve focus held outside the strip unless explicitly handed back. An unready pane releases the
  * old keyboard target before it can receive more input. */
 function moveDomFocusInto(pane: HTMLElement, target: HTMLElement | null, handedBack = false): void {
-  if (pane.closest("[inert]")) return;
+  if (pane.closest('[inert], [aria-hidden="true"]')) return;
   const active = document.activeElement;
   if (pane.contains(active)) return;
   if (
@@ -2162,6 +2416,11 @@ function moveDomFocusInto(pane: HTMLElement, target: HTMLElement | null, handedB
   if (!pane.contains(document.activeElement) && active instanceof HTMLElement) active.blur();
 }
 
+/** Cuts mounted into a lit pane take its lit span (PaneTabs.tsx markPaneLit). */
+function litPaneCuts(cut: HTMLSpanElement | null): void {
+  if (cut?.parentElement) markPaneCutsLit(cut.parentElement);
+}
+
 /**
  * The pane's corners where the strip's edge cuts it (index.css,
  * [data-pane-cut]). Render them last inside a positioned, clipped pane.
@@ -2169,7 +2428,7 @@ function moveDomFocusInto(pane: HTMLElement, target: HTMLElement | null, handedB
 function PaneCuts() {
   return (
     <>
-      <span aria-hidden data-pane-cut="start-top" />
+      <span aria-hidden data-pane-cut="start-top" ref={litPaneCuts} />
       <span aria-hidden data-pane-cut="start-notch" />
       <span aria-hidden data-pane-cut="start-after-notch">
         <span>

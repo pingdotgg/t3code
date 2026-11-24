@@ -174,6 +174,7 @@ function setup({ retryFails = false, holdRetry = false } = {}) {
   const registry = AtomRegistry.make();
   return {
     registry,
+    snapshot,
     historyQueries,
     historyReads,
     releaseRetry,
@@ -265,5 +266,49 @@ describe("resource monitor retry", () => {
     expect(monitor.retry).toHaveBeenCalledExactlyOnceWith({ environmentId, input: {} });
     await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
     await expect.element(screen.getByText(historyError, { exact: true })).toBeVisible();
+  });
+
+  it("stops showing refresh as pending after the first live snapshot arrives", async () => {
+    using fixture = setup();
+    const liveTelemetry = Atom.make<
+      AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>
+    >(AsyncResult.initial(true)).pipe(Atom.keepAlive);
+    monitor.telemetry.mockImplementation(() => liveTelemetry);
+
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    const refreshButton = screen.getByRole("button", { name: "Refresh resource telemetry" });
+    await expect.element(refreshButton).toBeDisabled();
+
+    await act(() => {
+      fixture.registry.set(
+        liveTelemetry,
+        AsyncResult.waiting(AsyncResult.success(fixture.snapshot)),
+      );
+    });
+    await expect.element(refreshButton).toBeEnabled();
+  });
+
+  it("stops showing refresh as pending after a live subscription error", async () => {
+    using fixture = setup();
+    const liveTelemetry = Atom.make<
+      AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>
+    >(AsyncResult.waiting(AsyncResult.fail(new MonitorError({ message: startError })))).pipe(
+      Atom.keepAlive,
+    );
+    monitor.telemetry.mockImplementation(() => liveTelemetry);
+
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText(startError, { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Refresh resource telemetry" }))
+      .toBeEnabled();
   });
 });

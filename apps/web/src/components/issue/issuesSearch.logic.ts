@@ -5,6 +5,7 @@ import {
   type IssueListInput,
   type ProjectId,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 
 import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
 
@@ -13,7 +14,8 @@ import type { IssuesSearch } from "./IssuesPage";
 // The router reads a bare `key=42` as a number.
 const bounded = (value: unknown): string | undefined => {
   const text = typeof value === "number" ? String(value) : value;
-  return typeof text === "string" && text.trim() ? text.trim().slice(0, 200) : undefined;
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  return trimmed ? trimmed.slice(0, splitsSurrogatePair(trimmed, 200) ? 199 : 200) : undefined;
 };
 
 const labels = (raw: unknown): ReadonlyArray<string> | undefined => {
@@ -81,14 +83,15 @@ const pathSuffixes = (paths: ReadonlyArray<string>): ReadonlyArray<string> | nul
 /**
  * One choice per project: projects on one repository can read different Linear teams. Projects
  * that share a name say the least that tells them apart: the machine where that differs, then
- * the fewest trailing folders of their paths. Scratch projects stay, since Settings can bind one
- * to a Linear team.
+ * the fewest trailing folders of their paths. The scratch project leads, beside All projects;
+ * scratch projects stay, since Settings can bind one to a Linear team.
  */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
 ) => {
-  const byTitle = groupBy(projects, (project) => project.title);
+  const named = projects;
+  const byTitle = groupBy(named, (project) => project.title);
   const details = new Map<EnvironmentProject, string>();
   for (const same of byTitle.values()) {
     if (same.length < 2) continue;
@@ -113,7 +116,7 @@ export const issueFilterProjects = (
   }
   const scratchFirst = (project: EnvironmentProject) =>
     project.repositoryIdentity == null && project.title === "No project" ? 0 : 1;
-  return projects
+  return named
     .map((project) => {
       const detail = details.get(project);
       return { ...project, title: detail ? `${project.title} (${detail})` : project.title };

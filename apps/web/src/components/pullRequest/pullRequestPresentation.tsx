@@ -31,6 +31,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { RowTooltip } from "../workItem/WorkItemRowTooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
@@ -92,12 +93,7 @@ export function PullRequestLabelChip({
     </Badge>
   );
   if (!label.description) return badge;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={badge} />
-      <TooltipPopup>{label.description}</TooltipPopup>
-    </Tooltip>
-  );
+  return <RowTooltip render={badge} popup={<TooltipPopup>{label.description}</TooltipPopup>} />;
 }
 
 function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
@@ -192,16 +188,16 @@ export function PullRequestStateGlyph({
   const m = useMessages();
   const presentation = resolvePullRequestState({ state, isDraft }, m);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-        />
-      </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
-    </Tooltip>
+    <RowTooltip
+      render={<span className="inline-flex shrink-0" />}
+      popup={<TooltipPopup>{presentation.label}</TooltipPopup>}
+    >
+      <presentation.Icon
+        role="img"
+        aria-label={presentation.label}
+        className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+      />
+    </RowTooltip>
   );
 }
 
@@ -230,16 +226,16 @@ export function PullRequestConflictGlyph({
   );
   if (presentation === null) return null;
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-        />
-      </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
-    </Tooltip>
+    <RowTooltip
+      render={<span className="inline-flex shrink-0" />}
+      popup={<TooltipPopup>{presentation.label}</TooltipPopup>}
+    >
+      <presentation.Icon
+        role="img"
+        aria-label={presentation.label}
+        className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+      />
+    </RowTooltip>
   );
 }
 
@@ -607,6 +603,36 @@ export function PullRequestDiffStat({
       <span className="text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
     </span>
   );
+}
+
+/** The short label beside the checks icon; null when every check passed. */
+export function pullRequestChecksCountLabel(
+  checks: ReadonlyArray<PullRequestCheck>,
+  resolve: MessageResolver = m,
+): string | null {
+  const count = (statuses: ReadonlyArray<PullRequestCheckStatus>) =>
+    checks.filter((check) => statuses.includes(check.status)).length;
+  const failed = count(["failure", "cancelled"]);
+  if (failed > 0) {
+    return resolve(
+      msg("{count, plural, one {{count} failed} other {{count} failed}}", { count: failed }),
+    );
+  }
+  const awaitingAction = count(["action-required"]);
+  if (awaitingAction > 0) {
+    return resolve(
+      msg("{count, plural, one {{count} awaiting action} other {{count} awaiting action}}", {
+        count: awaitingAction,
+      }),
+    );
+  }
+  const running = count(["pending"]);
+  if (running > 0) {
+    return resolve(
+      msg("{count, plural, one {{count} running} other {{count} running}}", { count: running }),
+    );
+  }
+  return null;
 }
 
 export function summarizePullRequestChecks(

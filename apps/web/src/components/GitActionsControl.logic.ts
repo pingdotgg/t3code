@@ -59,6 +59,18 @@ export interface GitActionResultToastTiming {
 
 export const GIT_ACTION_SUCCESS_VISIBLE_MS = 10_000;
 
+/**
+ * Every chat's git control listens on the window; only the one in the focused pane
+ * (`useLayoutPaneFocusedRef`, false for background threads) commits and pushes.
+ */
+export function commitPushShortcutPressActs(input: {
+  readonly paneFocused: boolean;
+  readonly defaultPrevented: boolean;
+  readonly repeat: boolean;
+}): boolean {
+  return input.paneFocused && !input.defaultPrevented && !input.repeat;
+}
+
 export function resolveGitActionResultToastTiming(
   type: "error" | "success",
 ): GitActionResultToastTiming {
@@ -404,7 +416,7 @@ export function resolveQuickAction(
         label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
+        action: "push",
       };
     }
     return {
@@ -442,7 +454,7 @@ export function resolveQuickAction(
         label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
+        action: "push",
       };
     }
     return {

@@ -686,7 +686,7 @@ export function SettingsRow({
     <div
       {...rowProps}
       ref={attachRow}
-      tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
+      tabIndex={rowProps.tabIndex ?? -1}
       data-slot="settings-row"
       className={cn(
         "group/settings-row @container/settings-row rounded-card px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
@@ -837,6 +837,11 @@ export function SettingResetButton({
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
+              // A reset usually unmounts this button. Keep focus beside the setting, or focus
+              // recovery sends it to the area's default control and scrolls that into view.
+              event.currentTarget.parentElement
+                ?.closest<HTMLElement>("[tabindex]")
+                ?.focus({ preventScroll: true });
               onClick();
             }}
           >
@@ -924,13 +929,17 @@ export function SettingsSearchField({
       <InputGroupAddon>
         <SearchIcon aria-hidden />
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
           event.preventDefault();
           if (value.length > 0) {
             event.stopPropagation();

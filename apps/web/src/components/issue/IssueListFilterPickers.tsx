@@ -6,7 +6,7 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import {
-  FolderIcon,
+  FolderGit2Icon,
   LayersIcon,
   ListFilterIcon,
   TagIcon,
@@ -106,7 +106,7 @@ export function IssueFiltersMenu(props: {
         {props.projects.length > 0 || props.hiddenProjects.size > 0 ? (
           <MenuSub>
             <MenuSubTrigger>
-              <FolderIcon aria-hidden className="size-3.5" />
+              <FolderGit2Icon aria-hidden className="size-3.5" />
               <span className="flex-1">{gt("Projects")}</span>
               <span className="min-w-0 max-w-32 truncate text-meta text-muted-foreground">
                 {props.hiddenProjects.size === 0

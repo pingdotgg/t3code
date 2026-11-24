@@ -21,6 +21,13 @@ const centerDelta = (from: RowPosition, to: RowPosition, listWidth: number) => (
 // Pinning or unpinning remounts a row as a tile or card; its thread key carries it across.
 const threadKeyOf = (node: HTMLElement) => node.dataset.threadItem;
 
+const motions = new WeakMap<Element, { scrolled(): void }>();
+
+/** After the app scrolls a list's viewport, a scroll clamp still sliding out no longer applies. */
+export function sidebarListScrolled(list: Element) {
+  motions.get(list)?.scrolled();
+}
+
 function progress(animation: Animation) {
   return animation.playState === "finished"
     ? 1
@@ -65,6 +72,17 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const running = new Map<HTMLElement, { animation: Animation; offset: number; offsetX: number }>();
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
+  // The scroll clamp's part of a row's offset, added on top of its own motion so an app
+  // scroll can drop it alone.
+  const shifted = new Map<HTMLElement, { animation: Animation; shift: number }>();
+  const scroller = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  let scrollTop = scroller?.scrollTop ?? 0;
+  const trackScroll = () => {
+    // A scheduled update measures the scroll clamp from the scrollTop its last run left.
+    if (frame !== 0) return;
+    scrollTop = scroller?.scrollTop ?? 0;
+  };
+  scroller?.addEventListener("scroll", trackScroll, { passive: true });
   let released: {
     nodes: Map<HTMLElement, RowPosition>;
     threads: Map<string, RowPosition>;
@@ -98,7 +116,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     const run = current ? current.offset * (1 - progress(current.animation)) : 0;
     const entry = entering.get(node);
     const enter = entry ? entry.travel * (1 - progress(entry.animation)) : 0;
-    return run + enter;
+    const clamp = shifted.get(node);
+    return run + enter + (clamp ? clamp.shift * (1 - progress(clamp.animation)) : 0);
   };
   const remainingOffsetX = (node: HTMLElement) => {
     const current = running.get(node);
@@ -111,7 +130,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     entering.clear();
     exiting.clear();
   };
-  const fadeOut = (node: HTMLElement, position: RowPosition, travel: number) => {
+  const fadeOut = (node: HTMLElement, position: RowPosition, travel: number, shift: number) => {
     if (position.height === 0) return;
     const clone = node.cloneNode(true) as HTMLElement;
     for (const element of [clone, ...clone.querySelectorAll("*")]) {
@@ -130,7 +149,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     clone.inert = true;
     Object.assign(clone.style, {
       position: "absolute",
-      top: `${position.top + remainingOffset(node)}px`,
+      top: `${position.top + remainingOffset(node) + shift}px`,
       left: `${position.left + remainingOffsetX(node)}px`,
       width: `${position.width}px`,
       height: `${position.height}px`,
@@ -165,11 +184,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const cancel = (node: HTMLElement) => {
     running.get(node)?.animation.cancel();
     running.delete(node);
+    shifted.get(node)?.animation.cancel();
+    shifted.delete(node);
     node.removeAttribute(LEAD_ATTRIBUTE);
     node.removeAttribute(MOVING_ATTRIBUTE);
   };
   const suspend = () => {
-    for (const node of running.keys()) cancel(node);
+    for (const node of [...running.keys(), ...shifted.keys()]) cancel(node);
     clearFades();
     positions = null;
     released = null;
@@ -207,6 +228,20 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       { once: true },
     );
     return animation;
+  };
+  const shiftBy = (node: HTMLElement, shift: number) => {
+    const animation = node.animate(
+      [{ transform: `translateY(${shift}px)` }, { transform: "translateY(0px)" }],
+      { ...motionTiming, composite: "add" },
+    );
+    shifted.set(node, { animation, shift });
+    animation.addEventListener(
+      "finish",
+      () => {
+        if (shifted.get(node)?.animation === animation) shifted.delete(node);
+      },
+      { once: true },
+    );
   };
 
   let frame = 0;
@@ -262,6 +297,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         positions !== null &&
         !reducedMotion?.matches &&
         fadeCount <= MAX_FADED_ROWS_PER_UPDATE;
+      // A removal near the bottom shrinks the list and the browser clamps scrollTop, moving
+      // every row on screen; offsets include that shift so those rows slide instead of jump.
+      let shift = 0;
+      if (scroller !== null) {
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        if (scrollTop > max && scroller.scrollTop >= max - 1)
+          shift = scroller.scrollTop - scrollTop;
+      }
       const movedDelta = new Map<HTMLElement, number>();
       const movedDeltaX = new Map<HTMLElement, number>();
       const remounted = new Map<string, RowPosition>();
@@ -287,12 +330,12 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           const previous = positions!.get(node);
           if (
             previous === undefined ||
-            (previous.top === position.top && previous.left === position.left) ||
+            (previous.top + shift === position.top && previous.left === position.left) ||
             crossing.has(node)
           ) {
             continue;
           }
-          movedDelta.set(node, previous.top + remainingOffset(node) - position.top);
+          movedDelta.set(node, previous.top + remainingOffset(node) - position.top + shift);
           movedDeltaX.set(
             node,
             Math.max(0, Math.min(previous.left + remainingOffsetX(node), width - position.width)) -
@@ -311,7 +354,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
             continue;
           }
           const delta = ridingDelta(oldOrder, oldOrder.indexOf(node), stays);
-          fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta);
+          fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta, shift);
         }
       }
       for (const [node, entry] of entering) {
@@ -320,7 +363,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           entering.delete(node);
         }
       }
-      for (const node of running.keys()) {
+      for (const node of [...running.keys(), ...shifted.keys()]) {
         if (!shouldAnimate || !next.has(node)) cancel(node);
       }
       if (shouldAnimate) {
@@ -343,7 +386,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
                 index,
                 (n) => positions!.has(n) && !crossing.has(n),
               );
-              const travel = delta === undefined ? -rowTravel(position.height) : delta;
+              const travel = delta === undefined ? -rowTravel(position.height) : delta - shift;
               const animation = node.animate(
                 [
                   { opacity: 0, transform: `translateY(${travel}px)` },
@@ -360,13 +403,16 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
                 },
                 { once: true },
               );
+              if (delta !== undefined && shift !== 0) shiftBy(node, shift);
             }
             continue;
           }
           const delta = movedDelta.get(node);
           // Computed progress includes easing; carry forward only our translation, never dnd-kit's
           // transforms.
-          if (delta !== undefined) move(node, delta, movedDeltaX.get(node) ?? 0);
+          if (delta === undefined) continue;
+          move(node, delta - shift, movedDeltaX.get(node) ?? 0);
+          if (shift !== 0) shiftBy(node, shift);
         }
       }
       if (released !== null) {
@@ -398,6 +444,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         });
       }
       positions = next;
+      if (scroller !== null) scrollTop = scroller.scrollTop;
     },
     /** `update` in the next frame, before it paints, so a commit's own layout
      * pass is the one read instead of a forced one mid-commit. A chat
@@ -432,11 +479,20 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       released = { nodes, threads, activeKey };
     },
     suspend,
+    /** Drop the clamp shift: rows an app scroll brings on screen land where they belong. */
+    scrolled() {
+      for (const { animation } of shifted.values()) animation.cancel();
+      shifted.clear();
+      if (scroller !== null) scrollTop = scroller.scrollTop;
+    },
     dispose() {
       suspend();
       if (frame !== 0) view?.cancelAnimationFrame(frame);
+      scroller?.removeEventListener("scroll", trackScroll);
+      if (motions.get(parent) === api) motions.delete(parent);
       disposed = true;
     },
   };
+  motions.set(parent, api);
   return api;
 }

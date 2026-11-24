@@ -3,6 +3,7 @@ import { CornerDownLeftIcon, FileIcon, XIcon } from "lucide-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { composerFileLinksToPlainText } from "@t3tools/shared/composerInlineTokens";
 
 import { RelativeTime } from "../RelativeTime";
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -21,7 +22,9 @@ function missingImageCount(entry: PromptStashEntry): number {
 
 export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResolver = m): string {
   const trimmed = assistantCitationsToPlainText(
-    replaceComposerContextReferences(entry.prompt, (reference) => reference.label),
+    composerFileLinksToPlainText(
+      replaceComposerContextReferences(entry.prompt, (reference) => reference.label),
+    ),
   )
     .trim()
     .replace(/\s+/g, " ");
@@ -91,6 +94,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   });
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229) return;
     if (backgroundThread || !paneFocusedRef.current) return;
     const drawer = drawerRef.current;
     if (!drawer) return;

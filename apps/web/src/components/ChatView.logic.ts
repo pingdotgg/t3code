@@ -6,7 +6,7 @@ import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -242,19 +242,22 @@ export function shouldShowComposerTasks(input: {
 }
 
 export function resolveProactiveTurnDiffAction(input: {
-  checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal"> | undefined;
+  checkpoint: Pick<TurnDiffSummary, "status" | "files" | "filesTotal" | "repositories"> | undefined;
   isGitRepo: boolean | undefined;
 }): "defer" | "ignore" | "open" {
-  if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
-  if (input.isGitRepo === undefined) return "defer";
-  if (
-    !input.isGitRepo ||
-    input.checkpoint.status !== "ready" ||
-    input.checkpoint.files.length === 0
-  ) {
-    return "ignore";
+  // A turn that changed tracked repositories has a diff whatever the thread's own folder is.
+  if (input.checkpoint?.repositories === undefined) {
+    if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
+    if (input.isGitRepo === undefined) return "defer";
+    if (
+      !input.isGitRepo ||
+      input.checkpoint.status !== "ready" ||
+      input.checkpoint.files.length === 0
+    ) {
+      return "ignore";
+    }
   }
-  const totals = checkpointFileTotals(input.checkpoint);
+  const { totals } = turnChanges(input.checkpoint);
   return totals.count >= 3 || totals.additions + totals.deletions >= 50 ? "open" : "ignore";
 }
 
@@ -901,7 +904,7 @@ export async function waitForRevertedMessage(
   requestId: CommandId,
   revert: () => Promise<void>,
   timeoutMs = 120_000,
-): Promise<void> {
+): Promise<ReadonlyArray<string>> {
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
@@ -925,7 +928,7 @@ export async function waitForRevertedMessage(
   if (witness === undefined) {
     throw new Error(m(msg("The thread has changed. Select a message to rewind again.")));
   }
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<ReadonlyArray<string>>((resolve, reject) => {
     let settled = false;
     let accepted = false;
     let unsubscribe = () => {};
@@ -935,8 +938,9 @@ export async function waitForRevertedMessage(
       settled = true;
       if (timeout !== undefined) globalThis.clearTimeout(timeout);
       unsubscribe();
-      if (error !== undefined) reject(error);
-      else resolve();
+      if (error !== undefined) return reject(error);
+      const unrestored = readProjection()?.thread.rollbackUnrestored;
+      resolve(unrestored?.requestId === requestId ? unrestored.repositories : []);
     };
     const inspect = () => {
       const thread = readProjection();
@@ -1213,7 +1217,7 @@ export function chatActionErrorMessage(error: unknown, resolve: MessageResolver 
 }
 
 /** A local copy of the runtime's error shares the runtime's key, so one dismissal covers both. */
-export function threadErrorIsServerRuntime(input: {
+function threadErrorIsServerRuntime(input: {
   readonly isServerThread: boolean;
   readonly localServerError: string | null;
   readonly runtimeError: string | null;
@@ -1222,6 +1226,43 @@ export function threadErrorIsServerRuntime(input: {
     input.isServerThread &&
     (input.localServerError === null || input.localServerError === input.runtimeError)
   );
+}
+
+// Only server runtime errors get a session dismissal: they persist in projections across
+// remounts. Local and draft errors are cleared on dismiss, so a repeat shows again.
+export function resolveThreadErrorBanner(input: {
+  readonly isServerThread: boolean;
+  readonly localServerError: string | null;
+  readonly localDraftError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorSource: string | null;
+}): {
+  readonly threadError: string | null;
+  readonly sessionDismissal: {
+    readonly error: string;
+    readonly source: string | null;
+  } | null;
+} {
+  const threadError = input.isServerThread
+    ? (input.localServerError ?? input.runtimeError ?? null)
+    : input.localDraftError;
+  if (
+    threadError === null ||
+    !threadErrorIsServerRuntime({
+      isServerThread: input.isServerThread,
+      localServerError: input.localServerError,
+      runtimeError: input.runtimeError,
+    })
+  ) {
+    return { threadError, sessionDismissal: null };
+  }
+  return {
+    threadError,
+    sessionDismissal: {
+      error: threadError,
+      source: input.runtimeErrorSource,
+    },
+  };
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
@@ -1376,6 +1417,10 @@ export function planComposerTurn(input: {
   readonly sendEnvMode: DraftThreadEnvMode;
   readonly worktreePath: string | null;
   readonly activeThreadBranch: string | null;
+  /** False for a plain folder that tracks repositories: each starts from its own default branch. */
+  readonly projectIsGitRepo: boolean;
+  /** For such a plain folder: the branch its repositories start from where they have it. */
+  readonly plainProjectBaseBranch?: string | undefined;
   /** The server launches a No project worktree request at its root, so it needs no base. */
   readonly isScratchProject: boolean;
   readonly resumeCompactionTokens: number | null;
@@ -1405,8 +1450,16 @@ export function planComposerTurn(input: {
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     missingWorktreeBaseBranch:
-      shouldCreateWorktree && !input.activeThreadBranch && !input.isScratchProject,
-    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+      shouldCreateWorktree &&
+      input.projectIsGitRepo &&
+      !input.activeThreadBranch &&
+      !input.isScratchProject,
+    // The launch schema requires a base ref; `HEAD` leaves each repository on its default branch.
+    baseBranchForWorktree: !shouldCreateWorktree
+      ? null
+      : input.projectIsGitRepo
+        ? input.activeThreadBranch
+        : input.plainProjectBaseBranch || "HEAD",
     compactBeforeSend,
     turnDispatchMode:
       compactBeforeSend || (input.sendQueuesBehindSetup && dispatchMode !== "steer")

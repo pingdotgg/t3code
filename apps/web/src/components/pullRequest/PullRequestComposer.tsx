@@ -31,6 +31,7 @@ export function PullRequestComposer({
   environmentId,
   reference,
   detail,
+  shownHeadSha,
   actionPending,
   onCommentAction,
   onCommented,
@@ -40,6 +41,8 @@ export function PullRequestComposer({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
+  /** The head the reader was shown, which a background refresh of `detail` can run ahead of. */
+  shownHeadSha: string | undefined;
   actionPending: boolean;
   onCommentAction: (
     body: string,
@@ -200,6 +203,7 @@ export function PullRequestComposer({
             active={open && sendsReview}
             environmentId={environmentId}
             reference={reference}
+            headSha={shownHeadSha}
             completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
             verdict={mode}
             term={term}
@@ -213,6 +217,8 @@ export function PullRequestComposer({
               setPopover("closed");
               onReviewSubmitted();
             }}
+            // A refusal usually means new commits, so show what the host has now.
+            onRefused={onReviewSubmitted}
           />
         </div>
       ) : null}

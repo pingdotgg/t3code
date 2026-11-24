@@ -1,5 +1,6 @@
 import {
   STATIC_KEYBINDING_COMMANDS,
+  type ClientSettings,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -15,7 +16,12 @@ import {
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
-import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
+import {
+  formatShortcutLabel,
+  shortcutConflictKey,
+  shortcutForContext,
+  shortcutKeyFromEvent,
+} from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
@@ -55,6 +61,8 @@ export interface KeybindingRow {
   readonly defaultWhen: string;
   readonly binding: ResolvedKeybindingRule;
   readonly conflicts: ReadonlyArray<string>;
+  readonly previewLabels: ReadonlyArray<string>;
+  readonly previewShortcuts: ReadonlyArray<KeybindingShortcut>;
 }
 
 export type WhenVariableOption = string;
@@ -81,7 +89,7 @@ export const DEFAULT_WHEN_VARIABLE =
   ) ?? "terminalFocus";
 const KNOWN_WHEN_VARIABLES = new Set(DEFAULT_WHEN_VARIABLES);
 
-export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
+export function shortcutToKeybindingParts(shortcut: KeybindingShortcut): ReadonlyArray<string> {
   const parts: string[] = [];
   if (shortcut.modKey) parts.push("mod");
   if (shortcut.metaKey) parts.push("meta");
@@ -89,7 +97,11 @@ export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string 
   if (shortcut.altKey) parts.push("alt");
   if (shortcut.shiftKey) parts.push("shift");
   parts.push(shortcut.key === " " ? "space" : shortcut.key === "escape" ? "esc" : shortcut.key);
-  return parts.join("+");
+  return parts;
+}
+
+export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
+  return shortcutToKeybindingParts(shortcut).join("+");
 }
 
 export function whenAstToExpression(node: KeybindingWhenNode | undefined): string {
@@ -162,9 +174,22 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
 
 function defaultBindingForBinding(
   binding: ResolvedKeybindingRule,
+  keybindings: ResolvedKeybindingsConfig,
 ): ResolvedKeybindingRule | undefined {
   const bindingKey = shortcutToKeybindingInput(binding.shortcut);
   const bindingWhen = whenAstToExpression(binding.whenAst);
+  const isBound = (entry: ResolvedKeybindingRule) =>
+    keybindings.some(
+      (other) =>
+        other.command === entry.command &&
+        shortcutToKeybindingInput(other.shortcut) === shortcutToKeybindingInput(entry.shortcut) &&
+        [whenAstToExpression(entry.whenAst), "false"].includes(whenAstToExpression(other.whenAst)),
+    );
+  // An edited row does not record which default it replaced; a default the command still has,
+  // or that is unassigned, cannot be it.
+  const findDefault = (matches: (entry: ResolvedKeybindingRule) => boolean) =>
+    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => matches(entry) && !isBound(entry)) ??
+    DEFAULT_RESOLVED_KEYBINDINGS.find(matches);
 
   return (
     DEFAULT_RESOLVED_KEYBINDINGS.find(
@@ -180,11 +205,14 @@ function defaultBindingForBinding(
             shortcutToKeybindingInput(entry.shortcut) === bindingKey,
         )
       : undefined) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find(
+    findDefault(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
     // The last rule is the main key; alt+cmd aliases come first (later rules win).
+    DEFAULT_RESOLVED_KEYBINDINGS.findLast(
+      (entry) => entry.command === binding.command && !isBound(entry),
+    ) ??
     DEFAULT_RESOLVED_KEYBINDINGS.findLast((entry) => entry.command === binding.command)
   );
 }
@@ -249,13 +277,39 @@ export function keybindingConflictLabels(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
+  sendShortcut: ClientSettings["sendShortcut"] = "enter",
   resolve: MessageResolver = m,
 ): ReadonlyArray<KeybindingRow> {
+  // Multiline sending can use either shortcut; settings have no active composer prompt.
+  const modifierModes =
+    sendShortcut === "mod-enter-multiline" ? [false, true] : [sendShortcut === "mod-enter"];
+  const previewLabels = keybindings.map(() => new Set<string>());
+  const previewShortcuts = keybindings.map(() => new Map<string, KeybindingShortcut>());
+  for (const composerRequiresModifier of modifierModes) {
+    const laterBindings = new Set<string>();
+    for (let index = keybindings.length - 1; index >= 0; index--) {
+      const binding = keybindings[index]!;
+      const when = whenAstToExpression(binding.whenAst);
+      if (when === "false") continue;
+      const shortcut = shortcutForContext(binding, { composerRequiresModifier });
+      const key = shortcutConflictKey(shortcut, platform);
+      const conditionKey = `${key}:${when === "true" ? "" : when}`;
+      // Distinct conditions may still apply in other focus contexts.
+      if (!laterBindings.has(`${key}:`) && !laterBindings.has(conditionKey)) {
+        const label = formatShortcutLabel(shortcut, platform);
+        previewLabels[index]!.add(label);
+        if (!previewShortcuts[index]!.has(label)) {
+          previewShortcuts[index]!.set(label, shortcut);
+        }
+      }
+      laterBindings.add(conditionKey);
+    }
+  }
   const rowsById = new Map<string, KeybindingRow>();
   const isMac = isMacPlatform(platform);
-  for (const binding of keybindings) {
+  for (const [index, binding] of keybindings.entries()) {
     if (platformAllowsWhen(binding.whenAst, isMac) === false) continue;
-    const defaultBinding = defaultBindingForBinding(binding);
+    const defaultBinding = defaultBindingForBinding(binding, keybindings);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
@@ -273,6 +327,8 @@ export function buildKeybindingRows(
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,
       conflicts: [],
+      previewLabels: [...previewLabels[index]!],
+      previewShortcuts: [...previewShortcuts[index]!.values()],
     });
   }
   const rows = [...rowsById.values()];
@@ -517,8 +573,9 @@ function titleCaseCommandSegment(segment: string): string {
 
 function recordedLayoutShortcutKey(
   event: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
 ): string {
-  const physicalKey = shortcutKeyFromEvent(event);
+  const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
@@ -565,7 +622,9 @@ export function keybindingFromKeyboardEvent(
   },
 ): string | null {
   const keyToken = normalizeShortcutKeyToken(
-    options?.layoutCharacter ? recordedLayoutShortcutKey(event) : shortcutKeyFromEvent(event),
+    options?.layoutCharacter
+      ? recordedLayoutShortcutKey(event, platform)
+      : shortcutKeyFromEvent(event, platform),
   );
   if (!keyToken) return null;
 

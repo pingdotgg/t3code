@@ -17,13 +17,24 @@ import {
   resolveEventKeys,
   type ShortcutEventLike as SharedShortcutEventLike,
   type ShortcutModifierStateLike,
+  type ShortcutKeyboardLayoutMap,
+  shortcutKeyFromEvent as sharedShortcutKeyFromEvent,
 } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
 import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
+import { getKeyboardLayoutMap } from "./keyboardLayout";
 
 export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
-export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+export function shortcutKeyFromEvent(
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
+) {
+  return sharedShortcutKeyFromEvent(
+    event,
+    isMacPlatform(platform) && event.altKey ? getKeyboardLayoutMap() : undefined,
+  );
+}
 
 export interface ShortcutEventLike extends SharedShortcutEventLike {
   target?: EventTarget | null;
@@ -44,6 +55,7 @@ export interface ShortcutMatchContext {
 
 interface ShortcutMatchOptions {
   platform?: string;
+  keyboardLayoutMap?: ShortcutKeyboardLayoutMap;
   context?: Partial<ShortcutMatchContext>;
 }
 
@@ -113,7 +125,10 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
+export function shortcutForContext(
+  binding: ResolvedKeybindingRule,
+  context: Partial<ShortcutMatchContext>,
+) {
   const shortcut = binding.shortcut;
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
@@ -217,13 +232,22 @@ export function resolveShortcutCommand(
   }
 
   // Every scope resolves every keydown, so rule out other keys before the full match.
-  const eventKeys = resolveEventKeys(event);
+  const keyboardLayoutMap = options?.keyboardLayoutMap ?? getKeyboardLayoutMap();
+  const eventKeys = resolveEventKeys(event, keyboardLayoutMap);
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
     if (!eventKeys.has(binding.shortcut.key)) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
+    if (
+      !matchesKeybindingShortcut(
+        event,
+        shortcutForContext(binding, context),
+        platform,
+        keyboardLayoutMap,
+      )
+    )
+      continue;
     return binding.command;
   }
   return null;

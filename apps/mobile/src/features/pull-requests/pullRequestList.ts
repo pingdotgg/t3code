@@ -194,6 +194,7 @@ export function pullRequestListRowsAreEqual(
       previous.title === next.title &&
       previous.url === next.url &&
       previous.state === next.state &&
+      previous.visibility === next.visibility &&
       previous.isDraft === next.isDraft &&
       previous.mergeability === next.mergeability &&
       previous.baseBranch === next.baseBranch &&

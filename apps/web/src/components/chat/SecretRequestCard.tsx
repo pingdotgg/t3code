@@ -18,12 +18,14 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  SecretProviderId,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages } from "gt-react";
 import {
   ArrowUpRightIcon,
@@ -37,8 +39,8 @@ import {
 } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type MouseEvent } from "react";
 
-import { isSecretsFeatureEnabled } from "../../env";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
@@ -122,7 +124,9 @@ function HostLink(props: { readonly href: string; readonly host: string }) {
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const messages = useMessages();
-  return isSecretsFeatureEnabled
+  // The server accepts a reference answer only with this scope; without it the card is typed.
+  const canUseReferences = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  return canUseReferences && hasFeatureFlag(config, "secretProviders")
     ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }
@@ -157,6 +161,7 @@ function PendingSecretRequestForm(props: {
   const inFlight = useRef(false);
   const inputs = secretRequestInputs(item, messages);
   const inputId = (index: number) => `${formId}-${index}`;
+  const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
   const canSave =
     source === null
       ? secretRequestAnswerInput(item, { type: "save", values }) !== null
@@ -210,7 +215,6 @@ function PendingSecretRequestForm(props: {
     const empty = inputs.findIndex((input) => !secretRequestValue(values, input.key).trim());
     document.getElementById(inputId(Math.max(empty, 0)))?.focus();
   };
-  const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
   const reason = secretRequestReasonParts(item);
   const prefix = !multiple && VARIABLE_NAME.test(item.label) ? item.label : null;
   const field = (input: SecretRequestInput, index: number) => (
@@ -227,25 +231,6 @@ function PendingSecretRequestForm(props: {
       describedBy={describedBy}
       onChange={(value) => setValues((current) => ({ ...current, [input.key]: value }))}
     />
-  );
-  const buttons = (
-    // One group, so a narrow pane wraps both buttons together.
-    <div className="ms-auto flex shrink-0 items-center gap-1">
-      <Button type="submit" variant="secondary" disabled={submitting || !canSave}>
-        <T>Save securely</T>
-        <Kbd size="sm" aria-hidden>
-          ↵
-        </Kbd>
-      </Button>
-      <Button
-        type="button"
-        variant="ghost-muted"
-        disabled={submitting}
-        onClick={() => void send({ type: "decline" })}
-      >
-        <T>Decline</T>
-      </Button>
-    </div>
   );
 
   return (
@@ -297,30 +282,27 @@ function PendingSecretRequestForm(props: {
             {reason.after}
           </p>
         ) : null}
-        {multiple ? (
-          <>
-            <div className="flex min-w-0 flex-col gap-2.5">{inputs.map(field)}</div>
-            {buttons}
-          </>
-        ) : (
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {sources.length > 0 ? (
-              <SecretSourceSelect
-                value={source?.id ?? null}
-                sources={sources}
-                label={item.label}
-                disabled={submitting}
-                onValueChange={(next) => {
-                  setSourceId(next);
-                  setError(null);
-                }}
-              />
-            ) : null}
+        {multiple ? <div className="flex min-w-0 flex-col gap-2">{inputs.map(field)}</div> : null}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {sources.length > 0 ? (
+            <SecretSourceSelect
+              value={source?.id ?? null}
+              sources={sources}
+              label={item.label}
+              disabled={submitting}
+              onValueChange={(next) => {
+                setSourceId(next);
+                setError(null);
+              }}
+            />
+          ) : null}
+          {multiple ? null : (
             <div className="min-w-40 flex-1">
               {source === null ? (
                 inputs.map(field)
               ) : (
                 <InputGroup>
+                  {prefix !== null ? <SecretVariablePrefix prefix={prefix} /> : null}
                   <InputGroupInput
                     id={inputId(0)}
                     font="mono"
@@ -341,9 +323,25 @@ function PendingSecretRequestForm(props: {
                 </InputGroup>
               )}
             </div>
-            {buttons}
+          )}
+          {/* One group, so a narrow pane wraps both buttons together. */}
+          <div className="ms-auto flex shrink-0 items-center gap-1">
+            <Button type="submit" variant="secondary" disabled={submitting || !canSave}>
+              <T>Save securely</T>
+              <Kbd size="sm" aria-hidden>
+                ↵
+              </Kbd>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost-muted"
+              disabled={submitting}
+              onClick={() => void send({ type: "decline" })}
+            >
+              <T>Decline</T>
+            </Button>
           </div>
-        )}
+        </div>
         {error !== null ? (
           <p id={errorId} role="alert" className="px-1 text-meta text-destructive">
             {error}
@@ -351,6 +349,18 @@ function PendingSecretRequestForm(props: {
         ) : null}
       </div>
     </form>
+  );
+}
+
+function SecretVariablePrefix(props: { readonly prefix: string }) {
+  return (
+    <InputGroupAddon className="max-w-1/2 min-w-0 shrink-0">
+      <div className="min-w-0 border-e border-divider pe-3">
+        <Text render={<p />} variant="body" tone="muted" mono truncate title={props.prefix}>
+          {props.prefix}
+        </Text>
+      </div>
+    </InputGroupAddon>
   );
 }
 
@@ -371,15 +381,7 @@ function SecretRequestField(props: {
   const masked = input.secret && !revealed;
   const control = (
     <InputGroup>
-      {props.prefix !== null ? (
-        <InputGroupAddon className="max-w-1/2 min-w-0 shrink-0">
-          <div className="min-w-0 border-e border-divider pe-3">
-            <Text render={<p />} variant="body" tone="muted" mono truncate title={props.prefix}>
-              {props.prefix}
-            </Text>
-          </div>
-        </InputGroupAddon>
-      ) : null}
+      {props.prefix !== null ? <SecretVariablePrefix prefix={props.prefix} /> : null}
       <InputGroupInput
         id={props.id}
         // A CSS-masked text field still exposes its value to screen readers.

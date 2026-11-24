@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  assetResources: [] as Array<import("@t3tools/contracts").AssetResource>,
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
   openedBrowserUrls: [] as string[],
@@ -65,7 +66,13 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: () => state.mintUrl,
-  useAssetUrlState: () => state.assetUrl,
+  useAssetUrlState: (
+    _environmentId: unknown,
+    resource: import("@t3tools/contracts").AssetResource | null,
+  ) => {
+    if (resource) state.assetResources.push(resource);
+    return state.assetUrl;
+  },
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
@@ -174,6 +181,7 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.assetResources = [];
   state.openedBrowserUrls = [];
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
@@ -189,14 +197,18 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
+function markdownPreview(
+  truncated: boolean,
+  contents = "- [ ] Keep the rest of this file\n",
+  relativePath = "tasks.md",
+) {
   state.file = {
-    relativePath: "tasks.md",
+    relativePath,
     contents,
     byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
-  return filePreview("tasks.md");
+  return filePreview(relativePath);
 }
 
 function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
@@ -431,8 +443,10 @@ describe("source file scroll", () => {
 
       const lines = Array.from({ length: 400 }, (_, index) => `line ${index + 1} markdown content`);
       const contents = `${lines.join("\n")}\n`;
+      // Its own file per case: the preview restores a file's scroll position across mounts.
+      const relativePath = `notes-${direction}-${startLine}.md`;
       state.file = {
-        relativePath: "notes.md",
+        relativePath,
         contents,
         byteLength: contents.length,
         truncated: false,
@@ -440,7 +454,7 @@ describe("source file scroll", () => {
 
       await using screen = await render(
         <div style={{ width: 560, height: 400, display: "flex", flexDirection: "column" }}>
-          {filePreview("notes.md")}
+          {filePreview(relativePath)}
         </div>,
       );
 
@@ -595,17 +609,28 @@ describe("rendered Markdown task saves", () => {
     expect(screen.container.querySelector('input[type="checkbox"]')).toBeNull();
   });
 
-  it("keeps a truncated read read-only without queuing a replacement", async () => {
+  it("renders the whole file of a truncated read, read-only", async () => {
     using _settings = setup();
+    state.assetUrl = {
+      _tag: "Success",
+      url: "/assets/tasks.md",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/tasks.md"
+          ? Promise.resolve(
+              new Response("- [ ] Keep the rest of this file\n\nPast the first megabyte\n"),
+            )
+          : realFetch(input, init),
+      );
     await using screen = await render(markdownPreview(true));
-    using _timers = fakeTimers();
+    await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox).not.toBeNull();
     expect(checkbox.disabled).toBe(true);
-    expect(checkbox.readOnly).toBe(true);
     await act(async () => checkbox.click());
-    await vi.advanceTimersByTimeAsync(500);
-    expect(checkbox.checked).toBe(false);
     expect(state.optimistic).toBeNull();
     expect(state.writeFile).not.toHaveBeenCalled();
   });
@@ -613,6 +638,8 @@ describe("rendered Markdown task saves", () => {
   it("still toggles and saves tasks from a complete read", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(false));
+    // The virtualized list mounts its pieces after measuring the viewport.
+    await expect.element(screen.getByRole("checkbox")).toBeInTheDocument();
     using _timers = fakeTimers();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(checkbox).not.toBeNull();
@@ -738,5 +765,21 @@ describe("rendered Markdown select all", () => {
     // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
     await expectFileOnlySelection();
+  });
+});
+
+describe("rendered Markdown relative images", () => {
+  it.each([
+    ["2026-11-23T14:05/README.md", "/workspace/2026-11-23T14:05/diagram.png"],
+    ["/README.md", "/diagram.png"],
+  ])("resolves relative images in %s against its folder", async (relativePath, expectedPath) => {
+    using _settings = setup();
+    await using _screen = await render(
+      markdownPreview(false, "![diagram](diagram.png)\n", relativePath),
+    );
+    await vi.waitFor(() => expect(state.assetResources).not.toHaveLength(0));
+    expect(state.assetResources).toContainEqual(
+      expect.objectContaining({ _tag: "media-file", path: expectedPath }),
+    );
   });
 });

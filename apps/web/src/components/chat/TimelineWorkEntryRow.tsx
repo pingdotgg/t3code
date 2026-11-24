@@ -1,10 +1,14 @@
 import {
-  thoughtPreviewPlugins,
+  thoughtPreviewMarkdown,
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
 } from "./TimelineWorkEntryRow.logic";
-import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
+import {
+  TimelineAnsweredApprovalRow,
+  TimelinePendingApprovalRow,
+} from "./TimelinePendingApprovalRow";
 import { MESSAGE_HEADING_LEVEL } from "./TimelineRowParts";
 import {
+  TimelineApprovalCtx,
   TimelineRowActivityCtx,
   TimelineRowCtx,
   type TimelineWorkEntry,
@@ -36,6 +40,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import {
+  resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   toolGroupAction,
   workEntryViewedImagePath,
@@ -44,18 +49,22 @@ import { t3ToolResultIndicatesFailure } from "@t3tools/client-runtime/t3ToolSumm
 import { turnItemNeedsDetailFetch } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
+import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
+import { McpSignInAction } from "./McpSignInAction";
+import * as DateTime from "effect/DateTime";
 import { CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
+import { observeResize } from "../../lib/observeResize";
 import { useThreadShell } from "../../state/entities";
 import { RunningFor } from "./RunningFor";
 import {
@@ -243,6 +252,20 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
   );
 });
 
+export function ApprovalWorkEntryRow({
+  item,
+}: {
+  item: Extract<
+    NonNullable<TimelineWorkEntry["projectedItem"]>["item"],
+    { type: "approval_request" }
+  >;
+}) {
+  const { pendingApprovals } = use(TimelineApprovalCtx);
+  const pendingApproval = pendingApprovals.get(item.requestId);
+  if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
+  return <TimelineAnsweredApprovalRow item={item} />;
+}
+
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const {
     workEntry,
@@ -254,7 +277,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
-  const { onImageExpand, timestampFormat } = ctx;
+  const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
   const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
@@ -269,6 +292,20 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const noticeMessage =
+    workEntry.structuredPayload?.type === "system_notice"
+      ? workEntry.structuredPayload.message
+      : null;
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const [noticeCutOff, setNoticeCutOff] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- only layout knows whether a notice fits its row
+  useLayoutEffect(() => {
+    const label = labelRef.current;
+    if (!label || noticeMessage === null) return;
+    const measure = () => setNoticeCutOff(label.scrollWidth > label.clientWidth);
+    measure();
+    return observeResize(label, measure);
+  }, [noticeMessage]);
   const onInitialOutputReady = () => {
     if (groupView) groupView.onContentReady?.(workEntry.id);
     else props.onContentReady?.();
@@ -285,11 +322,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;
-  const pendingApproval =
-    failureItem?.type === "approval_request"
-      ? ctx.pendingApprovals.get(failureItem.requestId)
-      : undefined;
-  if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
+  if (failureItem?.type === "approval_request") {
+    return <ApprovalWorkEntryRow item={failureItem} />;
+  }
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
     const resetAt = failureItem.failure.resetAt;
@@ -388,6 +423,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
       : null;
   const payload = workEntry.structuredPayload;
+  const mcpSignIn =
+    payload?.type === "system_notice" &&
+    payload.mcpSignIn !== undefined &&
+    payload.providerThreadId !== null ? (
+      <McpSignInAction
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadId={payload.threadId}
+        providerThreadId={payload.providerThreadId}
+        server={payload.mcpSignIn.server}
+        noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
+      />
+    ) : null;
   const skill =
     payload?.type === "dynamic_tool"
       ? claudeSkillInvocation(payload.toolName, payload.input)
@@ -398,13 +445,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : skill
         ? (skill.args ?? null)
         : undefined;
+  const viewedImagePath = workEntryViewedImagePath(workEntry);
+  const viewedImage =
+    viewedImagePath && threadRef
+      ? resolveViewedImageAsset(viewedImagePath, { threadId: threadRef.threadId, workspaceRoot })
+      : null;
   const groupViewedImages = groupView?.viewedImages;
-  // Images in this entry's expanded body page through the group's viewed images, like its strip.
+  // Images in this entry's expanded body page through the group's viewed images.
   const expandImage = groupViewedImages
     ? (preview: ExpandedImagePreview) =>
-        onImageExpand(
-          workGroupImageGallery(groupViewedImages, workEntryViewedImagePath(workEntry), preview),
-        )
+        onImageExpand(workGroupImageGallery(groupViewedImages, viewedImagePath, preview))
     : onImageExpand;
   const inspectedItem =
     plainOutput === undefined &&
@@ -423,11 +473,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
+  // A notice's details repeat its row, so it expands only to show text the row cuts off.
   const canExpandProjectedItem =
     expandable &&
+    (noticeMessage === null || noticeCutOff) &&
     Boolean(
       expandedBody ||
       inspectedItem ||
+      viewedImage ||
       workEntry.questionAnswer ||
       plainOutputFetches ||
       (isReasoning && workEntry.detail?.trim()),
@@ -472,7 +525,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         tabIndex: 0 as const,
         "aria-label": accessibleDisplayText,
         "aria-expanded": expanded,
-        onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
@@ -480,14 +532,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           }
         },
       }
-    : {};
+    : undefined;
 
   return (
     <WorkLogRow
       data-work-entry-id={workEntry.id}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
-      {...rowToggleProps}
+      onClick={canExpandProjectedItem ? toggleExpanded : undefined}
+      toggle={rowToggleProps}
       icon={
         <span
           className={iconWrapperClass}
@@ -506,8 +559,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <div className="min-w-0 flex-1 overflow-hidden">
           <p className="flex min-w-0 w-full items-baseline gap-1.25 text-body">
             <span
+              ref={labelRef}
               className={cn(
-                answerPreview || editCounts ? "min-w-0" : "min-w-0 flex-1",
+                answerPreview || editCounts || mcpSignIn ? "min-w-0" : "min-w-0 flex-1",
                 "truncate",
                 headingClass,
               )}
@@ -521,10 +575,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   )}
                   cwd={ctx.markdownCwd}
                   parseRawHtml={false}
-                  extraRemarkPlugins={
+                  extensions={
                     workEntry.toolLifecycleStatus === "inProgress"
-                      ? thoughtPreviewPlugins(gt("Thinking"))
-                      : thoughtPreviewPlugins(gt("Thought"))
+                      ? thoughtPreviewMarkdown(gt("Thinking"))
+                      : thoughtPreviewMarkdown(gt("Thought"))
                   }
                 />
               ) : threadLabel ? (
@@ -567,6 +621,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 {answerPreview}
               </span>
             ) : null}
+            {mcpSignIn}
           </p>
         </div>
       }
@@ -619,8 +674,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       !isReasoning &&
       !workEntry.questionAnswer &&
       canExpandProjectedItem &&
-      (expandedBody || inspectedItem || plainOutputFetches) ? (
+      (expandedBody || inspectedItem || viewedImage || plainOutputFetches) ? (
         <WorkLogDetails kind="panel">
+          {viewedImage && threadRef ? (
+            <ChatMarkdownAssetImage
+              environmentId={threadRef.environmentId}
+              resource={viewedImage.resource}
+              alt={viewedImage.alt}
+              srcFragment={viewedImage.srcFragment}
+              workspaceRoot={workspaceRoot}
+              maxHeightRem={16}
+              onImageExpand={expandImage}
+            />
+          ) : null}
           {inspectedItem ? (
             <V2ItemInspector
               onInitialOutputReady={onInitialOutputReady}

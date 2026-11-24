@@ -34,7 +34,9 @@ import {
   settlePullRequestSortStats,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
+  pullRequestListAnsweredEmpty,
   rankPullRequestMatches,
+  pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
   retainVisiblePullRequestStatsBatches,
@@ -456,11 +458,7 @@ export function PullRequestsPage() {
     listQuery.observations,
   );
   if (observedHosts !== hostReads) setHostReads(observedHosts);
-  const baselineEmpty =
-    baselineQuery.data?.entries.length === 0 &&
-    baselineQuery.data.errors.length === 0 &&
-    !baselineQuery.isPending &&
-    baselineQuery.error === null;
+  const baselineEmpty = pullRequestListAnsweredEmpty(baselineQuery);
   const facetTargets = (() => {
     if (!filtersOpen) return NO_LIST_TARGETS;
     return environmentQueries.map(({ environmentId, projectIds }) => ({
@@ -885,7 +883,6 @@ export function PullRequestsPage() {
   }
   const [statsTargetState, setStatsTargetState] = useState<{
     readonly key: string;
-    readonly sortKey?: string;
     readonly batches: ReadonlyArray<PullRequestStatsBatch>;
   }>({ key: filterKey, batches: [] });
   const statsBatches = statsTargetState.key === filterKey ? statsTargetState.batches : [];
@@ -943,12 +940,10 @@ export function PullRequestsPage() {
         activeBatches: batches,
         statsByRow: known,
       });
-      if (added.length === 0 && current.key === filterKey && current.sortKey === sortStatsKey) {
-        return current;
-      }
-      return { key: filterKey, sortKey: sortStatsKey, batches: [...batches, ...added] };
+      if (added.length === 0 && current.key === filterKey) return current;
+      return { key: filterKey, batches: [...batches, ...added] };
     });
-  }, [filterKey, entriesByStatsKey, statsPolicy, sortStatsKey]);
+  }, [filterKey, entriesByStatsKey, statsPolicy]);
   // The observer outlives the rows it watches, so it reads the rows held at the time it fires.
   const readStatsRows = useEffectEvent(() => entriesByStatsKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on rows requests stats for rows that scroll into view
@@ -1024,7 +1019,15 @@ export function PullRequestsPage() {
     statsByRow,
     statsPolicy === "eager" ? statsQuery.stats : null,
     statsPolicy !== "eager" ||
-      (statsTargetState.sortKey === sortStatsKey &&
+      // Read here rather than marked by the effect, so a keystroke that needs no new counts
+      // settles in its own render instead of committing again.
+      (statsTargetState.key === filterKey &&
+        pullRequestStatsKeysToRequest(
+          entriesByStatsKey,
+          new Set(entriesByStatsKey.keys()),
+          statsTargetState.batches,
+          statsByRow,
+        ).size === 0 &&
         !statsQuery.isPending &&
         !listQuery.isPending &&
         !baselineQuery.isPending &&
@@ -1283,10 +1286,11 @@ export function PullRequestsPage() {
     ),
   );
 
-  const prefetchEntry = usePullRequestIntentPrefetch((entry) =>
+  const { prefetch: prefetchEntry, reads: intentReads } = usePullRequestIntentPrefetch((entry) =>
     listedPullRequestsBySurface.has(pullRequestListEntryId(entry)),
   );
-  const selectEntry = (entry: PullRequestRowTarget) => {
+  // Stable, so the memoized rows skip the page's re-renders.
+  const selectEntry = useStableCallback((entry: PullRequestRowTarget) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
     updateSearch({
@@ -1296,7 +1300,7 @@ export function PullRequestsPage() {
       selectedEnvironmentId: entry.environmentId,
       selectedHost: entry.host,
     });
-  };
+  });
 
   const searchInput = (
     <PullRequestSearchInput
@@ -1496,6 +1500,7 @@ export function PullRequestsPage() {
           scrollElement={scrollElement}
         />
       )}
+      {intentReads}
 
       {listError && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
@@ -1644,7 +1649,6 @@ export function PullRequestsPage() {
       />
     ),
     rightPanelOpen: rightPanelState.isOpen,
-
     maximizedAway: rightPanelMaximized,
     listBody,
     scrollRef: attachScroller,

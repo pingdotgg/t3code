@@ -2,7 +2,7 @@ import { RegistryProvider } from "@effect/atom-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import * as atomCommands from "../../state/use-atom-command";
 
@@ -122,6 +122,34 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+
+  it.each([
+    { name: "existing binding", field: existingField, open: () => activate(existingPill, "click") },
+    {
+      name: "new binding",
+      field: newField,
+      open: async () => {
+        await activate(page.getByRole("button", { name: "Add keybinding" }), "click");
+        await activate(newField, "focus");
+      },
+    },
+  ])("records Shift+Esc in the $name field", async ({ field, open }) => {
+    const onOpenChange = vi.fn();
+    await using _screen = await render(
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogPopup>
+          <DialogTitle>Settings</DialogTitle>
+          <KeybindingsSettingsPanel />
+        </DialogPopup>
+      </Dialog>,
+    );
+
+    await open();
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+
+    await expect.element(field).toHaveValue("shift+esc");
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });
 
 it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
@@ -180,6 +208,26 @@ it("Esc in the keybindings search clears the query without closing Settings", as
   );
   const search = page.getByRole("searchbox", { name: "Search keybindings" });
   await search.fill("sidebar");
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    const keydown = new KeyboardEvent("keydown", {
+      ...composition,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => {
+      // Safari ends the composition just before the Escape keydown.
+      if (!composition.isComposing)
+        search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search.element().dispatchEvent(keydown);
+    });
+    expect(keydown.defaultPrevented).toBe(false);
+    await expect.element(search).toHaveValue("sidebar");
+    await expect.element(search).toHaveFocus();
+  }
+  expect(search.element().getAttribute("type")).toBe("text");
 
   await userEvent.keyboard("{Escape}");
 
@@ -246,8 +294,8 @@ it("keeps a new binding open when Escape is pressed during its save", async () =
   runCommand.mockReturnValue(pendingSave);
   await using screen = await render(<KeybindingsSettingsPanel />);
   await screen.getByRole("button", { name: "Add keybinding" }).click();
-  await screen.getByRole("combobox").click();
-  await page.getByRole("option", { name: "Toggle sidebar", exact: true }).click();
+  await userEvent.keyboard("sidebar.toggle");
+  await page.getByRole("option", { name: /Toggle sidebar/ }).click();
   const field = screen.getByRole("textbox", { name: "Keybinding for Toggle sidebar", exact: true });
   await field.click();
   await userEvent.keyboard("{Control>}k{/Control}");
@@ -260,4 +308,49 @@ it("keeps a new binding open when Escape is pressed during its save", async () =
   await expect.element(screen.getByRole("button", { name: "Add keybinding" })).toBeDisabled();
   finishSave();
   await expect.element(screen.getByRole("button", { name: "Add keybinding" })).toBeEnabled();
+});
+
+it("filters actions and allows additional shortcuts for assigned commands", async () => {
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  await screen.getByRole("button", { name: "Add keybinding" }).click();
+  const dialog = page.getByRole("dialog", { name: "Command", exact: true });
+  const search = dialog.getByRole("combobox", { name: "Search", exact: true });
+  await expect.element(search).toHaveFocus();
+  await userEvent.keyboard("sidebar.toggle");
+  const assigned = page.getByRole("option", { name: /Toggle sidebar/ });
+  await expect.element(assigned).not.toHaveAttribute("aria-disabled", "true");
+  await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
+  expect(assigned.element().querySelectorAll('[data-slot="kbd"]')).toHaveLength(2);
+  await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
+  await assigned.click();
+  const command = screen.getByRole("combobox", { name: "Command", exact: true });
+  await expect.element(command).toHaveTextContent("Toggle sidebar");
+  await command.click();
+  await search.fill("tab.close");
+  const multiShortcut = page.getByRole("option", { name: /Close tab/ });
+  await expect.element(multiShortcut).toBeVisible();
+  expect(multiShortcut.element().querySelectorAll('[data-slot="kbd-group"]')).toHaveLength(1);
+  const extraBadge = multiShortcut.getByText("+1");
+  await expect.element(extraBadge).toBeVisible();
+  await userEvent.hover(extraBadge);
+  await vi.waitFor(() => {
+    const tooltip = document.querySelector('[data-slot="tooltip-popup"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip?.querySelectorAll('[data-slot="kbd"]')).toHaveLength(2);
+    expect(tooltip?.textContent).toContain("!terminalFocus");
+  });
+  await search.fill("opposite queue");
+  await expect
+    .element(page.getByRole("option", { name: /Send with the opposite queue or steer action/ }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
+  await search.fill("no-such-action");
+  await expect.element(page.getByText("No results found.")).toBeVisible();
+  await search.fill("composer.cycleHost");
+  const available = page.getByRole("option", { name: "Composer: Cycle Host" });
+  await expect.element(available).not.toHaveAttribute("aria-disabled", "true");
+  await available.click();
+  await expect
+    .element(screen.getByRole("combobox", { name: "Command", exact: true }))
+    .toHaveTextContent("Composer: Cycle Host");
 });

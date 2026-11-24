@@ -1,6 +1,7 @@
 import { type TimelineRow, TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogBlock } from "./WorkLog";
 import { memo, use } from "react";
+import { FeedbackRequestCard } from "./FeedbackRequestCard";
 import { V2LifecycleRow } from "./V2LifecycleRow";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -10,14 +11,35 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent") {
     return (
-      <WorkLogBlock continues={row.continuesWorkLog}>
+      <WorkLogBlock continues={row.continuesWorkLog} precedesPrompt={row.precedesPrompt}>
         <V2SubagentGroup key={row.id} row={row} />
+      </WorkLogBlock>
+    );
+  }
+  if (item.type === "run_interrupt_result") {
+    return (
+      <WorkLogBlock continues={row.continuesWorkLog} precedesPrompt={row.precedesPrompt}>
+        <V2LifecycleRow
+          environmentId={ctx.activeThreadEnvironmentId}
+          item={item}
+          runs={ctx.runs}
+          onOpenThread={ctx.onOpenThread}
+        />
       </WorkLogBlock>
     );
   }
   if (item.type === "secret_request") {
     return (
       <SecretRequestCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        item={item}
+        visibility={visibility}
+      />
+    );
+  }
+  if (item.type === "feedback_request") {
+    return (
+      <FeedbackRequestCard
         environmentId={ctx.activeThreadEnvironmentId}
         item={item}
         visibility={visibility}

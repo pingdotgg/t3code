@@ -14,7 +14,9 @@ import {
   describeUpdateCapsule,
   formatUpdateElapsed,
   RUN_STATUS_LABELS,
+  resolveRestoredRetry,
   resolveUpdateRunMachineStatus,
+  type UpdateEverythingMachine,
   type UpdateEverythingRun,
   type UpdateRunLocalState,
   type UpdateRunMachineView,
@@ -35,7 +37,10 @@ function useNow(intervalMs: number | null): number {
   return useSyncExternalStore(subscribe, () => Math.floor(Date.now() / step) * step);
 }
 
-function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<UpdateRunMachineView> {
+function useUpdateRunMachineViews(
+  run: UpdateEverythingRun,
+  current: ReadonlyArray<UpdateEverythingMachine>,
+): ReadonlyArray<UpdateRunMachineView> {
   const updateStates = useAtomValue(
     environmentUpdateStatesAtom(
       environmentIdsKey(run.machines.map(({ environmentId }) => environmentId)),
@@ -44,6 +49,7 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
   return run.machines.map((machine, index) => ({
     machine,
     status: resolveUpdateRunMachineStatus(machine, run.phase, updateStates[index]!),
+    restoredRetry: resolveRestoredRetry(machine, current),
   }));
 }
 
@@ -72,16 +78,19 @@ function localStatusLabel(
 
 export function SidebarUpdateCapsule({
   run,
+  current,
   local,
   icon,
   onRestart,
 }: {
   readonly run: UpdateEverythingRun;
+  /** Every server as it is now, to rebuild the retry of a row restored after a relaunch. */
+  readonly current: ReadonlyArray<UpdateEverythingMachine>;
   readonly local: UpdateRunLocalState;
   readonly icon: ReactNode;
   readonly onRestart?: () => Promise<void>;
 }) {
-  const machines = useUpdateRunMachineViews(run);
+  const machines = useUpdateRunMachineViews(run, current);
   const hasActiveMachine = machines.some(
     ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
   );
@@ -93,20 +102,35 @@ export function SidebarUpdateCapsule({
   const failed = machines.some(({ status }) => status === "failed");
   const settled = !hasActiveMachine && run.localVersion === null;
   const restartSeconds = restartSecondsLeft(run, now);
+  const expandedControlClassName =
+    restartSeconds === null
+      ? "@min-[5rem]/sidebar-update:block"
+      : "@min-[12rem]/sidebar-update:block";
 
   const actionLabel =
     view.action === "later" ? gt("Later") : view.action === "retry" ? gt("Retry") : gt("Dismiss");
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
-    else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
-    else dismissSettledUpdateRunMachines();
+    else if (view.action === "retry") {
+      retryFailedUpdateRunServers(
+        updateServer,
+        new Map(
+          machines.flatMap(({ machine, restoredRetry }) =>
+            restoredRetry === null ? [] : [[machine.environmentId, restoredRetry] as const],
+          ),
+        ),
+      );
+    } else dismissSettledUpdateRunMachines();
   };
 
   return (
     <Popover>
       <div
         className={cn(
-          "relative ml-auto flex h-8 w-8 shrink-0 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground @min-[12rem]/sidebar-update:w-full",
+          "relative ml-auto flex h-8 w-8 shrink-0 items-center justify-end rounded-full bg-sidebar-control-surface text-sidebar-foreground transition-[width] duration-200 ease-out motion-reduce:transition-none",
+          restartSeconds === null
+            ? "@min-[5rem]/sidebar-update:w-full"
+            : "@min-[12rem]/sidebar-update:w-full",
           view.tone === "slow" && "ring-1 ring-warning/40 ring-inset",
           view.tone === "failed" && "ring-1 ring-destructive/40 ring-inset",
         )}
@@ -122,14 +146,24 @@ export function SidebarUpdateCapsule({
             />
           }
         />
-        <span className="pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-caption @min-[12rem]/sidebar-update:block">
+        <span
+          className={cn(
+            "pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-caption transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+            expandedControlClassName,
+          )}
+        >
           <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
           {view.slow ? (
             <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
           ) : null}
         </span>
         {view.action !== null ? (
-          <span className="relative hidden shrink-0 @min-[12rem]/sidebar-update:block">
+          <span
+            className={cn(
+              "relative hidden shrink-0 transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+              expandedControlClassName,
+            )}
+          >
             <Button size="xs" variant="link" onClick={runAction}>
               {actionLabel}
             </Button>
@@ -138,7 +172,10 @@ export function SidebarUpdateCapsule({
         <span
           className={cn(
             "pointer-events-none relative grid size-8 shrink-0 place-items-center",
-            view.action !== null && "@min-[12rem]/sidebar-update:hidden",
+            view.action !== null &&
+              (restartSeconds === null
+                ? "@min-[5rem]/sidebar-update:hidden"
+                : "@min-[12rem]/sidebar-update:hidden"),
             restartSeconds !== null &&
               "rounded-full text-caption tabular-nums ring-1 ring-current/22 ring-inset",
           )}

@@ -85,16 +85,19 @@ export function useStableRows(
     const {
       expandedWorkGroupIds: previousGroups,
       pendingApprovalRequestIds: previousApprovals,
+      childApprovalThreadIds: previousChildApprovals,
       ...previousInput
     } = state.input;
     const {
       expandedWorkGroupIds: nextGroups,
       pendingApprovalRequestIds: nextApprovals,
+      childApprovalThreadIds: nextChildApprovals,
       ...nextInput
     } = input;
     if (
       shallow(previousGroups, nextGroups) &&
       shallow(previousApprovals, nextApprovals) &&
+      shallow(previousChildApprovals, nextChildApprovals) &&
       shallow(previousInput, nextInput)
     ) {
       return state.stable.result;
@@ -129,6 +132,7 @@ type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[
   readonly pendingApprovalRequestIds: NonNullable<
     MessagesTimelineRowsInput["pendingApprovalRequestIds"]
   >;
+  readonly childApprovalThreadIds: NonNullable<MessagesTimelineRowsInput["childApprovalThreadIds"]>;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
   readonly toolCallVisibility: Exclude<MessagesTimelineRowsInput["toolCallVisibility"], undefined>;

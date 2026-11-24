@@ -308,6 +308,26 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData).not.toHaveBeenCalled();
   });
 
+  it("sends nothing for Ctrl+Shift+C or Ctrl+Insert without a selection but keeps Ctrl+C", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "C", "KeyC", { ctrlKey: true, shiftKey: true });
+    key(surface, "Insert", "Insert", { ctrlKey: true });
+    expect(harness.onData).not.toHaveBeenCalled();
+    key(surface, "c", "KeyC", { ctrlKey: true });
+    key(surface, "Insert", "Insert", { ctrlKey: true, altKey: true });
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x03", "\x1b[2;7~"]);
+  });
+
+  it("sends nothing for Cmd+C on macOS without a selection", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "c", "KeyC", { metaKey: true });
+    expect(harness.onData).not.toHaveBeenCalled();
+  });
+
   it("skips middle-click selection paste when the desktop turned primary paste off", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();
@@ -596,19 +616,21 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelection()).toBe("row 6\nrow 7\nrow 8");
   });
 
-  it("leaves mostly sideways wheel events to the scroller around it", async () => {
+  it("leaves mostly sideways and Shift+wheel events to the scroller around it", async () => {
     const harness = createHarness();
     await harness.create();
-    const wheel = (deltaX: number, deltaY: number) => {
+    const wheel = (deltaX: number, deltaY: number, shiftKey = false) => {
       const event = Object.assign(new Event("wheel", { cancelable: true }), {
         deltaX,
         deltaY,
         deltaMode: 0,
+        shiftKey,
       });
       harness.canvas.dispatchEvent(event);
       return event.defaultPrevented;
     };
     expect(wheel(-20, 1)).toBe(false);
+    expect(wheel(0, -60, true)).toBe(false);
     expect(wheel(2, -60)).toBe(true);
   });
 

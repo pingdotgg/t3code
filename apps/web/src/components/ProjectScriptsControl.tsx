@@ -64,6 +64,7 @@ import {
   MenuSubPopup,
 } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { StatusDot } from "./ui/status-dot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export type { NewProjectScriptInput, ProjectScriptActionResult };
@@ -466,7 +467,9 @@ export default function ProjectScriptsControl({
               <span className="relative shrink-0">
                 <SquareTerminalIcon className="size-4 text-muted-foreground" />
                 {runningScriptServer ? (
-                  <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-success" />
+                  <span className="absolute -right-0.5 -top-0.5 flex">
+                    <StatusDot tone="success" />
+                  </span>
                 ) : null}
               </span>
               <span className="min-w-0 flex-1 truncate">{primaryScript.name}</span>

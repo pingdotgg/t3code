@@ -40,6 +40,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openDiscoveredPort } from "../preview/openDiscoveredPort";
 import { Spinner } from "../ui/spinner";
+import { StatusDot } from "../ui/status-dot";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -107,19 +108,20 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       event.preventDefault();
       // This machine's browser reaches another environment's loopback only through a forward.
       // Starting a forward runs the probe; only a confirmed local environment opens directly.
-      const url =
-        forwardable && locality !== "local"
-          ? await forwardPort(props.environmentId, server.port).then(
-              (forward) => forwardedUrl(forward, server.url),
-              (error: unknown) => {
-                reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
-                return null;
-              },
-            )
-          : resolveExternalServerUrl(props.environmentId, server.url);
+      const forwarding = forwardable && locality !== "local";
+      const url = forwarding
+        ? await forwardPort(props.environmentId, server.port).then(
+            (forward) => forwardedUrl(forward, server.url),
+            (error: unknown) => {
+              reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
+              return null;
+            },
+          )
+        : resolveExternalServerUrl(props.environmentId, server.url);
       if (url === null) return;
       // Without a forward, a remote environment's localhost would open this machine's instead.
       if (
+        !forwarding &&
         locality !== "local" &&
         tunnelsEnvironmentLoopback(environment?.entry.target) &&
         isLoopbackHost(new URL(url).hostname)
@@ -206,7 +208,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                 >
                   <span className="relative shrink-0">
                     <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-                    <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-success" />
+                    <span className="absolute -right-0.5 -top-0.5 flex">
+                      <StatusDot tone="success" />
+                    </span>
                   </span>
                   {/* The end padding keeps text clear of the stop button. */}
                   <span
@@ -239,7 +243,11 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                 </TooltipPopup>
               </Tooltip>
               {actionCount > 0 ? (
-                <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+                <div
+                  className={cn(
+                    "absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5",
+                  )}
+                >
                   {canForward ? (
                     <Tooltip>
                       <TooltipTrigger

@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { contextMenuSourceOf } from "../contextMenuSource";
 import {
   ClipboardApiUnavailableError,
   ClipboardWriteError,
@@ -69,6 +70,7 @@ import { useConnectedEnvironmentIds } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { WorktreeRepositoriesControl } from "./WorktreeRepositoriesControl";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -98,7 +100,6 @@ import {
   resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNarrowestWidth,
 } from "./composerFooterLayout";
-import { NoProjectChip } from "./chat/NoProjectChip";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 
@@ -125,7 +126,10 @@ interface BranchToolbarProps {
   projectId: ProjectId;
   worktreePath: string | null;
   isServerThread: boolean;
+  /** Offers the workspace choice: the project folder is a repository or tracks one. */
   showGitControls: boolean;
+  /** False when the project folder has no branch of its own to pick. Defaults to `showGitControls`. */
+  showBranchControls?: boolean;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
@@ -259,13 +263,15 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
         <TooltipTrigger
           render={
             <span
-              className="inline-flex h-7 shrink-0 items-center ps-2 pe-0.5 text-muted-foreground sm:h-5.5"
+              // The chips' 12px medium label at every size: caption on phones, meta above.
+              className="inline-flex h-7 min-w-0 shrink-0 items-center gap-1.25 border border-transparent px-2 text-caption text-muted-foreground sm:h-5.5 sm:text-meta"
               data-composer-context-control
               aria-label={workspaceLabel}
             />
           }
         >
           {icon}
+          <ComposerContextLabel>{workspaceLabel}</ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>{workspaceLabel}</TooltipPopup>
       </Tooltip>
@@ -639,10 +645,11 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
   event.preventDefault();
   event.stopPropagation();
   void api.contextMenu
-    .show([{ id: "copy-path", label: resolveMessage(msg("Copy full path")), icon: "copy" }], {
-      x: event.clientX,
-      y: event.clientY,
-    })
+    .show(
+      [{ id: "copy-path", label: resolveMessage(msg("Copy full path")), icon: "copy" }],
+      { x: event.clientX, y: event.clientY },
+      contextMenuSourceOf(event),
+    )
     .then((action) => {
       if (action !== "copy-path") return;
       const clipboardPath = formatFilePathForClipboard(workspacePath);
@@ -672,6 +679,8 @@ interface RunContextSelectorProps {
   panelEnvironmentActions?: ReactNode;
   workspaceRoot?: string;
   forceNewWorktree: boolean;
+  /** False when the folder has no repository a worktree could come from. */
+  offersWorkspaceModes: boolean;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
@@ -700,7 +709,8 @@ const RunContextSelector = memo(function RunContextSelector({
   section,
   panelEnvironmentActions,
   workspaceRoot,
-  forceNewWorktree,
+  forceNewWorktree: requestedForceNewWorktree,
+  offersWorkspaceModes,
   autoEnvironmentLabel,
   onAutoEnvironment,
   envLocked,
@@ -710,7 +720,7 @@ const RunContextSelector = memo(function RunContextSelector({
   showEnvironmentPicker,
   showEnvironmentIndicator,
   onEnvironmentChange,
-  effectiveEnvMode,
+  effectiveEnvMode: requestedEnvMode,
   activeWorktreePath,
   onEnvModeChange,
   previousWorktreeLabel,
@@ -725,11 +735,14 @@ const RunContextSelector = memo(function RunContextSelector({
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
+  // A folder no worktree can come from runs threads in place, whatever mode was requested.
+  const forceNewWorktree = offersWorkspaceModes && requestedForceNewWorktree;
+  const effectiveEnvMode = offersWorkspaceModes ? requestedEnvMode : "local";
   const WorkspaceIcon = noProject
     ? FolderIcon
     : effectiveEnvMode === "worktree"
       ? FolderGit2Icon
-      : activeWorktreePath
+      : activeWorktreePath && offersWorkspaceModes
         ? FolderGitIcon
         : FolderIcon;
   const workspaceLabel = noProject
@@ -742,7 +755,10 @@ const RunContextSelector = memo(function RunContextSelector({
           ? resolveEnvModeLabel("worktree", m)
           : resolveCurrentWorkspaceLabel(activeWorktreePath, m);
   const isPanel = displayMode === "panel";
-  const isLocked = isPanel ? section === "workspace" && envModeLocked : envLocked || envModeLocked;
+  const workspaceModesLocked = envModeLocked || !offersWorkspaceModes;
+  const isLocked = isPanel
+    ? section === "workspace" && workspaceModesLocked
+    : envLocked || workspaceModesLocked;
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -752,7 +768,7 @@ const RunContextSelector = memo(function RunContextSelector({
     ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0)
       ? availableEnvironments
       : undefined;
-  const showWorkspaceGroup = section !== "machine";
+  const showWorkspaceGroup = section !== "machine" && offersWorkspaceModes;
   const showPathGroup = isPanel && workspacePath !== null && section !== "workspace";
   const environmentActions = isPanel && section !== "workspace" ? panelEnvironmentActions : null;
   const machineLabel = autoEnvironmentLabel ?? activeEnvironment?.label;
@@ -879,7 +895,7 @@ const RunContextSelector = memo(function RunContextSelector({
         data-composer-context-control
         data-composer-shortcut={[
           showEnvironmentPicker && !envLocked && section !== "workspace" ? "composer.host" : "",
-          !envModeLocked && section !== "machine" ? "composer.workspace" : "",
+          !workspaceModesLocked && section !== "machine" ? "composer.workspace" : "",
         ].join(" ")}
       >
         {triggerContent}
@@ -1233,6 +1249,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   worktreePath,
   isServerThread,
   showGitControls,
+  showBranchControls = showGitControls,
   draftId,
   onEnvModeChange,
   envMode,
@@ -1330,6 +1347,14 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   if (!activeProject) return null;
 
+  const startsNewWorktree =
+    showGitControls && effectiveEnvMode === "worktree" && activeWorktreePath === null;
+  const offersRepositoryChoice =
+    startsNewWorktree &&
+    !isServerThread &&
+    !envModeLocked &&
+    (activeProject.trackedFolders?.length ?? 0) > 0;
+
   if (layout === "panel") {
     return (
       <div className="flex w-full flex-col" data-thread-panel-run-context>
@@ -1344,6 +1369,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                   panelEnvironmentActions={panelEnvironmentActions}
                   workspaceRoot={activeProject.workspaceRoot}
                   forceNewWorktree={forceNewWorktree}
+                  offersWorkspaceModes={showGitControls}
                   autoEnvironmentLabel={autoEnvironmentLabel}
                   onAutoEnvironment={onAutoEnvironment}
                   envLocked={envLocked}
@@ -1425,21 +1451,24 @@ export const BranchToolbar = memo(function BranchToolbar({
       onAddToMachine={onAddToMachine}
     />
   ) : null;
-
   return (
     <ComposerSurface.ContextStrip
       ref={attachStrip}
       data-compact={stripCompaction === "none" ? undefined : stripCompaction}
       data-composer-context-control
     >
-      {isScratchProject(activeProject, scratchWorkspaceRoot) ? (
-        <NoProjectChip started={isServerThread} />
-      ) : null}
       {machineMenu}
-      {!showGitControls && !onOpenWorkspaceDetails ? (
+      {showGitControls && !showBranchControls && !onOpenWorkspaceDetails ? (
         <WorkspaceMenu {...workspaceMenuProps} />
       ) : null}
-      {showGitControls && !onOpenWorkspaceDetails ? (
+      {offersRepositoryChoice ? (
+        <WorktreeRepositoriesControl
+          project={activeProject}
+          draftTarget={draftId ?? threadRef}
+          offersBaseBranch={!showBranchControls}
+        />
+      ) : null}
+      {!showGitControls || !showBranchControls || onOpenWorkspaceDetails ? null : (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
@@ -1459,7 +1488,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
-      ) : null}
+      )}
       {afterBranch}
       {trailing}
     </ComposerSurface.ContextStrip>

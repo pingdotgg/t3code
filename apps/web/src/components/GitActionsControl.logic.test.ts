@@ -7,6 +7,7 @@ import {
   type DefaultBranchConfirmableAction,
   hasUsableGitMenuContent,
   buildSyncMenuItems,
+  commitPushShortcutPressActs,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
@@ -127,6 +128,22 @@ describe("when: on default ref without open PR", () => {
       label: "Commit & push",
       disabled: false,
     });
+  });
+
+  it("resolveQuickAction pushes without committing when the tree is clean and ahead", () => {
+    const withUpstream = resolveQuickAction(
+      status({ refName: "main", aheadCount: 1 }),
+      false,
+      true,
+    );
+    assert.deepInclude(withUpstream, { kind: "run_action", action: "push", label: "Push" });
+
+    const withoutUpstream = resolveQuickAction(
+      status({ refName: "main", aheadCount: 1, hasUpstream: false }),
+      false,
+      true,
+    );
+    assert.deepInclude(withoutUpstream, { kind: "run_action", action: "push", label: "Push" });
   });
 
   it("offers a feature branch only to actions that commit the changes", () => {
@@ -260,6 +277,18 @@ describe("requiresDefaultBranchConfirmation", () => {
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
     assert.isFalse(requiresDefaultBranchConfirmation("push", false));
+  });
+});
+
+describe("commitPushShortcutPressActs", () => {
+  it("acts once, only for the control in the focused pane", () => {
+    const press = { defaultPrevented: false, repeat: false };
+    assert.isTrue(commitPushShortcutPressActs({ ...press, paneFocused: true }));
+    assert.isFalse(commitPushShortcutPressActs({ ...press, paneFocused: false }));
+    assert.isFalse(
+      commitPushShortcutPressActs({ ...press, paneFocused: true, defaultPrevented: true }),
+    );
+    assert.isFalse(commitPushShortcutPressActs({ ...press, paneFocused: true, repeat: true }));
   });
 });
 

@@ -100,6 +100,18 @@ export function issueOrder(sort: IssueListSort) {
   return (left: IssueListEntry, right: IssueListEntry) => date(right) - date(left);
 }
 
+// A row keeps its object while its entry and environment hold, so a memoized row skips the list's
+// re-renders.
+const listedIssueEntries = new WeakMap<IssueListEntry, EnvironmentIssueEntry>();
+
+function listedIssueEntry(entry: IssueListEntry, environmentId: EnvironmentId) {
+  const held = listedIssueEntries.get(entry);
+  if (held?.environmentId === environmentId) return held;
+  const listed = { ...entry, environmentId };
+  listedIssueEntries.set(entry, listed);
+  return listed;
+}
+
 export function groupIssues(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   query: string,
@@ -141,7 +153,7 @@ export function groupIssues(
       // Environments holding the same repository answer the same issue; the first one keeps it.
       if (listed.has(entry.url)) continue;
       listed.add(entry.url);
-      group.rows.push({ ...entry, environmentId });
+      group.rows.push(listedIssueEntry(entry, environmentId));
     }
     for (const error of page.errors) {
       const project = projects.find(
@@ -170,6 +182,9 @@ export function issueFilterScopes(
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
+  // A repository's scope is the same scope on every server. A bound tracker's scope is not: two
+  // accounts, or two servers, may both have an ENG team, so those are deduplicated per server only.
+  const fromRepository = new Set<IssueScopeRef>();
   for (const [environmentId, page] of held) {
     for (const project of projects) {
       if (project.environmentId !== environmentId) continue;
@@ -186,10 +201,9 @@ export function issueFilterScopes(
           )
         )
           continue;
-        scopes.push({
-          environmentId,
-          input: { projectId: project.id, tracker: tracker.tracker, host, scope },
-        });
+        const input = { projectId: project.id, tracker: tracker.tracker, host, scope };
+        fromRepository.add(input);
+        scopes.push({ environmentId, input });
       }
     }
     // A tracker bound in settings (a Linear team) is no repository's; the answer names its scope,
@@ -209,9 +223,12 @@ export function issueFilterScopes(
       );
       if (!tracker?.configured) continue;
       if (!tracker.capabilities?.labels && !tracker.capabilities?.assignees) continue;
+      // An answer names each scope once per account; rows standing in for one repeat.
       if (
         scopes.some(
           (s) =>
+            (fromRepository.has(s.input) ||
+              (page.answer.scopes === undefined && s.environmentId === environmentId)) &&
             s.input.scope.toLowerCase() === input.scope.toLowerCase() &&
             s.input.host?.toLowerCase() === host,
         )

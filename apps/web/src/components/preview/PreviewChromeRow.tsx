@@ -18,6 +18,7 @@ import { T, useGT } from "gt-react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+import { StatusDot } from "~/components/ui/status-dot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
@@ -272,7 +273,9 @@ export function PreviewChromeRow({
             >
               <Camera className={cn(recording && "text-destructive")} />
               {recording ? (
-                <span className="absolute right-0.5 top-0.5 size-1.5 motion-safe:animate-status-pulse rounded-full bg-destructive" />
+                <span className="absolute right-0.5 top-0.5 flex">
+                  <StatusDot tone="danger" pulse />
+                </span>
               ) : null}
             </TooltipTrigger>
             <TooltipPopup>

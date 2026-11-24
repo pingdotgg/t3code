@@ -142,7 +142,7 @@ export function PullRequestListGroups({
       ? [
           {
             key: `group:${group.key}`,
-            type: "header",
+            type: groupIndex > 0 ? "header:gap" : "header",
             node: (
               <div className={groupIndex > 0 ? "pt-3" : undefined}>
                 <PullRequestGroupHeader
@@ -156,7 +156,9 @@ export function PullRequestListGroups({
       : []),
     ...clusterPullRequestStacks(group.entries).map((item, index) => ({
       key: `${group.key}:${item.kind === "row" ? pullRequestEntryKey(item.entry) : `stack:${item.key}`}`,
-      type: item.kind,
+      // Each type is one height (the separator, the gap above a group), so the list's estimate
+      // for a row it has not measured is exact and mounting one moves no other.
+      type: `${item.kind}${index > 0 ? ":separated" : !group.label && groupIndex > 0 ? ":gap" : ""}`,
       node: (
         <div className={index === 0 && !group.label && groupIndex > 0 ? "pt-3" : undefined}>
           {index > 0 ? <Separator /> : null}

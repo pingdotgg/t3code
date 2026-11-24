@@ -23,6 +23,7 @@ export function layoutRoutePage(location: {
 }): LayoutPageContent | null {
   if (location.pathname === "/pull-requests") return { kind: "pull-requests", href: location.href };
   if (location.pathname === "/issues") return { kind: "issues", href: location.href };
+  if (location.pathname === "/workflows") return { kind: "workflows", href: location.href };
   return null;
 }
 
@@ -36,7 +37,7 @@ export function layoutPageHref(content: LayoutPageContent): string {
   if (content.href === undefined && content.kind === "issues") {
     url.search = defaultStringifySearch(readIssueListPreferences());
   }
-  url.searchParams.delete("pane");
+  if (content.kind !== "workflows") url.searchParams.delete("pane");
   return `${url.pathname}${url.search}${url.hash}`;
 }
 

@@ -115,7 +115,7 @@ export function ThreadDetailsMoreButton({
       aria-expanded={expanded}
       onClick={onToggle}
       tone="muted"
-      className="w-full"
+      className="w-full active:scale-100"
     >
       <Icon aria-hidden className="size-4 shrink-0" />
       {expanded ? (

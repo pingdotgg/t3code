@@ -69,7 +69,7 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
 
 describe("RightPanelTabs", () => {
   it.each(["embedded", "inline"] as const)(
-    "%s: a flick that scrolls the tab strip to its left edge keeps the thread, a swipe from the edge goes back",
+    "%s: a flick that scrolls the tab strip to its left edge keeps the thread, and so does a swipe from the edge",
     async (mode) => {
       navigateHistory.mockReset();
       const { bridge, scroll } = trackpad();
@@ -140,7 +140,7 @@ describe("RightPanelTabs", () => {
       viewport.scrollLeft = 0;
       scroll(viewport.querySelector("[data-active-tab]")!, [-40, -40, -40, -40, -40]);
 
-      expect(navigateHistory).toHaveBeenCalledExactlyOnceWith("back");
+      expect(navigateHistory).not.toHaveBeenCalled();
     },
   );
 });

@@ -84,6 +84,16 @@ export function authoredImageSizeStyle(
   return undefined;
 }
 
+/**
+ * An unavailable file has no dimensions, so its `aspect-video w-full` frame
+ * would fill the row and `max-height` would squash it. Bound the width so the
+ * frame stays 16:9 at the height cap.
+ */
+function unavailableImageSizeStyle(maxHeightRem: number): CSSProperties | undefined {
+  if (maxHeightRem === 30) return undefined;
+  return { maxWidth: `min(100%, 30rem, ${(maxHeightRem * 16) / 9}rem)` };
+}
+
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
@@ -442,13 +452,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         : fallbackSrc + (props.srcFragment ?? "");
   const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
   const maxHeightRem = props.maxHeightRem ?? 30;
+  const unavailable = assetUrl._tag === "Failure" && fallbackSrc === undefined;
   const style =
     props.style ??
     (knownSize
       ? authoredImageSizeStyle(knownSize.width, knownSize.height, maxHeightRem)
-      : maxHeightRem !== 30
-        ? { maxHeight: `${maxHeightRem}rem` }
-        : undefined);
+      : unavailable
+        ? unavailableImageSizeStyle(maxHeightRem)
+        : maxHeightRem !== 30
+          ? { maxHeight: `${maxHeightRem}rem` }
+          : undefined);
   const actionsSource = assetMediaActionsSource({
     environmentId: props.environmentId,
     resource,
@@ -464,7 +477,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     return (
       <ChatMarkdownVideo
         src={src}
-        sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+        sourceFailed={unavailable}
         unavailableDetail={unavailableDetail}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
@@ -482,7 +495,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+      sourceFailed={unavailable}
       unavailableDetail={unavailableDetail}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
