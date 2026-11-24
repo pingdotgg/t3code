@@ -879,6 +879,7 @@ mod tests {
             environment: env.clone(),
             scheduled_tasks: std::sync::OnceLock::new(),
             devices: std::sync::OnceLock::new(),
+            previews: std::sync::OnceLock::new(),
             settle_cleanups: Arc::default(),
         });
         let provider = Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
