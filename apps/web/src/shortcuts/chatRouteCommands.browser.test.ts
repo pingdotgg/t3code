@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { isMacPlatform } from "../lib/utils";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { installChatRouteCommands } from "./chatRouteCommands";
+import { registerCommands } from "./dispatcher";
 
 type Match = { readonly routeId: string; readonly pathname: string };
 
@@ -22,8 +23,13 @@ const CHAT: Match[] = [
   { routeId: "/_chat", pathname: "/" },
 ];
 
-function pressEscape(): KeyboardEvent {
-  const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true, bubbles: true });
+function pressEscape(init: KeyboardEventInit = {}): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key: "Escape",
+    ...init,
+    cancelable: true,
+    bubbles: true,
+  });
   window.dispatchEvent(event);
   return event;
 }
@@ -49,11 +55,23 @@ function selectThread(threadKey: string) {
 describe("chat route commands", () => {
   it("clears a selection made after install, reading the store at keypress time", () => {
     const { router } = routerAt(CHAT);
+    const consumed: boolean[] = [];
     using stack = new DisposableStack();
     stack.defer(installChatRouteCommands(router));
+    stack.defer(
+      registerCommands({}, { observe: (_event, wasConsumed) => consumed.push(wasConsumed) }),
+    );
     stack.defer(() => useThreadSelectionStore.getState().clearSelection());
 
     selectThread("env:thread-1");
+    // An IME Escape keeps the selection but still claims the key from later handlers.
+    for (const composing of [{ isComposing: true }, { keyCode: 229 }]) {
+      const label = JSON.stringify(composing);
+      expect(pressEscape(composing).defaultPrevented, label).toBe(false);
+      expect(useThreadSelectionStore.getState().selectedThreadKeys.size, label).toBe(1);
+    }
+    expect(consumed).toEqual([true, true]);
+
     const event = pressEscape();
 
     expect(event.defaultPrevented).toBe(true);

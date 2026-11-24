@@ -215,6 +215,8 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         if (event.key !== "Escape") return false;
         const selection = useThreadSelectionStore.getState();
         if (selection.selectedThreadKeys.size === 0) return false;
+        // Claimed but left alone, so the IME cancels and later Escape handlers stay out.
+        if (event.isComposing || event.keyCode === 229) return;
         event.preventDefault();
         selection.clearSelection();
       },
