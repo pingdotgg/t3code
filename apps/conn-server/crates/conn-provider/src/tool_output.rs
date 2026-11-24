@@ -1,5 +1,6 @@
 //! Shared T3 tool-name resolution and bounded result metadata (`packages/shared/src/toolOutput.ts`).
 use serde_json::{Map, Value, json};
+use std::borrow::Cow;
 
 include!("tool-output-constants.rs");
 // packages/shared/src/toolOutput.ts:25-31 (private constants).
@@ -177,12 +178,20 @@ fn read(
                 || object.get("is_error") == Some(&Value::Bool(true))
                 || object.get("_tag").and_then(Value::as_str) == Some("OrchestratorMcpFailure")
                 || object.get("error").is_some_and(|value| !value.is_null());
+            // Antigravity's `acp-mcp-call` puts the result after a marker in its stdout.
+            let terminal = || {
+                let output = object.get("output")?.as_str()?;
+                let (_, result) = output.split_once(TERMINAL_OUTPUT_MARKER)?;
+                Some(Cow::Owned(Value::String(result.to_owned())))
+            };
             let content = object
                 .get("structuredContent")
                 .filter(|v| !v.is_null())
-                .or_else(|| object.get("content"));
+                .or_else(|| object.get("content").filter(|v| !v.is_null()))
+                .map(Cow::Borrowed)
+                .or_else(terminal);
             if let Some(content) = content {
-                let next = read(content, budget, depth + 1, leaf);
+                let next = read(&content, budget, depth + 1, leaf);
                 Envelope {
                     data: next.data,
                     failed: failed || next.failed,
@@ -566,6 +575,18 @@ mod tests {
                 )
             );
         }
+        // `htmlRender.test.ts`: Antigravity's `acp-mcp-call` wraps the result in its stdout.
+        let terminal = json!({
+            "output": format!(
+                "Created At: 2026-11-19T02:54:02Z\nCommand exited with code 0.\n\nCommand output:\n{}\r\n",
+                json!({"content": [], "structuredContent": output, "isError": false})
+            ),
+            "exit_code": 0,
+        });
+        assert_eq!(
+            html_render_from_tool_item(&json!({"toolName":"conn.html_render","output":terminal})),
+            Some(json!({"attachmentId":"page", "title":"Page", "height":HTML_RENDER_MIN_HEIGHT}))
+        );
         assert!(
             html_render_from_tool_item(&json!({"toolName":"html_preview","output":output}))
                 .is_none()

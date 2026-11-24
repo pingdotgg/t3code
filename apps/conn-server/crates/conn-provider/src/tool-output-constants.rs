@@ -6,3 +6,4 @@ const HTML_RENDER_MAX_TITLE_LENGTH: usize = 200;
 const MAX_MEASURED_HEIGHTS: usize = 24;
 const SEND_TO_USER_MAX_LENGTH: usize = 4_000;
 pub(crate) const MCP_APP_OUTPUT_KEY: &str = "t3McpApp";
+const TERMINAL_OUTPUT_MARKER: &str = "\nCommand output:\n";

@@ -15212,6 +15212,7 @@ async fn a_queued_edit_claims_its_new_upload_once() {
 }
 
 const RECORDING: &str = "t1-0b9f6c1e-3c1d-4f7a-9d2e-5a6b7c8d9e0f-webm";
+const ACP_RECORDING: &str = "t1-1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f-webm";
 
 /// `Orchestrator.ts`, `queued-run.edit`: a file an edit drops is removed after the edit commits
 /// (`attachment.cleanup` with `skipReferenced`), unless another message of the thread still
@@ -15254,6 +15255,13 @@ async fn a_queued_edit_removes_the_files_it_drops() {
                 "ordinal": 2, "input": {},
                 "output": [{"type": "text", "text": json!({"id": RECORDING, "mimeType": "video/webm"}).to_string()}],
             })))?;
+            // `htmlRender.test.ts`: Antigravity's `acp-mcp-call` puts the result in its stdout.
+            let result = json!({"content": [], "structuredContent": {"id": ACP_RECORDING}, "isError": false});
+            tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({
+                "id": "acp-recording", "threadId": "t1", "runId": "run:t1:1", "type": "dynamic_tool",
+                "toolName": "conn.preview_recording_stop", "status": "completed", "ordinal": 3,
+                "output": {"output": format!("Command exited with code 0.\n\nCommand output:\n{result}\r\n"), "exit_code": 0},
+            })))?;
             tx.commit(None)
         })
         .await
@@ -15263,7 +15271,8 @@ async fn a_queued_edit_removes_the_files_it_drops() {
     first["attachments"] = json!([
         text_file("pending-1"),
         text_file(page),
-        text_file(RECORDING)
+        text_file(RECORDING),
+        text_file(ACP_RECORDING)
     ]);
     dispatch(&engine, first).await;
     let mut second = message_with("t1", "c4", "second", queue, None);
@@ -15446,6 +15455,124 @@ async fn an_imported_queued_items_edit_and_start_find_it_by_message() {
     assert_eq!(
         items(&projection(&engine, "t1").await),
         [(json!(imported), json!("t1-b"))]
+    );
+}
+
+/// `Orchestrator.ts`, `queued-run.edit` and the queued run's start: promoting an imported
+/// queued message cancels its run and steers it under a new item; when the provider declines,
+/// the newer item waits in the queue. Edit and start take the item of the queued run
+/// (`candidate.runId === queuedRun.id`), not the cancelled run's.
+#[tokio::test(flavor = "current_thread")]
+async fn a_declined_promotion_of_an_imported_item_edits_and_starts_the_requeued_item() {
+    let db = TempDb::new("promote-imported-declined");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(
+        FakeProvider::new("claudeAgent").without_steering(),
+    )];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut queued = message_with(
+        "t1",
+        "c3",
+        "later",
+        json!({"type": "queue_after_active"}),
+        None,
+    );
+    queued["attachments"] = json!([text_file("pending-a")]);
+    dispatch(&engine, queued).await;
+    // The item as the importer keeps it, under the TypeScript server's id.
+    let imported = "turn-item:message:imported-c3";
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx()?;
+            tx.append(crate::store::Draft::new(
+                "t1",
+                "turn-item.updated",
+                json!({
+                    "id": imported, "threadId": "t1", "runId": "run:t1:2", "type": "user_message",
+                    "messageId": "message:c3", "text": "later", "ordinal": 0, "status": "completed",
+                    "attachments": [text_file("t1-a")],
+                }),
+            ))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type": "queued-message.promote-to-steer", "commandId": "c4", "threadId": "t1",
+            "queuedRunId": "run:t1:2", "targetRunId": "run:t1:1"}),
+    )
+    .await;
+    let requeued = loop {
+        let item = next(&mut thread).await;
+        let payload = &item["event"]["payload"];
+        if item["event"]["type"] == "run.created"
+            && payload["userMessageId"] == "message:c3"
+            && payload["id"] != "run:t1:2"
+        {
+            break payload["id"].clone();
+        }
+    };
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.edit", "commandId": "c5", "threadId": "t1", "runId": requeued,
+            "text": "edited", "attachments": [text_file("pending-b")]}),
+    )
+    .await;
+    let items = |p: &Value| -> Vec<(Value, Value, Value)> {
+        p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["type"] == "user_message" && i["messageId"] == "message:c3")
+            .map(|i| {
+                (
+                    i["id"].clone(),
+                    i["runId"].clone(),
+                    i["attachments"][0]["id"].clone(),
+                )
+            })
+            .collect()
+    };
+    let steered = json!("turn-item:message:c3");
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        items(&p),
+        [
+            (json!(imported), json!("run:t1:2"), json!("t1-a")),
+            (steered.clone(), requeued.clone(), json!("t1-b")),
+        ]
+    );
+    // The requeued run starts with that same item.
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c6", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    for _ in 0..2 {
+        until_run_ends(&mut thread).await;
+    }
+    assert_eq!(
+        items(&projection(&engine, "t1").await),
+        [
+            (json!(imported), json!("run:t1:2"), json!("t1-a")),
+            (steered, requeued, json!("t1-b")),
+        ]
     );
 }
 
