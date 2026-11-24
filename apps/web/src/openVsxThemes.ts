@@ -4,7 +4,7 @@ import { parse, type ParseError } from "jsonc-parser";
 import { msg } from "gt-react";
 
 import { m } from "./i18n/messages";
-import type { ThemeDefinition } from "./themePalette";
+import { cutThemeLabel, type ThemeDefinition } from "./themePalette";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
@@ -800,7 +800,7 @@ export async function importOpenVsxThemeExtension(
   const themes = resolveThemeLabelCollisions(paired.map((theme) => ({ theme })));
   const collection = {
     id: extension.collectionId,
-    label: extension.name.slice(0, 48),
+    label: cutThemeLabel(extension.name),
   };
   return themes.map((theme) => ({ ...theme, collection }));
 }

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import {
+  cutThemeLabel,
   getCustomThemes,
   installCustomTheme,
   removeCustomTheme,
@@ -358,13 +359,13 @@ function ThemeImportBody({
   ): ThemeDefinition => {
     // renameTheme leaves the collection behind: updating a collection replaces every theme in it.
     if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-      const candidate = renameTheme(theme, preferredName.slice(0, 48));
+      const candidate = renameTheme(theme, cutThemeLabel(preferredName));
       if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     for (let copy = 1; copy < 100; copy += 1) {
       const candidate = renameTheme(
         theme,
-        `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
+        `${cutThemeLabel(theme.label, 48 - ` (${copy})`.length)} (${copy})`,
       );
       if (!isThemeIdTaken(candidate.id)) return candidate;
     }

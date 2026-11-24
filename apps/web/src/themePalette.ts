@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -120,6 +121,12 @@ export function isThemeColor(value: unknown): value is string {
 
 function isThemeId(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
+}
+
+/** `name` cut to fit a theme label, without splitting an emoji in two. */
+export function cutThemeLabel(name: string, limit = 48): string {
+  const label = name.trim();
+  return label.slice(0, splitsSurrogatePair(label, limit) ? limit - 1 : limit).trimEnd();
 }
 
 function isThemeLabel(value: unknown): value is string {

@@ -5,6 +5,7 @@ import { m } from "./i18n/messages";
 
 import {
   createVividThemeColors,
+  cutThemeLabel,
   getStandardThemeColors,
   getThemeModes,
   isReservedThemeId,
@@ -169,7 +170,7 @@ function resolveName(value: Record<string, unknown>): string {
   for (const candidate of [value.displayName, value.name]) {
     if (typeof candidate !== "string") continue;
     const humanized = humanizeThemeName(candidate);
-    if (humanized.length > 0) return humanized.slice(0, 48);
+    if (humanized.length > 0) return cutThemeLabel(humanized);
   }
   return m(msg("VS Code theme"));
 }
@@ -459,7 +460,7 @@ export function resolveThemeLabelCollisions(
 ): ReadonlyArray<ThemeDefinition> {
   const rename = (theme: ThemeDefinition, name: string): ThemeDefinition | null => {
     try {
-      return renameTheme(theme, name.slice(0, 48));
+      return renameTheme(theme, cutThemeLabel(name));
     } catch {
       return null;
     }
