@@ -209,11 +209,13 @@ dependencies = [
  "conn-source-control",
  "conn-support",
  "conn-vcs",
+ "jiff",
  "rusqlite",
  "serde",
  "serde_json",
  "stats_alloc",
  "tokio",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -243,6 +245,7 @@ dependencies = [
  "conn-contract",
  "conn-support",
  "getrandom 0.3.4",
+ "globset",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",

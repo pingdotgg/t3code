@@ -537,6 +537,22 @@ async fn main() {
         .cloned()
         .unwrap();
 
+    // An undo of a settle whose anchor lands past year 9999 (T3 accepts any `Date` time).
+    for command in [
+        json!({"type": "thread.settle", "commandId": "far-1", "threadId": "thread-1"}),
+        json!({"type": "thread.unsettle", "commandId": "far-2", "threadId": "thread-1",
+               "reason": "user", "restoreUnsettledAt": "9999-12-31T23:30:00-01:00"}),
+    ] {
+        engine.dispatch(from_json(command).unwrap()).await.unwrap();
+    }
+    let far_anchor_shell = engine.shell_snapshot().await.unwrap()["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "thread-1")
+        .cloned()
+        .unwrap();
+
     // A client adds a project and removes it again.
     let added =
         std::env::temp_dir().join(format!("conn-engine-export-added-{}", std::process::id()));
@@ -753,6 +769,7 @@ async fn main() {
         "stopItems": stop_items,
         "backgroundItems": background_items,
         "backgroundShell": background_shell,
+        "farAnchorShell": far_anchor_shell,
         "stopUnresponsiveAt": unresponsive_at,
         "coldStopItems": cold_stop_items,
         "coldStopAt": cold_stop_at,
