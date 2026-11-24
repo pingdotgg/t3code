@@ -37,7 +37,7 @@ thread already active keeps its anchor and `updatedAt` but still records `thread
   answers only for its owner (`owner_kind` thread or project, `owner_id`; T3's
   `commandThreadId`, so a fork's and a merge-back's is the target thread). Receipts from
   before owners (main's schema 4) keep none, so a retry of a command from before the upgrade
-  is refused, never run twice. The upgrade runs in one transaction. A project command takes
+  is refused, never run twice. The upgrade adds only the columns a store lacks, so a store at 6 without them gets them too. A project command takes
   its id inside its write (insert-if-absent; a receipt is never replaced), records its project
   and T3's command type (`project.update` is `project.meta.update`), and records a refusal
   from planning, which a retry gets again (T3's `commitRejectedProjectCommand`).
@@ -58,7 +58,7 @@ Proof: `a_fork_receipt_belongs_to_its_target_thread`,
 `a_replayed_queue_resume_starts_what_waits`, `auto_settle_rechecks_the_thread_against_its_snapshot`,
 `a_settle_for_a_stale_run_is_refused`,
 `a_delayed_visit_keeps_the_later_time`, `a_merge_back_first_message_names_its_instance`,
-`the_receipt_high_water_reads_an_index`, `the_receipt_upgrade_is_all_or_nothing`, `a_v4_store_upgrades_and_refuses_its_old_retries`,
+`the_receipt_high_water_reads_an_index`, `a_partial_receipt_upgrade_finishes_on_open`, `a_version_6_store_without_receipt_owners_gets_them`, `a_v4_store_upgrades_and_refuses_its_old_retries`,
 `a_command_id_keeps_its_outcome_across_a_reopen` (audit 1.6, 1.7),
 `a_planned_project_refusal_is_replayed`, `a_project_replay_without_its_row_is_a_read_error`,
 `a_receipt_is_never_replaced`, `the_queue_starts_on_the_effective_selection`,

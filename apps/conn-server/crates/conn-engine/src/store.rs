@@ -2259,19 +2259,28 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
-    if version < 5 {
+    if version <= 6 {
         // 5: a receipt names what it answers for and records a refusal (T3's
         // `CommandReceiptV2`). A receipt from before names no owner, so a retry of it is
-        // refused rather than replayed for a thread nothing proves. One transaction: the
-        // columns and the version land together or not at all.
+        // refused rather than replayed for a thread nothing proves. A store that numbered its
+        // search step 5 is at 6 without them, so each column is added where it is missing.
+        // One transaction: the columns and the version land together or not at all.
         let tx = conn.unchecked_transaction().map_err(err)?;
-        tx.execute_batch(
-            "ALTER TABLE receipts ADD COLUMN owner_kind TEXT;
-             ALTER TABLE receipts ADD COLUMN owner_id TEXT;
-             ALTER TABLE receipts ADD COLUMN error TEXT;
-             PRAGMA user_version = 5;",
-        )
-        .map_err(err)?;
+        for column in ["owner_kind", "owner_id", "error"] {
+            let present = tx
+                .prepare(
+                    "SELECT 1 FROM pragma_table_info('receipts') WHERE name = ?1 COLLATE NOCASE",
+                )
+                .and_then(|mut stmt| stmt.exists([column]))
+                .map_err(err)?;
+            if !present {
+                tx.execute_batch(&format!("ALTER TABLE receipts ADD COLUMN {column} TEXT"))
+                    .map_err(err)?;
+            }
+        }
+        if version < 5 {
+            tx.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+        }
         tx.commit().map_err(err)?;
     }
     if version < 6 {

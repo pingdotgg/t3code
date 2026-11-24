@@ -1551,12 +1551,15 @@ impl Inner {
             }
         }
         // A session that ended on its own (its process exited), still the thread's current
-        // one: its native subagents died with it. A closed or replaced session is handled
-        // by `close_session`, which knows whether the process ended.
-        let current = lock(&self.live)
+        // one or one a fresh run moved aside: its native subagents died with it. A closed or
+        // replaced session is handled by `release`, which knows whether the process ended.
+        let owned = lock(&self.live)
             .get(&thread_id)
-            .is_some_and(|current| Arc::ptr_eq(current, &live));
-        if current && live.background_tasks_end_with_process && !self.shutting_down() {
+            .is_some_and(|current| Arc::ptr_eq(current, &live))
+            || lock(&self.detached)
+                .iter()
+                .any(|(_, detached)| Arc::ptr_eq(detached, &live));
+        if owned && live.background_tasks_end_with_process && !self.shutting_down() {
             // Before the run ends, so its end does not fail their open items.
             self.end_released_subagents(&thread_id, &live.provider_session_id, self.now_ms())
                 .await;

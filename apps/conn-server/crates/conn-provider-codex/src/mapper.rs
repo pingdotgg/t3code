@@ -830,6 +830,9 @@ impl<E: Env> Mapper<E> {
         self.pending_turns.clear();
         self.abandoned = None;
         self.settled.clear();
+        let mut out = Vec::new();
+        // A run held between goal turns settles: its last turn did complete.
+        self.settle_goal_holds(&mut out);
         let roots: Vec<String> = self
             .turns
             .iter()
@@ -841,7 +844,6 @@ impl<E: Env> Mapper<E> {
                 turn.subagent.is_some() && turn.native_thread_id == request.native_thread_id
             })
         });
-        let mut out = Vec::new();
         for native in roots {
             let now = self.env.now();
             self.finalize(&native, "interrupted", now, None, None, &mut out);

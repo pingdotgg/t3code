@@ -572,43 +572,37 @@ async fn a_v4_store_upgrades_and_refuses_its_old_retries() {
     assert!(found.to_string().contains("\"a\""), "{found}");
 }
 
-/// The upgrade from main's schema commits atomically: a failure leaves schema 4 and none of
-/// the new columns, and the next open finishes it.
+/// The receipt upgrade adds only the columns a store lacks: one a failed or partial upgrade
+/// left (here `error`) stays, the rest are added, and commands work.
 #[tokio::test(flavor = "current_thread")]
-async fn the_receipt_upgrade_is_all_or_nothing() {
-    let db = TempDb::new("upgrade-atomic");
+async fn a_partial_receipt_upgrade_finishes_on_open() {
+    let db = TempDb::new("upgrade-partial");
     {
         let (engine, _) = open(&db);
         dispatch(&engine, create("a", "c1")).await;
     }
     downgrade_to_v4(&db);
-    // A stray column makes the upgrade's last step fail.
     rusqlite::Connection::open(db.path())
         .unwrap()
-        .execute_batch("ALTER TABLE receipts ADD COLUMN error TEXT")
+        .execute_batch("ALTER TABLE receipts ADD COLUMN ERROR TEXT")
         .unwrap();
-    let mut config = EngineConfig::new(db.path());
-    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
-    assert!(SqliteEngine::open(config).is_err(), "the upgrade fails");
-    {
-        let conn = rusqlite::Connection::open(db.path()).unwrap();
-        let version: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(version, 4);
-        let added: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('receipts') WHERE name = 'owner_kind'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(added, 0, "no column of a failed upgrade stays");
-        conn.execute_batch("ALTER TABLE receipts DROP COLUMN error")
-            .unwrap();
-    }
     let (engine, _) = open(&db);
     dispatch(&engine, create("b", "c2")).await;
+    drop(engine);
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 6);
+    let columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('receipts')
+             WHERE lower(name) IN ('owner_kind', 'owner_id', 'error')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 3);
 }
 
 /// A project command's typed refusal from planning is its receipt, as T3's
@@ -3169,6 +3163,46 @@ async fn a_restart_sends_an_undelivered_message_again() {
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(p["runs"][0]["status"], "completed");
     assert_eq!(p["messages"][1]["text"], "echo: late");
+}
+
+/// A store the pre-merge branch wrote is at version 6 with no receipt owners (that branch
+/// numbered its search step 5 and had no receipts step). It gets the columns on open, and
+/// commands and their retries work.
+#[tokio::test(flavor = "current_thread")]
+async fn a_version_6_store_without_receipt_owners_gets_them() {
+    let db = TempDb::new("receipt-owners-v6");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+    }
+    {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE receipts DROP COLUMN owner_kind;
+             ALTER TABLE receipts DROP COLUMN owner_id;
+             ALTER TABLE receipts DROP COLUMN error;
+             PRAGMA user_version = 6;",
+        )
+        .unwrap();
+    }
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t2", "c2")).await;
+    dispatch(&engine, message("t2", "c3", "hello")).await;
+    let retried = engine
+        .dispatch(from_json(create("t2", "c2")).unwrap())
+        .await;
+    assert!(retried.is_ok(), "{retried:?}");
+    drop(engine);
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('receipts')
+             WHERE name IN ('owner_kind', 'owner_id', 'error')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 3);
 }
 
 /// With `recover_runs` off, a recovered run waits for `recover_runs()`, as the server holds it
@@ -7839,6 +7873,52 @@ async fn a_scheduled_fresh_run_keeps_a_busy_session_open() {
         "closing the busy session would end its work"
     );
     assert_eq!(count(&provider.sessions), 2);
+}
+
+/// A busy session a fresh schedule moved aside still ends its native subagents when its
+/// process exits on its own, though it is no longer the thread's current session.
+#[tokio::test(flavor = "current_thread")]
+async fn a_detached_session_that_exits_interrupts_its_native_subagents() {
+    let db = TempDb::new("fresh-scheduled-exit");
+    let exit = Arc::new(tokio::sync::Notify::new());
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_process_exit(exit.clone()),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    until_run_ends(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    dispatch(&engine, fire("c3", "second")).await;
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["id"], "run:t1:2");
+    assert_eq!(count(&provider.sessions), 2);
+    assert_eq!(count(&provider.closed), 0);
+    exit.notify_waiters();
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "subagent.updated"
+            && item["event"]["payload"]["id"] == "node:native"
+            && item["event"]["payload"]["status"] == "interrupted"
+        {
+            break;
+        }
+    }
+    assert_orphans_ended(&engine, "interrupted").await;
 }
 
 /// Force stop ends every session of the thread: the current one and one a fresh schedule
