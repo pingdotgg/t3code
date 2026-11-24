@@ -1,6 +1,6 @@
 import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { PROVIDER_CHANGELOG_URLS, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 
 import { APP_VERSION } from "~/branding";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
@@ -93,9 +93,15 @@ export function useUpdateEverything(
       providerMachines: providers.machines.map((machine) => ({
         environmentId: machine.environmentId,
         label: machine.label,
-        providers: machine.candidates.map(
-          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-        ),
+        providers: machine.candidates.map((candidate) => {
+          const name = PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver;
+          const { currentVersion, latestVersion } = candidate.versionAdvisory;
+          return {
+            label: currentVersion ? `${name} ${currentVersion} → ${latestVersion}` : name,
+            href:
+              PROVIDER_CHANGELOG_URLS[candidate.driver]?.(latestVersion.replace(/^v/, "")) ?? null,
+          };
+        }),
       })),
     },
     resolve,

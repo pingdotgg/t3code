@@ -207,3 +207,17 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [PI_DRIVER_KIND]: "Pi",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
 };
+
+/** Link to a provider's release notes for a version; drivers without an entry show only the version. */
+export const PROVIDER_CHANGELOG_URLS: Partial<
+  Record<ProviderDriverKind, (version: string) => string>
+> = {
+  [CODEX_DRIVER_KIND]: (version) => `https://github.com/openai/codex/releases/tag/rust-v${version}`,
+  // GitHub's heading anchors drop the dots from the version.
+  [CLAUDE_DRIVER_KIND]: (version) =>
+    `https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#${version.replaceAll(".", "")}`,
+  [CURSOR_DRIVER_KIND]: () => "https://cursor.com/changelog",
+  [KIRO_DRIVER_KIND]: () => "https://kiro.dev/changelog",
+  [OPENCODE_DRIVER_KIND]: (version) =>
+    `https://github.com/anomalyco/opencode/releases/tag/v${version}`,
+};

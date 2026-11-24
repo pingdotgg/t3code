@@ -725,7 +725,7 @@ export interface UpdateEverythingPlan {
   readonly providerMachines: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
-    readonly providers: ReadonlyArray<string>;
+    readonly providers: ReadonlyArray<ProviderUpdateEntry>;
   }>;
   readonly skipped: ReadonlyArray<SkippedMachine>;
 }
@@ -735,7 +735,13 @@ export interface UpdateEverythingRow {
   readonly label: string;
   readonly app: "this-app" | "server" | "desktop-app" | null;
   readonly skipped: string | null;
-  readonly providers: ReadonlyArray<string>;
+  readonly providers: ReadonlyArray<ProviderUpdateEntry>;
+}
+
+/** A provider update as listed in the dialog: name and version jump, linked to its changelog. */
+export interface ProviderUpdateEntry {
+  readonly label: string;
+  readonly href: string | null;
 }
 
 /** "Update this app, 2 servers, and 3 providers" as one sentence per combination; null when nothing. */

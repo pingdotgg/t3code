@@ -406,6 +406,8 @@ describe("runUpdateEverything", () => {
   });
 });
 
+const entry = (label: string) => ({ label, href: null });
+
 describe("describeUpdateEverything", () => {
   it("gives each machine one row with its T3 Code and provider updates", () => {
     const id = EnvironmentId.make;
@@ -424,9 +426,9 @@ describe("describeUpdateEverything", () => {
         },
       ],
       providerMachines: [
-        { environmentId: id("npm"), label: "bb-1", providers: ["Codex", "Claude"] },
-        { environmentId: id("local"), label: "Mainbook", providers: ["Codex"] },
-        { environmentId: id("manual"), label: "alvin", providers: ["Claude"] },
+        { environmentId: id("npm"), label: "bb-1", providers: [entry("Codex"), entry("Claude")] },
+        { environmentId: id("local"), label: "Mainbook", providers: [entry("Codex")] },
+        { environmentId: id("manual"), label: "alvin", providers: [entry("Claude")] },
       ],
       skipped: [
         { environmentId: id("manual"), label: "alvin", reason: "needs a manual update" },
@@ -437,10 +439,10 @@ describe("describeUpdateEverything", () => {
     expect(
       rows.map(({ label, app, skipped, providers }) => [label, app, skipped, providers]),
     ).toEqual([
-      ["Mainbook", "this-app", null, ["Codex"]],
+      ["Mainbook", "this-app", null, [entry("Codex")]],
       ["Mainbook WSL", "this-app", null, []],
-      ["bb-1", "server", null, ["Codex", "Claude"]],
-      ["alvin", null, "needs a manual update", ["Claude"]],
+      ["bb-1", "server", null, [entry("Codex"), entry("Claude")]],
+      ["alvin", null, "needs a manual update", [entry("Claude")]],
       ["TheoRoom", null, "not connected", []],
     ]);
   });
