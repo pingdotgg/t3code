@@ -391,6 +391,9 @@ export const make = Effect.gen(function* () {
     refine?: (
       current: ProjectStore.ProjectRow | undefined,
     ) => Effect.Effect<ProjectCommand | null, ProjectServiceError>,
+    // Runs under the same lock only when this call commits, so retries skip it and writes keep
+    // the commit order.
+    onCommitted?: Effect.Effect<void, ProjectOperationError>,
   ) {
     const { projectId } = initial;
     const dispatchError = (cause: unknown) =>
@@ -424,13 +427,15 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
-        return yield* eventSink.commitProjectCommand({
+        const { receipt, committed } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
         });
+        if (committed && onCommitted !== undefined) yield* onCommitted;
+        return { receipt };
       }
       const receipt = yield* eventSink.commitRejectedProjectCommand({
         commandId: command.commandId,
@@ -439,7 +444,7 @@ export const make = Effect.gen(function* () {
         rejectedAt: now,
         error: encodeProjectCommandRejection(planned.failure),
       });
-      return { receipt, committed: false };
+      return { receipt };
     });
     const outcome = yield* projectLocks
       .withLock(
@@ -449,17 +454,16 @@ export const make = Effect.gen(function* () {
           : workspaceLocks.withLock(workspaceRoot, planAndCommit),
       )
       .pipe(Effect.mapError(dispatchError));
-    if (outcome === null) return false;
+    if (outcome === null) return;
     if ("refused" in outcome) return yield* Effect.failCause(outcome.refused);
-    const { receipt, committed } = outcome;
+    const { receipt } = outcome;
     if (receipt.projectId !== projectId || receipt.commandType !== initial.type) {
       return yield* dispatchError(
         `Command ${initial.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
       );
     }
     // Retries re-plan against their own effects; the first receipt determines the outcome.
-    // True only when this call committed it, so a retry does not redo its side effects.
-    if (receipt.status === "accepted") return committed;
+    if (receipt.status === "accepted") return;
     const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
     switch (rejection?._tag) {
       case "ProjectWorkspaceConflictError":
@@ -575,16 +579,19 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         input.trackedFolders ?? [],
       );
-      const committed = yield* commit({
-        type: "project.create",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot,
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        trackedFolders,
-      });
-      if (committed) yield* saveScripts(input.projectId, input.scripts);
+      yield* commit(
+        {
+          type: "project.create",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot,
+          ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+          trackedFolders,
+        },
+        undefined,
+        saveScripts(input.projectId, input.scripts),
+      );
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -631,7 +638,7 @@ export const make = Effect.gen(function* () {
       } as const;
       // Checked against the row under the lock: an update that ran meanwhile may have moved the
       // project's folder or changed what it tracks.
-      const committed = yield* commit(
+      yield* commit(
         command,
         Effect.fnUntraced(function* (current) {
           if (current === undefined || current.deletedAt !== null) return command;
@@ -667,8 +674,8 @@ export const make = Effect.gen(function* () {
           );
           return { ...command, trackedFolders };
         }),
+        saveScripts(input.projectId, input.scripts),
       );
-      if (committed) yield* saveScripts(input.projectId, input.scripts);
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
