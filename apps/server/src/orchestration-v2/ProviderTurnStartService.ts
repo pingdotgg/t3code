@@ -1988,23 +1988,6 @@ export const layer: Layer.Layer<
         sideChatHandoff !== undefined ||
         restartNote !== "" ||
         noteContinuation;
-      // Pending context turns the resume into a prompted turn, which needs no native resume.
-      if (
-        manualResume &&
-        unsentResumeMessage === undefined &&
-        session.resumeTurn === undefined &&
-        !carriesPendingContext
-      ) {
-        yield* settleStartFailure({
-          signal: "resume-unsupported",
-          title: "Native resume is unavailable",
-          error: new ProviderAdapter.ProviderResumeUnsupportedError({
-            driver: session.driver,
-            providerThreadId: providerThread.id,
-          }),
-        });
-        return;
-      }
       const needsOutputRunIdCheck =
         outputNote !== "" &&
         ((manualResume && unsentResumeMessage === undefined) ||
@@ -2016,6 +1999,25 @@ export const layer: Layer.Layer<
       // A typed continuation must prompt with its own run.id: the agent names it, and a call naming
       // the run it continues may be that stopped run's late one.
       const needsPromptedOutputRunId = needsOutputRunIdCheck && mcpSession !== undefined;
+      // Pending context or an output note turns the resume into a prompted turn, which needs no
+      // native resume.
+      if (
+        manualResume &&
+        unsentResumeMessage === undefined &&
+        session.resumeTurn === undefined &&
+        !carriesPendingContext &&
+        !needsPromptedOutputRunId
+      ) {
+        yield* settleStartFailure({
+          signal: "resume-unsupported",
+          title: "Native resume is unavailable",
+          error: new ProviderAdapter.ProviderResumeUnsupportedError({
+            driver: session.driver,
+            providerThreadId: providerThread.id,
+          }),
+        });
+        return;
+      }
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
         contextUsage: handoffUsage,

@@ -2490,6 +2490,21 @@ effectIt.effect("refuses unsupported resume instead of manufacturing a user prom
         }),
       ]),
     );
+
+    // A typed resume is prompted with its own output note, which needs no native resume.
+    const typed = makeLocalCommandHarness({
+      text: "",
+      manualContinuation: true,
+      nativeResumeUnsupported: true,
+      outputSchema: { type: "object" },
+      mcpSession: "bound",
+      sideChat: { contextRun: "delivered" },
+    });
+    yield* typed.start;
+    const typedTurn = typed.startTurn.mock.calls[0]?.[0];
+    expect(typedTurn?.resume).toBeUndefined();
+    expect(typedTurn?.message.text).toContain("run-native-account-command");
+    expect(typed.settledRuns).not.toContain("failed");
   }),
 );
 
