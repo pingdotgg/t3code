@@ -23,7 +23,15 @@ export default function PreviewImageContent(props: {
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const update = () => setViewport({ width: node.clientWidth, height: node.clientHeight });
+    // clientWidth rounds a fractional pane size up, and an image fitted to it overflows the pane.
+    // The computed size keeps the fraction and ignores the transform of an opening dialog.
+    const update = () => {
+      const size = getComputedStyle(node);
+      setViewport({
+        width: Math.floor(Number.parseFloat(size.width)),
+        height: Math.floor(Number.parseFloat(size.height)),
+      });
+    };
     update();
     return observeResize(node, update);
   }, []);
