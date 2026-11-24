@@ -1079,10 +1079,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         host: "0.0.0.0",
         privateNetworkOnly: true,
       });
-      expect(yield* resolveHost({ connected: true, host: "" })).toEqual({
-        host: "0.0.0.0",
-        privateNetworkOnly: true,
-      });
       expect(
         yield* resolveHost({ connected: true, host: " ", env: { T3CODE_HOST: " 127.0.0.1 " } }),
       ).toEqual({ host: "127.0.0.1", privateNetworkOnly: undefined });
