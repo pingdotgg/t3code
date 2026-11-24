@@ -28,7 +28,7 @@ export function reviewGuideInputFromPullRequest(
   detail: PullRequestDetail,
   activity: PullRequestActivity,
   baseCommit: string,
-): Omit<ReviewGuideGenerationInput, "cwd" | "modelSelection"> {
+): Omit<ReviewGuideGenerationInput, "cwd" | "projectCwd" | "modelSelection"> {
   return {
     number: detail.number,
     title: detail.title,

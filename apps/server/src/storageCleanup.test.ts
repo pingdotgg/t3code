@@ -1041,6 +1041,7 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
         branch: "task",
         projectStart: { refName: "main", baseRefName: "main" },
         startFromOrigin: false,
+        projectCommands: true,
       });
       const root = taskFolder.root;
       // A nested worktree's uncommitted work must survive its thread's cleanup.
