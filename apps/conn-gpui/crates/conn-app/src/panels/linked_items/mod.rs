@@ -7,6 +7,13 @@
 mod logic;
 mod render;
 
+/// What the chat's link menu needs to tell a pull request link from the thread's linked ones.
+pub(crate) mod pr_link {
+    pub(crate) use super::logic::{
+        now_epoch_ms, parse_change_request_url, visible_thread_pull_requests,
+    };
+}
+
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;

@@ -481,6 +481,11 @@ impl ConnApp {
                             .update(cx, |panel, cx| panel.reveal_line(line, cx));
                     }
                 }
+                crate::chat::ChatEvent::OpenInBrowser(url) => {
+                    app.right_panel
+                        .update(cx, |panel, cx| panel.navigate_browser(url.clone(), cx));
+                    app.select_right_panel_tab(RightPanelTab::Browser, cx);
+                }
                 crate::chat::ChatEvent::RuntimeModeSelected(mode) => {
                     app.set_runtime_mode(mode, cx);
                 }
@@ -1176,6 +1181,21 @@ impl ConnApp {
                 interaction_mode,
             )
         };
+        let linked_pull_requests: Vec<crate::chat::LinkedPullRequest> = shell_thread
+            .and_then(|t| t.pull_requests.as_deref())
+            .map(|links| {
+                crate::panels::linked_items::pr_link::visible_thread_pull_requests(links)
+                    .iter()
+                    .map(|link| {
+                        crate::chat::LinkedPullRequest::new(
+                            &link.host,
+                            &link.repository,
+                            link.number,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let branch_context = self.branch_context(shell_thread, &branch);
         let has_projects = self.shell.projects.iter().any(|p| p.archived_at.is_none());
         let connected = self.connection.is_some();
@@ -1194,6 +1214,7 @@ impl ConnApp {
             chat.set_project_id(project_id.clone(), cx);
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
+            chat.set_linked_pull_requests(linked_pull_requests, cx);
             chat.set_child_approvals(child_approvals, cx);
             chat.set_branch_context(branch_context, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);

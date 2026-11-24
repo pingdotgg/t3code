@@ -540,7 +540,7 @@ fn render_add_panel_menu(
     // that case (`@supports not (backdrop-filter)`: `var(--popover)`), not the 94% overlay.
     let overlay_bg = to_hsla(tokens.popover);
     let glass_border = to_hsla(tokens.foreground.with_alpha(0.08));
-    let highlight = to_hsla(tokens.shell_highlight);
+    let highlight = crate::sidebar::thread_menu::MenuHighlight::new(tokens);
     let fg = to_hsla(tokens.foreground);
     let muted = to_hsla(tokens.muted_foreground);
     let icon_color = muted.opacity(MENU_ICON_OPACITY);
@@ -569,8 +569,10 @@ fn render_add_panel_menu(
             available,
         } = item;
         let on_add = on_add_tab.clone();
+        let group = SharedString::from(format!("right-panel-add-{label}"));
         let mut row = h_flex()
-            .id(SharedString::from(format!("right-panel-add-{label}")))
+            .id(group.clone())
+            .group(group.clone())
             .a11y(
                 gpui_kit::Role::MenuItem,
                 format!("panel.add-menu.{}", item.slug()),
@@ -586,7 +588,10 @@ fn render_add_panel_menu(
             .text_size(px(TAB_FONT_SIZE_PX))
             .line_height(px(TAB_LINE_HEIGHT_PX))
             .text_color(fg)
-            .child(superhero_icon(icon, HEADER_ICON_PX, icon_color))
+            .child(
+                superhero_icon(icon, HEADER_ICON_PX, icon_color)
+                    .group_hover(group.clone(), move |s| s.text_color(highlight.fg)),
+            )
             .child(div().min_w_0().truncate().child(label))
             .child(
                 div()
@@ -595,12 +600,13 @@ fn render_add_panel_menu(
                     .text_size(px(MENU_SHORTCUT_FONT_PX))
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(muted)
+                    .group_hover(group.clone(), move |s| s.text_color(highlight.fg))
                     .child(shortcut),
             );
         // Browser profiles submenu is out of scope (`docs/scope.md` #17/#31): no chevron.
         row = if available {
             row.cursor_pointer()
-                .hover(move |s| s.bg(highlight))
+                .hover(move |s| highlight.hover_style(s))
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     cx.stop_propagation();
                     on_add(tab, window, cx);

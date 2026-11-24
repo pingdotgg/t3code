@@ -18,7 +18,7 @@ mod files;
 pub(crate) mod header;
 mod highlight;
 mod laravel_toolbar;
-mod linked_items;
+pub(crate) mod linked_items;
 mod mcp;
 mod pull_request;
 mod tasks;
@@ -250,10 +250,6 @@ impl RightPanel {
     }
 
     /// Loads `url` in the Browser tab (starting the CEF runtime on first use).
-    #[cfg_attr(
-        not(feature = "automation"),
-        expect(dead_code, reason = "driven by the automation hook")
-    )]
     pub fn navigate_browser(&mut self, url: String, cx: &mut Context<'_, Self>) {
         self.browser.update(cx, |b, cx| b.navigate(url, cx));
     }

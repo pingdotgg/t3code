@@ -108,7 +108,14 @@ pub(crate) struct MarkdownOptions<'a> {
     pub(crate) workspace_root: Option<&'a str>,
     /// Optional callback invoked when a user clicks a workspace file link or inline file path.
     pub(crate) on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    /// Optional callback invoked with the link and the window position when a user right-clicks a
+    /// web link (Conn's link context menu).
+    pub(crate) on_link_menu: Option<LinkMenuCallback>,
 }
+
+/// Opens the link menu for `url` at the window position.
+pub(crate) type LinkMenuCallback =
+    Rc<dyn Fn(String, gpui_kit::Point<gpui_kit::Pixels>, &mut Window, &mut App)>;
 
 impl MarkdownOptions<'_> {
     fn prose_color(&self, tokens: &Tokens) -> Hsla {
@@ -134,6 +141,7 @@ impl fmt::Debug for MarkdownOptions<'_> {
                 &self.on_toggle_wrap_code.is_some(),
             )
             .field("has_on_open_file", &self.on_open_file.is_some())
+            .field("has_on_link_menu", &self.on_link_menu.is_some())
             .finish()
     }
 }
@@ -1134,6 +1142,7 @@ fn render_inline_spans(
     let prose = options.prose.map(|prose| prose.color);
     let workspace_root = options.workspace_root.map(str::to_owned);
     let on_open_file = options.on_open_file.clone();
+    let on_link_menu = options.on_link_menu.clone();
     if spans.iter().any(|span| span.style.code) {
         let spans = spans.to_vec();
         let owned_tokens = tokens.clone();
@@ -1149,7 +1158,15 @@ fn render_inline_spans(
                 Some(window),
             );
             let layout = styled.layout().clone();
-            let inner = interactive_inline_text(&span_id, styled, ranges, targets, on_open_file);
+            let inner = interactive_inline_text(
+                &span_id,
+                styled,
+                ranges,
+                targets,
+                on_open_file,
+                on_link_menu,
+                layout.clone(),
+            );
             Built {
                 inner,
                 layout,
@@ -1166,21 +1183,41 @@ fn render_inline_spans(
         on_open_file.is_some(),
         None,
     );
-    interactive_inline_text(span_id, styled, ranges, targets, on_open_file)
+    let layout = styled.layout().clone();
+    interactive_inline_text(
+        span_id,
+        styled,
+        ranges,
+        targets,
+        on_open_file,
+        on_link_menu,
+        layout,
+    )
 }
 
-/// `styled`, made clickable over `ranges` (URLs and workspace file paths) when there are any.
+/// `styled`, made clickable over `ranges` (URLs and workspace file paths) when there are any. A
+/// right-click on a web link asks `on_link_menu` for the link menu.
 fn interactive_inline_text(
     span_id: &str,
     styled: StyledText,
     ranges: Vec<Range<usize>>,
     targets: Vec<ClickTarget>,
     on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    on_link_menu: Option<LinkMenuCallback>,
+    layout: gpui_kit::TextLayout,
 ) -> AnyElement {
     if ranges.is_empty() {
         return styled.into_any_element();
     }
-    InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
+    let menu_targets: Vec<(Range<usize>, String)> = ranges
+        .iter()
+        .zip(&targets)
+        .filter_map(|(range, target)| match target {
+            ClickTarget::Url(url) => Some((range.clone(), url.clone())),
+            ClickTarget::WorkspaceFile(_) => None,
+        })
+        .collect();
+    let text = InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
         .on_click(ranges, move |ix, window, cx| {
             let Some(target) = targets.get(ix) else {
                 return;
@@ -1193,8 +1230,30 @@ fn interactive_inline_text(
                     }
                 }
             }
+        });
+    let Some(on_link_menu) = on_link_menu.filter(|_| !menu_targets.is_empty()) else {
+        return text.into_any_element();
+    };
+    div()
+        .on_mouse_down(gpui_kit::MouseButton::Right, move |event, window, cx| {
+            let Ok(index) = layout.index_for_position(event.position) else {
+                return;
+            };
+            if let Some(url) = link_at(&menu_targets, index) {
+                cx.stop_propagation();
+                on_link_menu(url.to_owned(), event.position, window, cx);
+            }
         })
+        .child(text)
         .into_any_element()
+}
+
+/// The web link whose text covers byte `index` of the paragraph.
+fn link_at(links: &[(Range<usize>, String)], index: usize) -> Option<&str> {
+    links
+        .iter()
+        .find(|(range, _)| range.contains(&index))
+        .map(|(_, url)| url.as_str())
 }
 
 /// Builds the paragraph text and runs. With a `chip_window`, an inline code span becomes a run
@@ -1524,6 +1583,23 @@ fn looks_like_file_path(rel: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_right_click_finds_the_web_link_under_the_pointer() {
+        let links = vec![
+            (4..10, "https://a.test".to_owned()),
+            (14..20, "https://b.test".to_owned()),
+        ];
+        assert_eq!(link_at(&links, 4), Some("https://a.test"));
+        assert_eq!(link_at(&links, 9), Some("https://a.test"));
+        assert_eq!(
+            link_at(&links, 10),
+            None,
+            "the range end is outside the link"
+        );
+        assert_eq!(link_at(&links, 15), Some("https://b.test"));
+        assert_eq!(link_at(&links, 0), None);
+    }
+
     use super::*;
 
     #[test]
