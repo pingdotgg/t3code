@@ -132,31 +132,41 @@ const params = (condition: SQL | undefined) =>
 
 describe("AccountDeletion", () => {
   it.effect(
-    "tears down tunnels before deleting rows and keeps environments another account links",
+    "tears down tunnels, then locks each environment identity before deleting its rows",
     () => {
       const calls: Array<string> = [];
-      const selects: Record<string, ReadonlyArray<{ environmentId: string }>> = {
-        relay_environment_links: [{ environmentId: "env-own" }, { environmentId: "env-shared" }],
-        relay_managed_endpoint_allocations: [{ environmentId: "env-own" }],
-      };
+      const ownLinks = [
+        { environmentId: "env-shared", environmentPublicKey: "key-b" },
+        { environmentId: "env-own", environmentPublicKey: "key-a" },
+      ];
       const fakeDb = {
+        execute: (query: SQL) =>
+          Effect.sync(() => {
+            calls.push(`lock ${params(query).join(",")}`);
+          }),
         select: () => ({
           from: (table: Table) => ({
-            where: (condition: SQL | undefined) =>
-              Effect.sync(() => {
-                const name = getTableName(table);
-                // After the user's links are gone, only the other account's link remains.
-                if (calls.includes("delete relay_environment_links user_1")) {
-                  return name === "relay_environment_links"
-                    ? [{ environmentId: "env-shared" }]
-                    : [];
-                }
+            where: (condition: SQL | undefined) => {
+              const name = getTableName(table);
+              const rows = Effect.sync(() => {
                 calls.push(`select ${name} ${params(condition).join(",")}`);
-                return calls.some((call) => call.startsWith("deprovision")) &&
-                  name === "relay_managed_endpoint_allocations"
+                if (name === "relay_environment_links") return ownLinks;
+                // Teardown removed the allocation, so the remaining-allocation check finds none.
+                return calls.some((call) => call.startsWith("deprovision"))
                   ? []
-                  : (selects[name] ?? []);
-              }),
+                  : [{ environmentId: "env-own" }];
+              });
+              // The per-identity check after the user's links are deleted: another account
+              // still links env-shared under the same key.
+              return Object.assign(rows, {
+                limit: () =>
+                  Effect.succeed(
+                    params(condition).includes("env-shared")
+                      ? [{ environmentId: "env-shared" }]
+                      : [],
+                  ),
+              });
+            },
           }),
         }),
         delete: (table: Table) => ({
@@ -171,11 +181,13 @@ describe("AccountDeletion", () => {
         const accounts = yield* AccountDeletion.AccountDeletion;
         yield* accounts.deleteAccount({ userId: "user_1" });
         expect(calls.filter((call) => !call.startsWith("select"))).toEqual([
-          "deprovision env-own",
           "deprovision env-shared",
+          "deprovision env-own",
+          "lock env-own,key-a",
+          "lock env-shared,key-b",
           "delete relay_environment_links user_1",
-          "delete relay_environment_credentials env-own",
-          "delete relay_agent_activity_rows env-own",
+          "delete relay_environment_credentials env-own,key-a",
+          "delete relay_agent_activity_rows env-own,key-a",
           "delete relay_live_activities user_1",
           "delete relay_mobile_devices user_1",
           "delete relay_delivery_attempts user_1",

@@ -1,5 +1,5 @@
 import { RelayApi } from "@t3tools/contracts/relay";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -100,19 +100,28 @@ const make = Effect.gen(function* () {
     const fail = (stage: AccountDeletionFailed["stage"]) => (cause: unknown) =>
       new AccountDeletionFailed({ userId, stage, cause });
 
-    const environmentIds = yield* Effect.all([
+    const [links, allocations] = yield* Effect.all([
       db
-        .select({ environmentId: relayEnvironmentLinks.environmentId })
+        .select({
+          environmentId: relayEnvironmentLinks.environmentId,
+          environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+        })
         .from(relayEnvironmentLinks)
         .where(eq(relayEnvironmentLinks.userId, userId)),
       db
         .select({ environmentId: relayManagedEndpointAllocations.environmentId })
         .from(relayManagedEndpointAllocations)
         .where(eq(relayManagedEndpointAllocations.userId, userId)),
-    ]).pipe(
-      Effect.map((rows) => [...new Set(rows.flat().map((row) => row.environmentId))]),
-      Effect.mapError(fail("list-environments")),
-    );
+    ]).pipe(Effect.mapError(fail("list-environments")));
+    const environmentIds = [...new Set([...links, ...allocations].map((row) => row.environmentId))];
+    // Credentials and activity rows belong to an environment identity (id and key), not an account.
+    const identities = [
+      ...new Map(
+        links.map((link) => [`${link.environmentId}\u0000${link.environmentPublicKey}`, link]),
+      ).entries(),
+    ]
+      .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([, identity]) => identity);
 
     // Revoke, clear held webhooks, and delete each Cloudflare tunnel and DNS record before
     // dropping rows, so no live tunnel is left without the allocation that tracks it.
@@ -140,24 +149,36 @@ const make = Effect.gen(function* () {
     yield* transactions
       .withTransaction(
         Effect.gen(function* () {
+          // Linking takes this lock while writing a link and its credential, so a link another
+          // account makes for the same environment either commits before the check below or
+          // waits for this transaction. Sorted, so two deletions cannot deadlock.
+          for (const identity of identities) {
+            yield* db.execute(
+              sql`select pg_advisory_xact_lock(hashtext(${identity.environmentId}), hashtext(${identity.environmentPublicKey}))`,
+            );
+          }
           yield* db.delete(relayEnvironmentLinks).where(eq(relayEnvironmentLinks.userId, userId));
-          // Environment-scoped rows go only when no other account still links the environment.
-          const stillLinked =
-            environmentIds.length === 0
-              ? []
-              : yield* db
-                  .select({ environmentId: relayEnvironmentLinks.environmentId })
-                  .from(relayEnvironmentLinks)
-                  .where(inArray(relayEnvironmentLinks.environmentId, environmentIds));
-          const shared = new Set(stillLinked.map((row) => row.environmentId));
-          const orphaned = environmentIds.filter((environmentId) => !shared.has(environmentId));
-          if (orphaned.length > 0) {
+          for (const identity of identities) {
+            const sameIdentity = (
+              table:
+                | typeof relayEnvironmentLinks
+                | typeof relayEnvironmentCredentials
+                | typeof relayAgentActivityRows,
+            ) =>
+              and(
+                eq(table.environmentId, identity.environmentId),
+                eq(table.environmentPublicKey, identity.environmentPublicKey),
+              );
+            const stillLinked = yield* db
+              .select({ environmentId: relayEnvironmentLinks.environmentId })
+              .from(relayEnvironmentLinks)
+              .where(sameIdentity(relayEnvironmentLinks))
+              .limit(1);
+            if (stillLinked.length > 0) continue;
             yield* db
               .delete(relayEnvironmentCredentials)
-              .where(inArray(relayEnvironmentCredentials.environmentId, orphaned));
-            yield* db
-              .delete(relayAgentActivityRows)
-              .where(inArray(relayAgentActivityRows.environmentId, orphaned));
+              .where(sameIdentity(relayEnvironmentCredentials));
+            yield* db.delete(relayAgentActivityRows).where(sameIdentity(relayAgentActivityRows));
           }
           yield* db.delete(relayLiveActivities).where(eq(relayLiveActivities.userId, userId));
           yield* db.delete(relayMobileDevices).where(eq(relayMobileDevices.userId, userId));
