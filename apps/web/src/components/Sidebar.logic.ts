@@ -198,7 +198,13 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+export type SidebarSection =
+  | "roles" // fork: roles
+  | "pinned"
+  | "active"
+  | "working"
+  | "snoozed"
+  | "settled";
 
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
@@ -214,6 +220,7 @@ export function resolveSidebarThreadSection(input: {
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
+  | "roles-header" // fork: roles
   | "pinned-header"
   | "active-placeholder"
   | "settled-placeholder"
@@ -240,7 +247,9 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
   for (let i = 0; i < index && i < items.length; i += 1) {
     const item = items[i]!;
     if (item.kind !== "marker") continue;
-    if (item.marker === "pinned-divider") section = "active";
+    if (item.marker === "roles-header") section = "roles"; // fork: roles
+    else if (item.marker === "pinned-header") section = "pinned"; // fork: roles
+    else if (item.marker === "pinned-divider") section = "active";
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header" || item.marker === "later-header")
       section = "snoozed"; // fork: later-shelf
@@ -266,11 +275,12 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section === "working" || section === "snoozed" || section === "roles") return null; // fork: roles
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
   for (const item of moved) {
+    if (item.kind === "thread" && item.section === "roles") continue; // fork: roles
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
       else if (

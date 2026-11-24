@@ -142,6 +142,8 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { LaterShelfHeader, useLaterShelf } from "./Sidebar.forkLater"; // fork: later-shelf
 import { timedSnoozePresets } from "@t3tools/client-runtime/state/thread-settled"; // fork: later-shelf
 import { laterMenuItem } from "./threadActionMenu.forkLater"; // fork: later-shelf
+import { RolesHeader, SidebarRoleIcon, useRolesSection } from "./Sidebar.forkRoles"; // fork: roles
+import { splitRoleThreads } from "./Sidebar.forkRoles.logic"; // fork: roles
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
   useEnvironmentIdentities,
@@ -538,6 +540,7 @@ function useSidebarThreads(input: {
     ? visibleSettledThreads
     : routeThreadOnly(visibleSettledThreads, shelfRouteThreadKey);
   const laterShelf = useLaterShelf(snoozedThreads, shelfRouteThreadKey); // fork: later-shelf
+  const rolesSection = useRolesSection(partition.roleThreads, shelfRouteThreadKey); // fork: roles
   const visibleSnoozedThreads = snoozedShelfExpanded
     ? laterShelf.timed // fork: later-shelf
     : routeThreadOnly(laterShelf.timed, shelfRouteThreadKey); // fork: later-shelf
@@ -565,6 +568,7 @@ function useSidebarThreads(input: {
           };
         });
   const orderedThreads = [
+    ...rolesSection.rows.map(({ thread }) => thread), // fork: roles
     ...pinnedThreads,
     ...(projectFolders === null
       ? activeThreads
@@ -576,6 +580,7 @@ function useSidebarThreads(input: {
   ];
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
+    [partition.roleThreads, "roles"], // fork: roles
     [pinnedThreads, "pinned"],
     [activeThreads, "active"],
     [workingThreads, "working"],
@@ -589,6 +594,7 @@ function useSidebarThreads(input: {
     threads,
     workingShelfEnabled,
     searchableThreads: [
+      ...partition.roleThreads, // fork: roles
       ...pinnedThreads,
       ...activeThreads,
       ...workingThreads,
@@ -609,6 +615,7 @@ function useSidebarThreads(input: {
     snoozedShelfExpanded,
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     laterShelf, // fork: later-shelf
+    rolesSection, // fork: roles
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     projectFolders,
@@ -663,7 +670,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     connectedEnvironmentIds: input.connectedEnvironmentIds,
   });
-  for (const thread of visible) {
+  const { roles, others } = splitRoleThreads(visible); // fork: roles
+  for (const thread of others) {
     const configLoaded = serverConfigs.has(thread.environmentId);
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     if (optimisticDrop?.key === threadKey) {
@@ -732,6 +740,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         firstValidTimestampMs(right.snoozedUntil ?? null),
     ),
     settledThreads: sortSettledThreads(settled),
+    roleThreads: roles, // fork: roles
     visibleThreads: visible,
     snoozeNow: preciseNow,
   };
@@ -1343,6 +1352,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     snoozedShelfExpanded,
     toggleSnoozedShelf,
     laterShelf, // fork: later-shelf
+    rolesSection, // fork: roles
     workingShelfExpanded,
     toggleWorkingShelf,
     projectFolders,
@@ -1992,7 +2002,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     // Boring mode keeps a pinned open project or one the user filtered to, so it can start a thread.
     if (
       !hasProjectFolders &&
-      pinnedThreads.length +
+      rolesSection.threads.length + // fork: roles
+        pinnedThreads.length +
         activeThreads.length +
         workingThreads.length +
         snoozedThreads.length +
@@ -2001,7 +2012,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     ) {
       return [];
     }
-    const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
+    const items: SidebarListItem[] = [];
+    if (rolesSection.threads.length > 0) {
+      // fork: roles
+      items.push({ kind: "marker", marker: "roles-header" });
+      items.push(
+        ...rowsOf(
+          rolesSection.rows.map(({ thread }) => thread),
+          "roles",
+        ),
+      );
+    }
+    items.push({ kind: "marker", marker: "pinned-header" });
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
@@ -2063,9 +2085,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
   // Cache on both fields so layout-key changes trigger the effect even when animate is unchanged.
   const listMotionPass = { layoutKey: listMotionLayoutKey, animate: listMotionAnimate };
-  const shelfExpansionKey = [workingShelfExpanded, snoozedShelfExpanded, settledShelfExpanded].join(
-    ":",
-  );
+  const shelfExpansionKey = [
+    workingShelfExpanded,
+    snoozedShelfExpanded,
+    settledShelfExpanded,
+    rolesSection.expanded, // fork: roles
+    rolesSection.showAll, // fork: roles
+  ].join(":");
   const previousShelfExpansionKeyRef = useRef(shelfExpansionKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records moved rows and updates list motion after each layout-affecting commit
   useLayoutEffect(() => {
@@ -3522,15 +3548,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
                             sortableDisabled={
+                              section === "roles" || // fork: roles
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
                               optimisticDrop !== null
                             }
                             thread={thread}
-                            variant={rowVariant}
+                            variant={section === "roles" ? "role" : rowVariant} // fork: roles
+                            role={
+                              section === "roles" // fork: roles
+                                ? {
+                                    icon: (
+                                      <SidebarRoleIcon
+                                        environmentId={thread.environmentId}
+                                        roleId={thread.roleId}
+                                      />
+                                    ),
+                                    dimmed: rolesSection.dimmedKeys.has(threadKey),
+                                  }
+                                : undefined
+                            }
                             navigationParent={
                               folderRow ??
-                              (section === "working" ||
+                              (section === "roles" || // fork: roles
+                              section === "working" ||
                               section === "snoozed" ||
                               section === "settled"
                                 ? `shelf:${section}`
@@ -3539,7 +3580,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             variantAction={
                               section === "snoozed"
                                 ? "unsnooze"
-                                : section === "settled"
+                                : section === "settled" || thread.settledOverride === "settled" // fork: roles
                                   ? "unsettle"
                                   : "settle"
                             }
@@ -3665,6 +3706,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           continue;
                         }
                         switch (item.marker) {
+                          case "roles-header": // fork: roles
+                            items.push(<RolesHeader key="roles-header" section={rolesSection} />);
+                            break;
                           case "pinned-header":
                             items.push(
                               <SidebarDragBoundary

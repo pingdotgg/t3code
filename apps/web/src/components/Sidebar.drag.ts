@@ -9,6 +9,7 @@ import {
   type SidebarSection,
 } from "./Sidebar.logic";
 import { projectSnoozeShelves } from "./Sidebar.forkLater"; // fork: later-shelf
+import { rolesBlock } from "./Sidebar.forkRoles.logic"; // fork: roles
 
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
@@ -120,6 +121,7 @@ export function createSidebarSortingStrategy(input: {
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
     if (!target) return [];
     const groups: Record<SidebarSection, ThreadItem[]> = {
+      roles: [], // fork: roles
       pinned: [],
       active: [],
       working: [],
@@ -139,7 +141,7 @@ export function createSidebarSortingStrategy(input: {
       }
       if (item.section === "pinned" || item.section === "active" || item.section === "working")
         cardHeight ??= rects[index]?.height;
-      else slimHeight ??= rects[index]?.height;
+      else if (item.section !== "roles") slimHeight ??= rects[index]?.height; // fork: roles
       if (item.key !== active.key) groups[item.section].push(item);
     }
     const scale =
@@ -177,6 +179,7 @@ export function createSidebarSortingStrategy(input: {
       if (groups[name].length > 0) projected.push(...groups[name]);
       else marker(`${name}-placeholder`);
     };
+    projected.push(...rolesBlock(items)); // fork: roles
     marker("pinned-header");
     projected.push(...groups.pinned);
     marker("pinned-divider");
