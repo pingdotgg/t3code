@@ -1318,18 +1318,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: expandedControlsHiddenBlockCount,
     iconOnlyBlockCount: expandedControlsIconOnlyBlockCount,
   } = useRestingComposerControlsLayout(null, true);
-  const pendingPrimaryAction = activePendingProgress
-    ? {
-        questionIndex: activePendingProgress.questionIndex,
-        isLastQuestion: activePendingProgress.isLastQuestion,
-        canAdvance:
-          activePendingProgress.canAdvance &&
-          !attachmentBlockReason &&
-          !(questionPreparations[attachmentTargetKey] ?? 0),
-        isResponding: activePendingIsResponding,
-        isComplete: Boolean(activePendingResolvedAnswers),
-      }
-    : null;
+  // Read into primitives first so the compiler caches the literal on them; the progress object
+  // changes identity on every typed character, which re-rendered the footer per keystroke.
+  const pendingQuestionIndex = activePendingProgress?.questionIndex;
+  const pendingIsLastQuestion = activePendingProgress?.isLastQuestion === true;
+  const pendingCanAdvance =
+    activePendingProgress?.canAdvance === true &&
+    !attachmentBlockReason &&
+    !(questionPreparations[attachmentTargetKey] ?? 0);
+  const pendingIsComplete = Boolean(activePendingResolvedAnswers);
+  const pendingPrimaryAction =
+    pendingQuestionIndex === undefined
+      ? null
+      : {
+          questionIndex: pendingQuestionIndex,
+          isLastQuestion: pendingIsLastQuestion,
+          canAdvance: pendingCanAdvance,
+          isResponding: activePendingIsResponding,
+          isComplete: pendingIsComplete,
+        };
   const hasMessageToSend = composerSendState.hasSendableContent || messageHasPreparingImages;
   const showResumeAction =
     canResume &&

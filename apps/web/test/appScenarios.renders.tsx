@@ -358,9 +358,11 @@ it("app-answer-question", async () => {
     await userEvent.type(editor, TYPED_TEXT);
     await expect.element(editor).toHaveTextContent(TYPED_TEXT);
   });
-  // Answers live in the composer; the chat view renders for the request, not its answers.
+  // Answers live in the composer; the chat view renders for the request, not its answers. The
+  // primary actions re-render once, when the first character makes the answer advanceable.
   expect(pick.components.ChatView).toBeUndefined();
   expect(type.components.ChatView).toBeUndefined();
+  expect(type.components.ComposerFooterPrimaryActions).toBe(1);
   await report("app-answer-question", [pick, type]);
 });
 
