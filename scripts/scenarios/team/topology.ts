@@ -34,6 +34,7 @@ export interface TeamMemberSpec {
 export interface RecordedBrowserNotification {
   readonly title: string;
   readonly body: string;
+  readonly tag: string;
 }
 
 export interface TeamMemberHandle {
@@ -46,6 +47,8 @@ export interface TeamMemberHandle {
   readonly page: Page;
   readonly open: (targetPath?: string) => Promise<void>;
   readonly notifications: () => Promise<ReadonlyArray<RecordedBrowserNotification>>;
+  readonly clearNotifications: () => Promise<void>;
+  readonly setWindowFocused: (focused: boolean) => Promise<void>;
   readonly pairWithRemoteServer: (input: {
     readonly host: string;
     readonly pairingToken: string;
@@ -386,20 +389,40 @@ export async function startTeamTopology(input: {
       stack.defer(() => context.close());
 
       await context.addInitScript(() => {
-        const recorded: Array<{ readonly title: string; readonly body: string }> = [];
+        const recorded: Array<{
+          readonly title: string;
+          readonly body: string;
+          readonly tag: string;
+        }> = [];
         Object.defineProperty(globalThis, "__t3RecordedNotifications", {
           value: recorded,
           configurable: true,
         });
-        class MockNotification {
+        Object.defineProperty(globalThis, "__t3WindowFocusedOverride", {
+          value: null,
+          configurable: true,
+          writable: true,
+        });
+        const originalHasFocus = Document.prototype.hasFocus;
+        Document.prototype.hasFocus = function hasFocus() {
+          const override = (
+            globalThis as unknown as { readonly __t3WindowFocusedOverride?: boolean | null }
+          ).__t3WindowFocusedOverride;
+          if (typeof override === "boolean") return override;
+          return originalHasFocus.call(this);
+        };
+        class MockNotification extends EventTarget {
           static permission = "granted";
           static requestPermission = async () => "granted";
           readonly title: string;
           readonly body: string;
-          constructor(title: string, options?: { readonly body?: string }) {
+          readonly tag: string;
+          constructor(title: string, options?: { readonly body?: string; readonly tag?: string }) {
+            super();
             this.title = title;
             this.body = options?.body ?? "";
-            recorded.push({ title: this.title, body: this.body });
+            this.tag = options?.tag ?? "";
+            recorded.push({ title: this.title, body: this.body, tag: this.tag });
           }
           close() {}
         }
@@ -435,8 +458,25 @@ export async function startTeamTopology(input: {
             const globalRecord = globalThis as unknown as {
               readonly __t3RecordedNotifications?: ReadonlyArray<RecordedBrowserNotification>;
             };
-            return globalRecord.__t3RecordedNotifications ?? [];
+            return [...(globalRecord.__t3RecordedNotifications ?? [])];
           }),
+        clearNotifications: async () => {
+          await page.evaluate(() => {
+            const globalRecord = globalThis as unknown as {
+              readonly __t3RecordedNotifications?: Array<RecordedBrowserNotification>;
+            };
+            if (globalRecord.__t3RecordedNotifications) {
+              globalRecord.__t3RecordedNotifications.length = 0;
+            }
+          });
+        },
+        setWindowFocused: async (focused: boolean) => {
+          await page.evaluate((nextFocused) => {
+            (
+              globalThis as unknown as { __t3WindowFocusedOverride: boolean | null }
+            ).__t3WindowFocusedOverride = nextFocused;
+          }, focused);
+        },
         pairWithRemoteServer: async ({ host, pairingToken }) => {
           await page.goto(`${allocation.origin}/settings/connections`, {
             waitUntil: "domcontentloaded",
