@@ -2630,6 +2630,8 @@
   "89b5e8f3887812da": "Gastanfrage",
   "62e626804919b294": "Eingabe nötig",
   "c6196d99000642b4": "Thread öffnen",
+  "70bdebaa3d291d3b": "Thread nicht verfügbar",
+  "a351ebbdcf1a3f7a": "Dieser Thread liegt in einer Umgebung, mit der diese App nicht verbunden ist.",
   "826cb862b4a11fb3": "{label}:",
   "3e597ec938e7551b": "Du:",
   "a1fbf2422c588292": "Agent:",
