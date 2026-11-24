@@ -1,6 +1,22 @@
-import { Mp3Encoder } from "@breezystack/lamejs";
+// @effect-diagnostics nodeBuiltinImport:off - lamejs loads from disk outside the bundle.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+
+// lamejs stays external, and single-executables cannot import disk packages. Its `require`
+// entry is an IIFE that exports nothing, so import its ES module by path instead.
+let lamejs: Promise<typeof import("@breezystack/lamejs")> | undefined;
+const loadLamejs = () =>
+  (lamejs ??= (async () => {
+    const packagePath = NodeModule.findPackageJSON("@breezystack/lamejs", import.meta.url);
+    if (!packagePath) throw new Error("The MP3 encoder package is unavailable.");
+    const { module } = JSON.parse(await NodeFSP.readFile(packagePath, "utf8"));
+    const entry = NodePath.join(NodePath.dirname(packagePath), module);
+    return import(NodeURL.pathToFileURL(entry).href);
+  })());
 
 export const MAX_SYNTHESIS_BYTES = 32 * 1024 * 1024;
 
@@ -58,17 +74,25 @@ export function encodeMp3(
   for (let index = 0; index < samples.length; index++)
     samples[index] = view.getInt16(index * 2, true) / 0x8000;
   const mono = pcm16Mono(samples, channels);
-  const encoder = new Mp3Encoder(1, rate, mp3Kbps(rate));
   const slices = Math.ceil(mono.length / ENCODE_SLICE_SAMPLES);
-  return Stream.range(0, slices - 1).pipe(
-    Stream.mapEffect((slice) =>
-      Effect.sync(() => {
-        const start = slice * ENCODE_SLICE_SAMPLES;
-        const parts = [encoder.encodeBuffer(mono.subarray(start, start + ENCODE_SLICE_SAMPLES))];
-        if (slice === slices - 1) parts.push(encoder.flush());
-        return concat(parts);
-      }).pipe(Effect.tap(() => Effect.yieldNow)),
-    ),
+  // A missing encoder package is a packaging defect, not a recoverable failure.
+  return Effect.promise(loadLamejs).pipe(
+    Effect.map(({ Mp3Encoder }) => {
+      const encoder = new Mp3Encoder(1, rate, mp3Kbps(rate));
+      return Stream.range(0, slices - 1).pipe(
+        Stream.mapEffect((slice) =>
+          Effect.sync(() => {
+            const start = slice * ENCODE_SLICE_SAMPLES;
+            const parts = [
+              encoder.encodeBuffer(mono.subarray(start, start + ENCODE_SLICE_SAMPLES)),
+            ];
+            if (slice === slices - 1) parts.push(encoder.flush());
+            return concat(parts);
+          }).pipe(Effect.tap(() => Effect.yieldNow)),
+        ),
+      );
+    }),
+    Stream.unwrap,
     Stream.filter((bytes) => bytes.length > 0),
   );
 }
