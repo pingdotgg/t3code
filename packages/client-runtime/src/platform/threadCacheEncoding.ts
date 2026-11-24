@@ -14,7 +14,7 @@ import {
 } from "./orchestrationCache.ts";
 
 // Keep the full format for web/desktop; older clients discard compact records.
-export const COMPACT_THREAD_CACHE_SCHEMA_VERSION = 6 as const;
+export const COMPACT_THREAD_CACHE_SCHEMA_VERSION = 8 as const;
 
 /**
  * A thread followed live keeps every item it streams, so its projection can grow
