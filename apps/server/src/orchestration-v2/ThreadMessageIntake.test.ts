@@ -144,6 +144,60 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
+it.effect("leaves an async answer's text alone so its files travel as message attachments", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const id = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const threadId = ThreadId.make("thread-async-answer");
+    const requestId = RuntimeRequestId.make("request-async");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-async"),
+      threadId,
+      requestId,
+      answers: { q: "" },
+      attachmentsByQuestionId: {
+        q: [{ type: "image", id, name: "screen.png", mimeType: "image/png", sizeBytes: 3 }],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: layerFailingDispatchHandler(captured),
+          getThreadRecords: () =>
+            Effect.succeed({
+              runtimeRequests: [
+                {
+                  id: requestId,
+                  nodeId: null,
+                  providerTurnId: null,
+                  nativeRequestRef: null,
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: { type: "message" },
+                  createdAt: NOW,
+                  resolvedAt: null,
+                },
+              ],
+            } as unknown as Effect.Success<
+              ReturnType<ThreadManagementService.ThreadManagementServiceShape["getThreadRecords"]>
+            >),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(captured).toHaveLength(1);
+    const command = captured[0]!;
+    if (command.type !== "runtime-request.respond") throw new Error("expected a response");
+    expect(command.answers).toEqual({ q: "" });
+    expect(command.attachmentsByQuestionId?.q).toHaveLength(1);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
 it.effect("retains claimed copies when dispatch failure may have been accepted", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
