@@ -408,10 +408,12 @@ impl SqliteEngine {
         }
         // T3 holds the prompts queued in a thread the previous process left unfinished, also
         // one whose only unfinished run is queued: the user decides when they go. Before any
-        // replayed effect runs, so a replayed capture cannot start one.
+        // replayed effect runs, so a replayed capture cannot start one. A buffered provider
+        // notification is cancelled instead: its output went with the old process.
         let mut held = std::collections::HashSet::new();
         for (thread_id, _) in &unfinished {
             if held.insert(thread_id.as_str()) {
+                commands::cancel_buffered_notifications(&mut tx, thread_id)?;
                 commands::hold_queue(&mut tx, thread_id)?;
             }
         }

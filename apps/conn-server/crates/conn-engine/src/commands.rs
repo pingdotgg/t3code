@@ -845,6 +845,27 @@ fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
     Ok(released)
 }
 
+/// Cancels the queued runs of buffered provider notifications: their output lived in the
+/// provider process that is gone (T3's `isBufferedProviderNotification` at recovery).
+pub(crate) fn cancel_buffered_notifications(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    for run in queued_runs(tx, thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let buffered = tx
+            .entity(thread_id, "messages", message_id)?
+            .is_some_and(|m| {
+                m["createdBy"] == "agent"
+                    && m["creationSource"] == "provider"
+                    && !is_null(&m, "notification")
+                    && is_null(&m, "delegatedCompletion")
+            });
+        if buffered {
+            let run_id = run["id"].as_str().unwrap_or_default();
+            finish_run(tx, thread_id, run_id, "cancelled", None)?;
+        }
+    }
+    Ok(())
+}
+
 /// Sets `queueHeld` on every queued run, so they wait for the user.
 pub(crate) fn hold_queue(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
     for mut run in queued_runs(tx, thread_id)? {

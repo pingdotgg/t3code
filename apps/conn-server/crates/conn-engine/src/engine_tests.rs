@@ -2035,6 +2035,46 @@ async fn a_resend_holds_the_prompt_queued_behind_it() {
     assert_eq!(run_of(&p, "run:t1:2")["queueHeld"], true);
 }
 
+/// The #268 gate's probe: a provider's buffered notification queued behind a run that waits
+/// for its checkpoint lost its output with the process, so a restart cancels it
+/// (`ProviderRuntimeRecoveryService`). A user prompt and a server notice with its own text
+/// stay held.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_cancels_a_queued_buffered_provider_notification() {
+    let db = TempDb::new("restart-buffered-notification");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        dispatch(&engine, message("t1", "c2", "first")).await;
+        run_to_end(&engine, "t1", "run:t1:1").await;
+        engine.test_force_waiting("t1", "run:t1:1").await;
+        for (command, source) in [("c3", "provider"), ("c4", "server")] {
+            dispatch(
+                &engine,
+                json!({"type": "message.dispatch", "commandId": command, "threadId": "t1",
+                       "messageId": format!("message:{command}"), "text": "Background task completed.",
+                       "notification": {"source": {"kind": "background_task"},
+                           "outcome": "updated", "summary": "Background activity updated"},
+                       "attachments": [], "dispatchMode": {"type": "queue_after_active"},
+                       "createdBy": "agent", "creationSource": source}),
+            )
+            .await;
+        }
+        dispatch(&engine, message("t1", "c5", "after")).await;
+        let p = projection(&engine, "t1").await;
+        for run in ["run:t1:2", "run:t1:3", "run:t1:4"] {
+            assert_eq!(run_of(&p, run)["status"], "queued", "{run}");
+        }
+    }
+    let engine = open_held(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "cancelled");
+    for run in ["run:t1:3", "run:t1:4"] {
+        assert_eq!(run_of(&p, run)["status"], "queued", "{run}");
+        assert_eq!(run_of(&p, run)["queueHeld"], true, "{run}");
+    }
+}
+
 /// The #268 gate's probe: a host cleanup that fails is tried again; one that keeps failing
 /// leaves its row `failed` with the error, instead of `succeeded`.
 #[tokio::test(flavor = "current_thread")]
