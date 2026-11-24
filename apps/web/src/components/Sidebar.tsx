@@ -259,6 +259,12 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import {
+  hasActiveTeamEnvironment,
+  shouldShowThreadInTeamFilter,
+} from "@t3tools/client-runtime/team";
+import { useShowColleaguesThreads, useTeamStatesByEnvironment } from "../state/team";
+import { TeamColleaguesToggle } from "./team/TeamColleaguesToggle";
 import { TooltipProvider } from "./ui/tooltip";
 import {
   composerDraftHasUserContent,
@@ -495,8 +501,21 @@ function useSidebarThreads(input: {
   const settledVisibleCount =
     settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
 
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
+  const showColleaguesThreads = useShowColleaguesThreads();
+  const teamFilteredThreads = hasActiveTeamEnvironment(teamStatesByEnvironment)
+    ? threads.filter((thread) =>
+        shouldShowThreadInTeamFilter({
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+          teamStates: teamStatesByEnvironment,
+          showColleaguesThreads,
+        }),
+      )
+    : threads;
+
   const partition = partitionSidebarThreads({
-    threads,
+    threads: teamFilteredThreads,
     scopedProjectKeys,
     delegatedUnderParent,
     serverConfigs,
@@ -3078,6 +3097,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
               hasProjects={projectGroups.length > 0}
+              teamColleaguesToggle={<TeamColleaguesToggle />}
               projectScope={
                 <Combobox
                   items={projectScopeItems}

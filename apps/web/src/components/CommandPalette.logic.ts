@@ -448,6 +448,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     runThread: (thread: TThread) => Promise<void>;
     /** Makes the environment searchable; pass it only with two or more environments. */
     environmentLabelOf?: (thread: TThread) => string | null;
+    /** Optional display title formatter (e.g. team pseudo prefixing). */
+    titleOf?: (thread: TThread) => string;
     /** Tasks linked environments run for a listed thread; they open from under that thread. */
     delegatedUnderParent?: ReadonlySet<string>;
   },
@@ -490,22 +492,24 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       ? input.renderDescription(thread, { projectTitle })
       : descriptionParts.join(` · `);
 
+    const displayTitle = input.titleOf ? input.titleOf(thread) : thread.title;
     return Object.assign(
       {
         kind: "action" as const,
         value: `thread:${thread.environmentId}:${thread.id}`,
         threadRef: { environmentId: thread.environmentId, threadId: thread.id },
-        searchTerms: [thread.title],
+        searchTerms: displayTitle === thread.title ? [thread.title] : [displayTitle, thread.title],
         threadSearch: threadSearchSubject(
           {
             ...thread,
+            title: displayTitle,
             latestUserMessageAt: thread.latestUserMessageAt ?? null,
             opens: thread.opens ?? null,
           },
           projectTitle,
           input.environmentLabelOf?.(thread),
         ),
-        title: thread.title,
+        title: displayTitle,
         description,
         timestamp: formatRelativeTimeLabel(
           thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,

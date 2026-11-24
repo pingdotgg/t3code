@@ -45,6 +45,9 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { formatTeamThreadTitle } from "@t3tools/client-runtime/team";
+import { useTeamThreadCreatorPseudo } from "../../state/team";
+import { TeamPseudoPrefix } from "../team/TeamPseudoPrefix";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -92,6 +95,8 @@ export const ChatHeader = memo(function ChatHeader({
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
+  const creatorPseudo = useTeamThreadCreatorPseudo(activeThreadEnvironmentId, activeThreadId);
+  const displayThreadTitle = formatTeamThreadTitle(activeThreadTitle, creatorPseudo);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -361,7 +366,7 @@ export const ChatHeader = memo(function ChatHeader({
                 render={
                   <button
                     type="button"
-                    aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
+                    aria-label={gt("Thread actions for {title}", { title: displayThreadTitle })}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
                     onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
@@ -370,7 +375,10 @@ export const ChatHeader = memo(function ChatHeader({
                 }
               >
                 <h2 className="min-w-0" dir={textDirection(activeThreadTitle)}>
-                  <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                  <WorkspaceBreadcrumbText>
+                    <TeamPseudoPrefix pseudo={creatorPseudo} />
+                    {activeThreadTitle}
+                  </WorkspaceBreadcrumbText>
                 </h2>
                 <ChevronDownIcon
                   aria-hidden
@@ -378,22 +386,25 @@ export const ChatHeader = memo(function ChatHeader({
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
                 />
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup side="top">{displayThreadTitle}</TooltipPopup>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <h2
-                    aria-label={activeThreadTitle}
+                    aria-label={displayThreadTitle}
                     className="min-w-0 flex-1"
                     dir={textDirection(activeThreadTitle)}
                   />
                 }
               >
-                <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                <WorkspaceBreadcrumbText>
+                  <TeamPseudoPrefix pseudo={creatorPseudo} />
+                  {activeThreadTitle}
+                </WorkspaceBreadcrumbText>
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup side="top">{displayThreadTitle}</TooltipPopup>
             </Tooltip>
           )}
           {renamingTitle === null && activeThreadLinkOrigin ? (

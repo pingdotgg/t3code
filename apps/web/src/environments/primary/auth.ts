@@ -150,7 +150,9 @@ const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
 export function peekPairingTokenFromUrl(): string | null {
-  return getPairingTokenFromUrl(new URL(window.location.href));
+  const url = new URL(window.location.href);
+  if (url.pathname.replace(/\/+$/, "") === "/team/join") return null;
+  return getPairingTokenFromUrl(url);
 }
 
 export function stripPairingTokenFromUrl() {

@@ -35,6 +35,7 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/connections"
+  | "/settings/teams"
   | "/settings/access"
   | "/settings/secrets"
   | "/settings/maintenance"
@@ -113,6 +114,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
   "/settings/connections": msg("Environments"),
+  "/settings/teams": msg("Teams"),
   "/settings/access": msg("Sharing & access"),
   "/settings/secrets": msg("Secrets"),
   "/settings/maintenance": msg("Maintenance"),
@@ -168,7 +170,7 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
   },
   {
     heading: msg("Connections"),
-    paths: ["/settings/connections", "/settings/access", "/settings/secrets"],
+    paths: ["/settings/connections", "/settings/teams", "/settings/access", "/settings/secrets"],
   },
   {
     heading: msg("More"),
@@ -1511,6 +1513,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     secretProvidersOnly: true,
   },
   {
+    id: "teams-workspace",
+    title: msg("Teams"),
+    to: "/settings/teams",
+    searchTerms: [msg("team workspace pseudo invite members colleagues shared server")],
+  },
+  {
     id: "archive",
     title: msg("Archived threads"),
     to: "/settings/archived",
@@ -1539,6 +1547,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
   "/settings/connections": "connections",
+  "/settings/teams": "connections",
   "/settings/access": "connections",
   "/settings/secrets": null,
   "/settings/scheduled-tasks": null,

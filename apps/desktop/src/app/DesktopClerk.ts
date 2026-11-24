@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import { parseTeamJoinLink } from "@t3tools/contracts";
 import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/codexAuthHandoff";
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -216,7 +217,12 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const openAppLink = (value: string | undefined) => {
-        if (!value || (promptLinkAppPath(value) === null && readPairingAppLink(value) === null))
+        if (
+          !value ||
+          (promptLinkAppPath(value) === null &&
+            readPairingAppLink(value) === null &&
+            parseTeamJoinLink(value) === null)
+        )
           return false;
         void runPromise(webLinks.receive(value));
         return true;

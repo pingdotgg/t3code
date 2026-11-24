@@ -133,6 +133,9 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
+import { formatTeamThreadTitle } from "@t3tools/client-runtime/team";
+import { useTeamThreadCreatorPseudo } from "../../state/team";
+import { TeamPseudoPrefix } from "../team/TeamPseudoPrefix";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -291,12 +294,13 @@ function SidebarThreadTooltip({
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const creatorPseudo = useTeamThreadCreatorPseudo(thread.environmentId, thread.id);
   const gt = useGT();
   const m = useMessages();
   return (
     <ThreadHoverCardPopup side="right" align="start" sideOffset={4}>
       <ThreadHoverCard
-        title={thread.title}
+        title={formatTeamThreadTitle(thread.title, creatorPseudo)}
         footer={
           supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
             <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
@@ -709,6 +713,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const creatorPseudo = useTeamThreadCreatorPseudo(thread.environmentId, thread.id);
+  const displayTitle = formatTeamThreadTitle(thread.title, creatorPseudo);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
@@ -1065,7 +1071,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) : null;
 
   const accessibility = resolveSidebarRowAccessibility({
-    title: thread.title,
+    title: displayTitle,
     statusLabel: topStatus?.label ?? null,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
@@ -1108,9 +1114,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       )}
       dir={textDirection(thread.title)}
     >
+      <TeamPseudoPrefix pseudo={creatorPseudo} />
       {thread.title}
       {isRegeneratingTitle ? (
-        <ActivityShimmerOverlay className="truncate">{thread.title}</ActivityShimmerOverlay>
+        <ActivityShimmerOverlay className="truncate">{displayTitle}</ActivityShimmerOverlay>
       ) : null}
     </span>
   );
@@ -1773,8 +1780,10 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const messages = useMessages();
   const thread =
     useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
+  const creatorPseudo = useTeamThreadCreatorPseudo(thread.environmentId, thread.id);
+  const displayTitle = formatTeamThreadTitle(thread.title, creatorPseudo);
   const accessibility = resolveSidebarRowAccessibility({
-    title: thread.title,
+    title: displayTitle,
     statusLabel: null,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isRouteActive,
@@ -1917,10 +1926,11 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                       : "text-foreground",
                 )}
               >
+                <TeamPseudoPrefix pseudo={creatorPseudo} />
                 {thread.title}
                 {isRegeneratingTitle ? (
                   <ActivityShimmerOverlay className="truncate">
-                    {thread.title}
+                    {displayTitle}
                   </ActivityShimmerOverlay>
                 ) : null}
               </span>

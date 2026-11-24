@@ -303,6 +303,12 @@ import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
+import * as TeamService from "./team/TeamService.ts";
+import {
+  makeTeamWsRpcHandlers,
+  recordTeamDispatchEvents,
+  recordTeamThreadLaunch,
+} from "./team/wsHandlers.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
@@ -1630,6 +1636,7 @@ export const layerWsRpc = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
+      const teamService = yield* TeamService.TeamService;
       // Webhook URLs start agents; expose them only to operate-scoped sessions while keeping tasks readable.
       const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
         currentSession.scopes.includes(AuthOrchestrationOperateScope)
@@ -2078,7 +2085,13 @@ export const layerWsRpc = (
                 )
                 .pipe(
                   Effect.tap((result) =>
-                    result.replayed ? Effect.void : recordClientCommandAnalytics(command),
+                    result.replayed
+                      ? Effect.void
+                      : recordTeamDispatchEvents(
+                          teamService,
+                          currentSessionId,
+                          result.storedEvents,
+                        ).pipe(Effect.andThen(recordClientCommandAnalytics(command))),
                   ),
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
@@ -2285,6 +2298,9 @@ export const layerWsRpc = (
                 )
                 .pipe(
                   // A resumed launch is a retry of one already counted.
+                  Effect.tap((result) =>
+                    recordTeamThreadLaunch(teamService, currentSessionId, result),
+                  ),
                   Effect.tap((result) =>
                     result.resumed
                       ? Effect.void
@@ -3740,6 +3756,7 @@ export const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
+        ...makeTeamWsRpcHandlers(teamService, currentSessionId),
       });
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
       const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
@@ -3772,6 +3789,7 @@ export const layer = Layer.unwrap(
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
+    const teamService = yield* TeamService.TeamService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3880,6 +3898,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
               Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
+              Layer.provide(Layer.succeed(TeamService.TeamService, teamService)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

@@ -19,6 +19,8 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+import { TeamJoinDialogHost } from "../components/team/TeamJoinDialog";
+import { TeamShortcutCoordinator } from "../components/team/TeamShortcutCoordinator";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -165,6 +167,7 @@ function RootRouteBranch() {
 
   if (
     pathname === "/pair" ||
+    pathname === "/team/join" ||
     pathname === "/connect" ||
     pathname === "/connect-agent" ||
     pathname === "/approve-agent"
@@ -201,6 +204,8 @@ function RootRouteBranch() {
       <ConfirmDialogHost />
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
+      <TeamJoinDialogHost />
+      <TeamShortcutCoordinator />
       <ProjectCloneToastCoordinator />
       <ConnectDeviceApprovalCoordinator />
       <AddProjectToMachineDialogHost />

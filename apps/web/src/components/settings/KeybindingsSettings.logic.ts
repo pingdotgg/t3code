@@ -257,7 +257,7 @@ const KEYBINDING_GROUPS = [
     title: msg("Navigation"),
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
+  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest", "team"] },
   { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
   { id: "terminal", title: msg("Terminal"), prefixes: ["terminal"] },
   { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff"] },
@@ -512,6 +512,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "thread.pin": msg("Thread: Pin"),
   "thread.regenerateTitle": msg("Thread: Regenerate Title"),
   "thread.undo": msg("Thread: Undo"),
+  "team.toggleColleagues": msg("Team: Show or Hide Colleagues' Threads"),
 };
 
 // Whole labels: search titles keep the encoded message, which cannot nest another one.

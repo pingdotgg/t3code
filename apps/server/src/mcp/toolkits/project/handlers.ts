@@ -21,6 +21,7 @@ import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration
 import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
+import * as TeamService from "../../../team/TeamService.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
@@ -512,6 +513,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
+        if (caller !== undefined && !result.resumed) {
+          const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
+          if (Option.isSome(teamServiceOption)) {
+            yield* teamServiceOption.value.recordThreadInheritedFromParent({
+              parentThreadId: caller.id,
+              threadId: thread.id,
+              ...(run ? { turnId: run.id } : {}),
+            });
+          }
+        }
         return {
           threadId: thread.id,
           link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
