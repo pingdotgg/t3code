@@ -1,10 +1,11 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- signs Svix test payloads like Clerk does.
-import * as NodeCrypto from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import { getTableName, type SQL, type Table } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -18,8 +19,8 @@ import * as HookInbox from "../hooks/HookInbox.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import * as AccountDeletion from "./AccountDeletion.ts";
 
-const signingKey = NodeCrypto.randomBytes(24);
-const signingSecret = `whsec_${signingKey.toString("base64")}`;
+const signingKey = new TextEncoder().encode("clerk-webhook-test-signing-key");
+const signingSecret = `whsec_${Base64.encode(signingKey)}`;
 
 const config = {
   clerkWebhookSigningSecret: Redacted.make(signingSecret),
@@ -36,13 +37,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const clerkRequest = (event: unknown, options: { readonly secret?: Buffer } = {}) => {
+const clerkRequest = Effect.fn(function* (
+  event: unknown,
+  options: { readonly key?: Uint8Array } = {},
+) {
   const body = JSON.stringify(event);
   const id = "msg_test";
   const timestamp = String(SIGNED_AT_SECONDS);
-  const signature = NodeCrypto.createHmac("sha256", options.secret ?? signingKey)
-    .update(`${id}.${timestamp}.${body}`)
-    .digest("base64");
+  const mac = yield* Mac.Mac;
+  const key = yield* Mac.key(Mac.hmacSha256, options.key ?? signingKey);
+  const signature = yield* mac.sign(key, new TextEncoder().encode(`${id}.${timestamp}.${body}`));
   return HttpServerRequest.fromWeb(
     new Request("https://relay.test/v1/webhooks/clerk", {
       method: "POST",
@@ -50,22 +54,27 @@ const clerkRequest = (event: unknown, options: { readonly secret?: Buffer } = {}
         "content-type": "application/json",
         "svix-id": id,
         "svix-timestamp": timestamp,
-        "svix-signature": `v1,${signature}`,
+        "svix-signature": `v1,${Base64.encode(signature)}`,
       },
       body,
     }),
   );
-};
+});
 
 describe("Clerk webhook", () => {
   it.effect("deletes only for a signed user.deleted event", () => {
     const deleted: Array<string> = [];
-    const respond = (request: HttpServerRequest.HttpServerRequest) =>
-      AccountDeletion.handleClerkWebhook(request).pipe(Effect.map((response) => response.status));
+    const respond = (request: ReturnType<typeof clerkRequest>) =>
+      request.pipe(
+        Effect.flatMap(AccountDeletion.handleClerkWebhook),
+        Effect.map((response) => response.status),
+      );
     return Effect.gen(function* () {
       const userDeleted = { type: "user.deleted", data: { id: "user_1", deleted: true } };
       expect(
-        yield* respond(clerkRequest(userDeleted, { secret: NodeCrypto.randomBytes(24) })),
+        yield* respond(
+          clerkRequest(userDeleted, { key: new TextEncoder().encode("some-other-signing-key") }),
+        ),
       ).toBe(401);
       expect(yield* respond(clerkRequest({ type: "user.created", data: { id: "user_2" } }))).toBe(
         204,
@@ -78,6 +87,7 @@ describe("Clerk webhook", () => {
       Effect.provideService(AccountDeletion.AccountDeletion, {
         deleteAccount: ({ userId }) => Effect.sync(() => void deleted.push(userId)),
       }),
+      Effect.provide(Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto))),
     );
   });
 });
