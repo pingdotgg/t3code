@@ -8240,6 +8240,7 @@
   "ea24f015d73520fd": "Delete",
   "d6b75f6c2f576a2c": "Delete {title}",
   "41935b6ab025a13d": "Archived thread action failed",
+  "add343fc1f43258e": "{count, plural, one {{count} message} other {{count} messages}}",
   "ab830753e879ac5f": "Search archived threads",
   "4568f63340b7a586": "Loading archived threads",
   "3ce9741f164fb944": "Could not load archived threads",
@@ -8249,19 +8250,8 @@
   "3620df83bbb0ca02": "From its menu in the sidebar.",
   "84efb81776b1ced6": "Settled threads",
   "28bd13def6edfb48": "Cleared from Settled.",
-  "add343fc1f43258e": "{count, plural, one {{count} message} other {{count} messages}}",
-  "c05a43ba19ee431f": [
-    "No archived threads match “",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "”."
-  ],
-  "128f70c4e9a7e699": [
-    "Archived",
-    " ",
+  "5a81a2cc634258c3": [
+    "Archived ",
     {
       "i": 1,
       "k": "_gt_time_1",
@@ -8275,6 +8265,15 @@
       "k": "_gt_time_1",
       "v": "rt"
     }
+  ],
+  "c05a43ba19ee431f": [
+    "No archived threads match “",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "”."
   ],
   "ae85d885630b0e51": "{count, plural, one {{count} scope} other {{count} scopes}}",
   "129431563dc043bc": "{label}: show {scopes}",
@@ -13372,8 +13371,8 @@
   "e5203745e46dfd79": "{step} transcript",
   "c512071143a5ba32": "This thread is no longer there.",
   "ed169d23683fb6ac": "Loading the thread…",
-  "290e0ab40b87dc17": "Workflows breadcrumb",
   "683dd9831e54edc0": "Environment",
+  "290e0ab40b87dc17": "Workflows breadcrumb",
   "34ad53646f06ed80": "Workflows are off",
   "8f6589c9e0ac5d4e": "No environment connected",
   "744127f8dfad7d22": "Connect an environment to see its workflow runs.",

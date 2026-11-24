@@ -5807,14 +5807,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     // Older Git (such as 2.30) skips the write when racy entries merely check out clean.
     // A refresh re-reads every checked-out file, so allow five minutes outside shared permits.
-    const refresh = runGit(
-      "GitVcsDriver.createWorktree.refreshIndex",
-      worktreePath,
-      ["update-index", "-q", "--refresh", "--force-write-index"],
-      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
-    );
+    const refresh = (env?: NodeJS.ProcessEnv) =>
+      runGit(
+        "GitVcsDriver.createWorktree.refreshIndex",
+        worktreePath,
+        ["update-index", "-q", "--refresh", "--force-write-index"],
+        { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS, env },
+      );
     const checkoutSecond = yield* indexSecond;
-    yield* refresh;
+    yield* refresh();
     const refreshedSecond = yield* indexSecond;
     if (
       Option.isNone(checkoutSecond) ||
@@ -5827,10 +5828,44 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // second out (file timestamps can trail the clock by a kernel tick) and refresh again. Two
     // seconds or more means this clock does not match the file timestamps, as on a share stamped
     // by another machine, so it cannot say when that second ends.
-    const delay = (checkoutSecond.value + 1) * 1000 + 50 - (yield* Clock.currentTimeMillis);
+    const checkoutTime = checkoutSecond.value;
+    const delay = (checkoutTime + 1) * 1000 + 50 - (yield* Clock.currentTimeMillis);
     if (delay >= 2_000) return;
-    if (delay > 0) yield* Effect.sleep(Duration.millis(delay));
-    yield* refresh;
+    if (delay <= 0) return yield* refresh();
+    // Waiting here would hold up the thread's agent, and refreshing in place later would hold the
+    // index lock while its setup script and agent run Git. So refresh a copy in the background and
+    // take the lock only to swap it in, unless Git holds it or the index changed since the copy.
+    const copyPath = `${indexPath}.t3-refresh`;
+    const lockPath = `${indexPath}.lock`;
+    const stamp = (info: FileSystem.File.Info) =>
+      `${info.size}:${Option.getOrUndefined(info.ino)}:${Option.getOrUndefined(info.mtime)?.getTime()}`;
+    yield* Effect.gen(function* () {
+      yield* Effect.sleep(Duration.millis(delay));
+      const copied = stamp(yield* fileSystem.stat(indexPath));
+      yield* fileSystem.copyFile(indexPath, copyPath);
+      // Keep the checkout's timestamp so this refresh still re-reads the files stamped in it.
+      yield* fileSystem.utimes(copyPath, checkoutTime, checkoutTime);
+      yield* refresh({ GIT_INDEX_FILE: copyPath });
+      yield* Effect.uninterruptible(
+        // link fails when the lock exists; once it is ours, release it on any failure.
+        fileSystem.link(copyPath, lockPath).pipe(
+          Effect.andThen(
+            fileSystem.stat(indexPath).pipe(
+              Effect.flatMap((current) =>
+                stamp(current) === copied
+                  ? fileSystem.rename(lockPath, indexPath)
+                  : fileSystem.remove(lockPath),
+              ),
+              Effect.tapError(() => fileSystem.remove(lockPath).pipe(Effect.ignore)),
+            ),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.ensuring(fileSystem.remove(copyPath).pipe(Effect.ignore)),
+      Effect.ignore({ log: "Debug" }),
+      Effect.forkIn(serviceScope),
+    );
   });
 
   // Git writes the lock reason during registration, before checkout or user hooks can run.

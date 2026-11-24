@@ -84,15 +84,17 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-const stubbedAsset = vi.hoisted(() => ({ url: "" }));
+const stubbedAsset = vi.hoisted(() => ({ url: "", failed: false }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      stubbedAsset.url
-        ? { _tag: "Success", url: stubbedAsset.url }
-        : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+      stubbedAsset.failed
+        ? { _tag: "Failure" }
+        : stubbedAsset.url
+          ? { _tag: "Success", url: stubbedAsset.url }
+          : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
     useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
       stubbedAsset.url
         ? args[1].map(() => stubbedAsset.url)
@@ -2334,6 +2336,36 @@ describe("MessagesTimeline attachments", () => {
       void props.listRef.current!.scrollToIndex({ index: 20, animated: false });
     });
     await vi.waitFor(() => expect(one!.isConnected).toBe(false));
+  });
+
+  it("keeps an unavailable viewed image inside the work-log height cap", async () => {
+    stubbedAsset.failed = true;
+    onTestFinished(() => {
+      stubbedAsset.failed = false;
+    });
+    const read = work("read-step-1", {
+      label: "Read step-1.jpg",
+      toolTitle: "Read",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: "completed",
+      viewedImagePath: "/repo/step-1.jpg",
+    });
+    await using screen = await renderTimeline([read], { workspaceRoot: "/repo" });
+    await click(screen.button(/Read/));
+    const frame = await vi.waitFor(() => {
+      const element = screen.container.querySelector<HTMLElement>('[role="alert"]');
+      expect(element).toBeTruthy();
+      return element!;
+    });
+    const size = await vi.waitFor(() => {
+      const rect = frame.getBoundingClientRect();
+      expect(rect.width).toBeGreaterThan(0);
+      return rect;
+    });
+    expect(size.height).toBeLessThanOrEqual(257);
+    expect(size.width).toBeLessThanOrEqual(456);
+    expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
   });
 });
 

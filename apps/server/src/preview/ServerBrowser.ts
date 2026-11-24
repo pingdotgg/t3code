@@ -2945,10 +2945,14 @@ const make = Effect.gen(function* () {
         return recordAction(tab, "upload", () =>
           uploadFiles(tab, input as PreviewAutomationUploadInput),
         );
-      case "type":
-        return recordAction(tab, "type", () =>
-          ServerBrowserPage.type(tab.page, input as PreviewAutomationTypeInput),
-        );
+      case "type": {
+        // As for click: typing stops at the broker's deadline instead of running on after the reply.
+        const typeInput = {
+          ...(input as PreviewAutomationTypeInput),
+          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
+        };
+        return recordAction(tab, "type", () => ServerBrowserPage.type(tab.page, typeInput));
+      }
       case "press":
         return recordAction(tab, "press", () =>
           ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),

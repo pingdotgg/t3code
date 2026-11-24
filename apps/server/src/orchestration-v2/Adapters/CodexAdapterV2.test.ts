@@ -3512,6 +3512,99 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("keeps an asynchronous Codex alert distinguishable from the final answer", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "async-alert-thread";
+      const nativeTurnId = "async-alert-turn";
+      const agentMessage = (id: string, text: string, delivery: "async" | null) => ({
+        type: "emit_inbound" as const,
+        label: id,
+        frame: {
+          method: "item/completed",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            item: {
+              type: "agentMessage",
+              id,
+              text,
+              phase: "final_answer",
+              delivery,
+              questions: null,
+            },
+          },
+        },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "async-alert-and-final-answer",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt: "Alert me, then finish.",
+          }),
+          agentMessage("call_alert_1", "I found an important detail.", "async"),
+          agentMessage("msg_final", "Here is the ordinary final answer.", null),
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("async-alert-attempt"),
+          text: "Alert me, then finish.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      const classification = (nativeId: string) => {
+        const item = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId,
+        );
+        assert.equal(item?.type, "turn_item.updated");
+        if (item?.type !== "turn_item.updated") return {};
+        const {
+          id: _id,
+          nodeId: _nodeId,
+          messageId: _messageId,
+          nativeItemRef: _nativeItemRef,
+          ordinal: _ordinal,
+          text: _text,
+          startedAt: _startedAt,
+          completedAt: _completedAt,
+          updatedAt: _updatedAt,
+          ...rest
+        } = item.turnItem as typeof item.turnItem & { messageId?: unknown; text?: unknown };
+        return rest;
+      };
+      assert.notDeepEqual(classification("call_alert_1"), classification("msg_final"));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("returns a Codex question's answer under its native question id", () =>
     Effect.gen(function* () {
       const nativeThreadId = "question-id-thread";

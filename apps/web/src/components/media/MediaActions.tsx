@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import {
   formatFilePathForClipboard,
   type MediaActionId,
@@ -16,6 +17,7 @@ import {
   type EnvironmentId,
   sessionGrantsScope,
   type SessionGrantInput,
+  type ContextMenuSource,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { msg } from "gt-react";
@@ -167,7 +169,7 @@ export function MediaActions({
   const reference = source.reference;
   const tooltip = reference?.kind === "file" ? reference.path : (reference?.url ?? source.name);
 
-  const showMenu = async (position: { x: number; y: number }) => {
+  const showMenu = async (position: { x: number; y: number }, menuSource: ContextMenuSource) => {
     const api = readLocalApi();
     if (!api || menuOpen.current) return;
     menuOpen.current = true;
@@ -208,7 +210,7 @@ export function MediaActions({
         });
       }
 
-      const action = await api.contextMenu.show(items, position);
+      const action = await api.contextMenu.show(items, position, menuSource);
       if (!action) return;
       failureTitle =
         action === "copy-full-path"
@@ -295,6 +297,7 @@ export function MediaActions({
             event.clientX === 0 && event.clientY === 0
               ? { x: bounds.left, y: bounds.bottom }
               : { x: event.clientX, y: event.clientY },
+            contextMenuSourceOf(event),
           );
         }}
         onKeyDown={(event) => {
@@ -306,7 +309,7 @@ export function MediaActions({
           event.preventDefault();
           event.stopPropagation();
           const bounds = event.currentTarget.getBoundingClientRect();
-          void showMenu({ x: bounds.left, y: bounds.bottom });
+          void showMenu({ x: bounds.left, y: bounds.bottom }, "keyboard");
         }}
       />
       <TooltipPopup variant="code">{tooltip}</TooltipPopup>

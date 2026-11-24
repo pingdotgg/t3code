@@ -3,10 +3,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { writeExpandedDirectories } from "./fileTreeExpansion";
@@ -296,6 +297,54 @@ describe("FileBrowserPanel", () => {
     (search.element() as HTMLElement).blur();
     dispatchPreviewAction("find");
     await expect.element(search).toHaveFocus();
+  });
+
+  it("Escape in the file search clears it without closing the panel sheet", async () => {
+    const onCloseSheet = vi.fn();
+    await using _screen = await render(
+      <Sheet
+        open
+        onOpenChange={(open) => {
+          if (!open) onCloseSheet();
+        }}
+      >
+        <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+          <FileBrowserPanel
+            environmentId={EnvironmentId.make("env-files")}
+            cwd="/repo"
+            projectName="repo"
+            selectedPath={null}
+            selectedPathRevealId={0}
+            onOpenFile={() => {}}
+            workspaceMutationId={null}
+          />
+        </SheetPopup>
+      </Sheet>,
+    );
+    const search = page.getByRole("searchbox", { name: "Search repo files" });
+    await userEvent.fill(search, "read");
+    for (const composition of [
+      { key: "Escape", isComposing: true, keyCode: 27 },
+      { key: "Escape", isComposing: false, keyCode: 229 },
+    ]) {
+      // Safari ends the composition just before the Escape keydown.
+      await act(() => {
+        search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+        search
+          .element()
+          .dispatchEvent(new KeyboardEvent("keydown", { ...composition, bubbles: true }));
+      });
+      await expect.element(search).toHaveValue("read");
+    }
+    expect(search.element().getAttribute("type")).toBe("text");
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).toHaveValue("");
+    expect(onCloseSheet).not.toHaveBeenCalled();
+
+    (search.element() as HTMLElement).focus();
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
   });
 
   it("keeps expanded folders when the panel remounts", async () => {

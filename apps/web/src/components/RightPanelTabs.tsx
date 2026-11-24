@@ -1,3 +1,4 @@
+import { contextMenuSourceOf } from "../contextMenuSource";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { useQuietThreadShell } from "~/state/entities";
@@ -862,6 +863,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         { x: event.clientX, y: event.clientY },
         props.keybindings,
         () => setRenamingDevice(surface.id),
+        contextMenuSourceOf(event),
       );
       return;
     }
@@ -920,7 +922,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       },
     );
 
-    const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
+    const action = await api.contextMenu.show(
+      items,
+      { x: event.clientX, y: event.clientY },
+      contextMenuSourceOf(event),
+    );
     switch (action) {
       case "open-in-main-view":
         if (surface.kind === "thread" || surface.kind === "linked-thread") {

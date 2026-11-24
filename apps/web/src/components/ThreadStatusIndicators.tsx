@@ -509,7 +509,15 @@ function PullRequestBadge({
           )}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          <span className={appearance === "number" ? "text-secondary-label" : undefined}>
+          {/* The draft tone is dimmer here than main's draft gray, so a draft number keeps the label color. */}
+          <span
+            className={
+              appearance === "number" &&
+              presentation.toneClassName === PULL_REQUEST_STATE_PRESENTATION.draft.toneClassName
+                ? "text-secondary-label"
+                : undefined
+            }
+          >
             {presentation.text}
           </span>
         </span>

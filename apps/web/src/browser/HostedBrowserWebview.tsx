@@ -27,6 +27,7 @@ import {
   resolveBrowserViewportLayout,
   resolveBrowserViewportTransform,
   resolveFittedBrowserViewport,
+  resolveHiddenBrowserViewportFitScale,
   resolveHiddenBrowserViewportSize,
 } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
@@ -364,7 +365,16 @@ export function HostedBrowserWebview(props: {
   };
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
-  const viewportTransform = resolveBrowserViewportTransform(layout.viewportScale, fullDetail);
+  // Electron clips a guest's native surface at the window edge, so a hidden guest draws scaled to fit.
+  const fitScale =
+    active && lastRect
+      ? 1
+      : resolveHiddenBrowserViewportFitScale(
+          { width: hiddenWidth, height: hiddenHeight },
+          windowSize,
+        );
+  const viewportScale = layout.viewportScale * fitScale;
+  const viewportTransform = resolveBrowserViewportTransform(viewportScale, fullDetail);
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
     renderingActive,
@@ -402,10 +412,10 @@ export function HostedBrowserWebview(props: {
           key={webviewGeneration}
           className="absolute"
           style={{
-            left: layout.viewportX,
-            top: layout.viewportY,
-            width: layout.viewportWidth,
-            height: layout.viewportHeight,
+            left: layout.viewportX * fitScale,
+            top: layout.viewportY * fitScale,
+            width: layout.viewportWidth * fitScale,
+            height: layout.viewportHeight * fitScale,
             transformStyle: viewportTransform && fullDetail ? "preserve-3d" : undefined,
           }}
         >

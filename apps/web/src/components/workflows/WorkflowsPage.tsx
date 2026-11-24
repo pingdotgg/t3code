@@ -9,6 +9,7 @@ import { T, useGT } from "gt-react";
 import { FileCode2Icon, WorkflowIcon } from "lucide-react";
 import { lazy, Suspense, useState, type MouseEvent } from "react";
 
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { type FileContextMenuAction, useFileContextMenu } from "../../fileContextMenu";
 import { openThreadToTheSide } from "../../layout/layoutDrag";
 import { selectFocusedPane } from "../../layout/layoutModel";
@@ -113,10 +114,14 @@ export function WorkflowsPage() {
     const path = `${directory}/${search.file}`;
     const target = { environmentId: fileEnvironmentId, filePath: path, workspaceRoot: undefined };
     void api.contextMenu
-      .show([{ id: COPY_PATH, label: gt("Copy path") }, ...fileMenu.buildItems(target)], {
-        x: event.clientX,
-        y: event.clientY,
-      })
+      .show(
+        [{ id: COPY_PATH, label: gt("Copy path") }, ...fileMenu.buildItems(target)],
+        {
+          x: event.clientX,
+          y: event.clientY,
+        },
+        contextMenuSourceOf(event),
+      )
       .then((picked) => {
         if (picked === null) return;
         if (picked === COPY_PATH) return void navigator.clipboard.writeText(path);

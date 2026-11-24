@@ -2750,6 +2750,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --sidebar-border: rgb(0 0 0 / 10%);
   --sidebar-stage-fade: var(--sidebar);
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --map-canvas-background: color-mix(in srgb, var(--background) 75%, var(--sidebar));
   --code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
@@ -5885,9 +5886,11 @@ body {
 }
 
 /* Triple-click selection stops at block-level boxes, flex items included, so file chips in
-   prose stay inline-level down to the icon and label. */
+   prose stay inline-level down to the icon and label. Chromium also stops it at
+   draggable="true" (desktop native file drags) unless user-select is set back to text. */
 .chat-markdown-file-link {
   display: inline-block;
+  user-select: text;
   overflow-x: clip;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   DEFAULT_TERMINAL_ID,
   ProjectId,
   ThreadId,
@@ -486,6 +487,98 @@ it("restores bounded history across append compaction, clears and split Unicode"
   history.append("z".repeat(maxBytes * 3));
   flush();
   expect(persisted).toBe("z".repeat(maxBytes));
+});
+
+it("stops holding a control sequence that outgrows its limit", () => {
+  const limit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
+  // No final byte for a CSI and no terminator for a string.
+  const filler = "0123456789 123\r\n".repeat(64);
+  const fed = filler.repeat(Math.ceil(limit / filler.length) + 2);
+  // The terminal runs the line breaks inside a CSI while it waits for the final byte.
+  const lineBreaks = fed.replaceAll(/[^\r\n]/g, "");
+  for (const { name, open, end, history } of [
+    { name: "OSC, BEL", open: ["\u001b]0;"], end: ["\u0007"], history: "\u001b\\" },
+    {
+      name: "OSC, split ST",
+      open: ["\u001b]0;"],
+      end: ["\u001b", "\\\u001b[31m"],
+      history: "\u001b\\\u001b[31m",
+    },
+    // The last UTF-8 byte of U+20805 is 0x85, NEL, which ends the DCS and replays as ESC E.
+    {
+      name: "DCS, split code point",
+      open: ["\u001bPstuck"],
+      end: ["\ud842", "\udc05"],
+      history: "\u001b\\\u001bE",
+    },
+    // The dropped CSI's ESC ended the title, so history ends it too. Its final byte would have
+    // made it a query that the replay answers.
+    {
+      name: "CSI after a title its ESC cuts short",
+      open: ["\u001b]0;title", "\u001b["],
+      end: ["\n6n"],
+      history: `\u001b]0;title\u001b\\${lineBreaks}\n`,
+    },
+    {
+      name: "CSI, ESC",
+      open: ["\u001b["],
+      end: ["\n\u001b[31m"],
+      history: `\u001b\\${lineBreaks}\n\u001b[31m`,
+    },
+  ]) {
+    let held = "";
+    let visible = "";
+    const feed = (data: string) => {
+      const sanitized = TerminalManager.sanitizeTerminalHistoryChunk(held, data);
+      held = sanitized.pendingControlSequence;
+      visible += sanitized.visibleText;
+    };
+
+    feed("before\n");
+    for (const data of open) feed(data);
+    for (let offset = 0; offset < fed.length; offset += filler.length) {
+      feed(fed.slice(offset, offset + filler.length));
+    }
+    expect(held.length, name).toBeLessThanOrEqual(3);
+
+    for (const data of end) feed(data);
+    feed("after\n");
+    expect(held, name).toBe("");
+    expect(visible, name).toBe(`before\n${history}after\n`);
+  }
+
+  // Held text of exactly the limit stays held, and a sequence that ends in the chunk where it
+  // passes the limit is kept whole.
+  for (const atLimit of ["\u001b]".padEnd(limit, "0"), "\u001b[".padEnd(limit, "0")]) {
+    expect(TerminalManager.sanitizeTerminalHistoryChunk("", atLimit)).toEqual({
+      visibleText: "",
+      pendingControlSequence: atLimit,
+    });
+    const ended = `${atLimit}0${atLimit[1] === "]" ? "\u0007" : "m"}`;
+    expect(TerminalManager.sanitizeTerminalHistoryChunk("", ended)).toEqual({
+      visibleText: ended,
+      pendingControlSequence: "",
+    });
+  }
+
+  // An escape sequence keeps its first four intermediates, the only ones libghostty reads.
+  const escape = '\u001b!"#$';
+  expect(TerminalManager.sanitizeTerminalHistoryChunk(escape, "%&")).toEqual({
+    visibleText: "",
+    pendingControlSequence: escape,
+  });
+  expect(TerminalManager.sanitizeTerminalHistoryChunk(escape, "%&B")).toEqual({
+    visibleText: `${escape}%&B`,
+    pendingControlSequence: "",
+  });
+
+  // A completed escape sequence stays when another ESC follows it at once.
+  for (const kept of ["OLD\u001bc\u001b[31mNEW", "abc\u001b7\u001b[2;5HB\u001b8Z"]) {
+    expect(TerminalManager.sanitizeTerminalHistoryChunk("", kept)).toEqual({
+      visibleText: kept,
+      pendingControlSequence: "",
+    });
+  }
 });
 
 it.layer(
@@ -1786,6 +1879,39 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       expect((yield* manager.open(openInput())).history).toMatch(/^AB\nCSHOWN\u001b\\D\n/);
+    }),
+  );
+
+  it.effect("starts a snapshot inside the sequence the terminal has not finished", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const outputs = yield* Queue.unbounded<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" ? Queue.offer(outputs, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const historyAfter = Effect.fnUntraced(function* (data: string) {
+        process.emitData(data);
+        yield* Queue.take(outputs);
+        return (yield* manager.open(openInput())).history;
+      });
+
+      expect(yield* historyAfter("A\u001b]0;ti")).toBe("A\u001b]0;ti");
+      // A long string would push history out of the client's budget, so its payload is left out.
+      expect(yield* historyAfter("x".repeat(4_096))).toBe("A\u001b]");
+      // Past the limit only the introducer is left to replay.
+      expect(yield* historyAfter("x".repeat(DEFAULT_MAX_TERMINAL_BUFFER_BYTES))).toBe(
+        "A\u001b\\\u001b]",
+      );
+      expect(yield* historyAfter("\u0007B")).toBe("A\u001b\\B");
+
+      // Saved history has no live output to finish the sequence.
+      process.emitData("\u001b]0;open");
+      yield* Queue.take(outputs);
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("A\u001b\\B");
     }),
   );
 

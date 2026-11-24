@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useGT } from "gt-react";
 import type { ReactNode } from "react";
 
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { isElectron } from "../../env";
 import {
   LAYOUT_TAB_ICON_CLASS,
@@ -50,7 +51,13 @@ export function SettingsTabNotch({
             onContextMenu={(event) => {
               if (tabId === null) return;
               event.preventDefault();
-              void showLayoutTabMenu(tabId, { x: event.clientX, y: event.clientY }, keybindings);
+              void showLayoutTabMenu(
+                tabId,
+                { x: event.clientX, y: event.clientY },
+                keybindings,
+                undefined,
+                contextMenuSourceOf(event),
+              );
             }}
           >
             <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span>
