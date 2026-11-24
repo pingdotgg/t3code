@@ -6633,28 +6633,8 @@
   "a6d75a4380173c60": "Abrir comprobaciones: {summary}",
   "be3d1766bad18693": "Comprobaciones: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} con errores} other {{count} con errores}}",
+  "fd63b391898889f9": "{count, plural, one {{count} pendiente de acción} other {{count} pendientes de acción}}",
   "cb116c139cdace98": "No se informó de ninguna comprobación",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "comprobaciones"
-  ],
   "60b56e201607c7ec": "Los detalles de las comprobaciones están desactualizados. Actualiza la pull request para ponerlos al día.",
   "e74cd4e960cbb5e5": "Las líneas sin cambios no están disponibles en un archivo con líneas cortadas.",
   "38d6169e04a9a4ce": "No se pudieron cargar más comentarios",
