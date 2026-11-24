@@ -17,7 +17,7 @@ import {
   ThreadId,
   type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import { type LegendListRef } from "@legendapp/list/react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
   Profiler,
@@ -479,6 +479,56 @@ describe("MessagesTimeline work rows", () => {
   });
 });
 
+describe("LegendList patch", () => {
+  // patches/@legendapp__list@3.7.3.patch measures the footer inside scrollToEnd.
+  it("reaches the end when the footer returns to its earlier size before the resize observer reports", async () => {
+    const container = document.createElement("div");
+    container.style.cssText = "height: 600px; width: 600px; display: flex; flex-direction: column;";
+    const listRef = createRef<LegendListRef | null>();
+    const data = Array.from({ length: 60 }, (_, index) => ({ id: `row-${index}` }));
+    await using _screen = await render(
+      <LegendList
+        ref={listRef}
+        data={data}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <div style={{ height: 50 }}>{item.id}</div>}
+        estimatedItemSize={50}
+        initialScrollAtEnd
+        style={{ height: 600 }}
+        ListFooterComponent={<div data-probe-footer style={{ height: 240 }} />}
+      />,
+      { container },
+    );
+    const list = listRef.current!;
+    const viewport = list.getScrollableNode()!;
+    const end = () => viewport.scrollHeight - viewport.clientHeight;
+    await vi.waitFor(() => expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1));
+
+    const footer = container.querySelector<HTMLElement>("[data-probe-footer]")!;
+    // scrollToEnd measures the 80px footer; it is back at 240px before the observer delivers.
+    footer.style.height = "80px";
+    const scrollTo = viewport.scrollTo.bind(viewport);
+    let restored = false;
+    viewport.scrollTo = ((...args: Parameters<HTMLElement["scrollTo"]>) => {
+      scrollTo(...args);
+      if (!restored) {
+        restored = true;
+        footer.style.height = "240px";
+      }
+    }) as HTMLElement["scrollTo"];
+    void list.scrollToEnd({ animated: false });
+    await vi.waitFor(() => expect(restored).toBe(true));
+
+    await vi.waitFor(
+      () => {
+        void list.scrollToOffset({ offset: end(), animated: false });
+        expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
+      },
+      { timeout: 3000, interval: 100 },
+    );
+  });
+});
+
 describe("MessagesTimeline messages", () => {
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
@@ -813,6 +863,51 @@ describe("MessagesTimeline messages", () => {
     expect(screen.text()).toContain("B turn 118:");
     expect(screen.text()).not.toContain("A turn");
     expectItemOrder();
+  });
+
+  it("opens a working parent thread at its end without landing short", async () => {
+    setup();
+    const props = baseProps();
+    const parent = Array.from({ length: 30 }, (_, index) =>
+      message(
+        `Parent turn ${index}:\n\n${"x ".repeat(200)}`,
+        { role: index % 2 === 0 ? "user" : "assistant" },
+        `parent-${index}`,
+      ),
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline
+        {...props}
+        parentThreadLink={{ title: "Parent thread", open: () => {} }}
+        timelineEntries={[message("Short child reply.", { role: "assistant" }, "child-0")]}
+      />,
+    );
+    expect(screen.text()).toContain("Subagent of");
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const end = () => viewport.scrollHeight - viewport.clientHeight;
+    // Distance from the end as each scroll lands, against the content height at that moment.
+    const shortfalls: number[] = [];
+    viewport.addEventListener("scroll", () =>
+      shortfalls.push(Math.round(end() - viewport.scrollTop)),
+    );
+
+    // A working parent's footer (queued turns, its subagents) is taller than the child's.
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        routeThreadKey={`${props.routeThreadKey}-parent`}
+        timelineEntries={parent}
+        footer={<div style={{ height: 300 }}>Waiting on 4 subagents</div>}
+        isWorking
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(screen.text()).toContain("Parent turn 29:");
+      expect(end() - viewport.scrollTop).toBeLessThanOrEqual(1);
+    });
+
+    expect(shortfalls.length).toBeGreaterThan(0);
+    expect(shortfalls).toEqual(shortfalls.map(() => 0));
   });
 
   it("puts rows back in item order soon after a continuous scroll stops", async () => {
