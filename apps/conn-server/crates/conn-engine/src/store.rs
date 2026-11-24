@@ -1707,6 +1707,50 @@ impl Tx<'_> {
         seq
     }
 
+    /// `attributePendingBackgroundTasks` (`ProjectionStore.ts:915`): adapters resend whole
+    /// rosters without runs, so the projection's copy of a task keeps the run it first appeared
+    /// under: the event's run, else the thread's active run. `None` when nothing changes; the
+    /// event itself keeps the provider's roster.
+    fn attributed_background_tasks(
+        &self,
+        thread_id: &str,
+        payload: &Value,
+        run_id: Option<&str>,
+    ) -> StoreResult<Option<Value>> {
+        let Some(tasks) = payload["pendingBackgroundTasks"].as_array() else {
+            return Ok(None);
+        };
+        if tasks.iter().all(|task| task["runId"].is_string()) {
+            return Ok(None);
+        }
+        let id = payload["id"].as_str().unwrap_or_default();
+        let previous = self.entity(thread_id, "providerThreads", id)?;
+        let known: Vec<(Value, Value)> = previous
+            .as_ref()
+            .and_then(|thread| thread["pendingBackgroundTasks"].as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|task| (task["taskId"].clone(), task["runId"].clone()))
+            .collect();
+        let current = match run_id {
+            Some(run) => Some(Value::String(run.to_owned())),
+            None => crate::commands::active_run(self, thread_id)?.map(|run| run["id"].clone()),
+        };
+        let mut projected = payload.clone();
+        if let Some(tasks) = projected["pendingBackgroundTasks"].as_array_mut() {
+            for task in tasks.iter_mut().filter(|task| !task["runId"].is_string()) {
+                let owner = match known.iter().find(|(id, _)| *id == task["taskId"]) {
+                    Some((_, owner)) => Some(owner.clone()).filter(Value::is_string),
+                    None => current.clone(),
+                };
+                if let Some(owner) = owner {
+                    task["runId"] = owner;
+                }
+            }
+        }
+        Ok(Some(projected))
+    }
+
     /// Appends one domain event and applies it to the projection. Returns its sequence.
     pub(crate) fn append(&mut self, draft: Draft) -> StoreResult<u64> {
         let seq = self.alloc();
@@ -1719,6 +1763,12 @@ impl Tx<'_> {
             command_id,
             provider_instance,
         } = draft;
+        let projected = match event_type {
+            "provider-thread.updated" => {
+                self.attributed_background_tasks(&thread_id, &payload, run_id.as_deref())?
+            }
+            _ => None,
+        };
         let provider_instance_id = match provider_instance {
             Instance::Given(id) => Some(id),
             Instance::Absent => None,
@@ -1786,7 +1836,8 @@ impl Tx<'_> {
                 .execute(
                     "INSERT OR REPLACE INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![thread_id, kind, id, first_seq, seq as i64, ordinal, payload.to_string()],
+                    params![thread_id, kind, id, first_seq, seq as i64, ordinal,
+                        projected.as_ref().unwrap_or(&payload).to_string()],
                 )
                 .map_err(err)?;
         } else if event_type.starts_with("thread.") {

@@ -477,6 +477,13 @@ impl SqliteEngine {
                 &config.restart_policy,
             )?);
         }
+        // `recoverDelegatedTasks`: once recovery decided which runs continue, a delegated
+        // child's tasks whose work ended with a cancelled run are published.
+        let recovered: std::collections::BTreeSet<&str> =
+            unfinished.iter().map(|(id, _)| id.as_str()).collect();
+        for thread_id in recovered {
+            effects.extend(crate::families::finalize_tasks(&mut tx, thread_id)?);
+        }
         tx.enqueue(None, &effects)?;
         tx.commit(None)?;
         let notify = store.published.clone();
@@ -1172,6 +1179,8 @@ impl Inner {
             Some(crate::families::remote_complete as commands::Handler)
         } else if command_type == "delegated_task.remote.stop" {
             Some(crate::families::remote_stop as commands::Handler)
+        } else if command_type == "delegated_task.cancel" {
+            Some(crate::families::cancel_task as commands::Handler)
         } else if command_type == "thread.pull-request-watch.sync" {
             Some(commands::pull_request_watch_sync as commands::Handler)
         } else if command_type == "thread.pull-request-watch.checks-reopen" {
@@ -2121,6 +2130,31 @@ impl Engine for SqliteEngine {
                 .map(|_| ())
                 .map_err(|e| match e {
                     DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
+                })
+        })
+    }
+
+    fn cancel_delegated_task(
+        &self,
+        mut command: Value,
+    ) -> BoxFuture<'_, Result<(), EngineError<Value>>> {
+        Box::pin(async move {
+            command["type"] = json!("delegated_task.cancel");
+            self.inner
+                .dispatch_value(command)
+                .await
+                .map(|_| ())
+                .map_err(|e| match e {
+                    DispatchError::Rejected(message) => {
+                        let refusal = crate::families::MODE_REFUSALS.iter().find_map(|code| {
+                            let text = message.strip_prefix(code)?.strip_prefix(": ")?;
+                            Some(json!({"code": code, "message": text}))
+                        });
+                        EngineError::Rejected(
+                            refusal.unwrap_or_else(|| json!({"code": null, "message": message})),
+                        )
+                    }
+                    DispatchError::Internal(message) => EngineError::Internal(message),
                 })
         })
     }

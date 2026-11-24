@@ -33,7 +33,7 @@ mod pull_requests;
 mod scheduled;
 mod script_completion;
 mod secrets;
-mod tasks;
+pub(crate) mod tasks;
 mod test_logins;
 mod themes;
 mod threads;

@@ -1463,21 +1463,12 @@ pub(crate) async fn read_task(
         && !matches!(delivery, Some("acknowledged" | "disposed"))
         && let Caller::Thread(caller) = cx.caller
     {
-        let observing = parent["runs"].as_array().and_then(|runs| {
-            runs.iter()
-                .filter(|run| {
-                    crate::view::is_live(run)
-                        && run["providerInstanceId"] == caller.provider_instance_id.as_str()
-                })
-                .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
-                .map(|run| run["id"].clone())
-        });
         let command = json!({
             "type": "delegated_task.completion-delivery.acknowledge",
             "commandId": cx.stable_id("command", "task-status-acknowledge", &conn_support::uuid_v4()),
             "parentThreadId": caller.thread_id,
             "taskId": row["id"],
-            "observedByRunId": observing.unwrap_or(Value::Null),
+            "observedByRunId": crate::tools::tasks::observing_run(parent, caller),
         });
         if let Err(error) = cx.dispatch(command).await {
             let ToolError::Failure { message, .. } = &error else {

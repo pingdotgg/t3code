@@ -871,21 +871,24 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
         _ if mode == "restart" => "restarted",
         _ => "steered",
     };
-    Ok(json!({
+    let mut result = json!({
         "threadId": id,
         "link": cx.link(id, projection["thread"]["title"].as_str().unwrap_or_default()),
         "messageId": message_id,
         "runId": run["id"],
         "status": run["status"],
         "delivery": delivery,
-    }))
+    });
+    // A send to a finished delegated child is a follow-up task of its own.
+    if let Some(task) = run["delegatedTaskId"].as_str() {
+        result["taskId"] = json!(task);
+    }
+    Ok(result)
 }
 
 /// When a wait is over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Until {
-    /// The run ended or waits on a person (`delegate_task`'s wait).
-    EndedOrWaiting,
     /// The run reached a terminal status (`waitForThread`, `isTerminalRunStatus`).
     Ended,
     /// As `Ended`, then the thread's other work too: `untilDelegatedWorkSettled`.
@@ -904,6 +907,24 @@ fn is_terminal(run: &Value) -> bool {
     TERMINAL_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or_default())
 }
 
+/// `subagentHoldsCompletion` (`subagentProjection.ts`): a subagent still at work, or one whose
+/// result the thread still owes a follow-up.
+pub(super) fn subagent_holds_completion(task: &Value) -> bool {
+    let status = task["status"].as_str().unwrap_or_default();
+    let delivery = task["completionDelivery"]["state"]
+        .as_str()
+        .unwrap_or_default();
+    matches!(status, "pending" | "running" | "waiting")
+        || (status != "idle" && matches!(delivery, "pending" | "claimed"))
+}
+
+/// `backgroundWorkHoldsCompletion` (`orchestrationV2PendingBackgroundWork.ts:90`): commands and
+/// monitors are as often a dev server or its watchdog as a wait, so they hold only when the
+/// agent marked them awaited.
+pub(super) fn background_holds_completion(task: &Value) -> bool {
+    task["awaited"] == true || matches!(task["kind"].as_str(), Some("subagent" | "background_task"))
+}
+
 /// `delegatedTaskProgress` and the wait's `delegatedWorkResult`: the run whose reply is the
 /// thread's answer, once no run is active and no subagent or background task holds the
 /// thread. `None` while work goes on.
@@ -912,10 +933,21 @@ fn work_result(projection: &Value) -> Option<Value> {
         .as_array()
         .map(|r| r.iter().collect())
         .unwrap_or_default();
+    // `monitorUpdateRunIds`: a turn that only answers a monitor update is no work.
+    let monitor: Vec<&Value> = projection["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| {
+            m["notification"]["source"]["kind"] == "monitor"
+                && m["notification"]["outcome"] == "updated"
+        })
+        .map(|m| &m["runId"])
+        .collect();
     let work: Vec<&Value> = runs
         .iter()
         .copied()
-        .filter(|run| run["status"] != "rolled_back")
+        .filter(|run| run["status"] != "rolled_back" && !monitor.contains(&&run["id"]))
         .collect();
     let result = work
         .iter()
@@ -928,23 +960,16 @@ fn work_result(projection: &Value) -> Option<Value> {
     let active = work
         .iter()
         .any(|run| !is_terminal(run) && !(run["status"] == "queued" && run["queueHeld"] == true));
-    let holding_subagent = projection["subagents"].as_array().is_some_and(|tasks| {
-        tasks.iter().any(|task| {
-            let status = task["status"].as_str().unwrap_or_default();
-            let delivery = task["completionDelivery"]["state"]
-                .as_str()
-                .unwrap_or_default();
-            matches!(status, "pending" | "running" | "waiting")
-                || (status != "idle" && matches!(delivery, "pending" | "claimed"))
-        })
-    });
+    let holding_subagent = projection["subagents"]
+        .as_array()
+        .is_some_and(|tasks| tasks.iter().any(subagent_holds_completion));
     let holding_background = projection["providerThreads"]
         .as_array()
         .is_some_and(|threads| {
             threads.iter().any(|thread| {
                 thread["pendingBackgroundTasks"]
                     .as_array()
-                    .is_some_and(|tasks| !tasks.is_empty())
+                    .is_some_and(|tasks| tasks.iter().any(background_holds_completion))
             })
         });
     if active || holding_subagent || holding_background {
@@ -985,9 +1010,6 @@ pub(super) async fn wait_for_run(
                 return Ok((run, Some(None)));
             };
             let over = match until {
-                Until::EndedOrWaiting => {
-                    (!view::is_live(current) || current["status"] == "waiting").then_some(None)
-                }
                 Until::Ended => is_terminal(current).then_some(None),
                 Until::WorkSettled => {
                     if is_terminal(current) {

@@ -4,7 +4,7 @@
 //!   that ignores `turn/interrupt`.
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `question`: the turn asks the user a question (`user_input`) and waits for the answer.
-//! - `fail`: the turn fails.
+//! - `fail`: the turn fails. `report-fail`: it says `partial report`, then fails.
 //! - `hook-stop`: the turn completes with a stop reason, as Codex reports a turn a hook
 //!   stopped. `hook-interrupt`: the turn ends interrupted with that reason. `hook-hang`: the
 //!   turn waits for an interrupt, which ends it with that reason.
@@ -105,6 +105,9 @@ pub struct FakeProvider {
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
+    /// Ends the `background-task` scripts' `bg-1`: the roster reports it gone, as Claude's does
+    /// when a background command exits.
+    pub finish_background: Arc<tokio::sync::Notify>,
     /// Set by [`Self::with_process_exit`]: a notify ends every open session's event stream,
     /// as a provider process that exits on its own (systemd's SIGTERM reaches it too).
     process_exit: Option<Arc<tokio::sync::Notify>>,
@@ -153,6 +156,7 @@ impl FakeProvider {
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
+            finish_background: Arc::default(),
             #[cfg(test)]
             late_start_entered: Arc::default(),
             #[cfg(test)]
@@ -268,6 +272,7 @@ struct FakeSession {
     roster: Arc<Mutex<Vec<(String, bool)>>>,
     /// The running turn ignores Stop.
     stuck: Arc<AtomicBool>,
+    finish_background: Arc<tokio::sync::Notify>,
     /// The running turn is `hook-hang`: its interrupt carries [`HOOK_STOP_REASON`].
     hook_hang: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
@@ -391,6 +396,7 @@ impl Provider for FakeProvider {
                     background_wait: self.background_wait,
                     roster: Arc::default(),
                     stuck: Arc::new(AtomicBool::new(false)),
+                    finish_background: self.finish_background.clone(),
                     hook_hang: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
@@ -491,6 +497,29 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
     }
 }
 
+/// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
+/// marked, as Claude's `emitRosterUpdate`.
+fn roster_event(
+    roster: &Mutex<Vec<(String, bool)>>,
+    instance: &str,
+    mut provider_thread: Value,
+) -> ProviderEvent {
+    let tasks: Vec<Value> = crate::lock(roster)
+        .iter()
+        .map(|(id, awaited)| {
+            let mut task = json!({"taskId": id, "kind": "command",
+                "description": "sleep 600", "providerInstanceId": instance});
+            if *awaited {
+                task["awaited"] = json!(true);
+            }
+            task
+        })
+        .collect();
+    provider_thread["pendingBackgroundTasks"] = json!(tasks);
+    provider_thread["updatedAt"] = json!(now_iso());
+    event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+}
+
 impl FakeSession {
     /// The event sender; after `close`, one whose receiver is gone.
     fn events(&self) -> mpsc::Sender<ProviderEvent> {
@@ -501,21 +530,8 @@ impl FakeSession {
 
     /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
     /// marked, as Claude's `emitRosterUpdate`.
-    fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
-        let tasks: Vec<Value> = crate::lock(&self.roster)
-            .iter()
-            .map(|(id, awaited)| {
-                let mut task = json!({"taskId": id, "kind": "command",
-                    "description": "sleep 600", "providerInstanceId": self.instance});
-                if *awaited {
-                    task["awaited"] = json!(true);
-                }
-                task
-            })
-            .collect();
-        provider_thread["pendingBackgroundTasks"] = json!(tasks);
-        provider_thread["updatedAt"] = json!(now_iso());
-        event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+    fn roster_update(&self, provider_thread: Value) -> ProviderEvent {
+        roster_event(&self.roster, &self.instance, provider_thread)
     }
 
     /// The run of a `continuation.requested` message: shows `continued` and ends the work.
@@ -733,6 +749,11 @@ impl Session for FakeSession {
                     started.push(terminal(&turn,TurnStatus::Completed,None));
                 }
                 "hang" | "stuck" | "hook-hang" => {}
+                // `silent`: the turn completes without saying anything.
+                "silent" => {
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
                 t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
@@ -828,7 +849,17 @@ impl Session for FakeSession {
                 "background-task" | "background-task-hang" => {
                     self.background.store(true, Ordering::SeqCst);
                     *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
-                    started.push(self.roster_update(conn_contract::to_json(&input.provider_thread)));
+                    let provider_thread = conn_contract::to_json(&input.provider_thread);
+                    started.push(self.roster_update(provider_thread.clone()));
+                    // `bg-1` exits when the test says so: the roster reports it gone.
+                    let (roster, events, finish) =
+                        (self.roster.clone(), self.events(), self.finish_background.clone());
+                    let instance = self.instance.clone();
+                    tokio::spawn(async move {
+                        finish.notified().await;
+                        crate::lock(&roster).retain(|(id, _)| id != "bg-1");
+                        let _ = events.send(roster_event(&roster, &instance, provider_thread)).await;
+                    });
                     if text == "background-task" {
                         started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
                         started.push(provider_turn(&turn, "completed"));
@@ -970,6 +1001,14 @@ impl Session for FakeSession {
                     Some(json!({"class": "usage_limit", "message": "The fake provider hit its usage limit.", "code": null, "retryable": false,
                         "resetAt": conn_support::time::iso_from_ms(conn_support::time::now_ms() + 3_600_000)})),
                 )),
+                "report-fail" => {
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "partial report", false));
+                    started.push(terminal(
+                        &turn,
+                        TurnStatus::Failed,
+                        Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
+                    ));
+                }
                 _ => {
                     let reply = format!("echo: {text}");
                     let cut = |n: usize| reply.chars().take(n).collect::<String>();

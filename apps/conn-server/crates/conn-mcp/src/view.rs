@@ -565,31 +565,6 @@ pub(crate) fn timeline_item_within(
     longest_text(&cut_title(title_chars.max(0)))
 }
 
-/// The last assistant answer of a run, or its failure (TS `subagentResultForRun`). A
-/// completed run with neither gives the fallback, with a hook's stop reason.
-pub(crate) fn run_result_text(projection: &Value, run: &Value) -> Option<String> {
-    let run_id = run["id"].as_str()?;
-    let items = projection["turnItems"].as_array()?;
-    let answer = items
-        .iter()
-        .rev()
-        .filter(|item| item["runId"] == run_id)
-        .find_map(|item| match item["type"].as_str() {
-            Some("assistant_message") => text(&item["text"]).filter(|t| !t.is_empty()),
-            Some("error") => text(&item["failure"]["message"]),
-            _ => None,
-        });
-    if answer.is_some() || run["status"] != "completed" {
-        return answer;
-    }
-    let notice_id = conn_engine::provider_stop_reason_id(run_id);
-    let reason = items
-        .iter()
-        .find(|item| item["id"] == notice_id.as_str() && item["type"] == "system_notice")
-        .and_then(|item| item["message"].as_str());
-    Some(conn_engine::completed_without_result(reason))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,12 +575,12 @@ mod tests {
         let notice = json!({"id": conn_engine::provider_stop_reason_id("run:c:1"),
             "runId": "run:c:1", "type": "system_notice", "message": "hook said stop"});
         assert_eq!(
-            run_result_text(&json!({"turnItems": [notice]}), &run).as_deref(),
-            Some("Child task completed without an assistant result.\n\nhook said stop")
+            conn_engine::delegated_task_result(&json!({"turnItems": [notice]}), &run),
+            "Child task completed without an assistant result.\n\nhook said stop"
         );
         assert_eq!(
-            run_result_text(&json!({"turnItems": []}), &run).as_deref(),
-            Some("Child task completed without an assistant result.")
+            conn_engine::delegated_task_result(&json!({"turnItems": []}), &run),
+            "Child task completed without an assistant result."
         );
     }
 

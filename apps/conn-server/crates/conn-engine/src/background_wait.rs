@@ -251,9 +251,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn marks_and_clears_awaited_tasks_on_the_live_session() {
         let (engine, provider, _dir) = open("bg-wait", FakeProvider::new("claudeAgent"));
-        // The shell row's `derivePendingBackgroundWork` keeps `awaited`.
+        // The shell row's `derivePendingBackgroundWork` keeps `awaited`, and the task keeps the
+        // run it first appeared under (`attributePendingBackgroundTasks`).
         let task = |awaited: bool| {
-            let mut task = json!({"taskId": "bg-1", "kind": "command", "description": "sleep 600"});
+            let mut task = json!({"taskId": "bg-1", "kind": "command", "description": "sleep 600",
+                                  "runId": "run:t1:1"});
             if awaited {
                 task["awaited"] = json!(true);
             }
@@ -268,6 +270,23 @@ mod tests {
         );
         run(&engine, "background-task").await;
         until_tasks(&engine, &task(false)).await;
+        // The attribution is the projection's: the provider's roster event stays as the
+        // provider sent it (`claude_background_task_wake/output.ts:74`).
+        let events = engine.stored_events(0, 1000).await.unwrap();
+        let roster_task = events
+            .iter()
+            .filter(|e| e["event"]["type"] == "provider-thread.updated")
+            .flat_map(|e| {
+                e["event"]["payload"]["pendingBackgroundTasks"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .find(|task| task["taskId"] == "bg-1");
+        assert_eq!(
+            roster_task,
+            Some(json!({"taskId": "bg-1", "kind": "command", "description": "sleep 600"}))
+        );
 
         let marked = engine
             .await_background_tasks("t1".into(), ids(&["bg-1", "x", "bg-1"]), true)

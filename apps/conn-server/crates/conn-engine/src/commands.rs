@@ -762,6 +762,19 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(source) = &c.restart_continuation_of_run_id {
         run["restartContinuationOfRunId"] = json!(source);
     }
+    // A run the thread queues for itself continues the task of the run that sent it.
+    let continued = match &c.restart_continuation_of_run_id {
+        Some(source) => tx.entity(&c.thread_id, "runs", source)?,
+        None if c.sender_thread_id.as_deref() == Some(c.thread_id.as_str()) => {
+            active_run(tx, &c.thread_id)?
+        }
+        None => None,
+    };
+    if let Some(task) = continued.as_ref().map(|r| &r["delegatedTaskId"])
+        && task.is_string()
+    {
+        run["delegatedTaskId"] = task.clone();
+    }
     if let Some(merge_back) = &merge_back {
         crate::merge_back::append_records(
             tx,
@@ -828,6 +841,20 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         tx.append(draft("turn-item.updated", merge_back.turn_item.clone()))?;
     }
     tx.append(draft("message.updated", message))?;
+    crate::families::record_follow_up(
+        tx,
+        &crate::families::FollowUpSource {
+            command_id: &c.command_id,
+            thread_id: &c.thread_id,
+            run_id: &run_id,
+            text: &c.text,
+            created_by: &c.created_by,
+            creation_source: &c.creation_source,
+            sender_thread_id: c.sender_thread_id.as_deref(),
+            notification: c.notification.as_ref(),
+            excluded: c.scheduled_task_id.is_some() || c.restart_continuation_of_run_id.is_some(),
+        },
+    )?;
     let item_id = format!("turn-item:{}", c.message_id);
     let existing_item = tx.entity(&c.thread_id, "turnItems", &item_id)?;
     if queued {
@@ -1602,7 +1629,8 @@ fn queued_run_cancel(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: QueuedRun = decode(command)?;
     queued_run(tx, &c)?;
     finish_run(tx, &c.thread_id, &c.run_id, "cancelled", None)?;
-    Ok(vec![])
+    // A follow-up whose queued run is cancelled before it starts ends cancelled.
+    Ok(crate::families::finalize_tasks(tx, &c.thread_id)?)
 }
 
 #[derive(Deserialize)]
@@ -1854,21 +1882,37 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 .payload_instance(),
         )?;
     }
-    let children = crate::families::stop_children(tx, &c.thread_id)?;
-    let active = active_run(tx, &c.thread_id)?;
-    // With no active run, background work that outlives the latest run is the target: the
-    // provider alone knows whether work remains (`dispatchThreadStop`).
+    Ok(stop_thread_work(
+        tx,
+        &c.thread_id,
+        c.reason.as_deref(),
+        true,
+    )?)
+}
+
+/// What Stop ends in a thread: its delegates first, then its active run or, with none, the
+/// background work that outlives its latest run (`dispatchThreadStop`). `mark` records the
+/// Stop on the run, as a Stop the user asked for does.
+pub(crate) fn stop_thread_work(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    reason: Option<&str>,
+    mark: bool,
+) -> StoreResult<Vec<Effect>> {
+    let children = crate::families::stop_children(tx, thread_id)?;
+    let active = active_run(tx, thread_id)?;
+    // Only the provider knows whether background work remains, so it is asked to stop it.
     let settled = match &active {
         Some(_) => None,
-        None => crate::shell::settled_background_target(tx, &c.thread_id)?
+        None => crate::shell::settled_background_target(tx, thread_id)?
             .and_then(|(run, _)| run["id"].as_str().map(str::to_owned)),
     };
     let own = match &active {
-        Some(run) => stop_run(tx, &c.thread_id, run, c.reason.as_deref(), true)?,
+        Some(run) => stop_run(tx, thread_id, run, reason, mark)?,
         None => vec![],
     };
     let background = settled.map(|run_id| Effect::StopBackgroundWork {
-        thread_id: c.thread_id.clone(),
+        thread_id: thread_id.to_owned(),
         run_id,
     });
     Ok(children.into_iter().chain(own).chain(background).collect())
