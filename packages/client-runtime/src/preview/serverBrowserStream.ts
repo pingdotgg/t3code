@@ -1,6 +1,7 @@
 // @effect-diagnostics globalTimers:off globalFetch:off - This browser and WebView transport runs without an Effect runtime.
 import { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
 import {
+  PREVIEW_STREAM_CURSORS,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   type PreviewStreamHostSetup,
   type PreviewViewportSetting,
@@ -195,6 +196,8 @@ export interface PreviewStreamEvents {
   readonly onViewport: (viewport: PreviewStreamViewport) => void;
   readonly onProbe?: (probe: PreviewStreamProbe) => void;
   readonly onPointer?: (pointer: PreviewStreamPointer) => void;
+  /** A CSS cursor keyword; resets to "default" when the stream drops. */
+  readonly onCursor?: (cursor: string) => void;
   readonly onControl?: (control: PreviewStreamControl) => void;
   readonly onClipboard?: (text: string) => void;
   readonly onDownload?: (download: PreviewStreamDownload) => void;
@@ -231,6 +234,13 @@ export function createPreviewStreamClient(
   let failures = 0;
   let control: PreviewStreamControl | null = null;
   let fileChooser: string | null = null;
+  let cursor = "default";
+
+  const showCursor = (next: string) => {
+    if (next === cursor) return;
+    cursor = next;
+    events.onCursor?.(next);
+  };
 
   // The server re-offers a picker still open, under a new id, when this viewer reattaches.
   const withdrawFileChooser = () => {
@@ -286,6 +296,7 @@ export function createPreviewStreamClient(
         phase,
         sequence,
         tabId,
+        cursor: nextCursor,
       } = message as Record<string, unknown>;
       if (
         type === "fileChooser" &&
@@ -312,6 +323,8 @@ export function createPreviewStreamClient(
         typeof sequence === "number"
       ) {
         events.onPointer?.({ phase, x, y, sequence });
+      } else if (type === "cursor" && typeof nextCursor === "string") {
+        showCursor(PREVIEW_STREAM_CURSORS.has(nextCursor) ? nextCursor : "default");
       } else if (type === "popup" && typeof tabId === "string") {
         events.onPopup?.(tabId);
       } else if (type === "clipboard" && typeof text === "string") {
@@ -362,6 +375,7 @@ export function createPreviewStreamClient(
       socket = null;
       control = null;
       withdrawFileChooser();
+      showCursor("default");
       if (opened) events.onConnectedChange(false);
       if (stopped) return;
       if (event.code === 4404) {
@@ -402,7 +416,33 @@ export function createPreviewStreamClient(
       socket = null;
       control = null;
       withdrawFileChooser();
+      showCursor("default");
       ws?.close();
+    },
+  };
+}
+
+export interface PreviewCursor {
+  readonly set: (cursor: string) => void;
+  /** Only while this viewer drives the page and points inside it. */
+  readonly show: (shown: boolean) => void;
+}
+
+export function createPreviewCursor(element: HTMLElement): PreviewCursor {
+  let cursor = "default";
+  let shown = false;
+  const apply = () => {
+    element.style.cursor = shown ? cursor : "";
+  };
+  return {
+    set: (next) => {
+      cursor = next;
+      if (shown) apply();
+    },
+    show: (next) => {
+      if (next === shown) return;
+      shown = next;
+      apply();
     },
   };
 }
