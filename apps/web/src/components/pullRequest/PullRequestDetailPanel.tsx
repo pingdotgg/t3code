@@ -55,6 +55,7 @@ import {
   type LucideIcon,
   PanelRightIcon,
   TextIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import {
   lazy,
@@ -102,6 +103,8 @@ import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
+
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { toastManager } from "../ui/toast";
@@ -141,6 +144,8 @@ import {
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   checkoutFailureDescription,
+  mergeHeadPin,
+  seenPullRequestHead,
   readableFailure,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
@@ -331,6 +336,10 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
       return null;
   }
 }
+
+// The Summary restores its scroll on remount; a header left expanded would condense over the
+// restored position and its scroll compensation would move the view.
+const summaryCondensedByScopeKey = new Map<string, boolean>();
 
 export function PullRequestDetailPanel({
   environmentId,
@@ -551,7 +560,7 @@ export function PullRequestDetailPanel({
   };
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
-  >({});
+  >(() => ({ summary: summaryCondensedByScopeKey.get(tabScopeKey) ?? false }));
   const condensed = condensedByTab[tab] ?? false;
   const [scrolledByTab, setScrolledByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
@@ -723,6 +732,7 @@ export function PullRequestDetailPanel({
     stackError: nativeStackQuery.error,
   });
   const stackOwnsMerge = supportsStackActions && nativeStack !== null;
+  const stackAutoMerge = supportsStackActions && detail?.capabilities.stackAutoMerge === true;
   const mergeBlockedReason = canMergeSinglePullRequest
     ? null
     : nativeStackQuery.error
@@ -736,6 +746,20 @@ export function PullRequestDetailPanel({
     nativeStackQuery.refresh();
   };
   const [refreshToken, setRefreshToken] = useState(0);
+  const seenHeadKey = `${environmentId}:${pullRequestKey}`;
+  const [storedSeenHead, setSeenHead] = useState<ReturnType<typeof seenPullRequestHead> | null>(
+    null,
+  );
+  // A stored answer paints first, so only a settled read counts as shown.
+  const seenHead = seenPullRequestHead(
+    storedSeenHead,
+    seenHeadKey,
+    detailQuery.isPending ? undefined : detail?.headSha,
+  );
+  if (seenHead !== storedSeenHead) setSeenHead(seenHead);
+  const shownHeadSha = seenHead.sha ?? detail?.headSha;
+  const unseenHeadSha =
+    detail?.state === "open" && detail.headSha !== shownHeadSha ? detail.headSha : undefined;
   const [activityRevision, setActivityRevision] = useState<{
     readonly key: string;
     readonly updatedAt: string;
@@ -897,6 +921,7 @@ export function PullRequestDetailPanel({
       input: {
         ...reference,
         action,
+        ...mergeHeadPin(action, shownHeadSha),
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
       },
@@ -914,6 +939,8 @@ export function PullRequestDetailPanel({
         title: actionFailureLabels(changeRequestTermKind(terminology))[action],
         description: readableFailure(failure, hint),
       });
+      // A refused merge usually means new commits, so show what the host has now.
+      if (action === "merge" || action === "enable-auto-merge") refreshDetail();
       onActed?.(action, "failed");
       return false;
     }
@@ -1546,6 +1573,7 @@ export function PullRequestDetailPanel({
           onRetry: nativeStackQuery.error ? nativeStackQuery.refresh : undefined,
           reference,
           environmentId,
+          shownHeadSha,
           onSelect: onSelectPullRequest,
           mergeMethod: selectedMergeMethod,
           stale: !nativeStackQuery.isFresh,
@@ -1555,6 +1583,11 @@ export function PullRequestDetailPanel({
               ? detail.baseBranch
               : null,
           canRebase: supportsStackActions && detail.viewerPermissions.stackRebase === true,
+          canAutoMerge:
+            stackAutoMerge && can("enable-auto-merge") && allowedMergeMethods.length > 0,
+          preferAutoMerge: checksState !== null && checksState !== "passing",
+          autoMergeArmed: stackAutoMerge && autoMergeArmed,
+          canCancelAutoMerge: stackAutoMerge && can("disable-auto-merge"),
           onActed: () => {
             refreshDetail();
             onActed?.();
@@ -1585,7 +1618,10 @@ export function PullRequestDetailPanel({
     />
   ) : null;
   const stackMergeButton =
-    stackMenuProps !== null && stackMenuProps.canMerge && stackMenuProps.conflictsWith === null ? (
+    stackMenuProps !== null &&
+    (stackMenuProps.canMerge || (stackMenuProps.canAutoMerge && stackMenuProps.preferAutoMerge)) &&
+    !stackMenuProps.autoMergeArmed &&
+    stackMenuProps.conflictsWith === null ? (
       <PullRequestStackMenu {...stackMenuProps} display="merge-button" />
     ) : null;
   const showsArmedNote = autoMergeArmed && primaryAction !== "auto-merge-armed";
@@ -2031,6 +2067,33 @@ export function PullRequestDetailPanel({
           </div>
         </div>
 
+        {unseenHeadSha !== undefined && shownHeadSha !== undefined ? (
+          <div className="col-span-2 px-4 pb-2">
+            <Alert variant="warning">
+              <TriangleAlertIcon />
+              <AlertDescription>
+                {gt("New commits were pushed. A merge or review still applies to {sha}.", {
+                  sha: shownHeadSha.slice(0, 7),
+                })}
+              </AlertDescription>
+              <AlertAction>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  disabled={isInvalidating}
+                  onClick={() => {
+                    // The pin moves once the host read that reloads the diff has been asked for.
+                    void refetchFromHost().then(() =>
+                      setSeenHead({ key: seenHeadKey, sha: unseenHeadSha }),
+                    );
+                  }}
+                >
+                  {gt("Load new commits")}
+                </Button>
+              </AlertAction>
+            </Alert>
+          </div>
+        ) : null}
         {detail ? (
           <nav
             className="col-span-2 flex min-w-0 items-center px-4 pt-1.5 pb-3"
@@ -2130,7 +2193,9 @@ export function PullRequestDetailPanel({
             compensationRef.current = { tab, scroller, target: top - chromeDelta };
             next = true;
           }
-          if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
+          if (next === previous) return;
+          if (tab === "summary") summaryCondensedByScopeKey.set(tabScopeKey, next);
+          setCondensedByTab({ ...condensedByTab, [tab]: next });
         }}
       >
         {detailQuery.error && !detail ? (
@@ -2303,6 +2368,7 @@ export function PullRequestDetailPanel({
             environmentId={environmentId}
             reference={reference}
             detail={detail}
+            shownHeadSha={shownHeadSha}
             actionPending={actionPending}
             onCommentAction={performCommentAction}
             onCommented={refreshDetail}

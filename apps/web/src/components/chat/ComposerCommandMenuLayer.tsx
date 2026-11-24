@@ -1,4 +1,4 @@
-import { type ReactNode, useLayoutEffect, useState } from "react";
+import { type ReactNode, useDeferredValue, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
 
@@ -21,6 +21,15 @@ function composerCommandMenuPositionsEqual(
 // The gap between the tray and a menu floating above it, and the pen's widest menu.
 const COMPOSER_MENU_GAP_PX = 8;
 export const COMPOSER_MENU_MAX_WIDTH_PX = 520;
+
+/** Mounts the layer one deferred render after `open` turns true, so the keystroke that opened it paints first. */
+export function DeferredComposerCommandMenuLayer({
+  open,
+  ...props
+}: Parameters<typeof ComposerCommandMenuLayer>[0] & { open: boolean }) {
+  const mounted = useDeferredValue(open, false);
+  return open && mounted ? <ComposerCommandMenuLayer {...props} /> : null;
+}
 
 /** Floats a menu above the composer tray, aligned with its left edge. */
 export function ComposerCommandMenuLayer(props: {

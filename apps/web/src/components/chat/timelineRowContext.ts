@@ -72,8 +72,6 @@ export interface TimelineRowSharedState {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
   onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
-  /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */
-  onOpenTurnDiff: ((runId: RunId, filePath?: string) => void) | undefined;
   /**
    * Draws a published HTML visual. Unset, the row loads it from the environment; the guest page
    * loads it through its own route.

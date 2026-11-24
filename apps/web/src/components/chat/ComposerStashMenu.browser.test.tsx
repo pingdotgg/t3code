@@ -141,3 +141,30 @@ it("preserves the stash under an app modal and resumes keyboard restoration afte
   await expect.element(editor()).toHaveValue("second prompt");
   await expect.element(stash()).not.toBeInTheDocument();
 });
+
+it("leaves IME composition keys in the composer alone while the stash is open", async () => {
+  for (const composing of [{ isComposing: true }, { keyCode: 229 }]) {
+    for (const key of ["ArrowDown", "Enter", "Escape"]) {
+      await using _screen = await render(<Composer />);
+      const textarea = editor().element();
+      await focus(textarea);
+      const event = new KeyboardEvent("keydown", {
+        key,
+        ...composing,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(async () => {
+        textarea.dispatchEvent(event);
+      });
+      expect(event.defaultPrevented, `${key} ${JSON.stringify(composing)}`).toBe(false);
+      await expect.element(stash()).toBeInTheDocument();
+      await expect.element(editor()).toHaveValue("Unsent draft");
+    }
+  }
+
+  await using _control = await render(<Composer />);
+  await focus(editor().element());
+  await press("{Enter}");
+  await expect.element(editor()).toHaveValue("first prompt");
+});

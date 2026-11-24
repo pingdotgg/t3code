@@ -2,7 +2,6 @@ import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "reac
 import { cn } from "~/lib/utils";
 import { useGT, useMessages } from "gt-react";
 import {
-  ArrowLeftIcon,
   CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
@@ -10,6 +9,7 @@ import {
   MinusIcon,
   PlusIcon,
   VideoIcon,
+  XIcon,
   Image as ImageGlyphIcon,
   Text as TextGlyphIcon,
 } from "lucide-react";
@@ -337,7 +337,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             aria-label={gt("{name} actions", { name: item.name })}
             className="flex h-10 w-0 min-w-full items-center gap-2 rounded-card surface-popover px-1.5"
           >
-            {/* Back sits first, away from where the window's own close button is. */}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -347,15 +346,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                     size="icon-sm"
                     variant="secondary"
                     onClick={close}
-                    aria-label={
-                      isVideo ? gt("Back, close video preview") : gt("Back, close image preview")
-                    }
+                    aria-label={isVideo ? gt("Close video preview") : gt("Close image preview")}
                   />
                 }
               >
-                <ArrowLeftIcon aria-hidden="true" />
+                <XIcon aria-hidden="true" />
               </TooltipTrigger>
-              <TooltipPopup side="bottom">{gt("Back")}</TooltipPopup>
+              <TooltipPopup side="bottom">{gt("Close")}</TooltipPopup>
             </Tooltip>
             <ImageIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
             <span

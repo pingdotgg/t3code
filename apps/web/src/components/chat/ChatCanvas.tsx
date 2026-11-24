@@ -1,6 +1,10 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
-import { ChatCanvasContext, ChatCanvasTimelineContext } from "./ChatCanvasContext";
+import {
+  ChatCanvasBottomCoverContext,
+  ChatCanvasContext,
+  ChatCanvasTimelineContext,
+} from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { chatCanvasDrawnKey, resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
@@ -64,6 +68,7 @@ export function ChatCanvas({
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
+  const htmlPreviewWidthProbeRef = useRef<HTMLDivElement | null>(null);
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
   const detailsCardInlineOpen = useRightPanelStore((state) =>
     threadRef === null
@@ -91,7 +96,8 @@ export function ChatCanvas({
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
-    if (!element || !probe) return;
+    const htmlPreviewProbe = htmlPreviewWidthProbeRef.current;
+    if (!element || !probe || !htmlPreviewProbe) return;
     const findBar =
       detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
     let disposed = false;
@@ -139,6 +145,7 @@ export function ChatCanvas({
         height: element.clientHeight,
         padding: Number.parseFloat(styles.paddingLeft),
         maxChatWidth: Number.parseFloat(styles.width),
+        maxHtmlPreviewWidth: Number.parseFloat(getComputedStyle(htmlPreviewProbe).width),
         minChatWidth: Number.parseFloat(styles.minWidth),
         composerHeight: composerOverlayElement?.getBoundingClientRect().height ?? 0,
         timelineGutter: timelineElement
@@ -147,7 +154,7 @@ export function ChatCanvas({
       });
     };
     measure();
-    const observed: Element[] = [element, probe];
+    const observed: Element[] = [element, probe, htmlPreviewProbe];
     if (findBar) observed.push(findBar);
     if (composerOverlayElement) observed.push(composerOverlayElement);
     if (timelineElement) observed.push(timelineElement);
@@ -168,30 +175,50 @@ export function ChatCanvas({
     detailsCardPlacement: model.detailsCardPlacement,
   };
   const { layout } = context;
+  const coverFrame = layout.overlapsChat ? layout.frame : null;
+  const bottomCover =
+    coverFrame && coverFrame.y + coverFrame.height / 2 >= model.container.height / 2
+      ? Math.ceil(model.container.height - coverFrame.y)
+      : 0;
+  const htmlPreviewLane =
+    layout.htmlPreview.width > layout.chat.width
+      ? {
+          "--html-preview-lane-offset": `${layout.htmlPreview.left - layout.chat.left}px`,
+          "--html-preview-lane-width": `${layout.htmlPreview.width}px`,
+        }
+      : null;
   return (
     <ChatCanvasContext value={context}>
       <ChatCanvasTimelineContext value={registerTimeline}>
-        <div
-          {...props}
-          ref={elementRef}
-          data-chat-canvas
-          data-preview-overlaps-chat={layout.overlapsChat || undefined}
-          className="relative flex min-h-0 min-w-0 flex-1 flex-col"
-          style={
-            {
-              "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
-              "--chat-lane-inset-start": `${layout.chat.insetStart}px`,
-              "--chat-lane-inset-end": `${layout.chat.insetEnd}px`,
-            } as CSSProperties
-          }
-        >
+        <ChatCanvasBottomCoverContext value={bottomCover}>
           <div
-            ref={widthProbeRef}
-            aria-hidden
-            className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
-          />
-          {children}
-        </div>
+            {...props}
+            ref={elementRef}
+            data-chat-canvas
+            data-preview-overlaps-chat={layout.overlapsChat || undefined}
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+            style={
+              {
+                "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
+                "--chat-lane-inset-start": `${layout.chat.insetStart}px`,
+                "--chat-lane-inset-end": `${layout.chat.insetEnd}px`,
+                ...htmlPreviewLane,
+              } as CSSProperties
+            }
+          >
+            <div
+              ref={widthProbeRef}
+              aria-hidden
+              className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
+            />
+            <div
+              ref={htmlPreviewWidthProbeRef}
+              aria-hidden
+              className="pointer-events-none invisible absolute h-0 w-(--html-preview-max-width)"
+            />
+            {children}
+          </div>
+        </ChatCanvasBottomCoverContext>
       </ChatCanvasTimelineContext>
     </ChatCanvasContext>
   );

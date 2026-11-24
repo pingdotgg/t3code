@@ -308,6 +308,26 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData).not.toHaveBeenCalled();
   });
 
+  it("sends nothing for Ctrl+Shift+C or Ctrl+Insert without a selection but keeps Ctrl+C", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "C", "KeyC", { ctrlKey: true, shiftKey: true });
+    key(surface, "Insert", "Insert", { ctrlKey: true });
+    expect(harness.onData).not.toHaveBeenCalled();
+    key(surface, "c", "KeyC", { ctrlKey: true });
+    key(surface, "Insert", "Insert", { ctrlKey: true, altKey: true });
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x03", "\x1b[2;7~"]);
+  });
+
+  it("sends nothing for Cmd+C on macOS without a selection", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "c", "KeyC", { metaKey: true });
+    expect(harness.onData).not.toHaveBeenCalled();
+  });
+
   it("skips middle-click selection paste when the desktop turned primary paste off", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();

@@ -92,6 +92,37 @@ describe("ThemeImportDialog", () => {
     await userEvent.type(page.getByLabelText("Search Open VSX themes"), "night");
     await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
   });
+
+  it("clears the search on Escape before closing the dialog", async () => {
+    searchOpenVsxThemes.mockReset();
+    searchOpenVsxThemes.mockResolvedValue([]);
+    const onOpenChange = vi.fn();
+    await using _screen = await render(
+      <ThemeImportDialog
+        open
+        onOpenChange={onOpenChange}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />,
+    );
+    const search = page.getByRole("searchbox", { name: "Search Open VSX themes" });
+    await expect.element(search).toHaveAttribute("type", "text");
+    await userEvent.fill(search, "nord");
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).toHaveValue("");
+    search.element().dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+        repeat: true,
+      }),
+    );
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
 });
 
 const theme = (name: string, accent = "#3b82f6", css?: string) => ({

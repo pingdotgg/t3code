@@ -57,7 +57,7 @@ import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { TimelineMinimap } from "./TimelineMinimap";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
-import { useRegisterChatCanvasTimeline } from "./ChatCanvasContext";
+import { ChatCanvasBottomCoverContext, useRegisterChatCanvasTimeline } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
 import { TimelineChildApprovalCard } from "./ChildThreadApprovals";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
@@ -342,7 +342,6 @@ interface MessagesTimelineProps {
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
   onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
-  onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
@@ -479,7 +478,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   displayThreadKey,
   announceTurnStatus = true,
   onOpenToolDiff,
-  onOpenTurnDiff,
   onOpenThread,
   renderHtmlRender,
   turnItemSource,
@@ -508,7 +506,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
-  contentInsetEndAdjustment,
+  contentInsetEndAdjustment: composerInsetEnd,
   onIsAtEndChange,
   liveFollowEnabled,
   onViewportAttach,
@@ -521,6 +519,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const gt = useGT();
   const layoutPaneFocusedRef = useLayoutPaneFocusedRef();
   const pendingRequest = pendingRequestProp?.blocking === false ? null : pendingRequestProp;
+  // A floating preview over the lower half of a narrow chat covers the timeline's last rows,
+  // so the end must scroll them above it as it does for the composer.
+  const contentInsetEndAdjustment = Math.max(composerInsetEnd, use(ChatCanvasBottomCoverContext));
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   // Find open at the opening is part of the snapshot: opening find later
@@ -1454,7 +1455,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFileDownload,
     openPullRequest,
     onOpenToolDiff,
-    onOpenTurnDiff,
     onOpenThread,
     renderHtmlRender,
     turnItemSource,
@@ -1782,7 +1782,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         >
           <div
             ref={observeLaneWidth}
-            className="chat-content-lane overflow-x-clip"
+            // An HTML preview can run wider than this lane, which stays the chat column's width.
+            className={cn("chat-content-lane", item.kind !== "html-render" && "overflow-x-clip")}
             data-sidebar-slide-track="center"
             data-timeline-root="true"
           >
@@ -1931,10 +1932,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
                   {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
                   contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
                   maintainScrollAtEnd={maintainScrollAtEnd}
+                  // A restore owns the scroll position until it lands. Anchoring would
+                  // move it for the previous thread's header as the list swaps threads.
                   maintainVisibleContentPosition={
-                    findActive ||
-                    citationPositioning ||
-                    (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                    findActive || citationPositioning || restoringThreadPosition
                       ? false
                       : maintainVisibleContentPosition
                   }

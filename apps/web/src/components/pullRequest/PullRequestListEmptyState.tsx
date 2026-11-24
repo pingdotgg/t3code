@@ -1,4 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 /**
  *
  * A list narrowed to nothing (search, filters) wears the design's small notice: one glyph, a
@@ -128,7 +129,8 @@ export function PullRequestListEmptyState({
   onRefresh: () => void;
 }) {
   const gt = useGT();
-  const shownQuery = query.length > 48 ? `${query.slice(0, 48)}…` : query;
+  const shownQuery =
+    query.length > 48 ? `${query.slice(0, splitsSurrogatePair(query, 48) ? 47 : 48)}…` : query;
   if (!hasProjects) {
     return (
       <PullRequestPageEmpty

@@ -721,6 +721,13 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
+// Esc with a modifier is a shortcut to record, not a cancel.
+function isBareEscape(event: KeyboardEvent<HTMLInputElement>) {
+  return (
+    event.key === "Escape" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+  );
+}
+
 function useKeybindingRowEditor({
   row,
   allRows,
@@ -774,9 +781,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       const field = event.currentTarget;
       flushSync(() =>
         setDraft({
@@ -1293,9 +1300,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       if (!isSaving) onCancel();
       return;
     }

@@ -306,8 +306,10 @@ export function CustomModelEditor({
     <div
       className="mx-2 mt-1 mb-2 flex flex-col gap-3 rounded-card border border-transparent surface-card-settings p-3"
       onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") {
           event.preventDefault();
+          event.stopPropagation();
           onCancel();
         }
       }}

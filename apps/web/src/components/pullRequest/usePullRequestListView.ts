@@ -9,6 +9,7 @@ import {
   type PullRequestListResult,
   type PullRequestListState,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { useEffect, useState } from "react";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
@@ -414,10 +415,11 @@ export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRe
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
     // Keep every query as text and always own the free-text keys so an unvalidated parent value cannot leak.
-    q:
-      raw.q !== undefined && raw.q !== null && raw.q !== ""
-        ? (typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q)).slice(0, 200)
-        : undefined,
+    q: (() => {
+      if (raw.q === undefined || raw.q === null || raw.q === "") return undefined;
+      const text = typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q);
+      return text.slice(0, splitsSurrogatePair(text, 200) ? 199 : 200);
+    })(),
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
     raw.review === "changes-requested" ||

@@ -22,7 +22,7 @@ export interface ThreadCheckpointSummary {
   readonly checkpointTurnCount: number;
   readonly checkpointRef: CheckpointRef;
   readonly status: "ready" | "missing" | "error" | "stale";
-  /** A prefix of the changed files when `filesTotal` is set; see `checkpointFileTotals`. */
+  /** A prefix of the changed files when `filesTotal` is set; see `changedFileTotals`. */
   readonly files: ReadonlyArray<{
     readonly path: string;
     readonly kind: string;

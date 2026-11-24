@@ -929,13 +929,17 @@ export function SettingsSearchField({
       <InputGroupAddon>
         <SearchIcon aria-hidden />
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
           event.preventDefault();
           if (value.length > 0) {
             event.stopPropagation();

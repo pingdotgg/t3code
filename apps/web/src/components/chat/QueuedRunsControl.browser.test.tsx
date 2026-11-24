@@ -181,7 +181,7 @@ it.each([false, true])(
     await expect.element(page.getByText("first.png (1/2)", { exact: true })).toBeVisible();
     await page.getByRole("option", { name: "second.png (2/2)", exact: true }).click();
     await expect.element(page.getByText("second.png (2/2)", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Back, close image preview", exact: true }).click();
+    await page.getByRole("button", { name: "Close image preview", exact: true }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     await expect.element(page.getByText("Later", { exact: true })).toBeVisible();
   },

@@ -18,10 +18,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  SecretProviderId,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
@@ -39,6 +40,7 @@ import {
 import { useId, useRef, useState, type FormEvent, type MouseEvent } from "react";
 
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
@@ -122,7 +124,9 @@ function HostLink(props: { readonly href: string; readonly host: string }) {
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const messages = useMessages();
-  return hasFeatureFlag(config, "secretProviders")
+  // The server accepts a reference answer only with this scope; without it the card is typed.
+  const canUseReferences = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  return canUseReferences && hasFeatureFlag(config, "secretProviders")
     ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }
