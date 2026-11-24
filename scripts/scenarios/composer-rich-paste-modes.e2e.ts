@@ -55,9 +55,7 @@ for (const mode of ["Paste as Text", "Paste with an image"] as const) {
       );
 
       if (mode === "Paste with an image") {
-        await expect(
-          composer.getByRole("button", "Image attachment", { exact: false }),
-        ).toHaveCount(1);
+        await expect(screen.getByRole("button", "Remove setup.png")).toBeVisible();
       }
       await browser.keyboard.press("Enter");
       await screen.getByText("second fixture turn complete").waitFor();
