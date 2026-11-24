@@ -54,7 +54,7 @@ describe("withRelayClientTracing", () => {
 });
 
 describe("nonInterferingTracer", () => {
-  it.effect("exports failures without their messages", () =>
+  it.effect("exports failure types without messages or frames", () =>
     Effect.gen(function* () {
       const exits: Array<Exit.Exit<unknown, unknown>> = [];
       const delegate = Tracer.make({
@@ -75,6 +75,8 @@ describe("nonInterferingTracer", () => {
         { name: "ConnectionTransientError" },
       );
 
+      failure.stack = "    at connect (/home/user/private.mjs:12:34)";
+
       yield* Effect.fail(failure).pipe(
         Effect.withSpan("relay.connection.attempt"),
         Effect.withTracer(nonInterferingTracer(delegate)),
@@ -88,151 +90,55 @@ describe("nonInterferingTracer", () => {
       const text = exported.map((error) => `${error.message}\n${error.stack}`).join("\n");
       expect(text).toContain("Caused by: Error");
       expect(text).not.toContain("studio-mac");
-      // Frames keep their file and position, without the directory it was installed in.
-      expect(text).toContain("relayTracing.test.ts:");
-      expect(text).not.toMatch(/[\\/]/);
-    }),
-  );
-
-  it.effect("rebuilds each frame from its function, file and position, and drops the rest", () =>
-    Effect.gen(function* () {
-      const exits: Array<Exit.Exit<unknown, unknown>> = [];
-      const delegate = Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          const end = span.end.bind(span);
-          span.end = (endTime, exit) => {
-            end(endTime, exit);
-            exits.push(exit);
-          };
-          return span;
-        },
-      });
-      const failure = new Error("failed");
-      failure.stack = [
-        // Set before the message changed, so none of this is recognised as the header.
-        "Error: studio-mac refused the connection",
-        "    at studio-mac refused the connection",
-        "alice@studio-mac.local:12",
-        "    at connect (C:\\Users\\John Smith\\T3 Code (x86)\\index.js:12:34)",
-        "    at /Users/John Smith/t3/server.mjs:5:6",
-        "    at async Promise.all (index 0)",
-        "connect@http://studio-mac:3773/assets/index.js?next=/private/value.txt:12:34",
-        "global code@http://studio-mac.local/assets/app.js:1:2",
-        "open@http://studio-mac.local:12:34",
-        "read@http://studio-mac/app?file=/private/secret.txt:12:34",
-        "    at eval (eval at run (http://studio-mac/a.js?x:1:2), <anonymous>:5:6)",
-        "    at send (address at index.android.bundle:1:2345)",
-      ].join("\n");
-
-      yield* Effect.fail(failure).pipe(
-        Effect.withSpan("relay.connection.attempt"),
-        Effect.withTracer(nonInterferingTracer(delegate)),
-        Effect.ignore,
-      );
-
-      const exit = exits[0];
-      if (exit === undefined || !Exit.isFailure(exit)) throw new Error("expected a failed span");
-      expect(Cause.prettyErrors(exit.cause)[0]?.stack?.split("\n").slice(1)).toEqual([
-        "    at connect (index.js:12:34)",
-        "    at server.mjs:5:6",
-        "    at connect (index.js:12:34)",
-        "    at app.js:1:2",
-        "    at send (index.android.bundle:1:2345)",
-      ]);
-    }),
-  );
-
-  it.effect("exports a request without the machine it went to, and no log lines", () =>
-    Effect.gen(function* () {
-      const exported: Array<Tracer.NativeSpan> = [];
-      const delegate = Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          exported.push(span);
-          return span;
-        },
-      });
-
-      yield* Effect.logWarning("studio-mac did not answer").pipe(
-        Effect.annotateLogs({ "environment.label": "studio-mac" }),
-        Effect.withSpan("http.client GET", {
-          attributes: {
-            "http.request.method": "GET",
-            "url.full": "http://studio-mac.tail1234.ts.net:3773/api/threads/t1/history?cursor=c1",
-            "url.path": "/api/threads/t1/history",
-            "url.query": "cursor=c1",
-            "server.address": "studio-mac.tail1234.ts.net",
-            "server.port": 3773,
-          },
-        }),
-        Effect.withTracer(nonInterferingTracer(delegate)),
-      );
-
-      expect(Object.fromEntries(exported[0]?.attributes ?? [])).toEqual({
-        "http.request.method": "GET",
-        "url.path": "/api/threads/t1/history",
-      });
-      expect(exported[0]?.events).toEqual([]);
+      expect(text).not.toContain("private.mjs");
     }),
   );
 });
 
-describe("layer", () => {
-  it.effect("leaves out resource attributes the operator set for their own receiver", () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-    return Effect.void.pipe(
-      Effect.withSpan("relay.operation"),
-      withRelayClientTracing,
-      Layer.effectDiscard,
-      Layer.provide(
-        layer(
-          { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
-          { serviceName: "t3code-server", runtime: "node", serviceInstanceId: "id", client: "cli" },
-        ),
+it.effect.each([true, false])("filters relay exports at flush (%s)", (enabledAtFlush) => {
+  const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+  let enabled = true;
+  return Effect.logWarning("private error detail").pipe(
+    Effect.withSpan("relay.request", {
+      attributes: {
+        "url.full": "http://studio-mac.local:3773/api/threads?cursor=secret",
+        "url.path": "/api/threads",
+        "url.query": "cursor=secret",
+        "server.address": "studio-mac.local",
+        "server.port": 3773,
+      },
+    }),
+    withRelayClientTracing,
+    Effect.andThen(Effect.sync(() => (enabled = enabledAtFlush))),
+    Layer.effectDiscard,
+    Layer.provide(
+      layer(
+        { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
+        { serviceName: "t3code-test", runtime: "node", serviceInstanceId: "id", client: "test" },
+        { isEnabled: () => enabled },
       ),
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
-      Layer.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnvRecord({ OTEL_RESOURCE_ATTRIBUTES: "host.name=studio-mac" }),
-        ),
+    ),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord({ OTEL_RESOURCE_ATTRIBUTES: "host.name=private-host" }),
       ),
-      Layer.build,
-      Effect.scoped,
-      Effect.andThen(
-        Effect.sync(() => {
-          const sent = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
-          expect(sent).toContain("relay.operation");
-          expect(sent).not.toContain("studio-mac");
-        }),
-      ),
-    );
-  });
-
-  it.effect("drops a span queued before the opt-out instead of sending it", () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-    let enabled = true;
-    return Effect.void.pipe(
-      Effect.withSpan("relay.operation"),
-      withRelayClientTracing,
-      // The exporter sends what it holds when its scope closes, after the opt-out here.
-      Effect.andThen(Effect.sync(() => (enabled = false))),
-      Layer.effectDiscard,
-      Layer.provide(
-        layer(
-          { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
-          { serviceName: "t3code-mobile", runtime: "node", serviceInstanceId: "id", client: "app" },
-          { isEnabled: () => enabled },
-        ),
-      ),
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
-      Layer.build,
-      Effect.scoped,
-      Effect.andThen(Effect.sync(() => expect(fetchFn).not.toHaveBeenCalled())),
-    );
-  });
+    ),
+    Layer.build,
+    Effect.scoped,
+    Effect.andThen(
+      Effect.sync(() => {
+        expect(fetchFn).toHaveBeenCalledTimes(Number(enabledAtFlush));
+        if (!enabledAtFlush) return;
+        const sent = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
+        expect(sent).toContain("/api/threads");
+        expect(sent).not.toMatch(
+          /studio-mac|cursor=secret|server\.port|private error detail|private-host/,
+        );
+      }),
+    ),
+  );
 });
 
 describe("withLocalTracing", () => {

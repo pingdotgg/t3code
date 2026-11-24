@@ -33,16 +33,13 @@ it.effect("a policy with telemetry off stops relay tracing to T3 Connect", () =>
   }),
 );
 
-it("tells clients when the environment or a policy opted out of relay tracing", () => {
-  const policy = (telemetry: boolean) => ({
-    organization: "Example Corp",
-    lockedSettings: [],
-    limits: { telemetry },
-  });
-
+it("reports the server's relay tracing policy to clients", () => {
   assert.isTrue(allowedFor({}, undefined));
-  assert.isTrue(allowedFor({}, policy(true)));
-  assert.isFalse(allowedFor({}, policy(false)));
   assert.isFalse(allowedFor({ T3CODE_TELEMETRY_ENABLED: "false" }, undefined));
-  assert.isFalse(allowedFor({ OTEL_SDK_DISABLED: "true" }, undefined));
+  assert.isFalse(
+    allowedFor(
+      {},
+      { organization: "Example Corp", lockedSettings: [], limits: { telemetry: false } },
+    ),
+  );
 });

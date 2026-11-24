@@ -383,10 +383,7 @@ export const ServerObservability = Schema.Struct({
   otlpLogsSource: Schema.optional(OtlpEndpointSource),
   otlpLogsVariable: Schema.optional(TrimmedNonEmptyString),
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /**
-   * `false` when the server's environment or managed policy opted out of relay connection
-   * traces. A browser opened from this server stops its own. Older servers omit it.
-   */
+  /** Relay tracing policy for browsers opened from this server. */
   relayTracingAllowed: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerObservability = typeof ServerObservability.Type;

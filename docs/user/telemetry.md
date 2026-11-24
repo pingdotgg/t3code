@@ -13,10 +13,6 @@ Product events do not include prompts, responses, file contents, authentication 
 raw provider events, or child-agent output. The one exception is [agent feedback](#agent-feedback),
 which is off unless you turn it on.
 
-Hashed identifiers are not anonymous to T3 Code. T3 Code issues T3 Connect accounts, so it can
-match the hashed Connect identifier to your account, and with it the installations and usage events
-linked to that account.
-
 ## Agent feedback
 
 Agent feedback lets agents tell the T3 team about T3 Code: a T3 tool or `t3` command that did not
@@ -68,11 +64,9 @@ exactly what each one holds.
 ## Relay connection diagnostics
 
 T3 Code sends relay connection traces to Axiom to diagnose T3 Connect connectivity. These are
-separate from product events. Traces carry connection timings, environment and thread identifiers,
-the path and result of each request, and for a failure the error's name and the file names in its
-stack trace. They do not carry machine names, the addresses of your machines, error messages, or
-log lines. Older versions also sent the connected machine's name, the address a request went to,
-and error messages, which can quote a value the app was handling.
+separate from product events. Traces carry connection timings, request paths, environment and
+thread identifiers, and error types. They omit machine addresses, query strings, log lines,
+error messages, and stack frames.
 
 To disable product events and relay tracing from the server, set
 `T3CODE_TELEMETRY_ENABLED=false` in its environment before starting it. Relay tracing also stops
@@ -85,11 +79,8 @@ the hosted web app or mobile clients.
 The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for example `~/.zshrc`) on macOS and
 Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
 
-A browser opened from a T3 Code server, including one the `t3` CLI opens, follows that server: it
-sends connection traces only while it is connected to the server and the server has not opted out,
-by environment variable or managed policy. The hosted web app is not opened from one of your
-servers, so it sends its own connection traces when its build has relay tracing configured, and
-has no relay tracing toggle.
+A browser opened from a T3 Code server sends relay traces only while connected and allowed by that
+server's policy. The hosted web app sends relay traces when configured and has no tracing toggle.
 
 ## Mobile app diagnostics
 

@@ -69,39 +69,7 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
     ),
   );
 
-// A frame's location is a path under the user's home directory, or in a browser the address
-// of the machine that served the page, and a line that is not a frame is message text. So a
-// frame is rebuilt from the three parts that can be recognised, and any other line is dropped.
-const FRAME_FILE =
-  /(?:[^:/\\\s][\\/]|address at )([\w$~-]+(?:\.[\w$~-]+)+)(?:[?#][^\s)]*?)?((?::\d+){1,2})\)?\s*$/;
-const FRAME_FUNCTION = /^\s*at (?:async |new )?([\w$.<>]+) \(|^([\w$.<>]+)@/;
-// Frames are short; a longer line is message text, and costly to scan.
-const FRAME_MAX_LENGTH = 1000;
-
-function scrubbedFrame(line: string): Array<string> {
-  const file = line.length > FRAME_MAX_LENGTH ? null : FRAME_FILE.exec(line);
-  // A file name found after `?` or `#` belongs to a URL's query, not to the frame.
-  if (file === null || /[?#]\S*$/.test(line.slice(0, file.index))) return [];
-  const called = FRAME_FUNCTION.exec(line);
-  const name = called?.[1] ?? called?.[2];
-  const location = `${file[1]}${file[2]}`;
-  return [`    at ${name === undefined ? location : `${name} (${location})`}`];
-}
-
-// Error messages can carry machine names (environment labels) and paths, so
-// relay spans export only the error name and its stack frames.
-function traceFrames(error: Error): Array<string> {
-  const lines = (error.stack ?? "").split("\n");
-  const headerLines = error.message.split("\n").length;
-  const frames = lines.slice(0, headerLines).join("\n").endsWith(error.message)
-    ? lines.slice(headerLines)
-    : lines;
-  const effectFrameIndex = frames.findIndex((line) =>
-    /(?:Generator\.next|~effect\/Effect)/.test(line),
-  );
-  return (effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex)).flatMap(scrubbedFrame);
-}
-
+// Relay exports keep error types. Messages and stacks can contain customer data.
 function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
   const name =
     typeof value === "object" && value !== null && "name" in value && typeof value.name === "string"
@@ -118,10 +86,7 @@ function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
 
   const error = new Error(name, cause ? { cause } : undefined);
   error.name = name;
-  error.stack = [name, ...(value instanceof Error ? traceFrames(value) : [])].join("\n");
-  if (cause) {
-    error.stack = `${error.stack}\nCaused by: ${cause.stack}`;
-  }
+  error.stack = cause ? `${name}\nCaused by: ${cause.stack}` : name;
   return error;
 }
 
@@ -144,9 +109,7 @@ function traceSafeExit(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, un
   );
 }
 
-// Requests under a relay span also go to the user's own machines over LAN, Tailscale or a
-// tunnel. Their hosts and ports name those machines and query strings carry what was asked
-// for, so a request keeps only its method, path and status.
+// Relay-traced requests can target a user's machine, including over LAN or Tailscale.
 const REQUEST_ADDRESS_ATTRIBUTES = new Set([
   "url.full",
   "url.query",
@@ -168,8 +131,7 @@ export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
       span.attribute = (key, value) => {
         if (!REQUEST_ADDRESS_ATTRIBUTES.has(key)) attribute(key, value);
       };
-      // Effect attaches every log line to the current span as an event, with its message,
-      // annotations and pretty-printed cause: the free text `traceSafeExit` removes above.
+      // Effect adds raw logs to span events.
       span.event = () => {};
       return span;
     },

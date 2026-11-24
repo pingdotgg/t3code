@@ -32,29 +32,8 @@ const layerTracingTo = (fetchFn: typeof fetch) =>
     },
   ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));
 
-it.effect("sends relay spans only while crash reports are on", () =>
-  Effect.gen(function* () {
-    const requestsWhile = (sending: boolean) => {
-      setDiagnosticsSending(sending);
-      const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
-      return Effect.void.pipe(
-        Effect.withSpan("mobile.test.span"),
-        withRelayClientTracing,
-        Layer.effectDiscard,
-        Layer.provide(layerTracingTo(fetchFn)),
-        Layer.build,
-        Effect.scoped,
-        Effect.map(() => fetchFn.mock.calls.length),
-      );
-    };
-
-    expect(yield* requestsWhile(false)).toBe(0);
-    expect(yield* requestsWhile(true)).toBe(1);
-  }),
-);
-
-it.effect("does not let OTLP serialization failures alter application effects", () => {
-  setDiagnosticsSending(true);
+it.effect.each([false, true])("gates relay sends and preserves typed failures (%s)", (enabled) => {
+  setDiagnosticsSending(enabled);
   const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
   const layerTracing = layerTracingTo(fetchFn);
   const failure = { durationNanos: 1n };
@@ -78,7 +57,8 @@ it.effect("does not let OTLP serialization failures alter application effects", 
     Effect.scoped,
     Effect.andThen(
       Effect.sync(() => {
-        expect(fetchFn).toHaveBeenCalledOnce();
+        expect(fetchFn).toHaveBeenCalledTimes(Number(enabled));
+        if (!enabled) return;
         expect(new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array)).toContain(
           "mobile.test.failed-span",
         );

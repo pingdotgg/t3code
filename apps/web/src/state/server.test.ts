@@ -21,10 +21,11 @@ const B = EnvironmentId.make("b");
 const SWAPPED: KeybindingRule[] = [{ key: "mod+n", command: "chat.newLocal" }];
 const STALE: KeybindingRule[] = [{ key: "mod+n", command: "chat.newWithoutProject" }];
 
-function config(rules: readonly KeybindingRule[]) {
+function config(rules: readonly KeybindingRule[], relayTracingAllowed?: boolean) {
   return {
     keybindings: compileResolvedKeybindingsConfig(rules),
     providers: [],
+    observability: { relayTracingAllowed },
   } as unknown as ServerConfig;
 }
 
@@ -132,21 +133,7 @@ describe("createShortcutKeybindingsAtom", () => {
 });
 
 it("clears relay tracing permission when the primary session ends", () => {
-  const allowed: ServerConfig = {
-    ...config([]),
-    observability: {
-      logsDirectoryPath: "/tmp/logs",
-      localTracingEnabled: false,
-      otlpTracesEnabled: false,
-      otlpMetricsEnabled: false,
-      otlpLogsEnabled: false,
-      relayTracingAllowed: true,
-    },
-  };
-  const optedOut: ServerConfig = {
-    ...allowed,
-    observability: { ...allowed.observability, relayTracingAllowed: false },
-  };
+  const allowed = config([], true);
   const sessionConfig = Atom.make<ServerConfig | null>(allowed);
   using _session = vi
     .spyOn(environmentSession, "initialConfigValueAtom")
@@ -173,7 +160,7 @@ it("clears relay tracing permission when the primary session ends", () => {
   });
 
   registry.set(sessionConfig, null);
-  registry.set(sessionConfig, optedOut);
+  registry.set(sessionConfig, config([], false));
 
   expect(answers).toEqual([true, null, false]);
 });

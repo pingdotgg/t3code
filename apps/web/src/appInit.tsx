@@ -255,13 +255,6 @@ function startThreadOverlayRetention(router: AppRouter): void {
   });
 }
 
-/** A browser follows the relay tracing opt-out of the server it was opened from. */
-function startRelayTelemetrySync(): void {
-  appAtomRegistry.subscribe(primaryRelayTracingAllowedAtom, setServerRelayTelemetry, {
-    immediate: true,
-  });
-}
-
 /**
  * Starts every app-lifetime service once, before the first render, and returns the router.
  * They run for the life of the page, so their disposers are dropped here.
@@ -285,7 +278,9 @@ export function startAppServices(): AppRouter {
   startI18n();
   startDocumentTitle(router);
   startHostEnvironmentLookup();
-  startRelayTelemetrySync();
+  appAtomRegistry.subscribe(primaryRelayTracingAllowedAtom, setServerRelayTelemetry, {
+    immediate: true,
+  });
   startEnvironmentThemeRepaint();
   startThemeBackground();
   startBrowserChromeThemeSync(router);

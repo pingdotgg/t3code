@@ -83,11 +83,7 @@ export const primaryServerConfigAtom = Atom.make(
   (get): ServerConfig | null => get(primaryServerStateAtom).config,
 ).pipe(Atom.withLabel("web-primary-server-config"));
 
-/**
- * Whether the primary server allows relay tracing, from the config that opened the current
- * session. A cached config, or one from before a reconnect, may predate an opt-out, so the
- * answer is unknown (null) until this session has one and again once it ends.
- */
+// The config cache can outlive the session and predate an opt-out.
 export const primaryRelayTracingAllowedAtom = Atom.make((get): boolean | null => {
   const environmentId = get(primaryEnvironmentIdAtom);
   const config =
