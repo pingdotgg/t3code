@@ -702,8 +702,10 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
         checkbox.properties = { type: "checkbox", checked, disabled: true };
         if (node.type === "element") node.properties.className = ["contains-task-list"];
       }
-      breakLines(child, walk.options.breaks);
-    } else if (tagName === "p") {
+      if (child.position) breakLines(child, walk.options.breaks);
+    } else if (tagName === "p" && Object.keys(child.properties).length === 0) {
+      // Words writes a Markdown paragraph bare; one with attributes is raw HTML, which keeps its
+      // lines as written, as remark-breaks never touched raw HTML.
       breakLines(child, walk.options.breaks);
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts

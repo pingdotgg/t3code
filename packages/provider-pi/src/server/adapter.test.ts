@@ -2078,6 +2078,42 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("ends the session as stopped when Pi exits while no turn is running", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const adapter = yield* makeAdapter(fake, "");
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const statuses: Array<{ status: string; lastError: string | null | undefined }> = [];
+      const drained = yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type === "provider_session.updated")
+              statuses.push({
+                status: event.providerSession.status,
+                lastError: event.providerSession.lastError,
+              });
+          }),
+        ),
+        Effect.exit,
+        Effect.forkScoped,
+      );
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.closeStdout;
+      const exit = yield* Fiber.join(drained);
+      assert.isTrue(Exit.isSuccess(exit));
+      assert.deepEqual(statuses.at(-1), { status: "stopped", lastError: null });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("counts a running Pi for port discovery until its session closes", () =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;

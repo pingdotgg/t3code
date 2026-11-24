@@ -4760,8 +4760,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // OpenCode 2.2.5 answers its model list only once the scan has ended (observed, not documented).
     const skillsMentioned = Effect.fnUntraced(function* (
       location: { readonly directory: string },
-      mentions: ReadonlyArray<string>,
+      text: string,
     ) {
+      const mentions = skillMentions(text);
+      if (mentions.length === 0) return [];
       const known = yield* listSkills(location);
       if (mentions.some((name) => !known.has(name))) {
         yield* readModels(location.directory);
@@ -4865,8 +4867,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         }
       }
-      const mentions = skillMentions(text);
-      const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
+      const skills = yield* skillsMentioned(location, text);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
@@ -5207,7 +5208,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (turn.settledInbox.has(inboxID)) return;
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
-          const { files, messageText } = yield* Effect.gen(function* () {
+          const { files, messageText, skills } = yield* Effect.gen(function* () {
             const files = yield* promptFiles(steerInput.message.attachments);
             const messageText = (yield* providerMessageTextWithAttachmentPaths({
               text: steerInput.message.text,
@@ -5215,7 +5216,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             })).trim();
-            return { files, messageText };
+            const skills = yield* skillsMentioned(
+              { directory: directoryOf(turn.input.runtimePolicy.cwd) },
+              steerInput.message.text,
+            );
+            return { files, messageText, skills };
           }).pipe(
             Effect.onInterrupt(() =>
               lock.withPermit(
@@ -5252,6 +5257,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               id: inboxID,
               text: messageText,
               ...(files.length === 0 ? {} : { files }),
+              ...(skills.length === 0
+                ? {}
+                : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
               delivery: "steer",
             })
             .pipe(
