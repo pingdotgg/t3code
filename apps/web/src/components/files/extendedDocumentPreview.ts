@@ -385,13 +385,15 @@ export async function openDocument(
             ["table:table-cell", "table:covered-table-cell"].includes(child.name),
           )) {
             const value =
-              find(cell, "text:p", "office:annotation").map(text).join("\n") ||
-              cell.attrs["office:value"] ||
-              cell.attrs["office:date-value"] ||
-              cell.attrs["office:time-value"] ||
-              cell.attrs["office:boolean-value"] ||
-              cell.attrs["office:string-value"] ||
-              "";
+              cell.name === "table:covered-table-cell"
+                ? ""
+                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                  cell.attrs["office:value"] ||
+                  cell.attrs["office:date-value"] ||
+                  cell.attrs["office:time-value"] ||
+                  cell.attrs["office:boolean-value"] ||
+                  cell.attrs["office:string-value"] ||
+                  "";
             const count = repeat(
               cell.attrs["table:number-columns-repeated"],
               TABLE_PREVIEW_MAX_COLUMNS + 1,
