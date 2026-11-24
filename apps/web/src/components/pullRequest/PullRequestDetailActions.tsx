@@ -6,11 +6,11 @@ import type {
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
 import { Branch, T, msg, useGT, useMessages } from "gt-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
 import { cn } from "~/lib/utils";
-import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
@@ -103,16 +103,37 @@ export function PullRequestCheckoutMenu({
   const gt = useGT();
   const m = useMessages();
   const [open, setOpen] = useState(false);
+  const [branchCheck, setBranchCheck] = useState<{ target: string; refName: string | null } | null>(
+    null,
+  );
   const branchTarget =
     open && checkoutRoot !== null && sameRepositoryHead !== null && canPrepareWorktree
-      ? { environmentId: actingEnvironmentId, input: { cwd: checkoutRoot } }
+      ? `${actingEnvironmentId}:${checkoutRoot}`
       : null;
-  const branch = useEnvironmentQuery(
-    branchTarget === null ? null : vcsEnvironment.branch(branchTarget),
-  );
-  const checkingBranch = branchTarget !== null && branch.data === null && branch.error === null;
+  const checkedBranch = branchCheck?.target === branchTarget ? branchCheck : null;
+  if (branchCheck !== null && checkedBranch === null) setBranchCheck(null);
+  const checkingBranch = branchTarget !== null && checkedBranch === null;
   const worktreeBranchAlreadyCheckedOut =
-    sameRepositoryHead !== null && branch.data?.refName === sameRepositoryHead;
+    sameRepositoryHead !== null && checkedBranch?.refName === sameRepositoryHead;
+  const readLocalStatus = useAtomCommand(vcsEnvironment.refreshLocalStatusForPicker, {
+    reportFailure: false,
+  });
+  const readCheckoutBranch = useEffectEvent((cwd: string, signal: AbortSignal) =>
+    readLocalStatus({ environmentId: actingEnvironmentId, input: { cwd } }, { signal }),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads live HEAD when the menu opens or the checkout target changes
+  useEffect(() => {
+    if (branchTarget === null || checkoutRoot === null) return;
+    const controller = new AbortController();
+    void readCheckoutBranch(checkoutRoot, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      setBranchCheck({
+        target: branchTarget,
+        refName: result._tag === "Success" ? result.value.refName : null,
+      });
+    });
+    return () => controller.abort();
+  }, [branchTarget, checkoutRoot]);
   return (
     <Menu onOpenChange={setOpen}>
       <Tooltip>

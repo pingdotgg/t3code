@@ -12,14 +12,11 @@ import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
 
-const { command, permissions, reads, shown } = vi.hoisted(() => ({
+const { command, refreshCheckoutBranch, permissions, reads, shown } = vi.hoisted(() => ({
   command: vi.fn(),
+  refreshCheckoutBranch: vi.fn(),
   permissions: { checkout: true, operate: true },
-  reads: {
-    diff: [] as unknown[],
-    currentBranch: null as string | null | undefined,
-    branchReads: 0,
-  },
+  reads: { diff: [] as unknown[] },
   shown: { detail: null as PullRequestDetailView | null },
 }));
 
@@ -73,25 +70,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     },
   };
 });
-vi.mock(import("~/state/use-atom-command"), async (original) => ({
-  ...(await original()),
-  useAtomCommand: (() => command) as never,
-}));
-vi.mock(import("~/state/vcs"), async (original) => {
-  const actual = await original();
-  const { AsyncResult, Atom } = await import("effect/reactivity");
-  const branch = Atom.family((refName: string | null | undefined) =>
-    Atom.make(refName === undefined ? AsyncResult.initial(true) : AsyncResult.success({ refName })),
-  );
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const { vcsEnvironment } = await import("~/state/vcs");
   return {
-    ...actual,
-    vcsEnvironment: {
-      ...actual.vcsEnvironment,
-      branch: (() => {
-        reads.branchReads++;
-        return branch(reads.currentBranch);
-      }) as never,
-    },
+    ...(await original()),
+    useAtomCommand: ((selected: unknown) =>
+      selected === vcsEnvironment.refreshLocalStatusForPicker
+        ? refreshCheckoutBranch
+        : command) as never,
   };
 });
 
@@ -174,12 +160,27 @@ function setup() {
   permissions.checkout = true;
   permissions.operate = true;
   reads.diff = [];
-  reads.currentBranch = null;
-  reads.branchReads = 0;
   shown.detail = detail;
   command.mockReset();
+  refreshCheckoutBranch.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
+
+it("reads the checkout branch again when the menu reopens", async () => {
+  setup();
+  shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
+  refreshCheckoutBranch
+    .mockResolvedValueOnce({ _tag: "Success", value: { refName: "feature" } })
+    .mockResolvedValueOnce({ _tag: "Success", value: { refName: "main" } });
+  await using screen = await render(panel());
+  const checkout = screen.getByRole("button", { name: "Check out", exact: true });
+  await userEvent.click(checkout);
+  const worktree = page.getByRole("menuitem", { name: /In a separate worktree/ });
+  await expect.element(worktree.getByText("Checked out here", { exact: true })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(checkout);
+  await expect.element(worktree).toBeEnabled();
+});
 
 it.each([
   { branch: "feature", headRepository: "owner/repo", blocked: true },
@@ -189,7 +190,7 @@ it.each([
   "checks worktree checkout for $headRepository with $branch checked out",
   async ({ branch, headRepository, blocked }) => {
     setup();
-    reads.currentBranch = branch;
+    refreshCheckoutBranch.mockResolvedValue({ _tag: "Success", value: { refName: branch } });
     shown.detail = { ...detail, headRepositoryNameWithOwner: headRepository };
     await using screen = await render(panel());
     await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
@@ -207,15 +208,20 @@ it.each([
 it("waits for the local branch only after the checkout menu opens", async () => {
   setup();
   shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
-  reads.currentBranch = undefined;
+  const pending = Promise.withResolvers<{ _tag: "Success"; value: { refName: string } }>();
+  refreshCheckoutBranch.mockReturnValue(pending.promise);
   await using screen = await render(panel());
-  expect(reads.branchReads).toBe(0);
+  expect(refreshCheckoutBranch).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
   await expect
     .element(page.getByRole("menuitem", { name: /In a separate worktree/ }))
     .toBeDisabled();
-  expect(reads.branchReads).toBeGreaterThan(0);
+  expect(refreshCheckoutBranch).toHaveBeenCalledOnce();
   await expect.element(page.getByRole("menuitem", { name: /In this repository/ })).toBeEnabled();
+  await act(() => pending.resolve({ _tag: "Success", value: { refName: "main" } }));
+  await expect
+    .element(page.getByRole("menuitem", { name: /In a separate worktree/ }))
+    .toBeEnabled();
 });
 
 it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
