@@ -2074,6 +2074,51 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("closes a secret card when the call is aborted while the card is being recorded", () =>
+    Effect.gen(function* () {
+      const recording = yield* Deferred.make<void>();
+      const statuses = yield* Ref.make<ReadonlyArray<string>>([]);
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed({ ...parentProjection([]), turnItems: [] }),
+          dispatch: (command) => {
+            if (command.type !== "secret_request.record") return Effect.die("Unexpected command");
+            return Ref.update(statuses, (values) => [...values, command.secretStatus]).pipe(
+              Effect.andThen(
+                command.secretStatus === "pending"
+                  ? Deferred.succeed(recording, undefined).pipe(Effect.andThen(Effect.never))
+                  : Effect.void,
+              ),
+              Effect.as({} as never),
+            );
+          },
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const call = yield* service
+          .requestSecret(scope, {
+            label: "Router key",
+            reason: "Connect the router.",
+            clientRequestId: "router-key",
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(recording);
+        yield* Fiber.interrupt(call);
+        assert.deepEqual(yield* Ref.get(statuses), ["pending", "cancelled"]);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
   // Command receipts dedupe by commandId, so a later run reusing the identity gets no card.
   it.effect("opens a new secret card when a later run reuses a clientRequestId", () =>
     Effect.gen(function* () {
