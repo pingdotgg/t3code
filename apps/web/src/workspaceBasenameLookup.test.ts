@@ -223,6 +223,11 @@ describe("agentWorkingDirectories", () => {
     ).toEqual(["/work/d"]);
   });
 
+  // regression: #42304 a shell given no -c runs a script file, not its first argument
+  it("does not read a shell's script file argument as an inline script", () => {
+    expect(directories(`sh "cd /work/l"`, `bash -x 'cd /work/m'`)).toEqual([]);
+  });
+
   it("leaves network shares out of the search roots", () => {
     expect(
       directories(
