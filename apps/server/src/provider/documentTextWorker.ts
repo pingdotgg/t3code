@@ -659,6 +659,12 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         return { name: "root", attrs: {}, children: [] };
       }
     };
+    const partRels = (name: string) =>
+      NodePath.posix.join(
+        NodePath.posix.dirname(name),
+        "_rels",
+        `${NodePath.posix.basename(name)}.rels`,
+      );
     const relations = (name: string) =>
       new Map(
         [...all(read(name), "Relationship")]
@@ -708,9 +714,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const resolveWorkbookPart = (target: string) =>
         NodePath.posix.resolve(`/${workbookDir}`, target).slice(1);
       const workbook = read(workbookPath);
-      const rels = relations(
-        NodePath.posix.join(workbookDir, "_rels", `${NodePath.posix.basename(workbookPath)}.rels`),
-      );
+      const rels = relations(partRels(workbookPath));
       const workbookRelations = [...rels.values()];
       const workbookPartPath = (part: string) => {
         const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
@@ -802,8 +806,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         }
       }
     } else if (extension === ".pptx") {
-      const rels = relations("ppt/_rels/presentation.xml.rels");
-      const [presentation] = children(read("ppt/presentation.xml"));
+      const presentationPath = mainPart("ppt/presentation.xml");
+      const presentationDir = NodePath.posix.dirname(presentationPath);
+      const rels = relations(partRels(presentationPath));
+      const [presentation] = children(read(presentationPath));
       const slideList = children(presentation).find((node) => node.name === "sldIdLst");
       const inheritedAttributes = { ...presentation?.attrs, ...slideList?.attrs };
       let index = 0;
@@ -814,15 +820,9 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           skip(`slide relationship ${index}`);
           continue;
         }
-        const name = target.startsWith("/")
-          ? target.slice(1)
-          : NodePath.posix.normalize(`ppt/${target}`);
+        const name = NodePath.posix.resolve(`/${presentationDir}`, target).slice(1);
         yield* paragraphs(read(name));
-        const slideRels = NodePath.posix.join(
-          NodePath.posix.dirname(name),
-          "_rels",
-          `${NodePath.posix.basename(name)}.rels`,
-        );
+        const slideRels = partRels(name);
         if (!has(slideRels)) continue;
         for (const rel of all(read(slideRels), "Relationship")) {
           const target = rel.attrs.Target;
