@@ -10,6 +10,7 @@ import {
 import { msg } from "gt-react";
 
 import { m } from "../i18n/messages";
+import type { ImageEncodeRequest, ImageEncodeResponse } from "./imageEncode.worker";
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
@@ -354,8 +355,63 @@ function createCanvas(
   return { canvas, context };
 }
 
+let encodeWorker: Worker | null = null;
+let encodeWorkerUnavailable = false;
+let nextEncodeId = 0;
+const pendingEncodes = new Map<number, (blob: Blob | null) => void>();
+
+function settleEncode(id: number, blob: Blob | null) {
+  pendingEncodes.get(id)?.(blob);
+  pendingEncodes.delete(id);
+}
+
+function startEncodeWorker(): Worker | null {
+  if (encodeWorker || encodeWorkerUnavailable || typeof Worker !== "function") return encodeWorker;
+  try {
+    encodeWorker = new Worker(new URL("./imageEncode.worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    encodeWorkerUnavailable = true;
+    return null;
+  }
+  encodeWorker.addEventListener("message", (event: MessageEvent<ImageEncodeResponse>) =>
+    settleEncode(event.data.id, "blob" in event.data ? event.data.blob : null),
+  );
+  encodeWorker.addEventListener("error", () => {
+    encodeWorkerUnavailable = true;
+    encodeWorker?.terminate();
+    encodeWorker = null;
+    for (const id of pendingEncodes.keys()) settleEncode(id, null);
+  });
+  return encodeWorker;
+}
+
+/**
+ * Chromium runs main-thread canvas encodes as idle tasks, so on a page with no idle time each one
+ * waits ~1 s. A worker encodes at once. `null` means the caller should encode on the main thread.
+ */
+async function encodeInWorker(
+  canvas: OffscreenCanvas,
+  colorSpace: PredefinedColorSpace,
+  quality: number,
+  mimeType: string,
+): Promise<Blob | null> {
+  const worker = startEncodeWorker();
+  if (!worker) return null;
+  const bitmap = await createImageBitmap(canvas);
+  const id = nextEncodeId++;
+  return new Promise((resolve) => {
+    pendingEncodes.set(id, resolve);
+    worker.postMessage({ id, bitmap, colorSpace, mimeType, quality } satisfies ImageEncodeRequest, [
+      bitmap,
+    ]);
+  });
+}
+
 async function encodeCanvas(
   canvas: OffscreenCanvas | HTMLCanvasElement,
+  colorSpace: PredefinedColorSpace,
   quality: number,
   mimeType: string,
 ): Promise<Blob | null> {
@@ -363,7 +419,10 @@ async function encodeCanvas(
   if (typeof HTMLCanvasElement !== "undefined" && canvas instanceof HTMLCanvasElement) {
     blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
   } else {
-    blob = await (canvas as OffscreenCanvas).convertToBlob({ type: mimeType, quality });
+    const offscreen = canvas as OffscreenCanvas;
+    blob =
+      (await encodeInWorker(offscreen, colorSpace, quality, mimeType)) ??
+      (await offscreen.convertToBlob({ type: mimeType, quality }));
   }
   return blob?.type === mimeType ? blob : null;
 }
@@ -446,7 +505,7 @@ async function renderComposerImageThumbnailFromBitmap(
       dimension,
       dimension,
     );
-    const blob = await encodeCanvas(surface.canvas, 1, "image/png");
+    const blob = await encodeCanvas(surface.canvas, colorSpace, 1, "image/png");
     return blob ? await readFileAsDataUrl(blob) : null;
   } catch {
     return null;
@@ -469,7 +528,7 @@ async function encodeWithinBudget(
   // Probe the codec before drawing; JPEG needs a white matte because it has no alpha.
   const mimeType =
     preferredMimeType ??
-    ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp"))
+    ((await encodeCanvas(target.canvas, colorSpace, QUALITY_STEPS[0], "image/webp"))
       ? "image/webp"
       : "image/jpeg");
 
@@ -480,7 +539,7 @@ async function encodeWithinBudget(
   target.context.drawImage(bitmap, 0, 0, width, height);
 
   for (const quality of QUALITY_STEPS) {
-    const encoded = await encodeCanvas(target.canvas, quality, mimeType);
+    const encoded = await encodeCanvas(target.canvas, colorSpace, quality, mimeType);
     if (!encoded) break;
     if (dataUrlLength(encoded) <= budgetChars) {
       return { blob: encoded, mimeType, imageSize: { width, height } };
@@ -593,11 +652,12 @@ async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: I
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
     const imageSize = fitImageAttachmentSize(bitmap);
     if (!imageSize) return null;
-    const target = createCanvas(imageSize.width, imageSize.height, await readImageColorSpace(file));
+    const colorSpace = await readImageColorSpace(file);
+    const target = createCanvas(imageSize.width, imageSize.height, colorSpace);
     if (!target) return null;
     target.context.imageSmoothingQuality = "high";
     target.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
-    const blob = await encodeCanvas(target.canvas, QUALITY_STEPS[0], mimeType);
+    const blob = await encodeCanvas(target.canvas, colorSpace, QUALITY_STEPS[0], mimeType);
     if (!blob) return null;
     return {
       file: new File([blob], file.name, { type: mimeType, lastModified: file.lastModified }),
@@ -720,7 +780,7 @@ async function convertHeicImage(
     if (!surface) return { ok: false, reason: "unreadable" };
     surface.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
     const [converted] = await Promise.all([
-      encodeCanvas(surface.canvas, QUALITY_STEPS[0], "image/jpeg"),
+      encodeCanvas(surface.canvas, colorSpace, QUALITY_STEPS[0], "image/jpeg"),
       renderComposerImageThumbnailFromBitmap(bitmap, colorSpace).then(onThumbnail),
     ]);
     if (!converted) return { ok: false, reason: "unreadable" };

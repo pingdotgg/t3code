@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import heicUrl from "../../test/fixtures/images/photo.heic?url";
 import {
   compressImageForStash,
+  createComposerImageThumbnail,
   dataUrlToFile,
   prepareImageForAttachment,
   readFileAsDataUrl,
@@ -92,6 +93,26 @@ function replaceHeicColorWithProfile(heic: Uint8Array, profile: Uint8Array) {
   }
   return out;
 }
+
+describe("prepareImageForAttachment encoding", () => {
+  // Chromium runs main-thread canvas encodes as idle tasks, which stall ~1 s on a busy page.
+  it("encodes off the main thread", async () => {
+    const source = await makeImage("srgb", "#ff0000", "image/png");
+    const convertToBlob = vi.spyOn(OffscreenCanvas.prototype, "convertToBlob");
+    try {
+      const [result, thumbnail] = await Promise.all([
+        prepareImageForAttachment(source, 20 * 1024 * 1024),
+        createComposerImageThumbnail(source),
+      ]);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.imageSize).toEqual({ width: 2000, height: 1333 });
+      expect(thumbnail).toMatch(/^data:image\/png;base64,/);
+      expect(convertToBlob).not.toHaveBeenCalled();
+    } finally {
+      convertToBlob.mockRestore();
+    }
+  });
+});
 
 describe("prepareImageForAttachment color", () => {
   // P3 green lies outside sRGB, so an sRGB canvas clips it; a P3 canvas would turn sRGB red's
