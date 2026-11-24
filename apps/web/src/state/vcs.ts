@@ -1,3 +1,5 @@
+import { subscribeVcsBranch } from "@t3tools/client-runtime/rpc";
+import { createEnvironmentSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   createVcsActionManager,
   createVcsEnvironmentAtoms,
@@ -11,6 +13,15 @@ import { subscribeDocumentReturn } from "../lib/documentActivity";
 
 export const vcsEnvironment = createVcsEnvironmentAtoms(connectionAtomRuntime);
 export const vcsActionManager = createVcsActionManager(connectionAtomRuntime);
+
+// An independent subscription avoids reusing another view's cached HEAD.
+export function createCheckoutBranchSubscription() {
+  return createEnvironmentSubscriptionAtomFamily(connectionAtomRuntime, {
+    label: "web:vcs:checkout-branch",
+    idleTtlMs: 0,
+    subscribe: subscribeVcsBranch,
+  });
+}
 
 /** Only what a chat view reads, so changing file counts don't re-render it on every edit. */
 export const chatGitStatusAtom = Atom.family((status: ReturnType<typeof vcsEnvironment.status>) =>
