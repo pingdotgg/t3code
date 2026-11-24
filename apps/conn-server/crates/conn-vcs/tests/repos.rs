@@ -2193,3 +2193,62 @@ async fn commit_all_refuses_a_conflict_in_a_file_named_with_invalid_utf8() {
     assert!(git(&fx.work, &["ls-files", "--unmerged"]).is_empty());
     assert!(!fx.work.join(".git/MERGE_HEAD").exists());
 }
+
+/// A resolution of `notes.txt` of exactly `size` bytes: a Markdown heading, whose `=======`
+/// underline Git reports as a possible marker, then one long line.
+fn heading_resolution(size: usize) -> String {
+    let head = "Heading\n=======\n";
+    format!("{head}{}\n", "x".repeat(size - head.len() - 1))
+}
+
+#[tokio::test]
+async fn commits_a_large_merge_resolution_with_a_heading_underline() {
+    for size in [4_096, 1_200_000] {
+        let fx = merge_conflict("commit-large-resolution");
+        let resolution = heading_resolution(size);
+        write(&fx.work, "notes.txt", &resolution);
+
+        commit::create(&fx.work, "Merge", "", None).await.unwrap();
+
+        assert_eq!(
+            git(&fx.work, &["rev-list", "--parents", "-n1", "HEAD"])
+                .split_whitespace()
+                .count(),
+            3,
+            "{size}"
+        );
+        assert_eq!(
+            git(&fx.work, &["cat-file", "-s", "HEAD:notes.txt"]).trim(),
+            size.to_string()
+        );
+        assert!(git(&fx.work, &["show", "HEAD:notes.txt"]) == resolution);
+        assert!(git(&fx.work, &["ls-files", "--unmerged"]).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn refuses_conflict_markers_past_the_first_million_bytes() {
+    let fx = merge_conflict("commit-late-markers");
+    let padding = "a line of padding text\n".repeat(50_000);
+    assert!(padding.len() > 1_000_000, "the markers start past 1 MB");
+    write(
+        &fx.work,
+        "notes.txt",
+        &format!("{padding}<<<<<<< HEAD\nmain\n=======\nfeature\n>>>>>>> feature\n"),
+    );
+    let head = git(&fx.work, &["rev-parse", "HEAD"]);
+    let stages = git(&fx.work, &["ls-files", "-s"]);
+
+    let err = commit::create(&fx.work, "Merge", "", None)
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Cannot commit with unresolved merge conflicts in notes.txt."),
+        "{err}"
+    );
+    assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]), head);
+    assert_eq!(git(&fx.work, &["ls-files", "-s"]), stages);
+    assert!(fx.work.join(".git/MERGE_HEAD").exists());
+}
