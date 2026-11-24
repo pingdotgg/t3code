@@ -112,6 +112,18 @@ approval rules. They start in their own default mode, and their mode picker in t
 menu switches it. How far an agent is confined depends on that mode and the agent's own settings,
 so use its sandbox and permission controls when that matters.
 
+A new Factory Droid session starts at the autonomy level saved in Droid's own settings. On a thread
+below **Full access** whose current model has no level picked in the menu, T3 Code switches Droid
+from Auto (Low), (Medium), or (High) to Auto (Off), where Droid offers it, when it starts or reloads
+the session and when the thread's permission mode changes. A session approval that had raised
+Droid's level no longer covers the edits or commands that depended on it, so Droid can ask again.
+Its own command rules still apply. A level picked in the menu applies in every permission mode, so
+Auto (High) lets Droid act without asking even on **Supervised**, unless a
+[managed policy](./managed-policy.md#permission-modes) caps the permission mode. As with any model
+option, T3 Code keeps the pick with the model it was made on, so a thread carries no level after
+you change to a model you have not picked one for. If a session or a turn fails while switching to
+Auto (Off), update Droid to 0.236.0 or later.
+
 When a registry agent asks for approval, T3 Code answers by the thread's
 [permission mode](./permission-modes.md): **Supervised** shows the request in the conversation,
 **Auto-accept edits** approves edits and shows the rest, and **Auto** and **Full access** approve

@@ -9,7 +9,7 @@ import {
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
 } from "./devinAcp.ts";
-import { droidAcpFlavor } from "./droidAcp.ts";
+import { droidSessionModeForPolicy, extractDroidElicitationForm } from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
 import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
@@ -277,7 +277,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
     ...(isDroid
-      ? droidAcpFlavor
+      ? {
+          extractElicitationForm: extractDroidElicitationForm,
+          sessionModeForPolicy: droidSessionModeForPolicy,
+        }
       : isOmp
         ? { extractElicitationForm: extractOmpElicitationForm }
         : isOpenCode

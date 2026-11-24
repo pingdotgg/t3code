@@ -760,6 +760,24 @@ function rawProtocolRequestParam(
   return typeof params === "object" && params !== null ? Reflect.get(params, key) : undefined;
 }
 
+// The `autonomy_level` a decoded reply or session update reports in its config options. Raw
+// incoming events are chunks, which can split a message.
+function protocolAutonomyLevel(event: EffectAcpProtocol.AcpProtocolLogEvent): unknown {
+  if (event.stage !== "decoded" || !Array.isArray(event.payload)) return undefined;
+  const field = (value: unknown, key: string): unknown =>
+    typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+  let level: unknown;
+  for (const message of event.payload) {
+    const options =
+      field(field(field(message, "exit"), "value"), "configOptions") ??
+      field(field(field(message, "payload"), "update"), "configOptions");
+    if (!Array.isArray(options)) continue;
+    const option = options.find((candidate) => field(candidate, "configId") === "autonomy_level");
+    if (option !== undefined) level = field(option, "currentValue");
+  }
+  return level;
+}
+
 function rawProtocolPromptTextBlocks(
   event: EffectAcpProtocol.AcpProtocolLogEvent,
 ): Array<{ type: "text"; text: string }> {
@@ -2471,17 +2489,82 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest));
   });
 
+  // Each mock Droid session starts at auto-high. `writes` are T3's level writes before a turn's
+  // prompt; `level` is the last level Droid reported by then.
   it.live.each([
-    { agent: "the registry agent", settings: DROID_SETTINGS, maxAutonomy: "auto-high" },
     {
-      agent: "the registry agent under an organization cap",
+      agent: "the registry agent",
       settings: DROID_SETTINGS,
-      maxAutonomy: "auto-medium",
+      turns: [
+        { runtimeMode: "approval-required", writes: ["normal"], level: "normal" },
+        {
+          runtimeMode: "approval-required",
+          pick: "auto-high",
+          writes: ["auto-high"],
+          level: "auto-high",
+        },
+        { runtimeMode: "full-access", writes: [], level: "auto-high" },
+        { runtimeMode: "approval-required", writes: ["normal"], level: "normal" },
+      ],
     },
-    { agent: "a local droid command", settings: DROID_LOCAL_SETTINGS, maxAutonomy: "auto-high" },
-  ])(
-    "keeps Factory Droid's autonomy level on the thread's runtime mode for $agent",
-    ({ settings, maxAutonomy }) =>
+    {
+      agent: "a local droid command",
+      settings: DROID_LOCAL_SETTINGS,
+      turns: [
+        {
+          runtimeMode: "auto-accept-edits",
+          otherOption: "example",
+          grant: "auto-low",
+          writes: ["normal"],
+          level: "normal",
+        },
+        {
+          runtimeMode: "approval-required",
+          grant: "auto-medium",
+          writes: ["normal"],
+          level: "normal",
+        },
+        { runtimeMode: "auto", grant: "auto-high", writes: ["normal"], level: "normal" },
+        { runtimeMode: "auto", model: "composer-2", writes: [], level: "auto-high" },
+      ],
+    },
+    {
+      agent: "a session approval, a model change and new sessions",
+      settings: DROID_SETTINGS,
+      turns: [
+        {
+          runtimeMode: "approval-required",
+          grant: "auto-low",
+          writes: ["normal"],
+          level: "normal",
+        },
+        { runtimeMode: "approval-required", model: "composer-2", writes: [], level: "auto-low" },
+        {
+          runtimeMode: "approval-required",
+          newSession: true,
+          pick: "auto-low",
+          writes: ["auto-low"],
+          level: "auto-low",
+        },
+        { runtimeMode: "approval-required", newSession: true, writes: ["normal"], level: "normal" },
+      ],
+    },
+    {
+      agent: "a pick a managed limit drops",
+      settings: DROID_SETTINGS,
+      turns: [
+        {
+          runtimeMode: "approval-required",
+          maxRuntimeMode: "approval-required",
+          pick: "auto-high",
+          writes: ["normal"],
+          level: "normal",
+        },
+      ],
+    },
+  ] as const)(
+    "lowers an unpicked Factory Droid level only while applying a permission mode below Full access, for $agent",
+    ({ settings, turns }) =>
       Effect.gen(function* () {
         const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
         const instanceId = ProviderInstanceId.make("droid-autonomy-test");
@@ -2495,65 +2578,74 @@ describe("AcpAdapterV2", () => {
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             mockAgentPath: yield* bundledMockAgentPath,
             protocolEvents,
-            environment: { T3_ACP_DROID_MODES: "1", T3_ACP_DROID_MAX_AUTONOMY: maxAutonomy },
+            environment: { T3_ACP_DROID_MODES: "1", T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION: "1" },
           }),
         }).pipe(
           Effect.provide(
             Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
           ),
         );
-        const policy = (
-          runtimeMode: "approval-required" | "full-access",
-          interactionMode: "default" | "plan" = "default",
-        ) =>
-          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode,
-            interactionMode,
+        const turnInputs = turns.map((turn) => ({
+          modelSelection: {
+            instanceId,
+            model: "model" in turn ? turn.model : "default",
+            options: [
+              ...("pick" in turn ? [{ id: "autonomy_level", value: turn.pick }] : []),
+              ...("otherOption" in turn ? [{ id: "agent", value: turn.otherOption }] : []),
+            ],
+          },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: turn.runtimeMode,
+            interactionMode: "default",
+            ...("maxRuntimeMode" in turn ? { maxRuntimeMode: turn.maxRuntimeMode } : {}),
             cwd: process.cwd(),
-          });
-        const modelSelection: ModelSelection = {
-          instanceId,
-          model: "default",
-          options: [{ id: "autonomy_level", value: "auto-low" }],
-        };
+          }),
+        }));
         const runtime = yield* adapter.openSession({
           threadId,
           providerSessionId: ProviderSessionId.make("provider-session-droid-autonomy"),
-          modelSelection,
-          runtimePolicy: policy("approval-required"),
+          ...turnInputs[0]!,
         });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection,
-          runtimePolicy: policy("approval-required"),
-        });
+        let providerThread = yield* runtime.ensureThread({ threadId, ...turnInputs[0]! });
         const now = yield* DateTime.now;
-        const autonomyWritesForTurn = Effect.fnUntraced(function* (
-          ordinal: number,
-          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-        ) {
+        const observed = [];
+        let level: unknown;
+        for (const [ordinal, turn] of turns.entries()) {
+          const input = turnInputs[ordinal]!;
+          if ("newSession" in turn) {
+            providerThread = yield* runtime.ensureThread({
+              threadId,
+              ...input,
+              existingProviderThread: providerThread,
+              forceNewNativeThread: true,
+            });
+          }
           yield* runtime.startTurn(
             makeTurnInput({
               threadId,
               providerThread,
               instanceId,
-              runtimePolicy,
               now,
               ordinal,
-              messageText: `Request ${ordinal}.`,
-              modelSelection,
+              // The mock Droid raises itself to this level, as a session approval does.
+              messageText:
+                "grant" in turn
+                  ? `Always allow this session (${turn.grant}).`
+                  : `Request ${ordinal}.`,
+              ...input,
             }),
           );
-          yield* runtime.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runDrain,
+          const terminal = yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
           );
           const writes: Array<unknown> = [];
           while (true) {
             const event = yield* Queue.take(protocolEvents);
+            if (event.direction === "incoming") level = protocolAutonomyLevel(event) ?? level;
             if (event.direction !== "outgoing") continue;
             const method = rawProtocolMethod(event);
-            if (method === "session/prompt") return writes;
+            if (method === "session/prompt") break;
             if (
               method === "session/set_config_option" &&
               rawProtocolRequestParam(event, "configId") === "autonomy_level"
@@ -2561,88 +2653,17 @@ describe("AcpAdapterV2", () => {
               writes.push(rawProtocolRequestParam(event, "value"));
             }
           }
-        });
-
+          observed.push({ writes, level, status: Option.getOrThrow(terminal).status });
+        }
         assert.deepEqual(
-          yield* autonomyWritesForTurn(0, policy("approval-required")),
-          ["normal"],
-          "The policy's level is the only write: the composer's Autonomy Level choice is never sent",
-        );
-        assert.deepEqual(
-          yield* autonomyWritesForTurn(1, policy("full-access")),
-          [maxAutonomy],
-          "Full access reaches the highest level the organization allows",
-        );
-        assert.deepEqual(yield* autonomyWritesForTurn(2, policy("full-access", "plan")), []);
-        assert.deepEqual(
-          yield* autonomyWritesForTurn(3, policy("approval-required")),
-          ["normal"],
-          "Leaving Plan must not restore the autonomy level an earlier policy set",
+          observed,
+          turns.map((turn) => ({
+            writes: [...turn.writes],
+            level: turn.level,
+            status: "completed" as const,
+          })),
         );
       }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.live("reconfigures a reused ACP session only when its policy changes", () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("acp-policy-changes");
-      const threadId = ThreadId.make("thread-policy-changes");
-      const modelSelection = { instanceId, model: "default" };
-      let configurations = 0;
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          onSessionConfigurationUpdate: () => Effect.sync(() => configurations++),
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            mockAgentPath: yield* bundledMockAgentPath,
-          }),
-        },
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "approval-required",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("session-policy-changes"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const changes = [];
-      for (const [ordinal, restrictions] of [
-        { approvalPolicy: "on-request" },
-        { approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } },
-        { approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } },
-      ].entries()) {
-        const before = configurations;
-        yield* runtime.startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            modelSelection,
-            runtimePolicy: { ...runtimePolicy, ...restrictions },
-            now: yield* DateTime.now,
-            ordinal,
-          }),
-        );
-        yield* runtime.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runDrain,
-        );
-        changes.push(configurations - before);
-      }
-      assert.deepEqual(changes, [1, 1, 0], "approval changed, sandbox changed, unchanged");
-    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live.each(["failed", "recovered", "cancelled"] as const)(

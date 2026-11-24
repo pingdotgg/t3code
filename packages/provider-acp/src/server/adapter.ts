@@ -483,10 +483,14 @@ export interface AcpAdapterV2Flavor {
    */
   readonly ownedModelOptionIds?: ReadonlyArray<string>;
   readonly lockSessionModeToPolicy?: true;
-  /** `advertisedModeIds` are the modes the live session offers; an agent may reject any other. */
+  /**
+   * Mode to set on each configure, or none. `unpickedMode` is the session's mode state, given only
+   * while applying the permission mode (a session's first configure, or a changed runtime mode)
+   * to a thread that picks no mode.
+   */
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-    advertisedModeIds: ReadonlyArray<string>,
+    unpickedMode: AcpSessionModeState | undefined,
   ) => string | undefined;
   /**
    * Native select-option values to apply for a runtime policy (e.g. Kiro's
@@ -2303,6 +2307,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
+          yield* Ref.set(configuredRuntimeMode, null);
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
@@ -2325,8 +2330,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           return modes;
         });
-        const configuredRuntimePolicy =
-          yield* Ref.make<ProviderAdapter.ProviderAdapterV2RuntimePolicy | null>(null);
+        const configuredRuntimeMode = yield* Ref.make<
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] | null
+        >(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -8290,7 +8296,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const policyMode = flavor.sessionModeForPolicy?.(
             runtimePolicy,
-            (yield* runtime.getModeState)?.availableModes.map((mode) => mode.id) ?? [],
+            (yield* Ref.get(configuredRuntimeMode)) !== runtimePolicy.runtimeMode &&
+              !optionSelections.some((selection) => isModeChoice(selection.id))
+              ? yield* runtime.getModeState
+              : undefined,
           );
           const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
           if (policyMode !== undefined) {
@@ -8380,7 +8389,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
-          yield* Ref.set(configuredRuntimePolicy, runtimePolicy);
+          yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
           yield* (
             flavor.onSessionConfigurationUpdate?.(
               yield* runtime.getConfigOptions,
@@ -9372,18 +9381,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
-              const configuredPolicy = yield* Ref.get(configuredRuntimePolicy);
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
                 configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
-                configuredPolicy === null ||
-                configuredPolicy.runtimeMode !== turnInput.runtimePolicy.runtimeMode ||
-                !Equal.equals(
-                  configuredPolicy.approvalPolicy,
-                  turnInput.runtimePolicy.approvalPolicy,
-                ) ||
-                !Equal.equals(configuredPolicy.sandboxPolicy, turnInput.runtimePolicy.sandboxPolicy)
+                (yield* Ref.get(configuredRuntimeMode)) !== turnInput.runtimePolicy.runtimeMode
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {

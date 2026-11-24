@@ -1,6 +1,5 @@
 import { type OrchestrationV2UserInputQuestion, TrimmedNonEmptyString } from "@t3tools/contracts";
 import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -27,9 +26,9 @@ const isDroidCompanion = Schema.is(Schema.Struct({ type: Schema.Literal("string"
 
 // Droid pairs each choice with an optional *_other field. The client already
 // offers custom answers, so hide the companion and restore it in the response.
-const extractDroidElicitationForm: NonNullable<AcpAdapterV2Flavor["extractElicitationForm"]> = (
-  request,
-) => {
+export const extractDroidElicitationForm: NonNullable<
+  AcpAdapterV2Flavor["extractElicitationForm"]
+> = (request) => {
   if (request.mode !== "form" || !isDroidForm(request.requestedSchema)) return undefined;
   const { properties, required } = request.requestedSchema;
   const questions: Array<OrchestrationV2UserInputQuestion> = [];
@@ -84,29 +83,15 @@ const extractDroidElicitationForm: NonNullable<AcpAdapterV2Flavor["extractElicit
   };
 };
 
-const DROID_LEVELS_HIGHEST_FIRST = ["auto-high", "auto-medium", "auto-low", "normal"];
-
-// Droid's session modes are its autonomy levels, and a new session can start at
-// `auto-high`, which runs every action without asking. `normal` asks before each
-// change, so T3's runtime policy answers; only unrestricted full access skips asking.
-// An organization can cap the levels, and Droid then advertises only the ones it accepts.
-function droidSessionModeForPolicy(
-  policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  advertisedModeIds: ReadonlyArray<string>,
-): string | undefined {
-  const unrestricted =
-    policy.runtimeMode === "full-access" &&
-    policy.approvalPolicy === undefined &&
-    policy.sandboxPolicy === undefined;
-  return (unrestricted ? DROID_LEVELS_HIGHEST_FIRST : ["normal"]).find((level) =>
-    advertisedModeIds.includes(level),
-  );
-}
-
-export const droidAcpFlavor = {
-  extractElicitationForm: extractDroidElicitationForm,
-  // The policy picks the level, so T3 never sends the composer's Autonomy Level choice.
-  ownedModelOptionIds: ["autonomy_level"],
-  lockSessionModeToPolicy: true,
-  sessionModeForPolicy: droidSessionModeForPolicy,
-} satisfies Partial<AcpAdapterV2Flavor>;
+// Droid's modes are its autonomy levels: `normal` is Auto (Off), and the `auto-*` levels can act
+// without asking.
+export const droidSessionModeForPolicy: NonNullable<AcpAdapterV2Flavor["sessionModeForPolicy"]> = (
+  policy,
+  unpickedMode,
+) =>
+  policy.runtimeMode !== "full-access" &&
+  unpickedMode !== undefined &&
+  ["auto-low", "auto-medium", "auto-high"].includes(unpickedMode.currentModeId) &&
+  unpickedMode.availableModes.some((mode) => mode.id === "normal")
+    ? "normal"
+    : undefined;
