@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} svarade inte på någon sparad rutt.",
   "b0dd3cd876937ca8": "Anslutningsprofilen {connectionId} är inte tillgänglig.",
   "5ce46783e79ca9d1": "Autentiseringsuppgiften för anslutningen {connectionId} är inte tillgänglig.",
-  "0bda0cac7f5acc20": "Den anslutna miljön {actual} matchar inte {expected}.",
+  "b39d1428ec8b23f5": "Den här adressen kör nu en annan T3 Code-installation ({actual}, inte {expected}). Ta bort anslutningen och lägg till den igen.",
   "ea0d3e4e51d5706f": "Miljöns autentiseringsuppgift är ogiltig.",
   "7283ebfd16d09677": "Miljöns autentiseringsuppgift ger inte den åtkomst som krävs.",
   "d3e9a9cb543b4b7b": "Miljön avvisade autentiseringsbegäran.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Startar MCP-servrar för {provider}",
   "fedaa29ff8815a77": "Läser in hooks för {provider}",
   "57025ae4de5beb57": "Läser in regler och färdigheter för {provider}",
+  "1cbfbcad9f0d04fe": "Återupptar sessionen för {provider}",
   "4729a188600f1501": "Ansluter till {provider}",
   "8c8977097681630f": "Startar {provider}",
   "f1d27d127ab27ac6": "Startar",
@@ -2628,6 +2629,8 @@
   "89b5e8f3887812da": "Gästbegäran",
   "62e626804919b294": "Input behövs",
   "c6196d99000642b4": "Öppna tråd",
+  "70bdebaa3d291d3b": "Tråden är inte tillgänglig",
+  "a351ebbdcf1a3f7a": "Den här tråden finns i en miljö som den här appen inte är ansluten till.",
   "826cb862b4a11fb3": "{label}:",
   "3e597ec938e7551b": "Du:",
   "a1fbf2422c588292": "Agent:",
@@ -3626,8 +3629,8 @@
   "478e3b4551be4db3": "Visa extraherad text",
   "e7205ebfead1aafc": "Expanderad videoförhandsvisning",
   "1bda77e861bb472f": "Expanderad bildförhandsvisning",
-  "eebe5b17e3c19a1c": "Tillbaka, stäng videoförhandsvisningen",
-  "58fd0009a6eb7258": "Tillbaka, stäng bildförhandsvisningen",
+  "fb633d54edaeb4b1": "Stäng videoförhandsvisningen",
+  "62d0c453f5803180": "Stäng bildförhandsvisningen",
   "47bae54b5f532ff3": "Föregående media",
   "fb9434aad2b5c0bb": "Bilden kunde inte läsas in.",
   "26aee5d4e97bfb28": "Bilden är inte tillgänglig. Filen kan ha flyttats eller tagits bort.",
@@ -6639,28 +6642,8 @@
   "a6d75a4380173c60": "Öppna kontroller: {summary}",
   "be3d1766bad18693": "Kontroller: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} misslyckades} other {{count} misslyckades}}",
+  "fd63b391898889f9": "{count, plural, one {{count} väntar på åtgärd} other {{count} väntar på åtgärd}}",
   "cb116c139cdace98": "Inga kontroller rapporterade",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "kontroller"
-  ],
   "60b56e201607c7ec": "Kontrolldetaljerna är inaktuella. Uppdatera pull requesten för att uppdatera dem.",
   "e74cd4e960cbb5e5": "Oförändrade rader är inte tillgängliga i en fil med bortklippta rader.",
   "38d6169e04a9a4ce": "Fler kommentarer kunde inte läsas in",
@@ -12160,6 +12143,8 @@
   "f13e08bd3614112e": "uppdatera T3 Code på den datorn",
   "3c3348c36a2695af": "byt uppdateringsspår på den datorn",
   "fa8faa732a2688ef": "på kanalen {channel}",
+  "e65649675cb4cbaa": "avstängd",
+  "a1e7c08d9ef315c7": "läses fortfarande in",
   "9b961309baafa09d": "ingen behörighet",
   "9bafb2622c22d145": "uppdateras redan",
   "61aa0109862ff7ca": "Nightly",

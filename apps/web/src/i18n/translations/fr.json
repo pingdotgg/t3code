@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} n’a répondu sur aucune route enregistrée.",
   "b0dd3cd876937ca8": "Le profil de connexion {connectionId} n’est pas disponible.",
   "5ce46783e79ca9d1": "Les identifiants de connexion {connectionId} ne sont pas disponibles.",
-  "0bda0cac7f5acc20": "L’environnement connecté {actual} ne correspond pas à {expected}.",
+  "b39d1428ec8b23f5": "Cette adresse exécute désormais une autre installation de T3 Code ({actual}, et non {expected}). Supprimez cette connexion et ajoutez-la à nouveau.",
   "ea0d3e4e51d5706f": "Les identifiants de l’environnement ne sont pas valides.",
   "7283ebfd16d09677": "Les identifiants de l’environnement n’accordent pas l’accès requis.",
   "d3e9a9cb543b4b7b": "L’environnement a rejeté la demande d’authentification.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Démarrage des serveurs MCP de {provider}",
   "fedaa29ff8815a77": "Chargement des hooks de {provider}",
   "57025ae4de5beb57": "Chargement des règles et des skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reprise de la session de {provider}",
   "4729a188600f1501": "Connexion à {provider}",
   "8c8977097681630f": "Démarrage de {provider}",
   "f1d27d127ab27ac6": "Démarrage",
@@ -2628,6 +2629,8 @@
   "89b5e8f3887812da": "Demande d’invité",
   "62e626804919b294": "Réponse requise",
   "c6196d99000642b4": "Ouvrir le fil",
+  "70bdebaa3d291d3b": "Fil indisponible",
+  "a351ebbdcf1a3f7a": "Ce fil se trouve dans un environnement auquel cette app n’est pas connectée.",
   "826cb862b4a11fb3": "{label} :",
   "3e597ec938e7551b": "Vous :",
   "a1fbf2422c588292": "Agent :",
@@ -3626,8 +3629,8 @@
   "478e3b4551be4db3": "Afficher le texte extrait",
   "e7205ebfead1aafc": "Aperçu vidéo agrandi",
   "1bda77e861bb472f": "Aperçu d’image agrandi",
-  "eebe5b17e3c19a1c": "Retour, fermer l’aperçu vidéo",
-  "58fd0009a6eb7258": "Retour, fermer l’aperçu d’image",
+  "fb633d54edaeb4b1": "Fermer l’aperçu vidéo",
+  "62d0c453f5803180": "Fermer l’aperçu d’image",
   "47bae54b5f532ff3": "Média précédent",
   "fb9434aad2b5c0bb": "Impossible de charger cette image.",
   "26aee5d4e97bfb28": "Image indisponible. Le fichier a peut-être été déplacé ou supprimé.",
@@ -6634,28 +6637,8 @@
   "a6d75a4380173c60": "Ouvrir les checks : {summary}",
   "be3d1766bad18693": "Checks : {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} en échec} other {{count} en échec}}",
+  "fd63b391898889f9": "{count, plural, one {{count} en attente d’action} other {{count} en attente d’action}}",
   "cb116c139cdace98": "Aucun check signalé",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "checks"
-  ],
   "60b56e201607c7ec": "Les détails des checks ne sont plus à jour. Actualisez la pull request pour les mettre à jour.",
   "e74cd4e960cbb5e5": "Les lignes inchangées ne sont pas disponibles dans un fichier aux lignes tronquées.",
   "38d6169e04a9a4ce": "Impossible de charger plus de commentaires",
@@ -12152,6 +12135,8 @@
   "f13e08bd3614112e": "mettez à jour T3 Code sur cette machine",
   "3c3348c36a2695af": "changez le canal de mise à jour sur cette machine",
   "fa8faa732a2688ef": "sur le canal {channel}",
+  "e65649675cb4cbaa": "désactivé",
+  "a1e7c08d9ef315c7": "chargement en cours",
   "9b961309baafa09d": "pas d’autorisation",
   "9bafb2622c22d145": "déjà en cours de mise à jour",
   "61aa0109862ff7ca": "Nightly",

@@ -156,15 +156,34 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           enumerable: true,
         });
       }
-      const answers = yield* appendUserInputAttachmentPaths({
-        answers: command.answers ?? {},
-        attachmentsByQuestionId,
-        attachmentsDir: config.attachmentsDir,
-      }).pipe(
-        Effect.mapError(
-          (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
-        ),
-      );
+      // An answer by message carries its files as message attachments, not paths in its text.
+      const { runtimeRequests } = yield* threads
+        .getThreadRecords(command.threadId, ["runtimeRequests"], {
+          runtimeRequestStatuses: ["pending"],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AttachmentClaims.AttachmentClaimError({
+                message: "Failed to read the question.",
+                cause,
+              }),
+          ),
+        );
+      const answersByMessage =
+        runtimeRequests.find((request) => request.id === command.requestId)?.responseCapability
+          .type === "message";
+      const answers = answersByMessage
+        ? (command.answers ?? {})
+        : yield* appendUserInputAttachmentPaths({
+            answers: command.answers ?? {},
+            attachmentsByQuestionId,
+            attachmentsDir: config.attachmentsDir,
+          }).pipe(
+            Effect.mapError(
+              (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
+            ),
+          );
       return { answers, attachmentsByQuestionId };
     }).pipe(Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
     return yield* threads

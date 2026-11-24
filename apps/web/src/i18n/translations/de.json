@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} hat auf keiner gespeicherten Route geantwortet.",
   "b0dd3cd876937ca8": "Verbindungsprofil {connectionId} ist nicht verfügbar.",
   "5ce46783e79ca9d1": "Zugangsdaten der Verbindung {connectionId} sind nicht verfügbar.",
-  "0bda0cac7f5acc20": "Die verbundene Umgebung {actual} stimmt nicht mit {expected} überein.",
+  "b39d1428ec8b23f5": "Unter dieser Adresse läuft jetzt eine andere T3 Code-Installation ({actual}, nicht {expected}). Entferne diese Verbindung und füge sie erneut hinzu.",
   "ea0d3e4e51d5706f": "Die Zugangsdaten der Umgebung sind ungültig.",
   "7283ebfd16d09677": "Die Zugangsdaten der Umgebung gewähren nicht den erforderlichen Zugriff.",
   "d3e9a9cb543b4b7b": "Die Umgebung hat die Authentifizierungsanfrage abgelehnt.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "{provider}-MCP-Server werden gestartet",
   "fedaa29ff8815a77": "{provider}-Hooks werden geladen",
   "57025ae4de5beb57": "{provider}-Regeln und -Skills werden geladen",
+  "1cbfbcad9f0d04fe": "{provider}-Sitzung wird fortgesetzt",
   "4729a188600f1501": "Verbindung zu {provider} wird hergestellt",
   "8c8977097681630f": "{provider} wird gestartet",
   "f1d27d127ab27ac6": "Wird gestartet",
@@ -2629,6 +2630,8 @@
   "89b5e8f3887812da": "Gastanfrage",
   "62e626804919b294": "Eingabe nötig",
   "c6196d99000642b4": "Thread öffnen",
+  "70bdebaa3d291d3b": "Thread nicht verfügbar",
+  "a351ebbdcf1a3f7a": "Dieser Thread liegt in einer Umgebung, mit der diese App nicht verbunden ist.",
   "826cb862b4a11fb3": "{label}:",
   "3e597ec938e7551b": "Du:",
   "a1fbf2422c588292": "Agent:",
@@ -3627,8 +3630,8 @@
   "478e3b4551be4db3": "Extrahierten Text anzeigen",
   "e7205ebfead1aafc": "Vergrößerte Videovorschau",
   "1bda77e861bb472f": "Vergrößerte Bildvorschau",
-  "eebe5b17e3c19a1c": "Zurück, Videovorschau schließen",
-  "58fd0009a6eb7258": "Zurück, Bildvorschau schließen",
+  "fb633d54edaeb4b1": "Videovorschau schließen",
+  "62d0c453f5803180": "Bildvorschau schließen",
   "47bae54b5f532ff3": "Vorheriges Medium",
   "fb9434aad2b5c0bb": "Dieses Bild konnte nicht geladen werden.",
   "26aee5d4e97bfb28": "Bild nicht verfügbar. Die Datei wurde möglicherweise verschoben oder gelöscht.",
@@ -6633,28 +6636,8 @@
   "a6d75a4380173c60": "Checks öffnen: {summary}",
   "be3d1766bad18693": "Checks: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} fehlgeschlagen} other {{count} fehlgeschlagen}}",
+  "fd63b391898889f9": "{count, plural, one {{count} wartet auf Aktion} other {{count} warten auf Aktion}}",
   "cb116c139cdace98": "Keine Checks gemeldet",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "Checks"
-  ],
   "60b56e201607c7ec": "Die Check-Details sind veraltet. Aktualisiere den Pull Request, um sie zu aktualisieren.",
   "e74cd4e960cbb5e5": "Unveränderte Zeilen sind in einer Datei mit gekürzten Zeilen nicht verfügbar.",
   "38d6169e04a9a4ce": "Weitere Kommentare konnten nicht geladen werden",
@@ -12154,6 +12137,8 @@
   "f13e08bd3614112e": "T3 Code auf diesem Rechner aktualisieren",
   "3c3348c36a2695af": "Update-Kanal auf diesem Rechner ändern",
   "fa8faa732a2688ef": "im Kanal {channel}",
+  "e65649675cb4cbaa": "ausgeschaltet",
+  "a1e7c08d9ef315c7": "lädt noch",
   "9b961309baafa09d": "keine Berechtigung",
   "9bafb2622c22d145": "wird bereits aktualisiert",
   "61aa0109862ff7ca": "Nightly",

@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} no respondió en ninguna de las rutas guardadas.",
   "b0dd3cd876937ca8": "El perfil de conexión {connectionId} no está disponible.",
   "5ce46783e79ca9d1": "La credencial de conexión {connectionId} no está disponible.",
-  "0bda0cac7f5acc20": "El entorno conectado {actual} no coincide con {expected}.",
+  "b39d1428ec8b23f5": "Esta dirección ahora ejecuta otra instalación de T3 Code ({actual}, no {expected}). Elimina esta conexión y vuelve a añadirla.",
   "ea0d3e4e51d5706f": "La credencial del entorno no es válida.",
   "7283ebfd16d09677": "La credencial del entorno no concede el acceso necesario.",
   "d3e9a9cb543b4b7b": "El entorno rechazó la solicitud de autenticación.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Iniciando servidores MCP de {provider}",
   "fedaa29ff8815a77": "Cargando hooks de {provider}",
   "57025ae4de5beb57": "Cargando reglas y skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reanudando la sesión de {provider}",
   "4729a188600f1501": "Conectando con {provider}",
   "8c8977097681630f": "Iniciando {provider}",
   "f1d27d127ab27ac6": "Iniciando",
@@ -2628,6 +2629,8 @@
   "89b5e8f3887812da": "Solicitud de invitado",
   "62e626804919b294": "Se necesita una respuesta",
   "c6196d99000642b4": "Abrir hilo",
+  "70bdebaa3d291d3b": "Hilo no disponible",
+  "a351ebbdcf1a3f7a": "Este hilo está en un entorno al que esta app no está conectada.",
   "826cb862b4a11fb3": "{label}:",
   "3e597ec938e7551b": "Tú:",
   "a1fbf2422c588292": "Agente:",
@@ -3626,8 +3629,8 @@
   "478e3b4551be4db3": "Mostrar texto extraído",
   "e7205ebfead1aafc": "Vista previa ampliada del vídeo",
   "1bda77e861bb472f": "Vista previa ampliada de la imagen",
-  "eebe5b17e3c19a1c": "Atrás, cerrar la vista previa del vídeo",
-  "58fd0009a6eb7258": "Atrás, cerrar la vista previa de la imagen",
+  "fb633d54edaeb4b1": "Cerrar la vista previa del vídeo",
+  "62d0c453f5803180": "Cerrar la vista previa de la imagen",
   "47bae54b5f532ff3": "Elemento anterior",
   "fb9434aad2b5c0bb": "No se pudo cargar esta imagen.",
   "26aee5d4e97bfb28": "Imagen no disponible. Puede que el archivo se haya movido o eliminado.",
@@ -6633,28 +6636,8 @@
   "a6d75a4380173c60": "Abrir comprobaciones: {summary}",
   "be3d1766bad18693": "Comprobaciones: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} con errores} other {{count} con errores}}",
+  "fd63b391898889f9": "{count, plural, one {{count} pendiente de acción} other {{count} pendientes de acción}}",
   "cb116c139cdace98": "No se informó de ninguna comprobación",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "comprobaciones"
-  ],
   "60b56e201607c7ec": "Los detalles de las comprobaciones están desactualizados. Actualiza la pull request para ponerlos al día.",
   "e74cd4e960cbb5e5": "Las líneas sin cambios no están disponibles en un archivo con líneas cortadas.",
   "38d6169e04a9a4ce": "No se pudieron cargar más comentarios",
@@ -12147,6 +12130,8 @@
   "f13e08bd3614112e": "actualiza T3 Code en ese equipo",
   "3c3348c36a2695af": "cambia el canal de actualizaciones en ese equipo",
   "fa8faa732a2688ef": "en el canal {channel}",
+  "e65649675cb4cbaa": "desactivado",
+  "a1e7c08d9ef315c7": "aún cargando",
   "9b961309baafa09d": "sin permiso",
   "9bafb2622c22d145": "ya se está actualizando",
   "61aa0109862ff7ca": "Nightly",

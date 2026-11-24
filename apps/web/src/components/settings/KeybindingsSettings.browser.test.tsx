@@ -111,6 +111,34 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+
+  it.each([
+    { name: "existing binding", field: existingField, open: () => activate(existingPill, "click") },
+    {
+      name: "new binding",
+      field: newField,
+      open: async () => {
+        await activate(page.getByRole("button", { name: "Add keybinding" }), "click");
+        await activate(newField, "focus");
+      },
+    },
+  ])("records Shift+Esc in the $name field", async ({ field, open }) => {
+    const onOpenChange = vi.fn();
+    await using _screen = await render(
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogPopup>
+          <DialogTitle>Settings</DialogTitle>
+          <KeybindingsSettingsPanel />
+        </DialogPopup>
+      </Dialog>,
+    );
+
+    await open();
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+
+    await expect.element(field).toHaveValue("shift+esc");
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });
 
 it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {

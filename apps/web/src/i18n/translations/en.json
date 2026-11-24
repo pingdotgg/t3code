@@ -497,7 +497,7 @@
   "bc24c300d53d61c5": "{host} did not answer on any saved route.",
   "b0dd3cd876937ca8": "Connection profile {connectionId} is unavailable.",
   "5ce46783e79ca9d1": "Connection credential {connectionId} is unavailable.",
-  "0bda0cac7f5acc20": "Connected environment {actual} does not match {expected}.",
+  "b39d1428ec8b23f5": "This address now runs a different T3 Code install ({actual}, not {expected}). Remove this connection and add it again.",
   "ea0d3e4e51d5706f": "The environment credential is invalid.",
   "7283ebfd16d09677": "The environment credential does not grant the required access.",
   "d3e9a9cb543b4b7b": "The environment rejected the authentication request.",
@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Starting {provider} MCP servers",
   "fedaa29ff8815a77": "Loading {provider} hooks",
   "57025ae4de5beb57": "Loading {provider} rules and skills",
+  "1cbfbcad9f0d04fe": "Resuming {provider} session",
   "4729a188600f1501": "Connecting to {provider}",
   "8c8977097681630f": "Starting {provider}",
   "f1d27d127ab27ac6": "Starting",
@@ -2628,6 +2629,8 @@
   "89b5e8f3887812da": "Guest request",
   "62e626804919b294": "Input needed",
   "c6196d99000642b4": "Open thread",
+  "70bdebaa3d291d3b": "Thread unavailable",
+  "a351ebbdcf1a3f7a": "This thread is on an environment this app is not connected to.",
   "826cb862b4a11fb3": "{label}:",
   "3e597ec938e7551b": "You:",
   "a1fbf2422c588292": "Agent:",
@@ -3626,8 +3629,8 @@
   "478e3b4551be4db3": "Show extracted text",
   "e7205ebfead1aafc": "Expanded video preview",
   "1bda77e861bb472f": "Expanded image preview",
-  "eebe5b17e3c19a1c": "Back, close video preview",
-  "58fd0009a6eb7258": "Back, close image preview",
+  "fb633d54edaeb4b1": "Close video preview",
+  "62d0c453f5803180": "Close image preview",
   "47bae54b5f532ff3": "Previous media",
   "fb9434aad2b5c0bb": "This image could not be loaded.",
   "26aee5d4e97bfb28": "Image unavailable. The file may have been moved or deleted.",
@@ -6640,28 +6643,8 @@
   "a6d75a4380173c60": "Open checks: {summary}",
   "be3d1766bad18693": "Checks: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} failed} other {{count} failed}}",
+  "fd63b391898889f9": "{count, plural, one {{count} awaiting action} other {{count} awaiting action}}",
   "cb116c139cdace98": "No checks reported",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "checks"
-  ],
   "60b56e201607c7ec": "Check details are out of date. Refresh the pull request to update them.",
   "e74cd4e960cbb5e5": "Unchanged lines are unavailable in a file with cut lines.",
   "38d6169e04a9a4ce": "More comments could not be loaded",
@@ -12162,6 +12145,8 @@
   "f13e08bd3614112e": "update T3 Code on that machine",
   "3c3348c36a2695af": "change the update track on that machine",
   "fa8faa732a2688ef": "on the {channel} channel",
+  "e65649675cb4cbaa": "turned off",
+  "a1e7c08d9ef315c7": "still loading",
   "9b961309baafa09d": "no permission",
   "9bafb2622c22d145": "already updating",
   "61aa0109862ff7ca": "Nightly",
