@@ -1591,7 +1591,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
   // The host's configured LocalForward/RemoteForward lines would take the user's own ports, and
   // a held one stops the tunnel. ClearAllForwardings also drops -L, so the tunnel is a private
-  // ControlMaster with no forwards and T3's one forward is added through it. Windows has no mux.
+  // ControlMaster with no forwards and T3's one forward is added through it. Windows OpenSSH has
+  // no mux, but it binds a held local port alongside its holder instead of failing.
   const ownControlPath =
     controlPath === null && (yield* HostProcess.Platform) !== "win32"
       ? yield* Effect.gen(function* () {
