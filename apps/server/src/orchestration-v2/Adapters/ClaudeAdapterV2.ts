@@ -9129,9 +9129,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           liveQuery.checkMcpSignIns = statuses.some((status) => status.status === "pending");
           for (const status of statuses) {
+            const key = mcpSignInKey(liveQuery.nativeThreadId, status.name);
+            if (status.status === "connected") announcedMcpSignIns.delete(key);
             // Every claude.ai connector the user never connected reports this too.
             if (status.status !== "needs-auth" || status.scope === "claudeai") continue;
-            const key = mcpSignInKey(liveQuery.nativeThreadId, status.name);
             if (announcedMcpSignIns.has(key)) continue;
             announcedMcpSignIns.add(key);
             const nativeItemId = `mcp-sign-in:${context.providerTurnId}:${status.name}`;

@@ -7503,6 +7503,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     () =>
       Effect.gen(function* () {
         let linearStatus: "needs-auth" | "connected" = "needs-auth";
+        const noticesAfterTurn: Array<number> = [];
         const harness = yield* makeWakeHarnessWithOptions({
           freshQueueOnReopen: true,
           mcp: {
@@ -7541,6 +7542,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             makeResultFrame({ uuid: `mcp-sign-in-once-result-${ordinal}`, result: "Planned" }),
           );
           yield* Queue.take(harness.terminalReceipts);
+          noticesAfterTurn.push(
+            harness.events.filter(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                event.turnItem.mcpSignIn !== undefined,
+            ).length,
+          );
         });
 
         yield* runTurn(harness.runtime, harness.providerThread, 1);
@@ -7577,14 +7586,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         linearStatus = "needs-auth";
         yield* runTurn(reopened, resumed, 4);
 
-        const signIns = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "system_notice" &&
-          event.turnItem.mcpSignIn !== undefined
-            ? [event.turnItem.mcpSignIn.server]
-            : [],
-        );
-        assert.deepEqual(signIns, ["linear", "linear"]);
+        assert.deepEqual(noticesAfterTurn, [1, 1, 1, 2]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
