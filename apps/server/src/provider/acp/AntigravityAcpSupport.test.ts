@@ -41,16 +41,17 @@ function makeModelRuntime(
     if (failure) return yield* failure;
     selections.push(model);
   });
-  const setConfigOption = Effect.fn("AntigravityAcpSupportTest.setConfigOption")(function* (
+  const setConfigOption = (
     configId: string,
     value: string | boolean,
     options?: { readonly allowUnlistedValue?: boolean },
-  ) {
-    selections.push(
-      `${configId}=${String(value)}${options?.allowUnlistedValue === true ? " (unlisted)" : ""}`,
-    );
-    return { configOptions };
-  });
+  ) =>
+    Effect.sync(() => {
+      selections.push(
+        `${configId}=${String(value)}${options?.allowUnlistedValue === true ? " (unlisted)" : ""}`,
+      );
+      return { configOptions };
+    }).pipe(Effect.withSpan("AntigravityAcpSupportTest.setConfigOption"));
   return {
     runtime: { getConfigOptions: Effect.succeed(configOptions), setModel, setConfigOption },
     selections,
@@ -65,9 +66,8 @@ describe("Antigravity release gates", () => {
     { version: undefined, ownName: false },
     { version: "unknown", ownName: false },
   ])("$version: own client name $ownName", ({ version, ownName }) => {
-      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
-    },
-  );
+    expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
+  });
 });
 
 describe("Antigravity Auto", () => {
