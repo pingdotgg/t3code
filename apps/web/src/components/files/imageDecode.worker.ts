@@ -25,7 +25,7 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
       const tag = view.getUint16(entry, littleEndian);
       const type = view.getUint16(entry + 2, littleEndian);
       const values = view.getUint32(entry + 4, littleEndian);
-      const width = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8][type];
+      const width = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 4][type];
       if (!width) throw new PreviewError({ code: "tiff-metadata-type" });
       const length = values * width;
       const start = length > 4 ? view.getUint32(entry + 8, littleEndian) : entry + 8;
@@ -34,7 +34,8 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
       if (start + length > bytes.byteLength || allocation > 8 * 1024 * 1024)
         throw new PreviewError({ code: "tiff-metadata-truncated" });
       if (tag === 0x8769 || tag === 0x8825) {
-        if (type !== 4 || values !== 1) throw new PreviewError({ code: "tiff-metadata-pointer" });
+        if ((type !== 4 && type !== 13) || values !== 1)
+          throw new PreviewError({ code: "tiff-metadata-pointer" });
         inspect(view.getUint32(entry + 8, littleEndian), depth + 1);
       }
     }
@@ -190,6 +191,9 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
   const rgba = new Uint8ClampedArray(image.width * image.height * 4);
   const scale = image.bitsPerSample === 16 ? 257 : 1;
   const palette = image.palette;
+  const alpha = image.alpha;
+  // The tiff decoder inverts every WhiteIsZero sample, alpha included.
+  const invertAlpha = alpha && image.type === 0;
   for (let pixel = 0; pixel < image.width * image.height; pixel++) {
     const index = pixel * image.components;
     if (palette) {
@@ -203,7 +207,8 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
       const gray = image.data[index]! / scale;
       rgba.fill(gray, pixel * 4, pixel * 4 + 3);
     }
-    rgba[pixel * 4 + 3] = image.alpha ? image.data[index + image.components - 1]! / scale : 255;
+    const value = alpha ? image.data[index + image.components - 1]! / scale : 255;
+    rgba[pixel * 4 + 3] = invertAlpha ? 255 - value : value;
   }
   const canvas = new OffscreenCanvas(image.width, image.height);
   const context = canvas.getContext("2d");

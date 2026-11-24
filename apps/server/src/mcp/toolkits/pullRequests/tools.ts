@@ -38,6 +38,7 @@ import {
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
 } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
@@ -181,6 +182,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
   PullRequestThreadRequiredError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
@@ -797,7 +799,7 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
     ),
     stack: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge this PR and every open stack layer below it at once. Not with auto.",
+        description: "Merge this PR and every open stack layer below it at once.",
       }),
     ),
   }),

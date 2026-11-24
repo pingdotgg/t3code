@@ -2520,6 +2520,18 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     subagents.length,
   );
   // Both reads stay inside their indexes: no scan of the thread's nodes or provider threads.
+  // A dispatcher's statistics: the mostly NULL owner and session indexes match every row.
+  yield* sql`ANALYZE orchestration_v2_projection_provider_threads`;
+  yield* sql`DELETE FROM sqlite_stat1 WHERE tbl = 'orchestration_v2_projection_provider_threads'`;
+  for (const [index, stat] of [
+    ["sqlite_autoindex_orchestration_v2_projection_provider_threads_1", "5531 1"],
+    ["orchestration_v2_projection_provider_threads_thread_idx", "5531 1"],
+    ["orchestration_v2_projection_provider_threads_owner_idx", "5531 5531"],
+    ["orchestration_v2_projection_provider_threads_session_idx", "5531 2766"],
+  ] as const) {
+    yield* sql`INSERT INTO sqlite_stat1 VALUES ('orchestration_v2_projection_provider_threads', ${index}, ${stat})`;
+  }
+  yield* sql`ANALYZE sqlite_schema`;
   for (const [table, seeks] of [
     [
       "nodes",
@@ -2528,11 +2540,16 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         "SEARCH settled USING COVERING INDEX",
         "SEARCH settled_node USING COVERING INDEX",
         "subagents_settled_idx (thread_id=?)",
+        "SEARCH run USING COVERING INDEX orchestration_v2_projection_runs_run_status_idx",
       ],
     ],
     [
       "provider_threads",
-      ["MULTI-INDEX OR", "provider_threads_session_idx (provider_session_id=?)"],
+      [
+        "SEARCH orchestration_v2_projection_provider_threads USING INTEGER PRIMARY KEY",
+        "provider_threads_session_idx (provider_session_id=?)",
+        "SEARCH run USING COVERING INDEX orchestration_v2_projection_runs_run_status_idx",
+      ],
     ],
   ] as const) {
     const query = commandTrace.statements.find((statement) =>
@@ -2836,6 +2853,31 @@ const recordsThreadCreated = (threadId: ThreadId) =>
       deletedAt: null,
     },
   }) as never;
+
+const snapshotsReadDeletedThreadAsMissing = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = ThreadId.make("thread:records:deleted-snapshot");
+  const created: { readonly payload: object } = recordsThreadCreated(threadId);
+  yield* store.apply(created as never);
+  assert.equal((yield* store.getThreadSnapshot(threadId)).projection.thread.id, threadId);
+  yield* store.apply({
+    id: EventId.make(`event:${threadId}:deleted`),
+    type: "thread.deleted",
+    threadId,
+    providerInstanceId,
+    occurredAt: recordsAt(1),
+    payload: { ...created.payload, deletedAt: recordsAt(1) },
+  } as never);
+
+  for (const read of [
+    store.getThreadSnapshot(threadId),
+    store.getThreadSnapshotWindow(threadId, { rowLimit: 10 }),
+  ]) {
+    assert.equal((yield* Effect.flip(read))._tag, "ProjectionStoreThreadNotFoundError");
+  }
+  // Forks of the thread still read its rows.
+  assert.equal((yield* store.getThreadProjection(threadId)).thread.id, threadId);
+});
 
 const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefined) {
   assert.isDefined(statement);
@@ -3923,6 +3965,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "SQL recovery selects unfinished runless native subagents",
     () => runlessNativeSubagentNeedsRecovery,
+  );
+  it.effect(
+    "snapshot reads report a deleted thread as missing",
+    () => snapshotsReadDeletedThreadAsMissing,
   );
   it.effect(
     "worktree path and title lookups skip deleted threads, and can include archived ones",
@@ -5661,6 +5707,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ),
         );
       }
+
+      // Recovery cancels a run that had started; its delivered queued message stays.
+      const setCancelledStartedAt = (startedAt: string | null) => sql`
+        UPDATE orchestration_v2_projection_runs
+        SET payload_json = json_set(payload_json, '$.startedAt', ${startedAt})
+        WHERE run_id = ${cancelledRunId}
+      `;
+      yield* setCancelledStartedAt(nowIso);
+      const startedCancelledSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      assert.isTrue(
+        startedCancelledSnapshot.projection.visibleTurnItems.some((row) =>
+          String(row.sourceItemId).includes(":cancelled:"),
+        ),
+      );
+      yield* setCancelledStartedAt(null);
 
       // A steer moves the cancelled queued message outside the window.
       const steeredItemId = "turn-item:bounded-sql-history:steered-output";
