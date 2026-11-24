@@ -5,6 +5,8 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -364,7 +366,6 @@ it.live("a file without imports or exports loads again after it changes", () =>
       import * as NodeFS from "node:fs";
       import * as NodeServices from "@effect/platform-node/NodeServices";
       import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
       import { loadDefinitions } from ${JSON.stringify(new URL("./WorkflowRuntime.ts", import.meta.url).href)};
       const file = process.argv.at(-1);
@@ -467,12 +468,20 @@ it.effect(
           }),
         );
 
-        // The clock stands still, so an engine that waited for the agent's step to finish would
-        // never stop: the step is not given up on, and the turn does not end.
-        const saved = yield* definitions
-          .save("greet.ts", greet("hello"))
-          .pipe(Effect.timeoutOption("10 seconds"), TestClock.withLive);
-        assert.isTrue(Option.isSome(saved) && saved.value.changed);
+        // The test clock stands still during the save, so an engine that waited for the agent's
+        // step to finish would never stop: the step is not given up on, and the turn does not end.
+        // The swap cannot be interrupted, so a stuck save is unblocked by ending the turn.
+        const saving = yield* Effect.forkChild(definitions.save("greet.ts", greet("hello")));
+        const saved = yield* Fiber.await(saving).pipe(
+          Effect.timeoutOption("10 seconds"),
+          TestClock.withLive,
+        );
+        if (Option.isNone(saved)) {
+          yield* Deferred.succeed(ended, { ending: "completed", detail: "", reply: "late" });
+          yield* ticking(Fiber.await(saving));
+          assert.fail("The reload waited for the agent's turn to end.");
+        }
+        assert.isTrue(Exit.isSuccess(saved.value) && saved.value.value.changed);
         assert.equal((yield* workflows.get(helped.runId)).run.status, "waiting");
 
         // The turn ends after the reload, and the new engine carries its result into the run.
@@ -481,7 +490,7 @@ it.effect(
           workflows.waitFor(helped.runId, (run) => run.status === "completed"),
         );
         assert.equal(done.result, "all done");
-      }).pipe(Effect.provide(runtime), Effect.scoped, ticking);
+      }).pipe(Effect.provide(runtime), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

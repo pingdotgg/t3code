@@ -226,10 +226,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void
-          : Effect.logWarning("A workflow could not see an agent's turn through", {
-              wait: id,
-              cause: Cause.pretty(cause),
-            }),
+          : Effect.logWarning("A workflow could not see an agent's turn through", cause).pipe(
+              Effect.annotateLogs({ wait: id }),
+            ),
       ),
       Effect.ensuring(Effect.sync(() => watchingTurns.delete(id))),
       Effect.forkIn(scope),
