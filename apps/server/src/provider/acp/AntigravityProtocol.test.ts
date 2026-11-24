@@ -253,17 +253,23 @@ describe("Antigravity permissions and questions", () => {
   });
 
   it("bounds question text without changing choice IDs", () => {
+    const title = "Q".repeat(7_994) + "🧪";
+    const label = "O".repeat(506) + "🧪";
     const request = {
       ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, title: "Question ".repeat(2_000) },
+      toolCall: { ...questionRequest.toolCall, title: title + "🚀 continued" },
       options: [
-        { optionId: "stable-choice", name: "Choice ".repeat(2_000), kind: "allow_once" as const },
+        { optionId: "stable-choice", name: label + "🚀 continued", kind: "allow_once" as const },
       ],
     };
     const question = extractAntigravityUserInputQuestion(request);
-    expect(question?.question.length).toBeLessThanOrEqual(8_000);
-    expect(question?.options[0]?.label.length).toBeLessThanOrEqual(512);
-    expect(question?.options[0]?.value).toBe("stable-choice");
+    expect(question?.question).toBe(title + "...");
+    expect(question?.options).toEqual([
+      { value: "stable-choice", label: label + "...", description: label + "..." },
+    ]);
+    expect(
+      makeAntigravityUserInputResponse(request, { interaction_9960062f: label + "..." }),
+    ).toEqual({ outcome: { outcome: "selected", optionId: "stable-choice" } });
   });
 });
 
@@ -725,5 +731,39 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+
+  it("drops agy's toolSummary from T3 MCP call arguments only", () => {
+    const t3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_send",
+            title: "Run mcp_t3-code_send_to_user",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { message: "Hello", toolSummary: "Send greeting" },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const foreignCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_other",
+          title: "Run mcp_other_send_to_user",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { message: "Hello", toolSummary: "Send greeting" },
+        },
+      }).toolCall,
+    );
+    expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
   });
 });

@@ -156,6 +156,7 @@ export const layer: Layer.Layer<
       readonly requestId?: CommandId;
     }) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
+      if (context.thread.deletedAt !== null) return;
       const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
         context;
       const restoreFiles = input.restoreFiles !== false;
@@ -259,6 +260,7 @@ export const layer: Layer.Layer<
         yield* taskFolders.restore({
           taskFolder,
           branch,
+          projectCommands: TaskFolders.linkRunsProjectCommands(context.thread.linkOrigin),
           recreate: (checkout) =>
             gitWorkflow.pruneWorktrees({ cwd: checkout.repositoryPath }).pipe(
               Effect.andThen(
