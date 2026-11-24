@@ -45,6 +45,7 @@ mod engine_tests;
 #[cfg(any(test, feature = "fake-provider"))]
 pub mod fake;
 mod families;
+mod fold;
 mod fork;
 mod fresh;
 mod html_cleanup;
@@ -76,6 +77,7 @@ pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
     SqliteEngine,
 };
+pub use fold::{SearchField, field_holds_words, fold, fold_field, fold_search_query, match_fields};
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };

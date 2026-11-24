@@ -273,12 +273,9 @@ fn items_within_budget(
 /// engine's index (one per thread, outside the title hits), with a fifth of the slots kept
 /// for messages. Candidates are the project's active, listed threads.
 pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let query = str_arg(args, "query")
-        .unwrap_or_default()
-        .trim()
-        .to_lowercase();
+    let raw = str_arg(args, "query").unwrap_or_default().trim();
     // `OrchestrationSearchThreadsInput.query`: trimmed, 2 to 200 UTF-16 units.
-    let length = query.encode_utf16().count();
+    let length = raw.encode_utf16().count();
     if length < 2 {
         return Err(ToolError::InvalidParams(
             "Expected a value with a length of at least 2\n  at [\"query\"]".into(),
@@ -289,6 +286,9 @@ pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "Expected a value with a length of at most {SEARCH_QUERY_MAX_LENGTH}\n  at [\"query\"]"
         )));
     }
+    // Fields and the query fold the same way (`foldSearchQuery`): quotes around a pasted query
+    // go, and case and accents do not count.
+    let query = conn_engine::fold_search_query(raw);
     let limit = u64_arg(args, "limit").map_or(SEARCH_DEFAULT_LIMIT, |l| l as usize);
     let own = cx.caller_projection().await?;
     let project_id = str_arg(args, "projectId").map(str::to_owned).or_else(|| {
@@ -296,17 +296,12 @@ pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
             .and_then(|p| p["thread"]["projectId"].as_str().map(str::to_owned))
     });
     let shell = cx.shell().await?;
-    let live_projects: Vec<(&Value, String)> = shell["projects"]
+    let live_projects: Vec<(&Value, &str)> = shell["projects"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|p| p["deletedAt"].is_null())
-        .map(|p| {
-            (
-                &p["id"],
-                p["title"].as_str().unwrap_or_default().to_lowercase(),
-            )
-        })
+        .map(|p| (&p["id"], p["title"].as_str().unwrap_or_default()))
         .collect();
     // `titleCandidates`: not deleted or archived, not a subagent or side chat, in a live project.
     let mut candidates: Vec<&Value> = shell["threads"]
@@ -328,21 +323,27 @@ pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
             .to_owned()
     };
     candidates.sort_by_cached_key(|t| std::cmp::Reverse(activity(t)));
-    let title_hits: Vec<&Value> = candidates
+    let mut ranked: Vec<(TitleRank, &Value)> = candidates
         .iter()
-        .copied()
-        .filter(|thread| {
-            let lower = |key: &str| thread[key].as_str().unwrap_or_default().to_lowercase();
-            let project_hit = live_projects
+        .filter_map(|thread| {
+            let project = live_projects
                 .iter()
-                .any(|(id, title)| *id == &thread["projectId"] && title.contains(&query));
-            lower("title").contains(&query) || lower("branch").contains(&query) || project_hit
+                .find(|(id, _)| *id == &thread["projectId"])
+                .map_or("", |(_, title)| *title);
+            Some((thread_hit(&query, thread, project)?, *thread))
         })
+        .collect();
+    // `rankSearchItems` ranks every hit before the limit; the sort is stable, so recency
+    // breaks ties within a rank.
+    ranked.sort_by_key(|(rank, _)| std::cmp::Reverse(*rank));
+    let title_hits: Vec<&Value> = ranked
+        .into_iter()
+        .map(|(_, thread)| thread)
         .take(limit)
         .collect();
     let shown: Vec<&Value> = title_hits.iter().map(|t| &t["id"]).collect();
     let mut input = json!({
-        "query": query,
+        "query": raw,
         "limit": SEARCH_MESSAGE_LIMIT,
         "excludedThreadIds": shown,
     });
@@ -378,6 +379,195 @@ pub(super) async fn search(cx: &Cx<'_>, args: &Args) -> ToolResult {
     matches.extend(message_hits);
     matches.truncate(limit);
     Ok(json!({ "currentThreadId": cx.caller_thread_id(), "matches": matches }))
+}
+
+/// A thread's pull requests as search reads them (`threadSearchPullRequests`): the branch's PR,
+/// then the visible linked ones newest first, else the legacy single link. Only the newest three
+/// linked PRs match by title.
+fn search_pull_requests(thread: &Value) -> Vec<(&Value, Option<&str>)> {
+    const SEARCHED_TITLES: usize = 3;
+    let mut found: Vec<(&Value, Option<&str>)> = Vec::new();
+    if thread["branchPullRequest"].is_object() {
+        found.push((&thread["branchPullRequest"], None));
+    }
+    match thread["pullRequests"].as_array() {
+        Some(links) if !links.is_empty() => {
+            let updated = |link: &Value| {
+                link["snapshot"]["updatedAt"]
+                    .as_str()
+                    .or(link["linkedAt"].as_str())
+                    .and_then(conn_support::time::millis_from_iso)
+                    .unwrap_or(0)
+            };
+            let mut visible: Vec<&Value> = links
+                .iter()
+                .filter(|link| link["source"] != "stack-dismissed")
+                .collect();
+            visible.sort_by_key(|link| std::cmp::Reverse(updated(link)));
+            found.extend(visible.into_iter().enumerate().map(|(index, link)| {
+                let title = (index < SEARCHED_TITLES)
+                    .then(|| link["snapshot"]["title"].as_str())
+                    .flatten();
+                (link, title)
+            }));
+        }
+        _ if thread["linkedPullRequest"].is_object() => {
+            found.push((&thread["linkedPullRequest"], None));
+        }
+        _ => {}
+    }
+    found
+}
+
+/// Whether a folded query finds `thread`, as `scoreThreadSearch` without typos or joined words.
+/// Every word must sit in some field (`matchSearchFields`): the title, a PR's `#N` or searched
+/// title, the branch, or the project's name. When no word is in the title and the query has
+/// several, one field must explain the words left after the project's name (`matchHint`):
+/// "lakebed #7483" finds a thread of project Lakebed linked to #7483. Else the whole query may
+/// name the thread or a PR (`matchReference`).
+fn thread_hit(query: &str, thread: &Value, project_title: &str) -> Option<TitleRank> {
+    let pull_requests = search_pull_requests(thread);
+    let field_query = thread_field_query(query);
+    let branch = searchable_branch(thread["branch"].as_str().unwrap_or_default());
+    let title = conn_engine::SearchField::new(thread["title"].as_str().unwrap_or_default());
+    let mut others = Vec::new();
+    for (link, link_title) in &pull_requests {
+        let number = link["number"].as_u64().unwrap_or_default();
+        others.push(conn_engine::SearchField::new(&format!("#{number}")));
+        others.extend(link_title.map(conn_engine::SearchField::new));
+    }
+    others.push(conn_engine::SearchField::new(branch));
+    others.push(conn_engine::SearchField::new(project_title));
+    let Some(in_title) = conn_engine::match_fields(&field_query, &title, &others) else {
+        return reference_hit(query, thread, &pull_requests).then_some(TitleRank::Elsewhere);
+    };
+    if in_title {
+        // `matchSearchFields` lifts a title that is the whole query to `WHOLE_NAME`.
+        return Some(if title.is(&field_query) {
+            TitleRank::WholeTitle
+        } else {
+            TitleRank::Title
+        });
+    }
+    if !field_query.contains(' ') {
+        return Some(TitleRank::Elsewhere);
+    }
+    let hints: Vec<String> = pull_requests
+        .iter()
+        .map(|(link, link_title)| {
+            let number = link["number"].as_u64().unwrap_or_default();
+            match link_title {
+                Some(link_title) => format!("#{number} {link_title}"),
+                None => format!("#{number}"),
+            }
+        })
+        .chain([branch.to_owned(), project_title.to_owned()])
+        .collect();
+    let explained = |words: &str| {
+        hints
+            .iter()
+            .any(|hint| conn_engine::field_holds_words(hint, words))
+    };
+    if explained(&field_query) {
+        return Some(TitleRank::Elsewhere);
+    }
+    let rest = field_query
+        .split(' ')
+        .filter(|word| !conn_engine::field_holds_words(project_title, word))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!rest.is_empty() && rest != field_query && explained(&rest)).then_some(TitleRank::Elsewhere)
+}
+
+/// How a title hit ranks, worst first: a match outside the title (a PR, the branch, the
+/// project or a reference) weighs less than one the title shows (`rankSearchGroups`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TitleRank {
+    Elsewhere,
+    Title,
+    WholeTitle,
+}
+
+/// `threadFieldQuery`: a `pr`, `pull` or `pull request` before a number goes, then a `#`, and the
+/// app's worktree branch prefix, so the query reads as the stored fields do.
+fn thread_field_query(query: &str) -> String {
+    let unprefixed = ["pr", "pull request", "pull"]
+        .iter()
+        .find_map(|prefix| {
+            let rest = query.strip_prefix(prefix)?.trim_start();
+            rest.trim_start_matches('#')
+                .starts_with(|c: char| c.is_ascii_digit())
+                .then_some(rest)
+        })
+        .unwrap_or(query);
+    let unprefixed = unprefixed
+        .strip_prefix('#')
+        .map_or(unprefixed, str::trim_start);
+    // `FLAT_BRANCH_QUERY_PREFIX_PATTERN`: "t3-" before up to eight hex digits, while they are typed.
+    searchable_branch(unprefixed)
+        .split(' ')
+        .map(|word| match word.strip_prefix("t3-") {
+            Some(hex) if (1..=8).contains(&hex.len()) && hex.bytes().all(is_lower_hex) => hex,
+            _ => word,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `searchableBranch`: a branch without the app's worktree prefix ("t3/", "t3code/", or "t3-"
+/// before eight hex digits), which nearly every thread's branch has.
+fn searchable_branch(branch: &str) -> &str {
+    let nested = ["t3/", "t3code/"].iter().find_map(|prefix| {
+        branch
+            .strip_prefix(prefix)
+            .filter(|rest| rest.starts_with(|c: char| !c.is_whitespace()))
+    });
+    let flat = || {
+        branch
+            .strip_prefix("t3-")
+            .filter(|hex| hex.len() == 8 && hex.bytes().all(is_lower_hex))
+    };
+    nested.or_else(flat).unwrap_or(branch)
+}
+
+fn is_lower_hex(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+}
+
+/// `matchReference`: ids and links have many word starts, so only a query of eight or more
+/// characters matches them, anywhere when it holds a digit (never cutting a number short),
+/// else at the start.
+fn reference_hit(query: &str, thread: &Value, pull_requests: &[(&Value, Option<&str>)]) -> bool {
+    const REFERENCE_PREFIX_MIN: usize = 8;
+    if query.encode_utf16().count() < REFERENCE_PREFIX_MIN {
+        return false;
+    }
+    let anywhere = query.chars().any(char::is_numeric);
+    let not_cut = |text: &str, end: usize| {
+        !text
+            .get(end..)
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(char::is_numeric)
+    };
+    let matches = |reference: &str| {
+        let folded = reference.to_lowercase();
+        let at = folded.find(query);
+        if anywhere {
+            at.is_some_and(|at| not_cut(&folded, at + query.len()))
+                || (query.starts_with(&folded) && not_cut(query, folded.len()))
+        } else {
+            at == Some(0)
+        }
+    };
+    let references = pull_requests.iter().flat_map(|(link, _)| {
+        let repository = link["repository"].as_str().unwrap_or_default();
+        let number = link["number"].as_u64().unwrap_or_default();
+        [
+            format!("{repository}#{number}"),
+            link["url"].as_str().unwrap_or_default().to_owned(),
+        ]
+    });
+    thread["id"].as_str().is_some_and(matches) || references.into_iter().any(|r| matches(&r))
 }
 
 /// The tool's `limit` default, and the message hits `searchThreads` asks the index for.
@@ -1058,6 +1248,51 @@ mod tests {
             .iter()
             .filter_map(|i| i["position"].as_i64())
             .collect()
+    }
+
+    /// `scoreThreadSearch`: a project's name and a PR's number or title match together, and
+    /// the PR must explain the words left after the project's name.
+    #[test]
+    fn a_project_name_and_a_pull_request_match_together() {
+        let thread = json!({"id": "t1", "title": "Spring cleanup", "branch": "t3/8a2f1c3e",
+            "pullRequests": [{"number": 7483, "repository": "example/fixture",
+                "url": "https://github.com/example/fixture/pull/7483", "source": "manual",
+                "snapshot": {"title": "Résumé indexing"}}]});
+        let hit = |query: &str| {
+            thread_hit(&conn_engine::fold_search_query(query), &thread, "Lakebed").is_some()
+        };
+        for query in [
+            "lakebed #7483",
+            "lakebed resume",
+            "Lakebed résumé indexing",
+            "#7483 lakebed",
+            "spring #7483",
+            "8a2f1c3e",
+            "t3/8a2f",
+        ] {
+            assert!(hit(query), "{query}");
+        }
+        // A `pr` prefix only counts at the start, as `threadFieldQuery` strips it.
+        for query in [
+            "lakebed #7484",
+            "lakebed draft",
+            "lakebed t3",
+            "lake #7483 draft",
+            "lakebed pr 7483",
+        ] {
+            assert!(!hit(query), "{query}");
+        }
+        // A symbol starts a word only where a letter would (`isWordStart`): "⚙" sits inside
+        // "fix⚙", and only punctuation brings its own boundary.
+        let gear = json!({"id": "t2", "title": "Spring cleanup",
+            "pullRequests": [{"number": 12, "repository": "example/fixture",
+                "url": "https://github.com/example/fixture/pull/12", "source": "manual",
+                "snapshot": {"title": "fix⚙ settings"}}]});
+        let hit = |query: &str| {
+            thread_hit(&conn_engine::fold_search_query(query), &gear, "Lakebed").is_some()
+        };
+        assert!(hit("lakebed settings"));
+        assert!(!hit("lakebed ⚙"));
     }
 
     #[test]
