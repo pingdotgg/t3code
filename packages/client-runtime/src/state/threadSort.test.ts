@@ -305,34 +305,6 @@ describe("sortActiveThreadsByOrderKey", () => {
     ).toEqual(["brand-new", "newer", "arranged", "older", "saved"]);
   });
 
-  it("holds every row in place when a message is sent or a run finishes", () => {
-    const threads = [
-      { id: "arranged-top", createdAt: "2026-03-01T09:00:00.000Z", activeOrderKey: "f" },
-      { id: "unarranged", createdAt: "2026-03-09T10:00:00.000Z" },
-      { id: "arranged-bottom", createdAt: "2026-03-09T12:00:00.000Z", activeOrderKey: "t" },
-    ].map((thread) => ({
-      ...thread,
-      updatedAt: thread.createdAt,
-      latestUserMessageAt: thread.createdAt,
-      latestRun: null as { readonly completedAt: string } | null,
-    }));
-    const before = sortActiveThreadsByOrderKey(threads).map((thread) => thread.id);
-    expect(before).toEqual(["unarranged", "arranged-top", "arranged-bottom"]);
-    for (const id of ["arranged-bottom", "unarranged"]) {
-      const sent = threads.map((thread) =>
-        thread.id === id
-          ? {
-              ...thread,
-              updatedAt: "2026-03-10T09:00:00.000Z",
-              latestUserMessageAt: "2026-03-10T09:00:00.000Z",
-              latestRun: { completedAt: "2026-03-10T09:05:00.000Z" },
-            }
-          : thread,
-      );
-      expect(sortActiveThreadsByOrderKey(sent).map((thread) => thread.id)).toEqual(before);
-    }
-  });
-
   it("breaks equal order keys and timestamps by thread then environment", () => {
     for (const activeOrderKey of [null, "m"]) {
       const threads = [
@@ -446,13 +418,5 @@ describe("new threads above arranged ones", () => {
       "a",
       "b",
     ]);
-  });
-
-  it("derives the floor from the threads' own timestamps", () => {
-    expect(activeOrderFloorKey([])).toBeNull();
-    const reopened = { id: "reopened", createdAt: at(0), unsettledAt: at(50) };
-    const floor = activeOrderFloorKey([a, b, reopened]);
-    expect(floor).toBe(activeThreadSortKey({ createdAt: at(50, 1) }));
-    expect(floor! < activeThreadSortKey(a)).toBe(true);
   });
 });

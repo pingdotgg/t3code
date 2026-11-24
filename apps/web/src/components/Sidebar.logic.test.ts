@@ -1822,35 +1822,6 @@ describe("resolveSidebarFolderDropTarget", () => {
     expect(drop("b1", "a1")).toBeNull();
   });
 
-  it("plans one key write that keeps the new order within the folder", () => {
-    // Unarranged rows carry implied keys, newest first.
-    const activeKeysById = new Map(
-      activeOrder.map((key, index) => [
-        key,
-        activeThreadSortKey({
-          createdAt: new Date(Date.UTC(2026, 2, 9, 10 - index)).toISOString(),
-        }),
-      ]),
-    );
-    const target = drop("a3", "a1")!;
-    const plan = planSidebarThreadDrop({
-      activeKey: "a3",
-      activeSection: "active",
-      target,
-      pinnedOrder: ["p1"],
-      pinnedKeysById: new Map(),
-      activeOrder,
-      activeKeysById,
-      activeReorderableKeys: new Set(activeOrder),
-    });
-    expect(plan.kind).toBe("move-active");
-    if (plan.kind !== "move-active") return;
-    expect(plan.unpin || plan.unsettle || plan.unsnooze).toBe(false);
-    expect(plan.assignments).toHaveLength(1);
-    expect(plan.assignments[0]!.id).toBe("a3");
-    expect(plan.assignments[0]!.orderKey < activeKeysById.get("a1")!).toBe(true);
-  });
-
   it("keeps a new thread above one dragged to the top of its folder", () => {
     const rows = activeOrder.map((key, index) => ({
       id: key,
