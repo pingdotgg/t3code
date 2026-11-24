@@ -482,6 +482,7 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import { TeamWsRpcGroup } from "./team/rpc.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -2716,4 +2717,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
-).middleware(RpcScopeAuthorization);
+)
+  .merge(TeamWsRpcGroup)
+  .middleware(RpcScopeAuthorization);
