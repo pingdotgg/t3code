@@ -56,6 +56,8 @@ getrandom = "0.3"
 rustix = { version = "1", default-features = false, features = ["std"] }
 # Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
 rusqlite = { version = "0.37", default-features = false, features = ["bundled"] }
+# conn-engine search: case and accent folding and NFC queries, as T3 folds.
+unicode-normalization = "0.1.26"
 # Display and std::error::Error for the error types at crate boundaries. Already in the tree
 # through tungstenite; a proc macro, so no run-time code beyond the impls it writes.
 thiserror = "2"
@@ -68,6 +70,9 @@ uuid = { version = "1.29", default-features = false, features = ["std"] }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 # Already used by conn-server and grep-regex; shared for HTML pattern scans, no new features.
 regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "meta", "nfa-pikevm", "nfa-backtrack", "hybrid", "dfa-onepass", "perf", "unicode"] }
+# The Unicode general categories search reads words by (`conn-engine/src/fold.rs`). Already in
+# the binary with these tables: regex-automata's `unicode` feature turns them on.
+regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode-gencat"] }
 axum = { version = "0.8", default-features = false, features = [
   "http1",
   "json",
