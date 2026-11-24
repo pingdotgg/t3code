@@ -1606,3 +1606,590 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
 }
+
+/// The Git settings a project can carry that change what a plain `git diff` reports.
+const DIFF_SETTINGS: [&[(&str, &str)]; 3] = [
+    &[],
+    &[("diff.relative", "true")],
+    &[("diff.relative", "true"), ("color.ui", "always")],
+];
+
+fn configure(work: &std::path::Path, settings: &[(&str, &str)]) {
+    for (key, value) in settings {
+        git(work, &["config", key, value]);
+    }
+}
+
+/// `notes.txt` at the root conflicts in a merge from `feature`; `sub/` is the project folder.
+fn merge_conflict(label: &str) -> Fixture {
+    conflict_in(label, "notes.txt", |_| {})
+}
+
+/// `file` at the root conflicts in a merge from `feature`. `prepare` runs on the work tree
+/// before the base commit, so it can add `.gitattributes` or Git settings.
+fn conflict_in(label: &str, file: &str, prepare: impl FnOnce(&std::path::Path)) -> Fixture {
+    conflict_between(label, file, ["base\n", "feature\n", "main\n"], prepare)
+}
+
+/// `file` holds `base`, then `feature` on that branch and `main` on `main`, which merges
+/// `feature` with a conflict.
+fn conflict_between(
+    label: &str,
+    file: &str,
+    [base, feature, main]: [&str; 3],
+    prepare: impl FnOnce(&std::path::Path),
+) -> Fixture {
+    let fx = Fixture::new(label);
+    prepare(&fx.work);
+    write(&fx.work, file, base);
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    write(&fx.work, file, feature);
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    write(&fx.work, file, main);
+    commit_all(&fx.work, "main");
+    let merge = std::process::Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(&fx.work)
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "the merge should conflict");
+    fx
+}
+
+// T3: "keeps other files conflicted through a selected-file commit", run from a nested project
+// folder under each diff setting.
+#[tokio::test]
+async fn keeps_other_files_conflicted_through_a_selected_file_commit() {
+    for settings in DIFF_SETTINGS {
+        let fx = Fixture::new("commit-stash-pop");
+        write(&fx.work, "notes.txt", "base\n");
+        write(&fx.work, "sub/chosen.txt", "one\n");
+        commit_all(&fx.work, "base");
+        // git stash pop leaves notes.txt conflicted with no merge in progress.
+        write(&fx.work, "notes.txt", "stashed version\n");
+        git(&fx.work, &["stash", "-q"]);
+        write(&fx.work, "notes.txt", "committed version\n");
+        commit_all(&fx.work, "change notes");
+        let pop = std::process::Command::new("git")
+            .args(["stash", "pop"])
+            .current_dir(&fx.work)
+            .output()
+            .unwrap();
+        assert!(!pop.status.success(), "the stash pop should conflict");
+        configure(&fx.work, settings);
+        write(&fx.work, "sub/chosen.txt", "one\ntwo\n");
+        // A formatting hook stages its edit into the temporary index that --only commits from.
+        write(
+            &fx.work,
+            ".git/hooks/pre-commit",
+            "#!/bin/sh\necho formatted >> sub/chosen.txt\ngit add sub/chosen.txt\n",
+        );
+        let hook = fx.work.join(".git/hooks/pre-commit");
+        let mut mode = std::fs::metadata(&hook).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
+        std::fs::set_permissions(&hook, mode).unwrap();
+        let head = git(&fx.work, &["rev-parse", "HEAD"]);
+        let unmerged = git(&fx.work, &["ls-files", "--unmerged"]);
+        assert_eq!(unmerged.lines().count(), 3, "{settings:?}");
+        let sub = fx.work.join("sub");
+        let selected = vec!["sub/chosen.txt".to_owned()];
+
+        let context = commit::prepare_context(&sub, Some(&selected), true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(context.summary, "M\tsub/chosen.txt", "{settings:?}");
+        commit::create(&sub, "Add chosen", "", Some(&selected))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            git(&fx.work, &["rev-parse", "HEAD~1"]),
+            head,
+            "{settings:?}"
+        );
+        assert_eq!(
+            git(&fx.work, &["show", "--pretty=", "--name-only", "HEAD"]),
+            "sub/chosen.txt\n"
+        );
+        assert_eq!(
+            git(&fx.work, &["show", "HEAD:sub/chosen.txt"]),
+            "one\ntwo\nformatted\n"
+        );
+        assert_eq!(
+            git(&fx.work, &["show", ":sub/chosen.txt"]),
+            "one\ntwo\nformatted\n"
+        );
+        assert_eq!(git(&fx.work, &["ls-files", "--unmerged"]), unmerged);
+        let all = commit::prepare_context(&sub, None, true).await.unwrap_err();
+        assert!(
+            all.to_string().contains(
+                "Cannot commit with unresolved merge conflicts in notes.txt. Resolve them, then commit."
+            ),
+            "{settings:?}: {all}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn commit_all_from_a_subdirectory_refuses_a_conflict_anywhere() {
+    for settings in DIFF_SETTINGS {
+        let fx = merge_conflict("commit-all-conflict");
+        configure(&fx.work, settings);
+        write(&fx.work, "sub/chosen.txt", "one\ntwo\n");
+        let head = git(&fx.work, &["rev-parse", "HEAD"]);
+        let stages = git(&fx.work, &["ls-files", "-s"]);
+        let notes = std::fs::read(fx.work.join("notes.txt")).unwrap();
+        assert!(String::from_utf8_lossy(&notes).starts_with("<<<<<<< HEAD\n"));
+        let sub = fx.work.join("sub");
+
+        let prepared = commit::prepare_context(&sub, None, true).await.unwrap_err();
+        assert!(
+            prepared
+                .to_string()
+                .contains("unresolved merge conflicts in notes.txt"),
+            "{settings:?}: {prepared}"
+        );
+        let created = commit::create(&sub, "All", "", None).await.unwrap_err();
+        assert!(
+            created
+                .to_string()
+                .contains("unresolved merge conflicts in notes.txt"),
+            "{settings:?}: {created}"
+        );
+        assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]), head, "{settings:?}");
+        assert!(fx.work.join(".git/MERGE_HEAD").exists(), "{settings:?}");
+        assert_eq!(git(&fx.work, &["ls-files", "-s"]), stages, "{settings:?}");
+        assert_eq!(std::fs::read(fx.work.join("notes.txt")).unwrap(), notes);
+
+        // Once resolved, Commit All finishes the merge with both parents.
+        write(&fx.work, "notes.txt", "resolved\n");
+        commit::create(&sub, "Merge", "", None).await.unwrap();
+        assert_eq!(
+            git(&fx.work, &["rev-list", "--parents", "-n1", "HEAD"])
+                .split_whitespace()
+                .count(),
+            3,
+            "{settings:?}"
+        );
+        assert_eq!(git(&fx.work, &["show", "HEAD:notes.txt"]), "resolved\n");
+        assert_eq!(
+            git(&fx.work, &["show", "HEAD:sub/chosen.txt"]),
+            "one\ntwo\n"
+        );
+        assert!(!fx.work.join(".git/MERGE_HEAD").exists());
+    }
+}
+
+/// Commit All from `sub/` refuses `file`, and leaves HEAD, the merge, the stages and the file.
+async fn assert_commit_all_refused(fx: &Fixture, file: &str) {
+    let head = git(&fx.work, &["rev-parse", "HEAD"]);
+    let stages = git(&fx.work, &["ls-files", "-s"]);
+    let content = std::fs::read(fx.work.join(file)).unwrap();
+    let sub = fx.work.join("sub");
+    let expected = format!("Cannot commit with unresolved merge conflicts in {file}.");
+
+    let prepared = commit::prepare_context(&sub, None, true).await.unwrap_err();
+    assert!(prepared.to_string().contains(&expected), "{prepared}");
+    let created = commit::create(&sub, "All", "", None).await.unwrap_err();
+    assert!(created.to_string().contains(&expected), "{created}");
+
+    assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]), head, "HEAD moved");
+    assert!(fx.work.join(".git/MERGE_HEAD").exists(), "the merge ended");
+    assert_eq!(git(&fx.work, &["ls-files", "-s"]), stages, "stages changed");
+    assert_eq!(
+        std::fs::read(fx.work.join(file)).unwrap(),
+        content,
+        "the file changed"
+    );
+}
+
+/// Commit All from `sub/` finishes the merge with both parents and `file` as `resolution`.
+async fn assert_commit_all_merges(fx: &Fixture, file: &str, resolution: &str) {
+    write(&fx.work, file, resolution);
+    commit::create(&fx.work.join("sub"), "Merge", "", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        git(&fx.work, &["rev-list", "--parents", "-n1", "HEAD"])
+            .split_whitespace()
+            .count(),
+        3,
+        "a merge commit has two parents"
+    );
+    assert_eq!(
+        git(&fx.work, &["show", &format!("HEAD:{file}")]),
+        resolution,
+        "the committed resolution"
+    );
+    assert!(
+        git(&fx.work, &["ls-files", "--unmerged"]).is_empty(),
+        "stages remain"
+    );
+    assert!(
+        !fx.work.join(".git/MERGE_HEAD").exists(),
+        "the merge is still pending"
+    );
+}
+
+/// Commit All from `sub/` commits `file` with its markers, as T3 does: its `git diff --check`
+/// reports no marker in this file.
+async fn assert_commit_all_keeps_markers(fx: &Fixture, file: &str) {
+    let content = std::fs::read_to_string(fx.work.join(file)).unwrap();
+    assert!(content.contains("<<<<<<< "), "{content}");
+    assert_commit_all_merges(fx, file, &content).await;
+}
+
+#[tokio::test]
+async fn commit_all_commits_markers_that_a_binary_diff_driver_hides_as_t3() {
+    let fx = conflict_in("commit-binary-driver", "notes.txt", |work| {
+        write(work, ".gitattributes", "*.txt diff=doc\n");
+    });
+    // `git diff --check` skips a file whose diff driver calls it binary.
+    configure(&fx.work, &[("diff.doc.binary", "true")]);
+
+    assert_commit_all_keeps_markers(&fx, "notes.txt").await;
+}
+
+#[tokio::test]
+async fn commit_all_commits_markers_in_a_file_named_with_a_newline_as_t3() {
+    let file = "odd\nname.txt";
+    let fx = conflict_in("commit-newline-name", file, |_| {});
+
+    // `git diff --check` prints the raw name, so T3's line-by-line read never matches it.
+    assert_commit_all_keeps_markers(&fx, file).await;
+}
+
+#[tokio::test]
+async fn commit_all_commits_a_resolution_with_a_lone_divider_line() {
+    let fx = merge_conflict("commit-lone-divider");
+    assert_commit_all_merges(
+        &fx,
+        "notes.txt",
+        "Heading\n=======\n<<<<<<< only an opening\nresolved\n",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn commit_all_keeps_markers_the_file_already_had() {
+    // A file that documents conflict markers, as T3's `--check` reads only added lines.
+    let example = "Example:\n<<<<<<< ours\nmine\n=======\nyours\n>>>>>>> theirs\n";
+    let fx = conflict_between(
+        "commit-documented-markers",
+        "notes.txt",
+        [
+            &format!("{example}base\n"),
+            &format!("{example}feature\n"),
+            &format!("{example}main\n"),
+        ],
+        |_| {},
+    );
+
+    assert_commit_all_refused(&fx, "notes.txt").await;
+    assert_commit_all_merges(&fx, "notes.txt", &format!("{example}resolved\n")).await;
+}
+
+#[tokio::test]
+async fn commit_all_commits_markers_in_a_file_our_side_deleted_as_t3() {
+    let fx = Fixture::new("commit-deleted-by-us");
+    write(&fx.work, "notes.txt", "base\n");
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    write(&fx.work, "notes.txt", "feature\n");
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    git(&fx.work, &["rm", "-q", "notes.txt"]);
+    commit_all(&fx.work, "main");
+    let merge = std::process::Command::new("git")
+        .args(["merge", "feature"])
+        .current_dir(&fx.work)
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "the merge should conflict");
+    let stages = git(&fx.work, &["ls-files", "--unmerged"]);
+    assert!(!stages.contains(" 2\t"), "{stages}");
+    write(
+        &fx.work,
+        "notes.txt",
+        "<<<<<<< HEAD\n=======\nfeature\n>>>>>>> feature\n",
+    );
+
+    // `git diff --check` compares the file with our side, stage 2, and there is none.
+    assert_commit_all_keeps_markers(&fx, "notes.txt").await;
+}
+
+#[tokio::test]
+async fn commit_all_reads_markers_at_the_configured_width() {
+    let fx = conflict_in("commit-marker-size", "notes.txt", |work| {
+        // Anchored, so the lookup has to run from the repository root, not `sub/`.
+        write(
+            work,
+            ".gitattributes",
+            "/notes.txt conflict-marker-size=12\n",
+        );
+        configure(work, &[("merge.conflictStyle", "diff3")]);
+    });
+    let notes = std::fs::read_to_string(fx.work.join("notes.txt")).unwrap();
+    assert!(notes.starts_with("<<<<<<<<<<<< HEAD\n"), "{notes}");
+    assert!(notes.contains("\n|||||||||||| "), "{notes}");
+
+    assert_commit_all_refused(&fx, "notes.txt").await;
+    // Nine-wide markers are content in a file whose markers are twelve wide.
+    assert_commit_all_merges(
+        &fx,
+        "notes.txt",
+        "<<<<<<<<< ours\nexample\n=========\nexample\n>>>>>>>>> theirs\n",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn commit_all_refuses_markers_when_another_file_fails_the_whole_tree_check() {
+    let fx = conflict_in("commit-check-fatal", "z.txt", |work| {
+        // Git dies on this pair, but only for a file it diffs.
+        write(
+            work,
+            ".gitattributes",
+            "a.txt whitespace=tab-in-indent,indent-with-non-tab\n",
+        );
+        write(work, "a.txt", "one\n");
+    });
+    write(&fx.work, "a.txt", "two\n");
+
+    assert_commit_all_refused(&fx, "z.txt").await;
+    assert_commit_all_merges(&fx, "z.txt", "resolved\n").await;
+}
+
+/// Runs `git merge feature` in `work` and checks that it conflicts.
+fn merge_feature(work: &std::path::Path) {
+    let merge = std::process::Command::new("git")
+        .args(["-c", "protocol.file.allow=always", "merge", "feature"])
+        .current_dir(work)
+        .output()
+        .unwrap();
+    assert!(!merge.status.success(), "the merge should conflict");
+}
+
+#[tokio::test]
+async fn commit_all_commits_a_rename_rename_conflict_as_t3() {
+    let fx = Fixture::new("commit-rename-rename");
+    let lines = (1..=20).map(|n| format!("{n}\n")).collect::<String>();
+    write(&fx.work, "f.txt", &lines);
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    git(&fx.work, &["mv", "f.txt", "g.txt"]);
+    write(&fx.work, "g.txt", &lines.replace("\n10\n", "\nfeature\n"));
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    git(&fx.work, &["mv", "f.txt", "h.txt"]);
+    write(&fx.work, "h.txt", &lines.replace("\n10\n", "\nmain\n"));
+    commit_all(&fx.work, "main");
+    merge_feature(&fx.work);
+    // Git writes the merged file, with markers one wider than the attribute, as h.txt's
+    // stage 2 and g.txt's stage 3.
+    let merged = std::fs::read_to_string(fx.work.join("g.txt")).unwrap();
+    assert!(merged.contains("\n<<<<<<<< HEAD:h.txt\n"), "{merged}");
+    assert_eq!(
+        std::fs::read_to_string(fx.work.join("h.txt")).unwrap(),
+        merged
+    );
+
+    // `git diff --check` reads markers at the attribute's width only, as T3 relies on.
+    commit::create(&fx.work.join("sub"), "Merge", "", None)
+        .await
+        .unwrap();
+    assert_eq!(git(&fx.work, &["show", "HEAD:g.txt"]), merged);
+    assert_eq!(git(&fx.work, &["show", "HEAD:h.txt"]), merged);
+    assert!(!fx.work.join(".git/MERGE_HEAD").exists());
+}
+
+#[tokio::test]
+async fn commit_all_commits_default_markers_after_an_incoming_marker_size_as_t3() {
+    let fx = Fixture::new("commit-incoming-attributes");
+    write(&fx.work, "notes.txt", "base\n");
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    write(&fx.work, "notes.txt", "feature\n");
+    write(
+        &fx.work,
+        ".gitattributes",
+        "notes.txt conflict-marker-size=12\n",
+    );
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    write(&fx.work, "notes.txt", "main\n");
+    commit_all(&fx.work, "main");
+    merge_feature(&fx.work);
+    // Git wrote seven-wide markers; the merged attributes now say twelve.
+    let notes = std::fs::read_to_string(fx.work.join("notes.txt")).unwrap();
+    assert!(notes.starts_with("<<<<<<< HEAD\n"), "{notes}");
+    assert_eq!(
+        git(
+            &fx.work,
+            &["check-attr", "conflict-marker-size", "notes.txt"]
+        ),
+        "notes.txt: conflict-marker-size: 12\n"
+    );
+
+    // `git diff --check` reads twelve-wide markers only.
+    assert_commit_all_keeps_markers(&fx, "notes.txt").await;
+}
+
+#[tokio::test]
+async fn commit_all_reads_an_out_of_range_marker_size_as_the_default() {
+    let fx = merge_conflict("commit-marker-size-range");
+    // Past Git's `int`: Git reads it as no size, so the markers are seven wide.
+    write(
+        &fx.work,
+        ".gitattributes",
+        "notes.txt conflict-marker-size=99999999999\n",
+    );
+
+    assert_commit_all_refused(&fx, "notes.txt").await;
+    assert_commit_all_merges(&fx, "notes.txt", "resolved\n").await;
+}
+
+#[tokio::test]
+async fn commit_all_commits_a_submodule_resolution_under_an_inline_submodule_diff() {
+    let fx = Fixture::new("commit-submodule");
+    let lib = fx.root.path().join("lib");
+    git(
+        fx.root.path(),
+        &["init", "-q", "-b", "main", lib.to_str().unwrap()],
+    );
+    git(&lib, &["config", "user.name", "test"]);
+    git(&lib, &["config", "user.email", "test@example.com"]);
+    write(&lib, "a.txt", "a\n");
+    let base = commit_all(&lib, "a");
+    git(
+        &fx.work,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            lib.to_str().unwrap(),
+            "lib",
+        ],
+    );
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    let checkout = fx.work.join("lib");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    write(&checkout, "b.txt", "b\n");
+    commit_all(&checkout, "b");
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    git(&checkout, &["checkout", "-q", &base]);
+    write(&checkout, "c.txt", "c\n");
+    commit_all(&checkout, "c");
+    commit_all(&fx.work, "main");
+    merge_feature(&fx.work);
+    assert!(git(&fx.work, &["ls-files", "--unmerged"]).contains("\tlib\n"));
+    // The resolution is a submodule commit that adds a file documenting markers, which an
+    // inline submodule diff would show as added lines.
+    write(
+        &checkout,
+        "doc.txt",
+        "<<<<<<< ours\n=======\n>>>>>>> theirs\n",
+    );
+    let resolution = commit_all(&checkout, "doc");
+    configure(&fx.work, &[("diff.submodule", "diff")]);
+
+    commit::create(&fx.work.join("sub"), "Merge", "", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        git(&fx.work, &["rev-parse", "HEAD:lib"]).trim(),
+        resolution,
+        "the committed gitlink"
+    );
+    assert!(git(&fx.work, &["ls-files", "--unmerged"]).is_empty());
+    assert!(!fx.work.join(".git/MERGE_HEAD").exists());
+}
+
+#[tokio::test]
+async fn commit_all_commits_thousands_of_conflicts_resolved_to_ours() {
+    const FILES: usize = 800;
+    let fx = Fixture::new("commit-many-conflicts");
+    // Deep names, so `ls-files --unmerged` prints more than 1 MB from few files: each
+    // `git diff` reads the whole index, so every file adds to every other file's cost.
+    let folder = "a-long-folder-name".repeat(5);
+    let name = |n: usize| format!("many/{folder}/{folder}/{folder}/{folder}/{n:04}.txt");
+    let write_all = |text: &str| {
+        for n in 0..FILES {
+            write(&fx.work, &name(n), &format!("{text} {n}\n"));
+        }
+    };
+    write_all("base");
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    write_all("feature");
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    write_all("main");
+    commit_all(&fx.work, "main");
+    merge_feature(&fx.work);
+    let unmerged = git(&fx.work, &["ls-files", "--unmerged", "-z"]);
+    assert!(unmerged.len() > 1_000_000, "{}", unmerged.len());
+    git(&fx.work, &["checkout", "--ours", "--", "many"]);
+
+    commit::create(&fx.work.join("sub"), "Merge", "", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        git(&fx.work, &["show", &format!("HEAD:{}", name(FILES - 1))]),
+        format!("main {}\n", FILES - 1)
+    );
+    assert!(git(&fx.work, &["ls-files", "--unmerged"]).is_empty());
+    assert!(!fx.work.join(".git/MERGE_HEAD").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn commit_all_refuses_a_conflict_in_a_file_named_with_invalid_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let file = std::ffi::OsStr::from_bytes(b"odd\xffname.txt");
+    let fx = Fixture::new("commit-invalid-utf8-name");
+    let put = |text: &str| std::fs::write(fx.work.join(file), text).unwrap();
+    put("base\n");
+    write(&fx.work, "sub/chosen.txt", "one\n");
+    commit_all(&fx.work, "base");
+    git(&fx.work, &["checkout", "-q", "-b", "feature"]);
+    put("feature\n");
+    commit_all(&fx.work, "feature");
+    git(&fx.work, &["checkout", "-q", "main"]);
+    put("main\n");
+    commit_all(&fx.work, "main");
+    merge_feature(&fx.work);
+    let head = git(&fx.work, &["rev-parse", "HEAD"]);
+    let sub = fx.work.join("sub");
+
+    for refused in [
+        commit::prepare_context(&sub, None, true).await.unwrap_err(),
+        commit::create(&sub, "All", "", None).await.unwrap_err(),
+    ] {
+        assert!(
+            refused
+                .to_string()
+                .contains("unresolved merge conflicts in odd\u{fffd}name.txt."),
+            "{refused}"
+        );
+    }
+    assert_eq!(git(&fx.work, &["rev-parse", "HEAD"]), head);
+    assert!(fx.work.join(".git/MERGE_HEAD").exists());
+
+    put("resolved\n");
+    commit::create(&sub, "Merge", "", None).await.unwrap();
+    assert!(git(&fx.work, &["ls-files", "--unmerged"]).is_empty());
+    assert!(!fx.work.join(".git/MERGE_HEAD").exists());
+}
