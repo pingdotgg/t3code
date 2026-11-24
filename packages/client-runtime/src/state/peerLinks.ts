@@ -1,11 +1,39 @@
-import { type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type PeerLinkSummary,
+  type PeerLinkThreadInput,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  followLinkedThread,
+  keepLinkedThreadView,
+  type LinkedThreadView,
+} from "../linkedThread.ts";
+import { request, subscribe } from "../rpc/client.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  followStreamInEnvironment,
+} from "./runtime.ts";
+
+/** The environment a client reads through, and the linked environment's thread it reads. */
+export interface LinkedThreadViewTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: PeerLinkThreadInput;
+}
+
+const threadViewKey = ({ environmentId, input }: LinkedThreadViewTarget) =>
+  JSON.stringify({
+    environmentId,
+    input: { environmentId: input.environmentId, threadId: input.threadId },
+  });
 
 export function createPeerLinkEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -16,19 +44,116 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
     // Listing probes every linked environment, so a list stays fresh briefly.
     staleTimeMs: 10_000,
   });
+  // Names only, for opening linked threads with thread read access; it probes nothing.
+  const names = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:peer-links:names",
+    tag: WS_METHODS.peerLinksNames,
+    staleTimeMs: 10_000,
+  });
+  const refreshLinks = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
+    Effect.sync(() => {
+      registry.refresh(list({ environmentId, input: {} }));
+      registry.refresh(names({ environmentId, input: {} }));
+    });
+  /**
+   * What a view of the thread last showed. It outlives the subscription for a while, so coming
+   * back to the view shows the thread at once while the stream starts again.
+   */
+  const lastThreadView = Atom.family((key: string) =>
+    Atom.make<LinkedThreadView | null>(null).pipe(
+      Atom.setIdleTTL(5 * 60_000),
+      Atom.withLabel(`environment-data:peer-links:last-thread-view:${key}`),
+    ),
+  );
+  /**
+   * A linked environment's thread, streamed while a view reads it. The subscription ends with its
+   * last reader, which closes the stream at the linked environment too.
+   */
+  const threadView = Atom.family((key: string) => {
+    const { environmentId, input } = JSON.parse(key) as LinkedThreadViewTarget;
+    const kept = lastThreadView(key);
+    const stream = runtime
+      .atom(({ registry }) =>
+        followStreamInEnvironment(
+          environmentId,
+          Stream.suspend(() =>
+            followLinkedThread({
+              items: subscribe(WS_METHODS.peerLinksSubscribeThread, input),
+              historyPage: (cursor) =>
+                request(WS_METHODS.peerLinksThreadHistoryPage, { ...input, cursor }),
+              previous: registry.get(kept),
+            }),
+          ),
+        ),
+      )
+      .pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-stream:${key}`));
+    return Atom.readable(
+      (get) => {
+        const live = get(stream);
+        if (AsyncResult.isSuccess(live)) {
+          get.set(kept, keepLinkedThreadView(get.once(kept), live.value));
+        }
+        return live;
+      },
+      (refresh) => refresh(stream),
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
+  });
   return {
     list,
+    names,
+    /**
+     * Rereads `environmentId`'s link names when they lack one of `wanted`, however fresh they
+     * are. Links made elsewhere (the CLI, another client, a batch) are not pushed, so a reader
+     * that meets a machine the names lack asks once more; a read under way already answers it.
+     */
+    refreshNamesLacking: (
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentId,
+      wanted: ReadonlyArray<EnvironmentId>,
+    ) => {
+      const atom = names({ environmentId, input: {} });
+      const result = registry.get(atom);
+      if (!AsyncResult.isSuccess(result) || result.waiting) return;
+      const known = new Set(result.value.links.map((link) => link.environmentId));
+      if (wanted.every((id) => known.has(id))) return;
+      registry.refresh(atom);
+    },
     link: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:link",
       tag: WS_METHODS.peerLinksLink,
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+      onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
+    }),
+    // Leaves the list alone: a batch refreshes it once, when it ends (`runLinkBatch`).
+    linkInBatch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:link-in-batch",
+      tag: WS_METHODS.peerLinksLink,
     }),
     unlink: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:unlink",
       tag: WS_METHODS.peerLinksUnlink,
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+      onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
+    }),
+    threadView: (target: LinkedThreadViewTarget) => threadView(threadViewKey(target)),
+    lastThreadView: (target: LinkedThreadViewTarget) => lastThreadView(threadViewKey(target)),
+    /** One item of a linked environment's thread in full, for a row the reader opened. */
+    threadItem: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:peer-links:thread-item",
+      tag: WS_METHODS.peerLinksThreadItem,
+      idleTtlMs: 0,
+    }),
+    /** Asks for a one-time pairing with a linked environment. Its answer is a credential: never cached. */
+    pairClient: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:pair-client",
+      tag: WS_METHODS.peerLinksPairClient,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.environmentId]),
+      },
+    }),
+    /** Asks for a pairing code from a linked environment, to link another one there. Never cached. */
+    pairLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:pair-link",
+      tag: WS_METHODS.peerLinksPairLink,
     }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
@@ -39,8 +164,7 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.threadId, input.turnItemId]),
       },
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+      onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
     }),
   };
 }
@@ -66,4 +190,48 @@ export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLi
   if (link.lastError !== null) return { kind: "failing", detail: link.lastError };
   const days = Math.ceil(Duration.toDays(DateTime.distance(now, link.expiresAt)));
   return { kind: "reachable", expiresInDays: days <= EXPIRY_WARNING_DAYS ? days : null };
+}
+
+/** A linked machine, and the environment that can get a pairing code from it. */
+export interface LinkThroughRoute {
+  readonly viaEnvironmentId: EnvironmentId;
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly urls: ReadonlyArray<string>;
+}
+
+/**
+ * The machines `sourceEnvironmentId` can link to without a pasted code: those another of the
+ * client's environments reaches over a full-access link that answers. `hosts` are environments
+ * the client is connected to and manages access on, the only ones it may ask.
+ */
+export function linkThroughRoutes(input: {
+  readonly sourceEnvironmentId: EnvironmentId;
+  readonly hosts: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly links: ReadonlyArray<PeerLinkSummary>;
+  }>;
+  readonly now: DateTime.Utc;
+}): ReadonlyMap<EnvironmentId, LinkThroughRoute> {
+  const routes = new Map<EnvironmentId, LinkThroughRoute>();
+  for (const host of input.hosts) {
+    if (host.environmentId === input.sourceEnvironmentId) continue;
+    for (const link of host.links) {
+      if (
+        link.environmentId === input.sourceEnvironmentId ||
+        link.access !== "full-access" ||
+        routes.has(link.environmentId) ||
+        peerLinkHealth(link, input.now).kind !== "reachable"
+      ) {
+        continue;
+      }
+      routes.set(link.environmentId, {
+        viaEnvironmentId: host.environmentId,
+        environmentId: link.environmentId,
+        label: link.label,
+        urls: link.urls,
+      });
+    }
+  }
+  return routes;
 }

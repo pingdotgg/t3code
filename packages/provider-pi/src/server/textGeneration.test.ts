@@ -253,6 +253,17 @@ it.effect.each([
       const textGeneration = yield* makePiTextGeneration(
         { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
         {},
+        (_driver, detected) =>
+          Effect.succeed(
+            detected === "0.84.2"
+              ? {
+                  status: "broken" as const,
+                  message: null,
+                  recommendedVersion: null,
+                  recommendedRange: ">=1.0.0",
+                }
+              : undefined,
+          ),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
 
       const generation = textGeneration.generateCommitMessage({
@@ -268,7 +279,7 @@ it.effect.each([
       });
       if (version === "0.84.2") {
         const error = yield* generation.pipe(Effect.flip);
-        assert.include(error.detail, "Pi 0.84.3 or newer");
+        assert.include(error.detail, "Pi 0.84.2 does not work");
         assert.deepEqual(pi.received, []);
         return;
       }
