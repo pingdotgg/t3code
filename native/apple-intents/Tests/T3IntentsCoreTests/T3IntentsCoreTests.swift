@@ -78,6 +78,44 @@ private func makeTempStore() -> T3IndexStore {
   return T3IndexStore(databaseURL: dir.appendingPathComponent("index.sqlite"))
 }
 
+/// Answers the environment descriptor as `descriptorEnvironmentId` and records every request.
+private final class StubEnvironmentProtocol: URLProtocol, @unchecked Sendable {
+  nonisolated(unsafe) static var descriptorEnvironmentId = "env-1"
+  nonisolated(unsafe) static var requests: [URLRequest] = []
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    Self.requests.append(request)
+    let isDescriptor = request.url?.path == "/.well-known/t3/environment"
+    let body = isDescriptor
+      ? #"{"environmentId":"\#(Self.descriptorEnvironmentId)"}"#
+      : #"{"sequence":7}"#
+    let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: Data(body.utf8))
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
+}
+
+private func makeStubbedClient() -> T3ServerClient {
+  let credentials = InMemoryCredentials()
+  credentials.saveCredentials([
+    T3AuthCredentialRecord(
+      environmentId: "env-1",
+      httpBaseUrl: "http://192.168.1.20:3773",
+      accessToken: "secret-token",
+      authScheme: "Bearer"
+    ),
+  ])
+  let configuration = URLSessionConfiguration.ephemeral
+  configuration.protocolClasses = [StubEnvironmentProtocol.self]
+  return T3ServerClient(credentials: credentials, session: URLSession(configuration: configuration))
+}
+
 @Suite("T3IntentsCore")
 struct T3IntentsCoreTests {
   @Test("Applies deltas, searches projects and threads, and cascades environment removal")
@@ -197,6 +235,25 @@ struct T3IntentsCoreTests {
       updatedAt: "2026-09-10T12:00:00.000Z",
       deepLinkUrl: "t3code://threads/env-1/\(id)"
     )
+  }
+
+  @Test("Never sends a saved credential to an address that answers as another environment")
+  func verifiesEnvironmentBeforeAuthorizing() async throws {
+    let client = makeStubbedClient()
+
+    StubEnvironmentProtocol.requests = []
+    StubEnvironmentProtocol.descriptorEnvironmentId = "env-other"
+    await #expect(throws: T3IntentError.self) {
+      _ = try await client.dispatchCommand(environmentId: "env-1", payload: ["type": .string("thread.pin")])
+    }
+    #expect(StubEnvironmentProtocol.requests.map { $0.url?.path } == ["/.well-known/t3/environment"])
+    #expect(StubEnvironmentProtocol.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == nil })
+
+    StubEnvironmentProtocol.requests = []
+    StubEnvironmentProtocol.descriptorEnvironmentId = "env-1"
+    let response = try await client.dispatchCommand(environmentId: "env-1", payload: ["type": .string("thread.pin")])
+    #expect(response.sequence == 7)
+    #expect(StubEnvironmentProtocol.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer secret-token")
   }
 
   @Test("Signs valid RFC 9449 ES256 DPoP proof JWT")

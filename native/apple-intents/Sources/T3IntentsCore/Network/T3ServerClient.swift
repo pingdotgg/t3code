@@ -171,6 +171,10 @@ public final class T3ServerClient: T3EnvironmentOperating, @unchecked Sendable {
     guard let url = URL(string: normalizedBase + path) else {
       throw T3IntentError.environmentUnreachable
     }
+    // A saved address can be reassigned to another host; never hand it this environment's token.
+    if cred.relayManaged != true {
+      try await verifyEnvironment(baseUrl: normalizedBase, expectedEnvironmentId: environmentId)
+    }
 
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
@@ -208,6 +212,34 @@ public final class T3ServerClient: T3EnvironmentOperating, @unchecked Sendable {
       throw T3IntentError.environmentUnreachable
     }
     return try decodeResponse(data: data, statusCode: http.statusCode)
+  }
+
+  private struct EnvironmentDescriptor: Decodable {
+    let environmentId: String
+  }
+
+  /// Reads the unauthenticated descriptor, as the app does before authorizing a direct route.
+  private func verifyEnvironment(baseUrl: String, expectedEnvironmentId: String) async throws {
+    guard let url = URL(string: baseUrl + "/.well-known/t3/environment") else {
+      throw T3IntentError.environmentUnreachable
+    }
+    var request = URLRequest(url: url)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await session.data(for: request)
+    } catch {
+      throw T3IntentError.environmentUnreachable
+    }
+    guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+          let descriptor = try? JSONDecoder().decode(EnvironmentDescriptor.self, from: data)
+    else {
+      throw T3IntentError.environmentUnreachable
+    }
+    guard descriptor.environmentId == expectedEnvironmentId else {
+      throw T3IntentError.environmentMismatch
+    }
   }
 
   private func decodeResponse<Response: Decodable>(

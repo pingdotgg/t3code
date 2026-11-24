@@ -84,6 +84,8 @@ export const AppleIntentAuthCredential = Schema.Struct({
   authScheme: AppleIntentAuthScheme,
   /** Keychain tag or private JWK JSON used when `authScheme === "DPoP"`. */
   dpopKeyRef: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** Relay routes are bound by the relay; every other route is checked against `environmentId` first. */
+  relayManaged: Schema.optionalKey(Schema.Boolean),
 });
 export type AppleIntentAuthCredential = typeof AppleIntentAuthCredential.Type;
 

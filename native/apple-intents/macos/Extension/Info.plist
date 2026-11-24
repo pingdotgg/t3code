@@ -25,5 +25,11 @@
     <key>EXExtensionPointIdentifier</key>
     <string>com.apple.appintents-extension</string>
   </dict>
+  <!-- Environments are user-configured and may be plain HTTP on a LAN or tailnet, as in the iOS app. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+  </dict>
 </dict>
 </plist>

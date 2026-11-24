@@ -18,6 +18,7 @@ import { m } from "../../i18n/messages";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { environmentSession } from "../../state/session";
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
 import {
@@ -55,6 +56,7 @@ const appleIntentsSourceAtom = Atom.make((get) => {
     readonly httpBaseUrl: string;
     readonly accessToken: string;
     readonly authScheme: "Bearer" | "DPoP";
+    readonly relayManaged: boolean;
   }> = [];
 
   for (const [envKey, connection] of Object.entries(connectionsById)) {
@@ -73,23 +75,19 @@ const appleIntentsSourceAtom = Atom.make((get) => {
       threads: snapshot?.threads ?? [],
     });
 
-    if (connection.httpBaseUrl) {
-      if (connection.authenticationMethod === "dpop" && connection.dpopAccessToken) {
-        rawCredentials.push({
-          environmentId,
-          httpBaseUrl: connection.httpBaseUrl,
-          accessToken: connection.dpopAccessToken,
-          authScheme: "DPoP",
-        });
-      } else if (connection.bearerToken) {
-        rawCredentials.push({
-          environmentId,
-          httpBaseUrl: connection.httpBaseUrl,
-          accessToken: connection.bearerToken,
-          authScheme: "Bearer",
-        });
-      }
-    }
+    // The prepared connection carries the authorization of the route in use, including direct DPoP.
+    const prepared = Option.getOrNull(
+      get(environmentSession.preparedConnectionValueAtom(environmentId)),
+    );
+    const authorization = prepared?.httpAuthorization ?? null;
+    if (prepared === null || authorization === null) continue;
+    rawCredentials.push({
+      environmentId,
+      httpBaseUrl: prepared.httpBaseUrl,
+      accessToken: authorization._tag === "Dpop" ? authorization.accessToken : authorization.token,
+      authScheme: authorization._tag === "Dpop" ? "DPoP" : "Bearer",
+      relayManaged: prepared.target._tag === "RelayConnectionTarget",
+    });
   }
 
   const onscreenRef = get(activeOnscreenThreadRefAtom);
@@ -193,6 +191,7 @@ export function installAppleIntents(): () => void {
           httpBaseUrl: item.httpBaseUrl,
           accessToken: item.accessToken,
           authScheme: item.authScheme,
+          relayManaged: item.relayManaged,
           ...(item.authScheme === "DPoP" && dpopScalar ? { dpopKeyRef: dpopScalar } : {}),
         }));
         const credSig = JSON.stringify(credentials);

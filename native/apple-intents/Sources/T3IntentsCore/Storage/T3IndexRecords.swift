@@ -158,19 +158,23 @@ public struct T3AuthCredentialRecord: Codable, Sendable, Hashable {
   public let accessToken: String
   public let authScheme: String
   public let dpopKeyRef: String?
+  /// Relay routes are bound by the relay; other routes are checked against the environment first.
+  public let relayManaged: Bool?
 
   public init(
     environmentId: String,
     httpBaseUrl: String,
     accessToken: String,
     authScheme: String,
-    dpopKeyRef: String? = nil
+    dpopKeyRef: String? = nil,
+    relayManaged: Bool? = nil
   ) {
     self.environmentId = environmentId
     self.httpBaseUrl = httpBaseUrl
     self.accessToken = accessToken
     self.authScheme = authScheme
     self.dpopKeyRef = dpopKeyRef
+    self.relayManaged = relayManaged
   }
 }
 
