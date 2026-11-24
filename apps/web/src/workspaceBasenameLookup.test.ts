@@ -222,6 +222,15 @@ describe("agentWorkingDirectories", () => {
       ),
     ).toEqual(["/work/d"]);
   });
+
+  it("leaves network shares out of the search roots", () => {
+    expect(
+      directories(
+        "cd //files.example/share",
+        String.raw`cd '\\files.example\share'; cd C:\work\repo`,
+      ),
+    ).toEqual([String.raw`C:\work\repo`]);
+  });
 });
 
 // regression: #35337 a bare file name the agent cited from a subfolder of an unregistered checkout

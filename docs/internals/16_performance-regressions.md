@@ -36,7 +36,8 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
 - Always compare refs with `ab <checkoutA> <checkoutB>` on the same machine rather than comparing
   isolated runs.
 - Use `scaling` to separate per-thread cost from fixed server overhead, and `--soak <minutes>` to
-  spot rising heap slopes (leaks).
+  spot rising heap slopes (leaks). A leak only shows in code the soak drives, so give a new
+  subsystem with long-lived state a part in its workload.
 - Steer server work by `working`: many worktree threads editing files at once with one client
   subscribed to all of them. Turns per minute that stay flat as threads are added mean the
   server, not the agents, is the bottleneck.

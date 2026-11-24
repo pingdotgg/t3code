@@ -1,6 +1,5 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
-import { getElementContext } from "react-grab/primitives";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindingMatching";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -28,6 +27,7 @@ import {
   type StrokeGeometry,
 } from "./AnnotationStroke.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { pageWorld } from "./PageWorldBridge.ts";
 import { pickElementAtPoint } from "./PickTarget.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
@@ -435,19 +435,24 @@ function updateSelectedVisual(target: SelectedElement): void {
   target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
-function toStackFrame(frame: {
-  functionName?: string;
-  fileName?: string;
-  lineNumber?: number;
-  columnNumber?: number;
-}): PickedElementStackFrame {
-  return {
-    functionName: frame.functionName ?? null,
-    fileName: frame.fileName ?? null,
-    lineNumber: frame.lineNumber ?? null,
-    columnNumber: frame.columnNumber ?? null,
-  };
-}
+// Everything the page's world returns is page-controlled, so each field is checked, not trusted.
+const pageField = (source: unknown, key: string): unknown =>
+  typeof source === "object" && source !== null ? Reflect.get(source, key) : undefined;
+const pageString = (source: unknown, key: string): string | null => {
+  const value = pageField(source, key);
+  return typeof value === "string" ? value : null;
+};
+const pageNumber = (source: unknown, key: string): number | null => {
+  const value = pageField(source, key);
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
+
+const toStackFrame = (frame: unknown): PickedElementStackFrame => ({
+  functionName: pageString(frame, "functionName"),
+  fileName: pageString(frame, "fileName"),
+  lineNumber: pageNumber(frame, "lineNumber"),
+  columnNumber: pageNumber(frame, "columnNumber"),
+});
 
 /** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
@@ -471,20 +476,21 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
     pickedAt: new Date().toISOString(),
   };
   try {
-    const context = await withCaptureTimeout(
-      Promise.resolve(getElementContext(element)),
+    const context: unknown = await withCaptureTimeout(
+      Promise.resolve(pageWorld.elementContext(element)),
       ELEMENT_CONTEXT_TIMEOUT_MS,
     );
-    if (context) {
-      const stack = (context.stack ?? []).map(toStackFrame);
+    if (typeof context === "object" && context !== null) {
+      const frames = pageField(context, "stack");
+      const stack = Array.isArray(frames) ? frames.map(toStackFrame) : [];
       return {
         ...base,
-        selector: context.selector,
-        htmlPreview: context.htmlPreview ?? "",
-        componentName: context.componentName,
+        selector: pageString(context, "selector"),
+        htmlPreview: pageString(context, "htmlPreview") ?? "",
+        componentName: pageString(context, "componentName"),
         source: stack[0] ?? null,
         stack,
-        styles: context.styles ?? "",
+        styles: pageString(context, "styles") ?? "",
       };
     }
   } catch {}
