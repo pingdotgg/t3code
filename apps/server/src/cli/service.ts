@@ -15,7 +15,7 @@ import * as ServiceProtection from "../cloud/serviceProtection.ts";
 import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { nonBlankHost, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveEntryPath, resolveHostCliHint } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
@@ -128,7 +128,7 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   if (status.supported && !status.installed) {
     // A new service listens on this machine only, until `t3 up` opens the local network.
     const { entries } = yield* readServiceEnv(baseDir);
-    if (entries.T3CODE_LAN === undefined && entries.T3CODE_HOST === undefined) {
+    if (entries.T3CODE_LAN === undefined && nonBlankHost(entries.T3CODE_HOST) === undefined) {
       yield* writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
     }
   }

@@ -312,6 +312,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       envAfter: "T3CODE_HOST=0.0.0.0\n",
     },
     {
+      label: "a blank host is no override",
+      installed: true,
+      reportStatus: true,
+      prints: ["on · kept from an older install"],
+      omits: "overridden",
+      env: 'T3CODE_HOST=" "\n',
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: 'T3CODE_HOST=" "\n',
+    },
+    {
       label: "no service manager still records the choice",
       installed: false,
       status: { supported: false },

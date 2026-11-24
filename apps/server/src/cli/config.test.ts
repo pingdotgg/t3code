@@ -1037,8 +1037,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const resolveHost = (input: {
         readonly connected: boolean;
         readonly env?: Record<string, string>;
+        readonly host?: string;
       }) =>
-        resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+        resolveServerConfig(
+          { ...minimalWebFlags(baseDir), host: Option.fromUndefinedOr(input.host) },
+          Option.none(),
+        ).pipe(
           Effect.map(({ host, privateNetworkOnly }) => ({ host, privateNetworkOnly })),
           Effect.provide(
             Layer.mergeAll(
@@ -1070,6 +1074,18 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         host: "127.0.0.1",
         privateNetworkOnly: undefined,
       });
+      // A blank host is unset, and a padded one is trimmed.
+      expect(yield* resolveHost({ connected: true, env: { T3CODE_HOST: " " } })).toEqual({
+        host: "0.0.0.0",
+        privateNetworkOnly: true,
+      });
+      expect(yield* resolveHost({ connected: true, host: "" })).toEqual({
+        host: "0.0.0.0",
+        privateNetworkOnly: true,
+      });
+      expect(
+        yield* resolveHost({ connected: true, host: " ", env: { T3CODE_HOST: " 127.0.0.1 " } }),
+      ).toEqual({ host: "127.0.0.1", privateNetworkOnly: undefined });
       expect(yield* resolveHost({ connected: true, env: { T3CODE_LAN: "false" } })).toEqual({
         host: undefined,
         privateNetworkOnly: undefined,

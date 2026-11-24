@@ -117,6 +117,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       expected: "T3CODE_HOST=::\n",
     },
     {
+      label: "a blank host",
+      installed: false,
+      env: "T3CODE_HOST=\n",
+      expected: "T3CODE_HOST=\nT3CODE_LAN=false\n",
+    },
+    {
       label: "a quoted multiline value",
       installed: false,
       env: 'CUSTOM="first\nT3CODE_LAN=example\nlast"\n',

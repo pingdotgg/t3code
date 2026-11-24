@@ -18,7 +18,7 @@ import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { nonBlankHost, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
   connectSubcommands,
   disconnectCloud,
@@ -81,13 +81,14 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
     : null;
   // Another home's service doesn't read this home's service.env.
   const servesThisHome = service.installed && service.otherBaseDir === undefined;
+  const host = nonBlankHost(entries.T3CODE_HOST);
   return {
     service,
     connect,
     connectRevoked,
     lan: Option.getOrElse(lan, () => servesThisHome),
-    lanFromOldDefault: Option.isNone(lan) && servesThisHome && entries.T3CODE_HOST === undefined,
-    host: entries.T3CODE_HOST,
+    lanFromOldDefault: Option.isNone(lan) && servesThisHome && host === undefined,
+    host,
   } satisfies Setup;
 });
 
@@ -374,7 +375,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     ]);
     yield* Console.log(`${reason} Keep this command running:\n  ${command}`);
     // A host wins over --lan and --no-lan, as it does in service.env.
-    const shellHost = (yield* HostProcess.Environment).T3CODE_HOST;
+    const shellHost = nonBlankHost((yield* HostProcess.Environment).T3CODE_HOST);
     if (shellHost !== undefined) {
       yield* Console.warn(
         `T3CODE_HOST=${shellHost} in this shell overrides that choice. Unset it before you run the command.`,

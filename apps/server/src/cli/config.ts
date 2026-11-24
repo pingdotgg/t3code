@@ -251,6 +251,8 @@ const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
 ): Option.Option<Value> => Option.firstSomeOf(values);
 
+export const nonBlankHost = (host: string | undefined) => host?.trim() || undefined;
+
 const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
   const exists = yield* fs.exists(settingsPath).pipe(Effect.orElseSucceed(() => false));
@@ -416,9 +418,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
   const explicitHost = resolveOptionPrecedence(
-    normalizedFlags.host,
-    Option.fromUndefinedOr(env.host),
-    Option.fromUndefinedOr(bootstrap?.host),
+    Option.flatMap(normalizedFlags.host, (host) => Option.fromUndefinedOr(nonBlankHost(host))),
+    Option.fromUndefinedOr(nonBlankHost(env.host)),
+    Option.fromUndefinedOr(nonBlankHost(bootstrap?.host)),
   );
   // Private networks only, so clients learn a LAN address and prefer it over
   // T3 Connect. `t3 service install` writes T3CODE_LAN=false for a new
