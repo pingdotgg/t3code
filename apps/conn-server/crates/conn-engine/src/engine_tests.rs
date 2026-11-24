@@ -2075,6 +2075,46 @@ async fn a_restart_cancels_a_queued_buffered_provider_notification() {
     }
 }
 
+/// The #268 gate's probe: cancelling a buffered notification queued behind a run that waits
+/// for approval leaves that approval pending, so recovery does not continue past it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_cancelling_a_notification_keeps_the_active_approval() {
+    let db = TempDb::new("restart-notification-approval");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        dispatch(&engine, message("t1", "c2", "ask")).await;
+        while next(&mut thread).await["event"]["type"] != "runtime-request.updated" {}
+        dispatch(
+            &engine,
+            json!({"type": "message.dispatch", "commandId": "c3", "threadId": "t1",
+                   "messageId": "message:c3", "text": "Background task completed.",
+                   "notification": {"source": {"kind": "background_task"},
+                       "outcome": "updated", "summary": "Background activity updated"},
+                   "attachments": [], "dispatchMode": {"type": "queue_after_active"},
+                   "createdBy": "agent", "creationSource": "provider"}),
+        )
+        .await;
+        assert_eq!(
+            run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
+            "queued"
+        );
+    }
+    let engine = open_held(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "cancelled");
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+    assert_eq!(
+        p["runs"].as_array().map(Vec::len),
+        Some(2),
+        "the run that waited for approval does not continue on its own"
+    );
+}
+
 /// The #268 gate's probe: a host cleanup that fails is tried again; one that keeps failing
 /// leaves its row `failed` with the error, instead of `succeeded`.
 #[tokio::test(flavor = "current_thread")]

@@ -2057,6 +2057,8 @@ pub(crate) fn finish_run_as(
     if !is_live(&run) {
         return Ok(false);
     }
+    // A queued run never started, so the thread's pending requests belong to the active run.
+    let queued = run["status"] == "queued";
     crate::secret_requests::cancel_pending(tx, thread_id, run_id)?;
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None)?;
@@ -2106,7 +2108,12 @@ pub(crate) fn finish_run_as(
             tx.append(draft("turn-item.updated", item))?;
         }
     }
-    for mut request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+    let pending = if queued {
+        vec![]
+    } else {
+        tx.entities_where(thread_id, "runtimeRequests", "status", "pending")?
+    };
+    for mut request in pending {
         request["status"] = json!("cancelled");
         request["resolvedAt"] = json!(now);
         tx.append(draft("runtime-request.updated", request))?;
