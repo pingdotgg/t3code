@@ -76,7 +76,7 @@ impl EnvironmentSet {
     pub fn connect(&mut self, target: EnvironmentTarget) -> Connection {
         self.disconnect(&target.environment_id);
         let (connection, events) = Connection::start(target.config, &self.rt);
-        connection.subscribe_shell();
+        connection.subscribe_shell_with_idle_subagents();
         connection.subscribe_server_config();
         let forwarder = self.rt.spawn(forward(
             target.environment_id.clone(),

@@ -37,7 +37,9 @@ const PING_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MISSED_PONGS: u8 = 2;
 
 pub(crate) enum Command {
-    SubscribeShell,
+    SubscribeShell {
+        include_idle_subagents: bool,
+    },
     SubscribeServerConfig,
     SubscribeThread(String),
     UnsubscribeThread(String),
@@ -100,6 +102,7 @@ struct DriverState {
     backoff: Backoff,
     next_request_id: i64,
     shell_subscribed: bool,
+    include_idle_subagents: bool,
     shell_after_sequence: Option<i64>,
     shell_request_id: Option<RequestId>,
     server_config_subscribed: bool,
@@ -132,6 +135,7 @@ impl DriverState {
             backoff: Backoff::new(),
             next_request_id: 1,
             shell_subscribed: false,
+            include_idle_subagents: false,
             shell_after_sequence: None,
             shell_request_id: None,
             server_config_subscribed: false,
@@ -187,7 +191,10 @@ impl DriverState {
 
     fn handle_offline_command(&mut self, cmd: Command) {
         match cmd {
-            Command::SubscribeShell => {
+            Command::SubscribeShell {
+                include_idle_subagents,
+            } => {
+                self.include_idle_subagents = include_idle_subagents;
                 self.shell_subscribed = true;
             }
             Command::SubscribeServerConfig => {
@@ -652,7 +659,10 @@ where
     S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
     match cmd {
-        Command::SubscribeShell => {
+        Command::SubscribeShell {
+            include_idle_subagents,
+        } => {
+            state.include_idle_subagents = include_idle_subagents;
             state.shell_subscribed = true;
             if state.shell_request_id.is_none() {
                 send_shell_subscribe(state, ws_write).await?;
@@ -764,7 +774,7 @@ where
         http_snapshot_fallback: None,
         known_project_identities: None,
         request_completion_marker: Some(true),
-        omit_idle_subagents: Some(true),
+        omit_idle_subagents: Some(!state.include_idle_subagents),
         omit_older_settled: Some(true),
     };
     let payload = serde_json::to_value(&input)

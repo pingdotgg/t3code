@@ -243,24 +243,42 @@ impl VirtualItem {
 }
 
 /// One user-turn marker for the left-edge TimelineMinimap / TOC rail.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct TocEntry {
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct TocEntry {
     /// 1-based user turn number.
-    pub(super) turn_number: usize,
+    pub(crate) turn_number: usize,
     /// Index in [`RowCache::items`] / GPUI `ListState` to jump to.
-    pub(super) item_index: usize,
+    #[serde(skip)]
+    pub(crate) item_index: usize,
     /// Contract entry id of the user prompt starting this turn.
-    pub(super) entry_id: String,
+    pub(crate) entry_id: String,
     /// Single-line truncated prompt preview.
-    pub(super) preview: String,
+    pub(crate) preview: String,
     /// Optional short plain-text excerpt of the turn's assistant reply (for minimap hover card).
-    pub(super) assistant_preview: Option<String>,
+    pub(crate) assistant_preview: Option<String>,
     /// Whether this turn was initiated by an agent prompt rather than the human user.
-    pub(super) is_agent_prompt: bool,
+    pub(crate) is_agent_prompt: bool,
     /// Whether the turn produced a git checkpoint with changed files.
-    pub(super) has_checkpoint: bool,
+    pub(crate) has_checkpoint: bool,
     /// Whether any notice/tool in this turn failed.
-    pub(super) has_error: bool,
+    pub(crate) has_error: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct ThreadOutline {
+    pub(crate) markers: Vec<TocEntry>,
+    pub(super) by_id: std::collections::HashMap<String, usize>,
+}
+
+impl ThreadOutline {
+    pub(crate) fn new(markers: Vec<TocEntry>) -> Self {
+        let by_id = markers
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.entry_id.clone(), i))
+            .collect();
+        Self { markers, by_id }
+    }
 }
 
 /// Summary of work performed during [`RowCache::sync`].
@@ -380,6 +398,7 @@ fn assistant_excerpt(markdown: &str) -> String {
 /// Ordered cache of timeline rows, virtual list items, and turn TOC markers.
 #[derive(Debug, Default)]
 pub(super) struct RowCache {
+    prompt_positions: Vec<usize>,
     rows: Vec<CachedRow>,
     items: Vec<VirtualItem>,
     item_keys: Vec<String>,
@@ -429,10 +448,33 @@ impl RowCache {
         Some(next_after.saturating_sub(1))
     }
 
+    pub(super) fn prompt_at(&self, index: usize) -> Option<&str> {
+        let VirtualItem::User { row_idx, .. } = self.items.get(index)? else {
+            return None;
+        };
+        Some(self.rows[*row_idx].entry.id())
+    }
+
+    pub(super) fn active_outline_index(
+        &self,
+        top: usize,
+        outline: &ThreadOutline,
+    ) -> Option<usize> {
+        let end = self
+            .prompt_positions
+            .partition_point(|position| *position <= top);
+        // The body cache omits work rows that can separate two canonical prompt groups.
+        self.prompt_positions[..end]
+            .iter()
+            .rev()
+            .find_map(|position| outline.by_id.get(self.prompt_at(*position)?).copied())
+    }
+
     /// Clears all cached rows, virtual items, and TOC entries.
     pub(super) fn clear(&mut self) {
         self.rows.clear();
         self.items.clear();
+        self.prompt_positions.clear();
         self.item_keys.clear();
         self.toc.clear();
     }
@@ -844,6 +886,12 @@ impl RowCache {
         }
 
         let item_keys = items.iter().map(|item| item.stable_key(rows)).collect();
+        self.prompt_positions.clear();
+        self.prompt_positions.extend(
+            items.iter().enumerate().filter_map(|(index, item)| {
+                matches!(item, VirtualItem::User { .. }).then_some(index)
+            }),
+        );
         self.items = items;
         self.item_keys = item_keys;
         self.toc = toc;

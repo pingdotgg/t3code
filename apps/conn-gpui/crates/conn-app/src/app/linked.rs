@@ -240,6 +240,14 @@ impl ConnApp {
             .or_else(|| self.server_label.clone())
     }
 
+    pub(super) fn thread_connected(&self, id: &str) -> bool {
+        let status = match self.linked_environment_of_thread(id) {
+            Some(env) => self.linked.statuses.get(env),
+            None => self.status.as_ref(),
+        };
+        matches!(status, Some(ConnectionStatus::Connected))
+    }
+
     /// The connection of the environment `thread_id` lives on.
     pub(crate) fn connection_for_thread(&self, thread_id: &str) -> Option<Connection> {
         match self.linked_environment_of_thread(thread_id) {
@@ -431,7 +439,9 @@ impl ConnApp {
             Some(environment) => self.linked_connection(&environment),
             None => self.connection.clone(),
         };
-        if let Some(connection) = connection {
+        if let Some(connection) = connection
+            && !self.offline.watching(&previous)
+        {
             connection.unsubscribe_thread(&previous);
         }
     }
@@ -670,6 +680,7 @@ impl ConnApp {
             self.linked.restore_cached(environment_id);
         } else {
             if let Some(set) = self.linked.set.as_mut() {
+                self.offline.disconnected(environment_id);
                 set.disconnect(environment_id);
             }
             self.linked.statuses.remove(environment_id);
@@ -951,6 +962,7 @@ impl ConnApp {
                 continue;
             }
             if let Some(set) = self.linked.set.as_mut() {
+                self.offline.disconnected(environment_id);
                 set.disconnect(environment_id);
             }
             self.linked.statuses.remove(environment_id);
@@ -977,6 +989,7 @@ impl ConnApp {
         self.linked.missing_since_ms = verdict.missing_since_ms;
         for environment_id in &verdict.gone {
             if let Some(set) = self.linked.set.as_mut() {
+                self.offline.disconnected(environment_id);
                 set.disconnect(environment_id);
             }
             changed |= self.linked.shells.remove(environment_id);
@@ -1141,6 +1154,8 @@ impl ConnApp {
                     }
                     if shells_changed {
                         app.remerge_linked_shells();
+                        app.expire_offline(cx);
+                        app.reconcile_offline(cx);
                         app.drive_older_pages(cx);
                         // A thread started on a linked environment opens once it is listed.
                         if let Some(pending_id) = app.pending_open_thread.clone()
@@ -1150,6 +1165,7 @@ impl ConnApp {
                             app.select_thread(pending_id, cx);
                         }
                     }
+                    app.schedule_offline_save(cx);
                     app.schedule_linked_shell_save(cx);
                     app.sync_chat(cx);
                     cx.notify();
@@ -1179,6 +1195,9 @@ impl ConnApp {
         }
         match event {
             ClientEvent::Status(status) => {
+                if !matches!(status, ConnectionStatus::Connected) {
+                    self.offline.disconnected(&environment_id);
+                }
                 if let ConnectionStatus::Failed(message) = &status
                     && is_auth_failure(message)
                 {
@@ -1186,6 +1205,7 @@ impl ConnApp {
                     self.orbit.sessions.remove_bearer(&environment_id);
                     self.orbit.persist_sessions();
                     if let Some(set) = self.linked.set.as_mut() {
+                        self.offline.disconnected(&environment_id);
                         set.disconnect(&environment_id);
                     }
                 }
@@ -1218,7 +1238,7 @@ impl ConnApp {
                 if change.snapshot_required
                     && let Some(connection) = self.linked_connection(&environment_id)
                 {
-                    connection.subscribe_shell();
+                    connection.subscribe_shell_with_idle_subagents();
                 }
                 if !change.threads_changed.is_empty() {
                     self.resubscribe_ended_threads();
@@ -1230,6 +1250,7 @@ impl ConnApp {
                 changed
             }
             ClientEvent::Thread { thread_id, item } => {
+                self.offline.changed(&environment_id, &thread_id);
                 self.threads
                     .entry(thread_id.clone())
                     .or_insert_with(|| ThreadState::new(thread_id))

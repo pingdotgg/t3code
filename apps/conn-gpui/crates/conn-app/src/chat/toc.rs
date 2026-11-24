@@ -112,16 +112,16 @@ pub(super) fn render_toc_overlay(
     let prev_item = active_toc_idx
         .and_then(|i| i.checked_sub(1))
         .and_then(|i| toc.get(i))
-        .map(|e| e.item_index);
+        .map(|e| e.entry_id.clone());
     let next_item = active_toc_idx
         .and_then(|i| toc.get(i + 1))
-        .map(|e| e.item_index);
+        .map(|e| e.entry_id.clone());
 
     let nav_btn = |id: &'static str,
                    ax_id: &'static str,
                    label: &'static str,
                    icon_path: &'static str,
-                   target: Option<usize>,
+                   target: Option<String>,
                    cx: &mut Context<'_, ChatView>| {
         let mut btn = div()
             .id(id)
@@ -148,7 +148,7 @@ pub(super) fn render_toc_overlay(
                 .hover(move |s| s.bg(hover_bg))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, _, cx| {
-                    view.jump_to_toc_item(item_idx, cx);
+                    view.jump_to_prompt(&item_idx, cx);
                 }));
         }
         btn
@@ -194,7 +194,7 @@ pub(super) fn render_toc_overlay(
         } else {
             tick_idle
         };
-        let item_index = entry.item_index;
+        let prompt_id = entry.entry_id.clone();
 
         ticks_stack = ticks_stack.child(
             div()
@@ -219,7 +219,7 @@ pub(super) fn render_toc_overlay(
                 }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |view, _, _, cx| {
-                    view.jump_to_toc_item(item_index, cx);
+                    view.jump_to_prompt(&prompt_id, cx);
                 }))
                 .child(
                     // Web's strip: `transition-transform duration-150` (ease `cubic-bezier(.4,0,.2,1)`).

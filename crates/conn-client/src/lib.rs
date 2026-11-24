@@ -498,7 +498,16 @@ impl Connection {
     /// Items arrive as [`ClientEvent::Shell`]. Automatically resubscribes after reconnect using
     /// the last observed sequence as `afterSequence`.
     pub fn subscribe_shell(&self) {
-        let _ = self.cmd_tx.send(Command::SubscribeShell);
+        let _ = self.cmd_tx.send(Command::SubscribeShell {
+            include_idle_subagents: false,
+        });
+    }
+
+    /// Includes idle children so an unsettled subagent can be cached before it is opened.
+    pub fn subscribe_shell_with_idle_subagents(&self) {
+        let _ = self.cmd_tx.send(Command::SubscribeShell {
+            include_idle_subagents: true,
+        });
     }
 
     /// Subscribes to `subscribeServerConfig`, which sends the server config and then every
