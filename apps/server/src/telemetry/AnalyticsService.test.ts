@@ -70,6 +70,7 @@ const SentBatch = Schema.fromJsonString(
         properties: Schema.Struct({
           telemetryChannel: Schema.String,
           installId: Schema.optionalKey(Schema.String),
+          serverOs: Schema.optionalKey(Schema.String),
           ownerSource: Schema.optionalKey(Schema.String),
           observedBy: Schema.optionalKey(Schema.String),
         }),
@@ -215,12 +216,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
           yield* analytics.flush;
         }),
       );
-      const [linked, anonymous] = batches.flat();
+      assert.equal(batches.length, 2);
+      const [linked, anonymous] = batches.map(([event]) => event);
 
       assert.isDefined(linked?.properties.installId);
+      assert.isDefined(linked?.properties.serverOs);
       assert.equal(anonymous?.distinct_id, anonymous?.uuid);
       assert.notEqual(anonymous?.distinct_id, linked?.distinct_id);
       assert.isUndefined(anonymous?.properties.installId);
+      assert.isUndefined(anonymous?.properties.serverOs);
     }),
   );
 

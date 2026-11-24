@@ -598,7 +598,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       const before = yield* h.instance.snapshot.getSnapshot;
       h.controls.failResolution = true;
       const error = yield* h.refresh().pipe(Effect.flip);
-      expect(error.detail).toContain("previous model list is unchanged");
+      expect(error.detail).toBe("Fixture resolution failed.");
       const after = yield* h.instance.snapshot.getSnapshot;
       expect(after.models).toEqual(before.models);
       expect(after.auth).toEqual(before.auth);

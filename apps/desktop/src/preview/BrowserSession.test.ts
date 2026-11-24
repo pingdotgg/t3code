@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
@@ -241,12 +242,14 @@ describe("BrowserSession", () => {
       const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
       assert.strictEqual(calls.length, 1);
       const [filter, listener] = calls[0] ?? [];
-      assert.deepStrictEqual(filter, {
-        urls: ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"],
-      });
-      const send = (requestHeaders: Record<string, string>) => {
+      assert.deepStrictEqual(filter, { urls: ["http://*/*", "https://*/*"] });
+      const send = (
+        requestHeaders: Record<string, string>,
+        url = "https://teams.microsoft.com/v2/",
+        resourceType = "xhr",
+      ) => {
         let response: { requestHeaders?: Record<string, string> } | undefined;
-        listener({ requestHeaders }, (next: typeof response) => {
+        listener({ url, resourceType, requestHeaders }, (next: typeof response) => {
           response = next;
         });
         return response;
@@ -259,8 +262,59 @@ describe("BrowserSession", () => {
         assert.strictEqual(requestHeaders[key], nativeUserAgent);
       }
       assert.deepStrictEqual(send({ Accept: "*/*" }), {});
+      assert.deepStrictEqual(send({ "User-Agent": nativeUserAgent }, "https://example.com/"), {});
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("adds the renderer's client hints to secure navigations, which Electron omits", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const [, listener] =
+        sessions.get(partition)?.webRequest.onBeforeSendHeaders.mock.calls[0] ?? [];
+      const send = (url: string, resourceType: string, requestHeaders: Record<string, string>) => {
+        let response: { requestHeaders?: Record<string, string> } | undefined;
+        listener({ url, resourceType, requestHeaders }, (next: typeof response) => {
+          response = next;
+        });
+        return response;
+      };
+      const hints = BrowserSession.lowEntropyClientHints(
+        process.versions.chrome ?? "",
+        yield* HostProcess.Platform,
+      );
+
+      for (const [url, resourceType] of [
+        ["https://example.com/login", "mainFrame"],
+        ["http://localhost:3000/", "subFrame"],
+        ["http://127.0.0.1:3000/", "mainFrame"],
+      ] as const) {
+        assert.deepStrictEqual(send(url, resourceType, { Accept: "text/html" }), {
+          requestHeaders: { Accept: "text/html", ...hints },
+        });
+      }
+      // Chromium sends no hints to insecure origins, and subresources already carry the renderer's own.
+      assert.deepStrictEqual(send("http://example.com/", "mainFrame", {}), {});
+      assert.deepStrictEqual(send("https://example.com/api", "xhr", {}), {});
+      assert.deepStrictEqual(
+        send("https://example.com/", "mainFrame", { "Sec-CH-UA": '"Chromium";v="1"' }),
+        {},
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it("builds the client hints Electron 44's renderer sends", () => {
+    assert.deepStrictEqual(BrowserSession.lowEntropyClientHints("152.0.7977.169", "linux"), {
+      "sec-ch-ua": '"Not?A_Brand";v="24", "Chromium";v="152"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Linux"',
+    });
+    assert.strictEqual(
+      BrowserSession.lowEntropyClientHints("152.0.7977.169", "darwin")["sec-ch-ua-platform"],
+      '"macOS"',
+    );
+  });
 
   it.effect("grants preview permissions through both the request and check handlers", () =>
     Effect.gen(function* () {
