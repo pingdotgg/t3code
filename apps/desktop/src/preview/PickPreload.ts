@@ -182,6 +182,8 @@ interface AnnotationSession {
 interface RemoteTarget {
   readonly label: string;
   readonly styles: CSSStyleDeclaration;
+  readonly stylesWhenPicked: CSSStyleDeclaration;
+  readonly reloadStyles: () => void;
   readonly unclippedSize: () => FramePickSize;
   readonly capture: () => Promise<PickedElementPayload>;
   readonly setStyle: (property: string, value: string) => void;
@@ -1156,7 +1158,8 @@ function startAnnotation(
           selector: null,
           property,
           previousValue:
-            styleChanges.get(key)?.previousValue ?? remote.styles.getPropertyValue(property).trim(),
+            styleChanges.get(key)?.previousValue ??
+            remote.stylesWhenPicked.getPropertyValue(property).trim(),
           value,
         });
         remote.setStyle(property, value);
@@ -1509,7 +1512,10 @@ function startAnnotation(
       adjust.setAttribute("aria-expanded", "true");
       adjust.title = "Collapse annotation editor";
       adjust.setAttribute("aria-label", "Collapse annotation editor");
-      if (selected.size > 0) syncStyleControls();
+      if (selected.size > 0) {
+        syncStyleControls();
+        for (const target of selected.values()) remoteTargets.get(target.element)?.reloadStyles();
+      }
     } else {
       editorExpanded = false;
       editorPosition = null;
@@ -2075,13 +2081,13 @@ function startAnnotation(
 
   const loadRemoteStyles = (
     mirror: HTMLDivElement,
-    styles: CSSStyleDeclaration,
+    targets: ReadonlyArray<CSSStyleDeclaration>,
     documentToken: string,
     id: string,
   ): void => {
     void commandFrame(documentToken, { kind: "describe", id }).then((described) => {
       for (const [property, value] of Object.entries(pageStyles(described)))
-        styles.setProperty(property, value);
+        for (const styles of targets) styles.setProperty(property, value);
       if (selected.values().next().value?.element === mirror && editorExpanded) syncStyleControls();
     });
   };
@@ -2089,6 +2095,8 @@ function startAnnotation(
   const hoverTarget = (label: string): RemoteTarget => ({
     label,
     styles: document.createElement("div").style,
+    stylesWhenPicked: document.createElement("div").style,
+    reloadStyles: () => undefined,
     unclippedSize: () => ({ width: 0, height: 0 }),
     capture: () => Promise.reject(new Error("hover outline only")),
     setStyle: () => undefined,
@@ -2117,10 +2125,13 @@ function startAnnotation(
     }
     if (remoteTargets.has(mirror)) return mirror;
     const styles = document.createElement("div").style;
+    const stylesWhenPicked = document.createElement("div").style;
     const sizedMirror = mirror;
     remoteTargets.set(mirror, {
       label: hit.label,
       styles,
+      stylesWhenPicked,
+      reloadStyles: () => loadRemoteStyles(sizedMirror, [styles], documentToken, id),
       unclippedSize: () => mirrorSizes.get(sizedMirror) ?? hit.unclippedSize,
       capture: () => captureRemote(documentToken, framePaths, id, hit.label),
       setStyle: (property, value) => {
@@ -2130,7 +2141,7 @@ function startAnnotation(
         void commandFrame(documentToken, { kind: "restore", id });
       },
     });
-    loadRemoteStyles(mirror, styles, documentToken, id);
+    loadRemoteStyles(mirror, [styles, stylesWhenPicked], documentToken, id);
     return mirror;
   };
 
