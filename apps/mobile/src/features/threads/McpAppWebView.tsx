@@ -27,7 +27,7 @@ import Constants from "expo-constants";
 import { msg, T, useGT, Var } from "gt-react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Platform, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -241,6 +241,17 @@ export function ThreadMcpApp(props: {
     navigation,
   };
   const latest = useRef(live);
+  const presentFullscreen = () => {
+    const { props: current, navigation: currentNavigation } = latest.current;
+    setPresentedFullscreen(true);
+    currentNavigation.navigate("ThreadMcpApp", {
+      environmentId: String(current.environmentId),
+      threadId: String(current.threadId),
+      conversationThreadId: String(current.conversationThreadId),
+      itemId: String(current.itemId),
+      revision: current.revision,
+    });
+  };
   // The attached WebView owns its host; state lets the tool-call effect pair
   // a host only with an atom from a render after that host existed.
   const [host, setHost] = useState<McpAppHost | null>(null);
@@ -438,14 +449,7 @@ export function ThreadMcpApp(props: {
             reloadInline();
             return "inline";
           }
-          setPresentedFullscreen(true);
-          navigation.navigate("ThreadMcpApp", {
-            environmentId: String(current.environmentId),
-            threadId: String(current.threadId),
-            conversationThreadId: String(current.conversationThreadId),
-            itemId: String(current.itemId),
-            revision: current.revision,
-          });
+          presentFullscreen();
           return "fullscreen";
         }
         if (mode === "inline" && current.displayMode === "fullscreen") {
@@ -566,75 +570,90 @@ export function ThreadMcpApp(props: {
     );
   }
 
+  const showOpenFullscreen = !fullscreen && clipped && !navigatedAway && !crashed;
   return (
-    <View
-      style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}
-      className={
-        !fullscreen && clipped ? "overflow-hidden rounded-lg border border-border" : undefined
-      }
-    >
-      {navigatedAway ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">
-            <T>
-              The <Var>{app.server}</Var> app left its page and was stopped
-            </T>
-          </Text>
-        </View>
-      ) : uri !== null && !crashed ? (
-        <WebView<object>
-          key={`${documentKey}:${generation}:${uri}`}
-          ref={attachWebView}
-          onContentProcessDidTerminate={restart}
-          onRenderProcessGone={restart}
-          source={source!}
-          accessibilityLabel={gt("{server} app", { server: app.server })}
-          style={{ flex: 1, backgroundColor: "transparent" }}
-          nestedScrollEnabled
-          decelerationRate={webViewDecelerationRate}
-          originWhitelist={["*"]}
-          // Android misreports nested frames as top-level; rely on iframe sandboxing there and gate navigation elsewhere.
-          onShouldStartLoadWithRequest={(request) =>
-            Platform.OS === "android" ||
-            request.isTopFrame === false ||
-            request.url === "about:blank"
-          }
-          setSupportMultipleWindows={false}
-          onLoadEnd={() => setLoaded(true)}
-          onError={() => setCrashed(true)}
-          onHttpError={() => setCrashed(true)}
-          onMessage={(event: WebViewMessageEvent) => {
-            let envelope: unknown;
-            try {
-              envelope = JSON.parse(event.nativeEvent.data);
-            } catch {
-              return;
+    <View style={fullscreen ? { flex: 1 } : { marginBottom: ROW_BOTTOM_MARGIN }}>
+      <View
+        style={fullscreen ? { flex: 1 } : { height }}
+        className={
+          !fullscreen && clipped ? "overflow-hidden rounded-lg border border-border" : undefined
+        }
+      >
+        {navigatedAway ? (
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-sm text-foreground-muted">
+              <T>
+                The <Var>{app.server}</Var> app left its page and was stopped
+              </T>
+            </Text>
+          </View>
+        ) : uri !== null && !crashed ? (
+          <WebView<object>
+            key={`${documentKey}:${generation}:${uri}`}
+            ref={attachWebView}
+            onContentProcessDidTerminate={restart}
+            onRenderProcessGone={restart}
+            source={source!}
+            accessibilityLabel={gt("{server} app", { server: app.server })}
+            style={{ flex: 1, backgroundColor: "transparent" }}
+            nestedScrollEnabled
+            decelerationRate={webViewDecelerationRate}
+            originWhitelist={["*"]}
+            // Android misreports nested frames as top-level; rely on iframe sandboxing there and gate navigation elsewhere.
+            onShouldStartLoadWithRequest={(request) =>
+              Platform.OS === "android" ||
+              request.isTopFrame === false ||
+              request.url === "about:blank"
             }
-            if (!Predicate.isObject(envelope) || envelope.secret !== secret) return;
-            const message = envelope.message;
-            if (Predicate.isObject(message) && message.t3 === "navigated") {
-              host?.dispose();
-              setNavigatedAway(true);
-              return;
-            }
-            userActive.current = envelope.active === true;
-            host?.receive(message);
-            userActive.current = false;
-          }}
-        />
-      ) : asset._tag === "Failure" || crashed ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">
-            <T>
-              Unable to load the <Var>{app.server}</Var> app
-            </T>
+            setSupportMultipleWindows={false}
+            onLoadEnd={() => setLoaded(true)}
+            onError={() => setCrashed(true)}
+            onHttpError={() => setCrashed(true)}
+            onMessage={(event: WebViewMessageEvent) => {
+              let envelope: unknown;
+              try {
+                envelope = JSON.parse(event.nativeEvent.data);
+              } catch {
+                return;
+              }
+              if (!Predicate.isObject(envelope) || envelope.secret !== secret) return;
+              const message = envelope.message;
+              if (Predicate.isObject(message) && message.t3 === "navigated") {
+                host?.dispose();
+                setNavigatedAway(true);
+                return;
+              }
+              userActive.current = envelope.active === true;
+              host?.receive(message);
+              userActive.current = false;
+            }}
+          />
+        ) : asset._tag === "Failure" || crashed ? (
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-sm text-foreground-muted">
+              <T>
+                Unable to load the <Var>{app.server}</Var> app
+              </T>
+            </Text>
+          </View>
+        ) : null}
+        {uri !== null && !loaded && !crashed && !navigatedAway ? (
+          <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+            <AppActivityIndicator />
+          </View>
+        ) : null}
+      </View>
+      {showOpenFullscreen ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={awaitingUser}
+          onPress={presentFullscreen}
+          className="mt-1.5 min-h-11 items-end justify-center active:opacity-70 disabled:opacity-50"
+        >
+          <Text className="font-t3-medium text-xs text-foreground-muted">
+            <T>Open full screen</T>
           </Text>
-        </View>
-      ) : null}
-      {uri !== null && !loaded && !crashed && !navigatedAway ? (
-        <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-          <AppActivityIndicator />
-        </View>
+        </Pressable>
       ) : null}
     </View>
   );
