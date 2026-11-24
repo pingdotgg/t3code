@@ -37,6 +37,8 @@ const Soak = Schema.Struct({
   minutes: Schema.Number,
   heapMBPerHour: Schema.Number,
   rssMBPerHour: Schema.Number,
+  /** Processes below the server, so agent or git children that outlive their thread show. */
+  childProcessesPerHour: Schema.optional(Schema.Number),
 });
 
 const MachineState = Schema.Struct({
@@ -161,6 +163,14 @@ export const HeapGrowth = Schema.Struct({
   MB: Schema.Number,
 });
 
+/** An object whose retained size grew at every soak snapshot, and how it is reached. */
+export const RetainerGrowth = Schema.Struct({
+  path: Schema.String,
+  MB: Schema.Number,
+  retainedMB: Schema.Number,
+});
+export type RetainerGrowth = typeof RetainerGrowth.Type;
+
 export const ServerMetrics = Schema.Struct({
   meta: Schema.Record(
     Schema.String,
@@ -170,6 +180,7 @@ export const ServerMetrics = Schema.Struct({
   /** Top CPU self time (ms) and allocated MB by function, from the last run. */
   profiles: Schema.optional(Schema.Record(Schema.String, ProfileSummary)),
   soakHeapGrowth: Schema.optional(Schema.Array(HeapGrowth)),
+  soakRetainerGrowth: Schema.optional(Schema.Array(RetainerGrowth)),
 });
 export type ServerMetrics = typeof ServerMetrics.Type;
 
@@ -703,19 +714,24 @@ export function summarizeProfiles(
   return { cpuMs: top(cpuTotals, 0), allocatedMB: top(allocations, 1) };
 }
 
+const TypeNames = Schema.Array(Schema.Union([Schema.Array(Schema.String), Schema.String]));
 export const HeapSnapshot = Schema.Struct({
   snapshot: Schema.Struct({
     meta: Schema.Struct({
       node_fields: Schema.Array(Schema.String),
-      node_types: Schema.Array(Schema.Union([Schema.Array(Schema.String), Schema.String])),
+      node_types: TypeNames,
+      edge_fields: Schema.Array(Schema.String),
+      edge_types: TypeNames,
     }),
   }),
   nodes: Schema.Array(Schema.Number),
+  edges: Schema.Array(Schema.Number),
   strings: Schema.Array(Schema.String),
 });
+type HeapSnapshot = typeof HeapSnapshot.Type;
 
 /** Self size by constructor from a V8 heap snapshot. */
-export function heapByConstructor(snapshot: typeof HeapSnapshot.Type) {
+export function heapByConstructor(snapshot: HeapSnapshot) {
   const fields = snapshot.snapshot.meta.node_fields;
   const typeNames = snapshot.snapshot.meta.node_types[0];
   const types = Array.isArray(typeNames) ? typeNames : [];
@@ -755,6 +771,253 @@ export function heapGrowth(
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 25)
     .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
+}
+
+interface Retainer {
+  readonly retained: number;
+  /** The id of the node that dominates this one, none for the root. */
+  readonly dominator: number | undefined;
+  /** Empty below `pathBytes`: such a node is only kept to compare sizes across snapshots. */
+  readonly path: string;
+}
+
+const TEXT_NODES = new Set(["string", "concatenated string", "sliced string", "regexp", "number"]);
+const IDENTIFIER = /^[A-Za-z_$#][\w$]{0,48}$/;
+
+/**
+ * Retained size by node id for every node retaining at least `minBytes`, and for those retaining
+ * `pathBytes` the shortest strong path from the root to it. Node ids are stable within one process, so snapshots of one
+ * server line up. Paths name only code: string contents and non-identifier keys are left out.
+ */
+export function heapRetainers(snapshot: HeapSnapshot, minBytes = 16_000, pathBytes = 256_000) {
+  const { meta } = snapshot.snapshot;
+  const nodeFields = meta.node_fields.length;
+  const edgeFields = meta.edge_fields.length;
+  const list = (names: typeof meta.node_types) => {
+    const first = names[0];
+    return Array.isArray(first) ? first : [];
+  };
+  const nodeTypes = list(meta.node_types);
+  const edgeTypes = list(meta.edge_types);
+  const [typeAt, nameAt, idAt, sizeAt, edgeCountAt] = [
+    "type",
+    "name",
+    "id",
+    "self_size",
+    "edge_count",
+  ].map((field) => meta.node_fields.indexOf(field)) as [number, number, number, number, number];
+  const [edgeTypeAt, edgeNameAt, toAt] = ["type", "name_or_index", "to_node"].map((field) =>
+    meta.edge_fields.indexOf(field),
+  ) as [number, number, number];
+  const { nodes, edges, strings } = snapshot;
+  const count = nodes.length / nodeFields;
+  const firstEdge = new Uint32Array(count + 1);
+  for (let node = 0, offset = 0; node < count; node++) {
+    firstEdge[node] = offset;
+    offset += nodes[node * nodeFields + edgeCountAt]! * edgeFields;
+    firstEdge[node + 1] = offset;
+  }
+  const weak = edgeTypes.indexOf("weak");
+  const shortcut = edgeTypes.indexOf("shortcut");
+  const strong = (edge: number) =>
+    edges[edge + edgeTypeAt] !== weak && edges[edge + edgeTypeAt] !== shortcut;
+  const target = (edge: number) => edges[edge + toAt]! / nodeFields;
+
+  // Postorder from the root, then dominators by Cooper, Harvey and Kennedy's iteration.
+  const postorder = new Int32Array(count).fill(-1);
+  const order = new Int32Array(count);
+  const stack = new Int32Array(count);
+  const cursor = new Uint32Array(count);
+  const seen = new Uint8Array(count);
+  let depth = 0;
+  let visited = 0;
+  stack[depth++] = 0;
+  seen[0] = 1;
+  cursor[0] = firstEdge[0]!;
+  while (depth > 0) {
+    const node = stack[depth - 1]!;
+    if (cursor[node]! < firstEdge[node + 1]!) {
+      const edge = cursor[node]!;
+      cursor[node] = edge + edgeFields;
+      const next = target(edge);
+      if (strong(edge) && !seen[next]) {
+        seen[next] = 1;
+        cursor[next] = firstEdge[next]!;
+        stack[depth++] = next;
+      }
+    } else {
+      depth--;
+      postorder[node] = visited;
+      order[visited++] = node;
+    }
+  }
+  const predecessorStart = new Uint32Array(count + 1);
+  for (let node = 0; node < count; node++) {
+    if (!seen[node]) continue;
+    for (let edge = firstEdge[node]!; edge < firstEdge[node + 1]!; edge += edgeFields) {
+      if (strong(edge)) predecessorStart[target(edge) + 1]!++;
+    }
+  }
+  for (let node = 0; node < count; node++) predecessorStart[node + 1]! += predecessorStart[node]!;
+  const predecessors = new Int32Array(predecessorStart[count]!);
+  const fill = predecessorStart.slice(0, count);
+  for (let node = 0; node < count; node++) {
+    if (!seen[node]) continue;
+    for (let edge = firstEdge[node]!; edge < firstEdge[node + 1]!; edge += edgeFields) {
+      if (strong(edge)) predecessors[fill[target(edge)]!++] = node;
+    }
+  }
+  const dominator = new Int32Array(count).fill(-1);
+  dominator[0] = 0;
+  const intersect = (left: number, right: number) => {
+    while (left !== right) {
+      while (postorder[left]! < postorder[right]!) left = dominator[left]!;
+      while (postorder[right]! < postorder[left]!) right = dominator[right]!;
+    }
+    return left;
+  };
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let index = visited - 2; index >= 0; index--) {
+      const node = order[index]!;
+      let found = -1;
+      for (let at = predecessorStart[node]!; at < predecessorStart[node + 1]!; at++) {
+        const predecessor = predecessors[at]!;
+        if (dominator[predecessor] === -1) continue;
+        found = found === -1 ? predecessor : intersect(predecessor, found);
+      }
+      if (found !== -1 && dominator[node] !== found) {
+        dominator[node] = found;
+        changed = true;
+      }
+    }
+  }
+  const retained = new Float64Array(count);
+  for (let node = 0; node < count; node++) retained[node] = nodes[node * nodeFields + sizeAt]!;
+  for (let index = 0; index < visited - 1; index++) {
+    const node = order[index]!;
+    retained[dominator[node]!]! += retained[node]!;
+  }
+
+  const parent = new Int32Array(count).fill(-1);
+  const parentEdge = new Int32Array(count).fill(-1);
+  const queue = new Int32Array(count);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = 0;
+  parent[0] = 0;
+  while (head < tail) {
+    const node = queue[head++]!;
+    for (let edge = firstEdge[node]!; edge < firstEdge[node + 1]!; edge += edgeFields) {
+      const next = target(edge);
+      if (!strong(edge) || parent[next] !== -1) continue;
+      parent[next] = node;
+      parentEdge[next] = edge;
+      queue[tail++] = next;
+    }
+  }
+  const nodeType = (node: number) => nodeTypes[nodes[node * nodeFields + typeAt]!] ?? "?";
+  const label = (node: number) => {
+    const type = nodeType(node);
+    if (TEXT_NODES.has(type)) return `(${type})`;
+    const name = strings[nodes[node * nodeFields + nameAt]!] ?? "";
+    const shown = name.length > 60 || /["'`\n\\]|:\/\/|(^|\s)\/[\w.]/.test(name) ? "?" : name;
+    if (type === "object") return shown;
+    if (type === "closure") return `${shown || "(anonymous)"}()`;
+    return `(${type}${shown ? ` ${shown}` : ""})`;
+  };
+  const edgeName = (edge: number) => {
+    const type = edgeTypes[edges[edge + edgeTypeAt]!];
+    const value = edges[edge + edgeNameAt]!;
+    if (type === "element" || type === "hidden") return `[${value}]`;
+    const name = strings[value] ?? "";
+    return IDENTIFIER.test(name) ? name : "<key>";
+  };
+  const pathTo = (node: number) => {
+    const steps: string[] = [];
+    for (let at = node; at !== 0 && steps.length < 40; at = parent[at]!) {
+      if (parent[at] === -1) return "(unreachable)";
+      const from = parent[at]!;
+      steps.push(
+        from === 0 || nodeType(from) === "synthetic"
+          ? edgeName(parentEdge[at]!)
+          : `${label(from)}.${edgeName(parentEdge[at]!)}`,
+      );
+      if (nodeType(from) === "synthetic") break;
+    }
+    const shown = steps.reverse();
+    return [...(shown.length > 6 ? ["…", ...shown.slice(-6)] : shown), label(node)].join(" → ");
+  };
+  const result = new Map<number, Retainer>();
+  for (let node = 0; node < count; node++) {
+    if (!seen[node] || retained[node]! < minBytes) continue;
+    result.set(nodes[node * nodeFields + idAt]!, {
+      retained: retained[node]!,
+      dominator: node === 0 ? undefined : nodes[dominator[node]! * nodeFields + idAt]!,
+      path:
+        retained[node]! < pathBytes
+          ? ""
+          : nodeType(node) === "synthetic"
+            ? label(node)
+            : pathTo(node),
+    });
+  }
+  return result;
+}
+
+/**
+ * The objects whose retained size grew from each snapshot to the next, at least `minBytes` in all.
+ * An object is left out when a reported object it dominates holds at least 80% of its growth: of
+ * a chain that grew by about the same amount, only the deepest is kept, the container holding the
+ * growth. Nested objects whose growth differs are each reported.
+ */
+export function retainerGrowth(
+  snapshots: ReadonlyArray<ReadonlyMap<number, Retainer>>,
+  minBytes = 1_000_000,
+) {
+  const last = snapshots.at(-1);
+  if (last === undefined || snapshots.length < 2) return [];
+  const growth = new Map<number, number>();
+  for (const [id, { retained, path }] of last) {
+    if (path === "" || path.startsWith("(synthetic")) continue;
+    const sizes = [
+      ...snapshots.slice(0, -1).map((snapshot) => snapshot.get(id)?.retained ?? 0),
+      retained,
+    ];
+    const grewEachTime = sizes.every((size, index) => index === 0 || size > sizes[index - 1]!);
+    const grown = retained - sizes[0]!;
+    if (grewEachTime && grown >= minBytes) growth.set(id, grown);
+  }
+  const ancestors = (id: number) => {
+    const found: number[] = [];
+    for (let at = last.get(id)?.dominator; at !== undefined && found.length < 500;) {
+      found.push(at);
+      at = last.get(at)?.dominator;
+    }
+    return found;
+  };
+  // Deepest first, so every descendant is decided before its ancestors: a row is left out
+  // only when a reported descendant holds at least 80% of its growth.
+  const heldBelow = new Map<number, number>();
+  const kept: Array<[number, number]> = [];
+  const depth = new Map([...growth.keys()].map((id) => [id, ancestors(id).length]));
+  const order = [...growth].toSorted((a, b) => depth.get(b[0])! - depth.get(a[0])!);
+  for (const [id, grown] of order) {
+    if ((heldBelow.get(id) ?? 0) >= grown * 0.8) continue;
+    kept.push([id, grown]);
+    for (const ancestor of ancestors(id)) {
+      heldBelow.set(ancestor, Math.max(heldBelow.get(ancestor) ?? 0, grown));
+    }
+  }
+  const rows: RetainerGrowth[] = kept
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([id, grown]) => ({
+      path: last.get(id)!.path,
+      MB: round(grown / 1e6, 2),
+      retainedMB: round(last.get(id)!.retained / 1e6, 2),
+    }));
+  return rows;
 }
 
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
