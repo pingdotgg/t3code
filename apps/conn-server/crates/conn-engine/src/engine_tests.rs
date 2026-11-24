@@ -9593,11 +9593,7 @@ async fn a_provider_failure_holds_messages_and_starts_a_buffered_wake() {
     let (engine, _) = open(&db);
     dispatch(&engine, create("t1", "create")).await;
     // Hold only effect execution so every message is queued before the fake provider fails.
-    let gate = engine
-        .inner()
-        .reserve_effect(crate::commands::Effect::CloseSession {
-            thread_id: "t1".into(),
-        });
+    let gate = gate(&engine).await;
     dispatch(&engine, message("t1", "active", "fail")).await;
     let queued =
         |id, text| message_with("t1", id, text, json!({"type":"queue_after_active"}), None);
@@ -9688,13 +9684,32 @@ fn async_answer(command: &str) -> Value {
         "requestId":"t1:request","answers":{"color":"Blue","sizes":["Small"]}})
 }
 
-/// Holds effect execution, so the commands below land before t1's runs start.
-fn gate(engine: &SqliteEngine) -> crate::engine::ReservedEffect {
+/// Holds effect execution, so the commands below land before t1's runs start: a row in t1's
+/// outbox lane, behind what is already there. Dropping the release settles it without running.
+async fn gate(engine: &SqliteEngine) -> tokio::sync::oneshot::Sender<()> {
+    let (release, held) = tokio::sync::oneshot::channel();
+    let inner = engine.inner().clone();
     engine
         .inner()
-        .reserve_effect(crate::commands::Effect::CloseSession {
-            thread_id: "t1".into(),
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            tx.enqueue(
+                None,
+                &[crate::commands::Effect::CloseSession {
+                    thread_id: "t1".into(),
+                }],
+            )?;
+            let id = tx
+                .sql()
+                .query_row("SELECT max(id) FROM effect_outbox", [], |row| row.get(0))
+                .map_err(|e| e.to_string())?;
+            // Before the commit, so the worker never claims the row ungated.
+            crate::lock(&inner.worker_hooks).gates.insert(id, held);
+            tx.commit(None)
         })
+        .await
+        .unwrap();
+    release
 }
 
 fn queued(id: &str, text: &str) -> Value {
@@ -9730,7 +9745,7 @@ async fn an_async_answer_leaves_a_held_queue_held() {
     let db = TempDb::new("async-answer-held");
     let (engine, _) = open(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail")).await;
     dispatch(&engine, queued("b", "Queued by the user")).await;
     drop(hold);
@@ -9766,7 +9781,7 @@ async fn an_async_answer_during_a_start_gets_its_own_run() {
     let (engine, _) = open(&db);
     dispatch(&engine, create("t1", "create")).await;
     seed_async_question(&engine).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "one")).await;
     assert_eq!(
         projection(&engine, "t1").await["runs"][0]["status"],
@@ -9792,7 +9807,7 @@ async fn a_second_buffered_wake_drains_past_a_held_queue() {
     let db = TempDb::new("second-buffered-wake");
     let (engine, _) = open(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let first = gate(&engine);
+    let first = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail")).await;
     dispatch(&engine, queued("b", "Queued by the user")).await;
     dispatch(
@@ -9801,7 +9816,7 @@ async fn a_second_buffered_wake_drains_past_a_held_queue() {
     )
     .await;
     // Holds the first wake in its start, after the failure released it.
-    let second = gate(&engine);
+    let second = gate(&engine).await;
     drop(first);
     run_to_end(&engine, "t1", "run:t1:1").await;
     dispatch(
@@ -9843,7 +9858,7 @@ async fn a_usage_limit_blocks_only_its_provider() {
     let db = TempDb::new("usage-limit-same");
     let (engine, _, _) = open_two(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
     dispatch(&engine, on("claudeAgent", "b", "Queued for Claude")).await;
     dispatch(&engine, provider_wake("wake", "Background task completed.")).await;
@@ -9864,7 +9879,7 @@ async fn a_usage_limit_blocks_only_its_provider() {
     let db = TempDb::new("usage-limit-other");
     let (engine, _, codex) = open_two(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
     dispatch(&engine, on("codex", "b", "Queued for Codex")).await;
     drop(hold);
@@ -10034,7 +10049,7 @@ async fn a_limited_queue_waits_until_the_user_resumes() {
         m["modelSelection"] = json!({"instanceId": instance, "model": "m"});
         m
     };
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(
         &engine,
         on(
@@ -10085,7 +10100,7 @@ async fn a_monitor_wake_follows_the_current_selection() {
     let db = TempDb::new("monitor-wake-selection");
     let (engine, _, codex) = open_two(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "limited", "fail-usage-limit")).await;
     let mut wake = queued("wake", "A watched pull request changed.");
     wake["createdBy"] = json!("agent");
@@ -10114,7 +10129,7 @@ async fn a_provider_failure_holds_only_its_provider() {
     let db = TempDb::new("failure-other-provider");
     let (engine, _, codex) = open_two(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail")).await;
     let mut b = queued("b", "On Codex");
     b["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
@@ -10133,7 +10148,7 @@ async fn a_monitor_wake_takes_a_new_model_on_the_same_instance() {
     let db = TempDb::new("monitor-wake-same-instance");
     let (engine, _) = open(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "active", "Hello")).await;
     let mut wake = queued("wake", "A watched pull request changed.");
     wake["createdBy"] = json!("agent");
@@ -10163,7 +10178,7 @@ async fn a_stale_wake_does_not_hold_other_provider_work_after_a_failure() {
     let db = TempDb::new("stale-wake-failure");
     let (engine, _, codex) = open_two(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail")).await;
     let mut wake = queued("wake", "A watched pull request changed.");
     wake["createdBy"] = json!("agent");
@@ -10193,7 +10208,7 @@ async fn a_newer_session_error_lifts_an_old_usage_limit() {
     let db = TempDb::new("usage-limit-session-error");
     let (engine, _) = open(&db);
     dispatch(&engine, create("t1", "create")).await;
-    let hold = gate(&engine);
+    let hold = gate(&engine).await;
     dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
     dispatch(&engine, queued("b", "Later")).await;
     drop(hold);

@@ -54,6 +54,8 @@ pub(crate) struct TestHooks {
         tokio::sync::oneshot::Sender<()>,
         tokio::sync::oneshot::Receiver<()>,
     )>,
+    /// Outbox rows that hold their lane until released, then settle without running.
+    pub(crate) gates: std::collections::HashMap<i64, tokio::sync::oneshot::Receiver<()>>,
 }
 
 /// The wait before settlement try `failures + 1`: 100 ms, doubling, at most 30 s (the
@@ -157,6 +159,16 @@ impl Inner {
     /// Runs one claimed row and settles it; its thread's next row may then run.
     async fn run_claimed(self: Arc<Self>, claimed: Claimed) {
         let Claimed { id, effect } = claimed;
+        #[cfg(test)]
+        {
+            let gate = crate::lock(&self.worker_hooks).gates.remove(&id);
+            if let Some(release) = gate {
+                let _ = release.await;
+                self.settle_ran(id).await;
+                self.effects_wake.notify_one();
+                return;
+            }
+        }
         #[cfg(test)]
         let effect_type = effect.effect_type();
         self.clone().run_effect(effect).await;
