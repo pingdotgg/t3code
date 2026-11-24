@@ -7,6 +7,7 @@ import type { RemoteOpenResolution } from "./remoteOpen";
 const state = vi.hoisted(() => ({
   remoteOpen: { state: { mode: "local-exec" }, isResolved: true } as RemoteOpenResolution,
   openInEditor: vi.fn(async () => ({ _tag: "Success" })),
+  openRemoteEditorUrl: vi.fn(async (_url: string) => true),
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -17,11 +18,16 @@ vi.mock("@effect/atom-react", () => ({
     environment: { platform: { os: "linux" } },
   }),
 }));
+vi.mock(import("gt-react"), async (original) => ({
+  ...(await original()),
+  useMessages: () => (text: string) => text,
+}));
 vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => state.openInEditor }));
 vi.mock(import("./remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenResolution: () => state.remoteOpen,
-  useRemoteOpenState: () => state.remoteOpen.state,
+  useRemoteCapableEditors: () => ["vscode"],
+  openRemoteEditorUrl: state.openRemoteEditorUrl,
 }));
 
 const BASE_TARGET = {
@@ -66,26 +72,44 @@ describe("resolveFileContextMenuAbsolutePath", () => {
 
 describe("useFileContextMenu", () => {
   it.each<[string, RemoteOpenResolution]>([
-    [
-      "remote-links",
-      {
-        state: { mode: "remote-links", host: { kind: "ssh-alias", host: "box" } },
-        isResolved: true,
-      },
-    ],
     ["remote-unavailable", { state: { mode: "remote-unavailable" }, isResolved: true }],
     ["unresolved", { state: { mode: "local-exec" }, isResolved: false }],
-  ])("offers no host shell actions when remote open is %s", async (_mode, resolution) => {
+  ])("offers no open actions when remote open is %s", async (_mode, resolution) => {
     state.remoteOpen = resolution;
     state.openInEditor.mockClear();
     const menu = useFileContextMenu(BASE_TARGET.environmentId);
 
     expect(menu.buildItems(BASE_TARGET)).toEqual([]);
     await menu.activate("open", BASE_TARGET);
+    await menu.activate("editor:vscode", BASE_TARGET);
     expect(state.openInEditor).not.toHaveBeenCalled();
   });
 
-  it("offers host shell actions when remote open is local-exec", async () => {
+  it("opens files over SSH remote links instead of on the server host", async () => {
+    state.remoteOpen = {
+      state: { mode: "remote-links", host: { kind: "ssh-alias", host: "box", username: "me" } },
+      isResolved: true,
+    };
+    state.openInEditor.mockClear();
+    state.openRemoteEditorUrl.mockClear();
+    const menu = useFileContextMenu(BASE_TARGET.environmentId);
+
+    expect(menu.buildItems(BASE_TARGET)).toEqual([
+      {
+        id: "open-with",
+        label: "Open with",
+        children: [{ id: "editor:vscode", label: "VS Code" }],
+      },
+    ]);
+    await menu.activate("open", BASE_TARGET);
+    await menu.activate("editor:vscode", BASE_TARGET);
+    expect(state.openInEditor).not.toHaveBeenCalled();
+    expect(state.openRemoteEditorUrl).toHaveBeenCalledExactlyOnceWith(
+      "vscode://vscode-remote/ssh-remote+me%40box/workspace/project/src/index.ts:1:1",
+    );
+  });
+
+  it("opens files on the server host when remote open is local-exec", async () => {
     state.remoteOpen = { state: { mode: "local-exec" }, isResolved: true };
     state.openInEditor.mockClear();
     const menu = useFileContextMenu(BASE_TARGET.environmentId);

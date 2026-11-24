@@ -1,4 +1,5 @@
 import {
+  buildRemoteOpenUrl,
   EDITORS,
   type ContextMenuItem,
   type EditorId,
@@ -13,6 +14,11 @@ import {
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
 import { readLocalApi } from "./localApi";
+import {
+  openRemoteEditorUrl,
+  useRemoteCapableEditors,
+  useRemoteOpenResolution,
+} from "./remoteOpen";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
@@ -101,20 +107,38 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const resolve = useMessages();
 
-  const availableEditors = serverConfig?.availableEditors ?? [];
+  const remoteOpen = useRemoteOpenResolution(environmentId);
+  const remoteCapableEditors = useRemoteCapableEditors();
+  const mode = environmentId !== null && remoteOpen.isResolved ? remoteOpen.state.mode : null;
+  // Shell actions run on the server host, which is the viewer's machine only in local-exec.
+  const isLocalExec = mode === "local-exec";
+  const remoteHost = remoteOpen.state.mode === "remote-links" ? remoteOpen.state.host : null;
+
+  const availableEditors = isLocalExec
+    ? (serverConfig?.availableEditors ?? [])
+    : mode === "remote-links"
+      ? remoteCapableEditors
+      : [];
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:
-      environmentId !== null &&
+      isLocalExec &&
       serverConfig?.shellRevealInFileManager === true &&
       serverConfig.availableEditors.includes("file-manager")
         ? serverConfig.shellRevealInFileManagerKind === undefined
           ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os, resolve)
           : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind, resolve)
         : undefined,
-    canOpenDefault: availableEditors.includes("file-manager"),
+    canOpenDefault: isLocalExec && availableEditors.includes("file-manager"),
     editorIds: availableEditors,
   };
+
+  const editorFailureTitle = (editor: EditorId) =>
+    resolve(
+      msg("Could not open in {editor}", {
+        editor: EDITOR_LABEL_BY_ID.get(editor) ?? editor,
+      }),
+    );
 
   const activate = async (
     action: FileContextMenuAction,
@@ -128,7 +152,20 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       action === "open" || reveal
         ? ("file-manager" as const)
         : (action.slice("editor:".length) as EditorId);
+    if (action === "open" && !capabilities.canOpenDefault) return;
+    if (reveal && capabilities.revealLabel === undefined) return;
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
+
+    if (remoteHost !== null) {
+      const url = buildRemoteOpenUrl({ editor, ...remoteHost, absolutePath, isFile: true });
+      if (url !== undefined && (await openRemoteEditorUrl(url))) return;
+      toastManager.add({
+        type: "error",
+        title: editorFailureTitle(editor),
+        description: absolutePath,
+      });
+      return;
+    }
 
     const result = await openInEditor({
       environmentId,
@@ -142,11 +179,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           ? resolve(msg("Could not open file"))
           : reveal
             ? resolve(msg("Unable to reveal file"))
-            : resolve(
-                msg("Could not open in {editor}", {
-                  editor: EDITOR_LABEL_BY_ID.get(editor) ?? editor,
-                }),
-              ),
+            : editorFailureTitle(editor),
       description: absolutePath,
     });
   };
