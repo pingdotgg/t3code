@@ -608,6 +608,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           "/api/debug/location": "[]",
           "/api/model": '{"location":{"directory":"/work"},"data":[]}',
           "/api/provider": '{"location":{"directory":"/work"},"data":[]}',
+          "/api/agent": '{"location":{"directory":"/work"},"data":[]}',
           "/api/command": OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body,
           "/api/skill": OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body,
         };
@@ -680,6 +681,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             return json('[{"directory":"/work"}]');
           case "/api/provider":
           case "/api/model":
+          case "/api/agent":
             return afterScan('{"location":{"directory":"/work"},"data":[]}');
           case "/api/command":
             return json(OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body);
