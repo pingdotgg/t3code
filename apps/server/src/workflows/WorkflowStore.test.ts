@@ -249,6 +249,30 @@ it.effect("what a long agent step said is cut without leaving half an emoji", ()
   ),
 );
 
+it.effect("a long failure detail is cut without leaving half an emoji", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: "fail",
+        version: 1,
+        engineTag: "fail@1",
+        idempotencyKey: "k",
+        input: {},
+      });
+      yield* store.stepStarted("r1", "work", "step");
+      const detail = `${"a".repeat(1_999)}\u{1F680}tail`;
+      yield* store.stepEnded("r1", "work", "failed", detail);
+      yield* store.runPaused("r1", detail);
+      const [step] = yield* store.steps("r1");
+      const run = yield* store.run("r1");
+      assert.equal(step?.detail, "a".repeat(1_999));
+      assert.equal(run?.detail, "a".repeat(1_999));
+    }),
+  ),
+);
+
 it.effect("one buffered signal goes to one wait, and a claimed wait keeps what woke it", () =>
   withStore(
     Effect.gen(function* () {
