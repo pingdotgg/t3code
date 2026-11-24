@@ -118,12 +118,18 @@ public struct ProjectEntityQuery: IndexedEntityQuery, EnumerableEntityQuery, Ent
     for identifiers: [ProjectEntity.ID],
     indexDescription: CSSearchableIndexDescription
   ) async throws {
-    let entities = store.projects(for: identifiers).map(ProjectEntity.init(record:))
-    try await CSSearchableIndex.default().indexAppEntities(entities)
+    let store = store
+    try await T3IndexOperationQueue.run {
+      let entities = store.projects(for: identifiers).map(ProjectEntity.init(record:))
+      try await CSSearchableIndex.default().indexAppEntities(entities)
+    }
   }
 
   public func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
-    let entities = store.allProjects().map(ProjectEntity.init(record:))
-    try await CSSearchableIndex.default().indexAppEntities(entities)
+    let store = store
+    try await T3IndexOperationQueue.run {
+      let entities = store.allProjects().map(ProjectEntity.init(record:))
+      try await CSSearchableIndex.default().indexAppEntities(entities)
+    }
   }
 }

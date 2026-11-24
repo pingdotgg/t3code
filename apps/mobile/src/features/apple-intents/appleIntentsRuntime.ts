@@ -121,6 +121,14 @@ let lastCredentialSignature = "";
 let lastOnscreenSignature = "";
 // The native index persists across launches, so assume it holds data until a clear succeeds.
 let nativeMayHoldData = true;
+// Syncs and clears share one queue, so a write that started before a clear cannot land after it.
+let syncQueue: Promise<void> = Promise.resolve();
+
+function enqueueAppleIntentsWork(work: () => Promise<void>): Promise<void> {
+  const run = syncQueue.then(work);
+  syncQueue = run.catch(() => undefined);
+  return run;
+}
 
 async function readDpopPrivateScalarBase64Url(): Promise<string | null> {
   try {
@@ -133,13 +141,69 @@ async function readDpopPrivateScalarBase64Url(): Promise<string | null> {
   }
 }
 
-/** Clears the native index and credentials; the sync cache resets only once the clear succeeds. */
-export async function clearAppleIntentsIndex(): Promise<void> {
-  await clearAppleIntentsNativeIndex();
-  lastSnapshot = null;
-  lastCredentialSignature = "";
-  lastOnscreenSignature = "";
-  nativeMayHoldData = false;
+async function clearNativeIndex(): Promise<void> {
+  try {
+    await clearAppleIntentsNativeIndex();
+    nativeMayHoldData = false;
+  } finally {
+    // A failed clear may have removed part of the index, so the next sync starts from scratch.
+    lastSnapshot = null;
+    lastCredentialSignature = "";
+    lastOnscreenSignature = "";
+  }
+}
+
+/** Clears the native index and credentials after any sync already in flight. */
+export function clearAppleIntentsIndex(): Promise<void> {
+  return enqueueAppleIntentsWork(clearNativeIndex);
+}
+
+async function syncNativeIndex(source: Atom.Type<typeof appleIntentsSourceAtom>): Promise<void> {
+  if (!source.enabled) {
+    if (nativeMayHoldData) await clearNativeIndex();
+    return;
+  }
+
+  const nextSnapshot = buildAppleIntentsSnapshot(source.inputs, {
+    indexMessagePreviews: source.indexMessagePreviews,
+    nowMs: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    resolve: m,
+  });
+  const diff = diffAppleIntentsSnapshots(lastSnapshot, nextSnapshot);
+  if (diff.hasChanges) {
+    nativeMayHoldData = true;
+    try {
+      await syncAppleIntentsIndex(diff.delta);
+    } catch (error) {
+      // Native storage may have committed part of the delta, so resync everything next time.
+      lastSnapshot = null;
+      throw error;
+    }
+    lastSnapshot = nextSnapshot;
+  }
+
+  const onscreenSig = JSON.stringify(source.onscreen);
+  if (onscreenSig !== lastOnscreenSignature) {
+    setAppleIntentsOnscreenContext(source.onscreen);
+    lastOnscreenSignature = onscreenSig;
+  }
+
+  const needsDpop = source.rawCredentials.some((item) => item.authScheme === "DPoP");
+  const dpopScalar = needsDpop ? await readDpopPrivateScalarBase64Url() : null;
+  const credentials: AppleIntentAuthCredential[] = source.rawCredentials.map((item) => ({
+    environmentId: item.environmentId,
+    httpBaseUrl: item.httpBaseUrl,
+    accessToken: item.accessToken,
+    authScheme: item.authScheme,
+    relayManaged: item.relayManaged,
+    ...(item.authScheme === "DPoP" && dpopScalar ? { dpopKeyRef: dpopScalar } : {}),
+  }));
+  const credSig = JSON.stringify(credentials);
+  if (credSig !== lastCredentialSignature) {
+    nativeMayHoldData = true;
+    await syncAppleIntentsAuthCredentials(credentials);
+    lastCredentialSignature = credSig;
+  }
 }
 
 export function recordAppleIntentsNavigationState(state: NavigationState | undefined): void {
@@ -154,56 +218,14 @@ export function installAppleIntents(): () => void {
 
   let disposed = false;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let syncQueue: Promise<void> = Promise.resolve();
 
   const flush = (source: Atom.Type<typeof appleIntentsSourceAtom>) => {
-    syncQueue = syncQueue
-      .then(async () => {
-        if (disposed || !source.preferencesReady) return;
-
-        if (!source.enabled) {
-          if (nativeMayHoldData) await clearAppleIntentsIndex();
-          return;
-        }
-
-        const nextSnapshot = buildAppleIntentsSnapshot(source.inputs, {
-          indexMessagePreviews: source.indexMessagePreviews,
-          nowMs: DateTime.toEpochMillis(DateTime.nowUnsafe()),
-          resolve: m,
-        });
-        const diff = diffAppleIntentsSnapshots(lastSnapshot, nextSnapshot);
-        if (diff.hasChanges) {
-          nativeMayHoldData = true;
-          await syncAppleIntentsIndex(diff.delta);
-          lastSnapshot = nextSnapshot;
-        }
-
-        const onscreenSig = JSON.stringify(source.onscreen);
-        if (onscreenSig !== lastOnscreenSignature) {
-          setAppleIntentsOnscreenContext(source.onscreen);
-          lastOnscreenSignature = onscreenSig;
-        }
-
-        const needsDpop = source.rawCredentials.some((item) => item.authScheme === "DPoP");
-        const dpopScalar = needsDpop ? await readDpopPrivateScalarBase64Url() : null;
-        const credentials: AppleIntentAuthCredential[] = source.rawCredentials.map((item) => ({
-          environmentId: item.environmentId,
-          httpBaseUrl: item.httpBaseUrl,
-          accessToken: item.accessToken,
-          authScheme: item.authScheme,
-          relayManaged: item.relayManaged,
-          ...(item.authScheme === "DPoP" && dpopScalar ? { dpopKeyRef: dpopScalar } : {}),
-        }));
-        const credSig = JSON.stringify(credentials);
-        if (credSig !== lastCredentialSignature) {
-          nativeMayHoldData = true;
-          await syncAppleIntentsAuthCredentials(credentials);
-          lastCredentialSignature = credSig;
-        }
-      })
-      .catch((error: unknown) => {
-        console.warn("[apple-intents] sync failed", error);
-      });
+    void enqueueAppleIntentsWork(async () => {
+      if (disposed || !source.preferencesReady) return;
+      await syncNativeIndex(source);
+    }).catch((error: unknown) => {
+      console.warn("[apple-intents] sync failed", error);
+    });
   };
 
   const unsubscribe = appAtomRegistry.subscribe(

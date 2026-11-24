@@ -2,6 +2,26 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 
+/// Runs index mutations one at a time, each store write together with its Spotlight update, so a
+/// clear can never interleave with an in-flight sync or a system reindex callback.
+enum T3IndexOperationQueue {
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var tail: Task<Void, Never>?
+
+  static func run(_ work: @escaping @Sendable () async throws -> Void) async throws {
+    let task: Task<Void, any Error> = lock.withLock {
+      let previous = tail
+      let task = Task {
+        await previous?.value
+        try await work()
+      }
+      tail = Task { _ = await task.result }
+      return task
+    }
+    try await task.value
+  }
+}
+
 /// Process-local runtime bridge invoked by the Expo iOS module and macOS Electron host dylib.
 public final class T3IntentsRuntime: @unchecked Sendable {
   public static let shared = T3IntentsRuntime()
@@ -12,8 +32,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
   private var activeUserActivity: NSUserActivity?
   private var onscreenContextJSON: String?
   private var onscreenEntityResolved = false
-  private let operationLock = NSLock()
-  private var operationTail: Task<Void, Never>?
+  private var onscreenGeneration: UInt64 = 0
 
   public var onOpenURL: (@MainActor @Sendable (URL) -> Void)?
 
@@ -39,21 +58,6 @@ public final class T3IntentsRuntime: @unchecked Sendable {
     }
   }
 
-  /// Runs index mutations one at a time, each store write together with its Spotlight update,
-  /// so a clear can never interleave with an in-flight sync.
-  private func serialized(_ work: @escaping @Sendable () async throws -> Void) async throws {
-    let task: Task<Void, any Error> = operationLock.withLock {
-      let previous = operationTail
-      let task = Task {
-        await previous?.value
-        try await work()
-      }
-      operationTail = Task { _ = await task.result }
-      return task
-    }
-    try await task.value
-  }
-
   public func syncIndexJSON(_ jsonString: String) async throws {
     let delta = try JSONDecoder().decode(T3IndexDelta.self, from: Data(jsonString.utf8))
     try await applyDelta(delta)
@@ -61,7 +65,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
 
   private func applyDelta(_ delta: T3IndexDelta) async throws {
     let store = self.store
-    try await serialized {
+    try await T3IndexOperationQueue.run {
       // Spotlight removals run before the store commits, so a failed removal leaves the store
       // unchanged and the host's retry plans the same removals again.
       let plan = try store.planDelta(delta)
@@ -89,7 +93,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
   public func clearIndex() async throws {
     let store = self.store
     let credentials = self.credentials
-    try await serialized {
+    try await T3IndexOperationQueue.run {
       try store.clearAll()
       credentials.clearAllCredentials()
       try await T3SpotlightIndexer.clearAll()
@@ -106,20 +110,32 @@ public final class T3IntentsRuntime: @unchecked Sendable {
     credentials.saveCredentials(records)
   }
 
-  /// Context published before its entity reached the index has no entity identifier; republish it.
+  /// Context published before its entity reached the index has no entity identifier; republish it
+  /// unless a newer context replaced it in the meantime.
   private func refreshOnscreenEntityIfNeeded() {
     activityLock.lock()
     let pending = onscreenEntityResolved ? nil : onscreenContextJSON
+    let generation = onscreenGeneration
     activityLock.unlock()
     if let pending {
-      setOnscreenContextJSON(pending)
+      publishOnscreenContext(pending, expectedGeneration: generation)
     }
   }
 
   /// Publishes or clears the onscreen NSUserActivity with `appEntityIdentifier` so Siri
   /// ("summarize this thread", "stop this agent") resolves the visible thread or project.
   public func setOnscreenContextJSON(_ jsonString: String?) {
+    publishOnscreenContext(jsonString, expectedGeneration: nil)
+  }
+
+  private func publishOnscreenContext(_ jsonString: String?, expectedGeneration: UInt64?) {
     activityLock.lock()
+    if let expectedGeneration, expectedGeneration != onscreenGeneration {
+      activityLock.unlock()
+      return
+    }
+    onscreenGeneration &+= 1
+    let generation = onscreenGeneration
     let previous = activeUserActivity
     activeUserActivity = nil
     onscreenContextJSON = jsonString
@@ -161,11 +177,16 @@ public final class T3IntentsRuntime: @unchecked Sendable {
       }
     }
 
-    activity.becomeCurrent()
     activityLock.lock()
+    defer { activityLock.unlock() }
+    // A newer context was published while this one resolved its entity.
+    guard generation == onscreenGeneration else {
+      activity.invalidate()
+      return
+    }
+    activity.becomeCurrent()
     activeUserActivity = activity
     onscreenEntityResolved = entityResolved
-    activityLock.unlock()
   }
 
   /// Resolves a CoreSpotlight `CSSearchableItemActivityIdentifier` back to a T3 Code deep link URL.

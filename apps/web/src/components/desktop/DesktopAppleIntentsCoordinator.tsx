@@ -97,20 +97,103 @@ let lastCredentialSignature = "";
 let lastOnscreenSignature = "";
 // The native index persists across launches, so assume it holds data until a clear succeeds.
 let nativeMayHoldData = true;
+// Syncs and clears share one queue, so a write that started before a clear cannot land after it.
+let syncQueue: Promise<void> = Promise.resolve();
 
-function resetDesktopAppleIntentsSyncCache(): void {
-  lastSnapshot = null;
-  lastCredentialSignature = "";
-  lastOnscreenSignature = "";
+type DesktopAppleIntentsBridge = NonNullable<
+  NonNullable<typeof window.desktopBridge>["appleIntents"]
+>;
+
+function enqueueAppleIntentsWork(work: () => Promise<void>): Promise<void> {
+  const run = syncQueue.then(work);
+  syncQueue = run.catch(() => undefined);
+  return run;
 }
 
-/** Clears the native index and credentials; the sync cache resets only once the clear succeeds. */
-export async function clearDesktopAppleIntentsIndex(): Promise<void> {
+async function clearNativeIndex(bridge: DesktopAppleIntentsBridge): Promise<void> {
+  try {
+    await bridge.clearIndex();
+    nativeMayHoldData = false;
+  } finally {
+    // A failed clear may have removed part of the index, so the next sync starts from scratch.
+    lastSnapshot = null;
+    lastCredentialSignature = "";
+    lastOnscreenSignature = "";
+  }
+}
+
+/** Clears the native index and credentials after any sync already in flight. */
+export function clearDesktopAppleIntentsIndex(): Promise<void> {
   const bridge = window.desktopBridge?.appleIntents;
-  if (!bridge) return;
-  await bridge.clearIndex();
-  resetDesktopAppleIntentsSyncCache();
-  nativeMayHoldData = false;
+  if (!bridge) return Promise.resolve();
+  return enqueueAppleIntentsWork(() => clearNativeIndex(bridge));
+}
+
+async function syncNativeIndex(
+  bridge: DesktopAppleIntentsBridge,
+  router: ReturnType<typeof useRouter>,
+): Promise<void> {
+  const settings = getClientSettings();
+  const enabled = settings.appleIntentsEnabled;
+
+  if (!enabled) {
+    if (nativeMayHoldData) await clearNativeIndex(bridge);
+    return;
+  }
+
+  const source = appAtomRegistry.get(desktopAppleIntentsSourceAtom);
+  const nextSnapshot = buildAppleIntentsSnapshot(source.inputs, {
+    indexMessagePreviews: settings.appleIntentsIndexMessagePreviews,
+    nowMs: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    resolve: m,
+  });
+  const diff = diffAppleIntentsSnapshots(lastSnapshot, nextSnapshot);
+  if (diff.hasChanges) {
+    nativeMayHoldData = true;
+    try {
+      await bridge.syncIndex(diff.delta);
+    } catch (error) {
+      // Native storage may have committed part of the delta, so resync everything next time.
+      lastSnapshot = null;
+      throw error;
+    }
+    lastSnapshot = nextSnapshot;
+  }
+
+  const routeParams = (router.state.matches.at(-1)?.params ?? {}) as Record<
+    string,
+    string | undefined
+  >;
+  const onscreen = readOnscreenContext(routeParams, enabled);
+  const onscreenSig = JSON.stringify(onscreen);
+  if (onscreenSig !== lastOnscreenSignature) {
+    await bridge.setOnscreenContext(onscreen);
+    lastOnscreenSignature = onscreenSig;
+  }
+
+  const needsLocalToken = source.rawCredentials.some(
+    (item) => item.isLocal && item.bearerToken === null,
+  );
+  const localToken = needsLocalToken
+    ? await readDesktopPrimaryBearerToken().catch(() => null)
+    : null;
+  const credentials: AppleIntentAuthCredential[] = [];
+  for (const item of source.rawCredentials) {
+    const accessToken = item.bearerToken ?? (item.isLocal ? localToken : null);
+    if (!accessToken) continue;
+    credentials.push({
+      environmentId: item.environmentId,
+      httpBaseUrl: item.httpBaseUrl,
+      accessToken,
+      authScheme: "Bearer",
+    });
+  }
+  const credSig = JSON.stringify(credentials);
+  if (credSig !== lastCredentialSignature) {
+    nativeMayHoldData = true;
+    await bridge.syncAuthCredentials(credentials);
+    lastCredentialSignature = credSig;
+  }
 }
 
 function readOnscreenContext(
@@ -144,73 +227,15 @@ export function DesktopAppleIntentsCoordinator() {
 
     let disposed = false;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let syncQueue: Promise<void> = Promise.resolve();
     const cleanups: Array<() => void> = [];
 
     const flush = () => {
-      syncQueue = syncQueue
-        .then(async () => {
-          if (disposed) return;
-
-          const settings = getClientSettings();
-          const enabled = settings.appleIntentsEnabled;
-
-          if (!enabled) {
-            if (nativeMayHoldData) await clearDesktopAppleIntentsIndex();
-            return;
-          }
-
-          const source = appAtomRegistry.get(desktopAppleIntentsSourceAtom);
-          const nextSnapshot = buildAppleIntentsSnapshot(source.inputs, {
-            indexMessagePreviews: settings.appleIntentsIndexMessagePreviews,
-            nowMs: DateTime.toEpochMillis(DateTime.nowUnsafe()),
-            resolve: m,
-          });
-          const diff = diffAppleIntentsSnapshots(lastSnapshot, nextSnapshot);
-          if (diff.hasChanges) {
-            nativeMayHoldData = true;
-            await bridge.syncIndex(diff.delta);
-            lastSnapshot = nextSnapshot;
-          }
-
-          const routeParams = (router.state.matches.at(-1)?.params ?? {}) as Record<
-            string,
-            string | undefined
-          >;
-          const onscreen = readOnscreenContext(routeParams, enabled);
-          const onscreenSig = JSON.stringify(onscreen);
-          if (onscreenSig !== lastOnscreenSignature) {
-            await bridge.setOnscreenContext(onscreen);
-            lastOnscreenSignature = onscreenSig;
-          }
-
-          const needsLocalToken = source.rawCredentials.some(
-            (item) => item.isLocal && item.bearerToken === null,
-          );
-          const localToken = needsLocalToken
-            ? await readDesktopPrimaryBearerToken().catch(() => null)
-            : null;
-          const credentials: AppleIntentAuthCredential[] = [];
-          for (const item of source.rawCredentials) {
-            const accessToken = item.bearerToken ?? (item.isLocal ? localToken : null);
-            if (!accessToken) continue;
-            credentials.push({
-              environmentId: item.environmentId,
-              httpBaseUrl: item.httpBaseUrl,
-              accessToken,
-              authScheme: "Bearer",
-            });
-          }
-          const credSig = JSON.stringify(credentials);
-          if (credSig !== lastCredentialSignature) {
-            nativeMayHoldData = true;
-            await bridge.syncAuthCredentials(credentials);
-            lastCredentialSignature = credSig;
-          }
-        })
-        .catch((error: unknown) => {
-          console.warn("[apple-intents] desktop sync failed", error);
-        });
+      void enqueueAppleIntentsWork(async () => {
+        if (disposed) return;
+        await syncNativeIndex(bridge, router);
+      }).catch((error: unknown) => {
+        console.warn("[apple-intents] desktop sync failed", error);
+      });
     };
 
     const scheduleFlush = () => {

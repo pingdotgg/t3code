@@ -252,12 +252,13 @@ export function DesktopWebLinkCoordinator() {
 
   const receiveLink = useEffectEvent((url: string) => {
     // A connected server publishes its config before its project snapshot, so a source control
-    // link delivered at launch would miss its project and fall through to the browser. Hold
-    // those links until discovery settles; an ordinary link never waits for it.
+    // or new-thread project link delivered at launch would miss its project. Hold those links
+    // until discovery settles; an ordinary link never waits for it.
     const hold =
-      openPullRequestsInApp &&
-      (sourceControlClients.parseChangeRequestUrl(url) !== null ||
-        sourceControlClients.parseCommitUrl(url) !== null)
+      newThreadProjectTarget(url) !== null ||
+      (openPullRequestsInApp &&
+        (sourceControlClients.parseChangeRequestUrl(url) !== null ||
+          sourceControlClients.parseCommitUrl(url) !== null))
         ? projectsSettled()
         : Promise.resolve();
     void hold.then(() => {

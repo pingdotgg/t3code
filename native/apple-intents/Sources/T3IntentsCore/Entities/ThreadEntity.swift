@@ -213,13 +213,19 @@ public struct ThreadEntityQuery: IndexedEntityQuery, EntityStringQuery, Sendable
     for identifiers: [ThreadEntity.ID],
     indexDescription: CSSearchableIndexDescription
   ) async throws {
-    let entities = store.threads(for: identifiers).map(ThreadEntity.init(record:))
-    try await CSSearchableIndex.default().indexAppEntities(entities)
+    let store = store
+    try await T3IndexOperationQueue.run {
+      let entities = store.threads(for: identifiers).map(ThreadEntity.init(record:))
+      try await CSSearchableIndex.default().indexAppEntities(entities)
+    }
   }
 
   public func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
-    let entities = store.allThreads().map(ThreadEntity.init(record:))
-    try await CSSearchableIndex.default().indexAppEntities(entities)
+    let store = store
+    try await T3IndexOperationQueue.run {
+      let entities = store.allThreads().map(ThreadEntity.init(record:))
+      try await CSSearchableIndex.default().indexAppEntities(entities)
+    }
   }
 }
 
