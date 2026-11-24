@@ -7,7 +7,7 @@ import { FolderCodeIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { createElement, lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { projectFaviconUrlAtom } from "../state/assets";
+import { projectFaviconUrlAtom, refreshProjectFaviconUrl } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
@@ -79,13 +79,12 @@ export function ProjectFavicon(input: {
 
 function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
   const { project } = input;
-  const src = useAtomValue(
-    projectFaviconUrlAtom({
-      environmentId: project.environmentId,
-      cwd: project.workspaceRoot,
-      faviconPath: project.faviconPath,
-    }),
-  );
+  const target = {
+    environmentId: project.environmentId,
+    cwd: project.workspaceRoot,
+    faviconPath: project.faviconPath,
+  };
+  const src = useAtomValue(projectFaviconUrlAtom(target));
   const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
@@ -111,6 +110,8 @@ function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
       className={input.className}
       fallbackIcon={FallbackIcon}
       fallbackProjectName={project.title}
+      // An icon too large to cache inline loads from a signed URL that expires.
+      onRemoteLoadError={() => refreshProjectFaviconUrl(target)}
     />
   );
 }
@@ -155,11 +156,13 @@ function ProjectFaviconImage({
   className,
   fallbackIcon: FallbackIcon,
   fallbackProjectName,
+  onRemoteLoadError,
 }: {
   readonly src: string;
   readonly className?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
   readonly fallbackProjectName?: string | undefined;
+  readonly onRemoteLoadError: () => void;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(() =>
     src.startsWith("data:image/") ? src : null,
@@ -167,6 +170,7 @@ function ProjectFaviconImage({
   const isLoading = displayedSrc !== src;
   const handleLoadError = (failedSrc: string) => {
     setDisplayedSrc((currentSrc) => (currentSrc === failedSrc ? null : currentSrc));
+    if (!failedSrc.startsWith("data:")) onRemoteLoadError();
   };
 
   return (
