@@ -95,6 +95,7 @@ describe("UsageLimitsPooled next refill", () => {
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T17:30:00Z")} />,
     );
     await expect.element(screen.getByText("↻ +30%", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("↻ +30% in 30m")).toBeVisible();
 
     await screen.rerender(
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />,
