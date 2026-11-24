@@ -416,7 +416,9 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
           }),
         );
     const dataUri = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+    const cappedFullAccess = { ...fullAccess, runtimeModeCeiling: "approval-required" as const };
     expect(yield* renderedImage(scope)).not.toContain(dataUri);
+    expect(yield* renderedImage(cappedFullAccess)).not.toContain(dataUri);
     expect(yield* renderedImage(fullAccess)).toContain(dataUri);
   }).pipe(
     Effect.provide(

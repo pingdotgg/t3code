@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { isRuntimeModeAbove, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
@@ -28,8 +28,10 @@ const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
   readonly html?: string | undefined;
   readonly path?: string | undefined;
 }) {
-  const { limits } = yield* loadCaller();
-  const allowLocalImages = limits.runtimeMode === "full-access";
+  const { limits, scope } = yield* loadCaller();
+  const ceiling = scope.runtimeModeCeiling ?? "full-access";
+  const allowLocalImages =
+    limits.runtimeMode === "full-access" && !isRuntimeModeAbove("full-access", ceiling);
   if (input.html !== undefined && input.path === undefined) {
     return {
       source: { html: input.html } satisfies HtmlRender.HtmlRenderSource,
