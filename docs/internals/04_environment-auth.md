@@ -29,6 +29,10 @@ model.
   over authenticated HTTP so long-lived tokens never appear in socket URLs. DPoP RPC tickets stay
   proof-key bound at upgrade. A successful handshake grants no extra authority: every RPC declares
   and checks its required scope in [`RpcAuthorization.ts`](../../apps/server/src/auth/RpcAuthorization.ts).
+- **Secret references need `providers:manage`.** A request that names a secret for the server to
+  read needs `providers:manage` on top of its method's scope, whether the reference is saved in
+  settings or used once, as in a secret request answered with a reference. Typed values need only
+  the method's scope. Clients hide the secret provider picker from sessions without it.
 - **Backward-compatible scope evolution.** Token exchange intersects requested scopes with the
   pairing grant, dropping retired/unknown names and failing before consuming a link if none remain.
   Stored grants are never expanded when scopes split. Auth responses preserve legacy `scopes`
