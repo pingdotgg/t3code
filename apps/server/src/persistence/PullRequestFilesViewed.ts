@@ -9,9 +9,9 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 
 import {
-  PersistenceDecodeError,
   PersistenceSqlError,
   type PullRequestFilesViewedRepositoryError,
+  toSqlOrDecodeError,
 } from "./Errors.ts";
 
 export const PullRequestFilesViewedScope = Schema.Struct({
@@ -53,13 +53,6 @@ export class PullRequestFilesViewedRepository extends Context.Service<
     ) => Effect.Effect<void, PullRequestFilesViewedRepositoryError>;
   }
 >()("t3/persistence/PullRequestFilesViewed/PullRequestFilesViewedRepository") {}
-
-function toSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
-  return (cause: unknown): PullRequestFilesViewedRepositoryError =>
-    Schema.isSchemaError(cause)
-      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause)
-      : new PersistenceSqlError({ operation: sqlOperation, cause });
-}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

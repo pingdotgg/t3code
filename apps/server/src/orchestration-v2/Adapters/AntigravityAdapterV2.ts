@@ -121,11 +121,12 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
     toolCall.status === "failed" ? "failed" : toolCall.status === "pending" ? "pending" : "running";
   const launches = antigravitySubagentLaunches(toolCall.data.rawInput);
   const launch = launches === undefined ? undefined : describeAntigravitySubagentLaunches(launches);
+  const output = antigravitySubagentOutput(toolCall);
   return {
     nativeTaskId: toolCall.toolCallId,
     prompt:
       launch?.prompt ??
-      antigravitySubagentOutput(toolCall) ??
+      output ??
       toolCall.detail ??
       toolCall.title ??
       ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
@@ -133,7 +134,7 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
     model: null,
     status,
     childSessionId: null,
-    result: status === "failed" ? (antigravitySubagentOutput(toolCall) ?? null) : null,
+    result: status === "failed" ? (output ?? null) : null,
   };
 };
 

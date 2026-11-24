@@ -136,6 +136,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     model: string,
     options?: { focusComposer?: boolean },
   ) => {
+    const shouldFocusComposer = options?.focusComposer !== false;
     if (!activeThread) return;
     cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
     const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
@@ -146,7 +147,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       resolvedDriverKind !== null &&
       resolvedDriverKind !== lockedProvider
     ) {
-      if (options?.focusComposer !== false) scheduleComposerFocus();
+      if (shouldFocusComposer) scheduleComposerFocus();
       return;
     }
     if (
@@ -162,7 +163,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         entry?.continuation?.groupKey &&
         currentEntry.continuation.groupKey !== entry.continuation.groupKey
       ) {
-        if (options?.focusComposer !== false) scheduleComposerFocus();
+        if (shouldFocusComposer) scheduleComposerFocus();
         return;
       }
     }
@@ -192,7 +193,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     ) {
       // Re-picking the shown model keeps its options and saves it again if that save failed.
       if (resolvedModel && !isLocalDraftThread) applyThreadModelPick(composerDraftTarget);
-      if (options?.focusComposer !== false) scheduleComposerFocus();
+      if (shouldFocusComposer) scheduleComposerFocus();
       return;
     }
     const rememberedOptions =
@@ -228,7 +229,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         title: modelChangeBlockReason.title,
         description: modelChangeBlockReason.description,
       });
-      if (options?.focusComposer !== false) scheduleComposerFocus();
+      if (shouldFocusComposer) scheduleComposerFocus();
       return;
     }
     setComposerDraftModelSelection(composerDraftTarget, nextModelSelection, {
@@ -237,7 +238,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     });
     setStickyComposerModelSelection(nextModelSelection);
     if (!isLocalDraftThread) applyThreadModelPick(composerDraftTarget);
-    if (options?.focusComposer !== false) scheduleComposerFocus();
+    if (shouldFocusComposer) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);
   const onEnvModeChange = (mode: DraftThreadEnvMode) => {

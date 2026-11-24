@@ -12,8 +12,7 @@ import { AuthClientMetadata, AuthEnvironmentScopes } from "@t3tools/contracts";
 import {
   type AuthPairingLinkRepositoryError,
   PersistenceDecodeError,
-  type PersistenceErrorCorrelation,
-  PersistenceSqlError,
+  toSqlOrDecodeError,
 } from "./Errors.ts";
 
 /**
@@ -169,21 +168,6 @@ export class AuthPairingLinkRepository extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<string>, AuthPairingLinkRepositoryError>;
   }
 >()("t3/persistence/AuthPairingLinks/AuthPairingLinkRepository") {}
-
-function toPersistenceSqlOrDecodeError(
-  sqlOperation: string,
-  decodeOperation: string,
-  correlation?: PersistenceErrorCorrelation,
-) {
-  return (cause: unknown): AuthPairingLinkRepositoryError =>
-    Schema.isSchemaError(cause)
-      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause, correlation)
-      : new PersistenceSqlError({
-          operation: sqlOperation,
-          ...(correlation === undefined ? {} : { correlation }),
-          cause,
-        });
-}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -454,7 +438,7 @@ export const make = Effect.gen(function* () {
     getActivePairingLinkRowById(input).pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.getActiveById:query",
           "AuthPairingLinkRepository.getActiveById:decodeRow",
           { pairingLinkId: input.id },
@@ -467,7 +451,7 @@ export const make = Effect.gen(function* () {
     findPendingConnectPairingLinkRow(input).pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.findPendingConnect:query",
           "AuthPairingLinkRepository.findPendingConnect:decodeRow",
         ),
@@ -479,7 +463,7 @@ export const make = Effect.gen(function* () {
     (input) =>
       recordConnectRequestClientRow(input).pipe(
         Effect.mapError(
-          toPersistenceSqlOrDecodeError(
+          toSqlOrDecodeError(
             "AuthPairingLinkRepository.recordConnectRequestClient:query",
             "AuthPairingLinkRepository.recordConnectRequestClient:encodeRequest",
             { pairingLinkId: input.id },
@@ -515,7 +499,7 @@ export const make = Effect.gen(function* () {
   ) =>
     revokeUnspentByProofKeyRows(input).pipe(
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.revokeUnspentByProofKey:query",
           "AuthPairingLinkRepository.revokeUnspentByProofKey:decodeRows",
         ),
@@ -526,7 +510,7 @@ export const make = Effect.gen(function* () {
   const create: AuthPairingLinkRepository["Service"]["create"] = (input) =>
     createPairingLinkRow(input).pipe(
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.create:query",
           "AuthPairingLinkRepository.create:encodeRequest",
           { pairingLinkId: input.id },
@@ -537,7 +521,7 @@ export const make = Effect.gen(function* () {
   const consumeAvailable: AuthPairingLinkRepository["Service"]["consumeAvailable"] = (input) =>
     consumeAvailablePairingLinkRow(input).pipe(
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.consumeAvailable:query",
           "AuthPairingLinkRepository.consumeAvailable:decodeRow",
         ),
@@ -564,7 +548,7 @@ export const make = Effect.gen(function* () {
     listActivePairingLinkRows(input).pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.listActive:query",
           "AuthPairingLinkRepository.listActive:decodeRows",
         ),
@@ -587,7 +571,7 @@ export const make = Effect.gen(function* () {
   const revoke: AuthPairingLinkRepository["Service"]["revoke"] = (input) =>
     revokePairingLinkRow(input).pipe(
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.revoke:query",
           "AuthPairingLinkRepository.revoke:decodeRows",
           { pairingLinkId: input.id },
@@ -600,7 +584,7 @@ export const make = Effect.gen(function* () {
     getPairingLinkRowByCredential(input).pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "AuthPairingLinkRepository.getByCredential:query",
           "AuthPairingLinkRepository.getByCredential:decodeRow",
         ),

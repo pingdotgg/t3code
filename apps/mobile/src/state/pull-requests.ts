@@ -8,7 +8,7 @@ import {
 import type { EnvironmentId, PullRequestListInput, PullRequestRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
   EMPTY_PULL_REQUEST_STATS_CACHE,
@@ -53,45 +53,47 @@ export const filesViewedReadsFamily = Atom.family((_key: string) =>
   Atom.make(0).pipe(Atom.setIdleTTL(5 * 60_000)),
 );
 
+function updateListingPages(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  update: (pages: PullRequestListPages, listingInput: PullRequestListInput) => PullRequestListPages,
+) {
+  for (const atom of registry.getNodes().keys()) {
+    const listing = typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+    if (listing === undefined || listing[0] !== environmentId) continue;
+    registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) =>
+      pages === null ? pages : update(pages, listing[1]),
+    );
+  }
+}
+
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
   // Rows on pages past each listing's head; the head itself is patched where it is cached.
   actionReply: (target, reply, registry) =>
-    Effect.sync(() => {
-      for (const atom of registry.getNodes().keys()) {
-        const listing =
-          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
-        if (listing === undefined || listing[0] !== target.environmentId) continue;
-        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
-          if (pages === null) return pages;
-          const entries = patchPullRequestListEntries(
-            listing[1],
-            pages.entries,
-            target.input,
-            reply,
-            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
-          );
-          return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
-        });
-      }
-    }),
+    Effect.sync(() =>
+      updateListingPages(registry, target.environmentId, (pages, listingInput) => {
+        const entries = patchPullRequestListEntries(
+          listingInput,
+          pages.entries,
+          target.input,
+          reply,
+          registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+        );
+        return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
+      }),
+    ),
   acceptedEdit: (target, edit, registry) =>
-    Effect.sync(() => {
-      for (const atom of registry.getNodes().keys()) {
-        const listing =
-          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
-        if (listing === undefined || listing[0] !== target.environmentId) continue;
-        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
-          if (pages === null) return pages;
-          const entries = editHeldPullRequestListEntries(
-            listing[1],
-            pages.entries,
-            () => [edit],
-            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
-          );
-          return entries === pages.entries ? pages : { ...pages, entries };
-        });
-      }
-    }),
+    Effect.sync(() =>
+      updateListingPages(registry, target.environmentId, (pages, listingInput) => {
+        const entries = editHeldPullRequestListEntries(
+          listingInput,
+          pages.entries,
+          () => [edit],
+          registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+        );
+        return entries === pages.entries ? pages : { ...pages, entries };
+      }),
+    ),
   // A new head can change which files GitHub still counts as viewed, so the viewed-files read is
   // refreshed where the new head lands. The detail atom still holds the previous answer here.
   detail: (target, value, registry) =>

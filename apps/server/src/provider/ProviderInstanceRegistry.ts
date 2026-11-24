@@ -485,7 +485,6 @@ const makeReconcile = <R>(input: {
       const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
       const builtSecretsUnreadable = new Map<ProviderInstanceId, ProviderInstanceConfig>();
-      let orderChanged = false;
       let presentationChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
@@ -530,16 +529,9 @@ const makeReconcile = <R>(input: {
         }
       }
 
-      if (previousOrder.length === nextOrder.length) {
-        for (let i = 0; i < previousOrder.length; i++) {
-          if (previousOrder[i] !== nextOrder[i]) {
-            orderChanged = true;
-            break;
-          }
-        }
-      } else {
-        orderChanged = true;
-      }
+      const orderChanged =
+        previousOrder.length !== nextOrder.length ||
+        previousOrder.some((instanceId, index) => instanceId !== nextOrder[index]);
 
       const entriesChanged =
         presentationChanged ||

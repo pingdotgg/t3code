@@ -415,8 +415,8 @@ function xAiBackgroundTaskReport(
   update: XAiTaskLifecycleNotification["update"],
 ): XAiBackgroundTaskLifecycleMutation["report"] {
   const snapshot = update.task_snapshot;
-  const monitorDescription = nonEmptyString(update.monitor_description ?? undefined);
-  const displayCommand = nonEmptyString(snapshot?.display_command ?? undefined);
+  const monitorDescription = nonEmptyString(update.monitor_description);
+  const displayCommand = nonEmptyString(snapshot?.display_command);
   const isMonitor =
     snapshot?.kind === "monitor" ||
     monitorDescription !== undefined ||
@@ -426,8 +426,8 @@ function xAiBackgroundTaskReport(
   if (!isMonitor && !isCommand) return undefined;
   const label =
     monitorDescription ??
-    nonEmptyString(snapshot?.description ?? undefined) ??
-    nonEmptyString(update.description ?? undefined) ??
+    nonEmptyString(snapshot?.description) ??
+    nonEmptyString(update.description) ??
     displayCommand?.replace(/^\[monitor\]\s*/, "") ??
     nonEmptyString(snapshot?.command) ??
     nonEmptyString(update.command);
@@ -501,7 +501,7 @@ export function xAiSubagentFinishedNotice(
     sessionId: notification.sessionId,
     childSessionId,
     status,
-    result: nonEmptyString(text ?? undefined) ?? null,
+    result: nonEmptyString(text) ?? null,
   };
 }
 

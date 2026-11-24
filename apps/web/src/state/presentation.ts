@@ -9,7 +9,7 @@ import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { serverEnvironment } from "./server";
-import { expectsPrimaryEnvironment } from "./shell";
+import { catalogHasPrimaryEntry, expectsPrimaryEnvironment } from "./shell";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
@@ -33,12 +33,7 @@ export const environmentUnreachableAtom = Atom.family((environmentId: Environmen
     const catalog = get(environmentCatalog.catalogValueAtom);
     if (!catalog.isReady) return false;
     // The catalog is ready before primary discovery lands; until then it cannot prove absence.
-    if (
-      expectsPrimaryEnvironment() &&
-      !Array.from(catalog.entries.values()).some(
-        (entry) => entry.target._tag === "PrimaryConnectionTarget",
-      )
-    ) {
+    if (expectsPrimaryEnvironment() && !catalogHasPrimaryEntry(catalog)) {
       return false;
     }
     const entry = catalog.entries.get(environmentId);

@@ -10,7 +10,7 @@ const SLOW_RPC_ACK_THRESHOLD_MS = 15_000;
  */
 const LONG_RUNNING_RPC_ACK_THRESHOLD_MS = 120_000;
 const MAX_TRACKED_RPC_ACK_REQUESTS = 256;
-let slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
+const slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
 
 export interface SlowRpcAckRequest {
   readonly requestId: string;

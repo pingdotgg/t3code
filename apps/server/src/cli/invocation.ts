@@ -76,6 +76,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
   const entry = yield* fs.realPath(yield* resolveEntryPath);
   const runtime = PINNED_RUNTIME_ENTRY.exec(entry);
   if (runtime) {
+    const runtimeBase = runtime[1] || "/";
     const launchedAs = yield* resolveLauncherPath;
     if (launchedAs === undefined) return null;
     const link = yield* fs.readLink(launchedAs).pipe(Effect.option);
@@ -84,7 +85,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
       ? launchedAs
       : yield* findPosixLauncher({
           launchedAs,
-          versionsDir: path.join(runtime[1] || "/", "runtime/versions"),
+          versionsDir: path.join(runtimeBase, "runtime/versions"),
         });
     // None for a runtime started directly, as SSH launches do, or through a copy.
     if (launcher === undefined) return null;
@@ -93,11 +94,13 @@ export const resolveServerInstallation = Effect.gen(function* () {
       : yield* readPosixLauncherTarget(launcher);
     // Keep the home as the launcher spells it; `t3 update` only repoints launchers into that spelling.
     const linked = target === undefined ? null : PINNED_RUNTIME_ENTRY.exec(target);
-    if (!linked || (yield* fs.realPath(linked[1] || "/")) !== (runtime[1] || "/")) return null;
+    if (!linked) return null;
+    const baseDir = linked[1] || "/";
+    if ((yield* fs.realPath(baseDir)) !== runtimeBase) return null;
     return {
       kind: "t3-launcher",
       launcher,
-      baseDir: linked[1] || "/",
+      baseDir,
     } satisfies ServerInstallation;
   }
   const match = /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.mjs)$/.exec(entry);

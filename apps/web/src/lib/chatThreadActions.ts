@@ -89,15 +89,8 @@ export function draftModelSelectionApplies(
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
-  if (context.activeThread) {
-    return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
-  }
-  if (context.activeDraftThread) {
-    return scopeProjectRef(
-      context.activeDraftThread.environmentId,
-      context.activeDraftThread.projectId,
-    );
-  }
+  const thread = context.activeThread ?? context.activeDraftThread;
+  if (thread) return scopeProjectRef(thread.environmentId, thread.projectId);
   return context.defaultProjectRef;
 }
 

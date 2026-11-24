@@ -21,17 +21,19 @@ export interface McpAppModelContextEntry {
   readonly text: string;
 }
 
+interface SetInput {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  readonly server: string;
+  readonly tool: string;
+  readonly text: string;
+}
+
 export class McpAppModelContext extends Context.Service<
   McpAppModelContext,
   {
     /** Empty text removes the app's context. */
-    readonly set: (input: {
-      readonly threadId: ThreadId;
-      readonly itemId: TurnItemId;
-      readonly server: string;
-      readonly tool: string;
-      readonly text: string;
-    }) => Effect.Effect<void, McpAppModelContextError>;
+    readonly set: (input: SetInput) => Effect.Effect<void, McpAppModelContextError>;
     readonly forThread: (
       threadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<McpAppModelContextEntry>, McpAppModelContextError>;
@@ -67,13 +69,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const fail = (cause: unknown) => new McpAppModelContextError({ cause });
 
-    const set = Effect.fn("McpAppModelContext.set")(function* (input: {
-      readonly threadId: ThreadId;
-      readonly itemId: TurnItemId;
-      readonly server: string;
-      readonly tool: string;
-      readonly text: string;
-    }) {
+    const set = Effect.fn("McpAppModelContext.set")(function* (input: SetInput) {
       if (input.text.trim() === "") {
         yield* sql`
           DELETE FROM mcp_app_model_context

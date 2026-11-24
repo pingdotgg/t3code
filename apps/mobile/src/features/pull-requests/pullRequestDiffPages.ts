@@ -80,6 +80,15 @@ export function retainPullRequestDiffPage(
   return [...pages.slice(0, index), { cursor, result }];
 }
 
+function sumDiffFileStats(
+  files: readonly { readonly additions: number; readonly deletions: number }[],
+) {
+  return {
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
+  };
+}
+
 export function combinePullRequestDiffPages(
   pages: readonly PullRequestDiffPage[],
   cache: WeakMap<PullRequestDiffResult, ReviewParsedDiff>,
@@ -112,8 +121,7 @@ export function combinePullRequestDiffPages(
       value = {
         ...value,
         files,
-        additions: files.reduce((total, file) => total + file.additions, 0),
-        deletions: files.reduce((total, file) => total + file.deletions, 0),
+        ...sumDiffFileStats(files),
       };
     }
     cache.set(page.result, value);
@@ -128,8 +136,7 @@ export function combinePullRequestDiffPages(
     kind: "files",
     files,
     fileCount: files.length,
-    additions: files.reduce((total, file) => total + file.additions, 0),
-    deletions: files.reduce((total, file) => total + file.deletions, 0),
+    ...sumDiffFileStats(files),
     notice:
       pages.some((page) => page.result.truncated) ||
       parsed.some((page) => page.kind === "raw" || (page.kind === "files" && page.notice !== null))
@@ -213,7 +220,6 @@ export function withWithheldFiles(
   return {
     ...parsed,
     files,
-    additions: files.reduce((total, file) => total + file.additions, 0),
-    deletions: files.reduce((total, file) => total + file.deletions, 0),
+    ...sumDiffFileStats(files),
   };
 }

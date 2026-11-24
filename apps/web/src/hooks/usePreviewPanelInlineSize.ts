@@ -38,7 +38,7 @@ export function usePreviewPanelInlineSize(
     edge: "left",
   });
   const observeRow = (host: HTMLElement) => {
-    const row = container ?? (enabled ? host.parentElement : null) ?? null;
+    const row = container ?? (enabled ? host.parentElement : null);
     // Ref callbacks run before paint, so the width is clamped without an over-wide
     // flash on mount. Only the derived cap is stored: the row resizes every frame
     // of a sidebar drag, but an unchanged cap skips re-rendering the owner.

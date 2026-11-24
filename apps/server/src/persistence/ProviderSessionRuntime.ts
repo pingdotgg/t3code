@@ -20,9 +20,9 @@ import {
 
 import {
   PersistenceDecodeError,
-  type PersistenceErrorCorrelation,
   PersistenceSqlError,
   type ProviderSessionRuntimeRepositoryError,
+  toSqlOrDecodeError,
 } from "./Errors.ts";
 
 const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
@@ -118,21 +118,6 @@ const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 const RecordImportedTranscriptRequestSchema = RecordImportedTranscriptInput.mapFields(
   Struct.assign({ source: Schema.fromJsonString(AgentSessionImportSource) }),
 );
-
-function toPersistenceSqlOrDecodeError(
-  sqlOperation: string,
-  decodeOperation: string,
-  correlation?: PersistenceErrorCorrelation,
-) {
-  return (cause: unknown): ProviderSessionRuntimeRepositoryError =>
-    Schema.isSchemaError(cause)
-      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause, correlation)
-      : new PersistenceSqlError({
-          operation: sqlOperation,
-          ...(correlation === undefined ? {} : { correlation }),
-          cause,
-        });
-}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -335,7 +320,7 @@ export const make = Effect.gen(function* () {
   const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
     (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",
           "ProviderSessionRuntimeRepository.upsert:encodeRequest",
           { threadId: runtime.threadId },
@@ -347,7 +332,7 @@ export const make = Effect.gen(function* () {
     (input) =>
       recordImportedTranscriptRow(input).pipe(
         Effect.mapError(
-          toPersistenceSqlOrDecodeError(
+          toSqlOrDecodeError(
             "ProviderSessionRuntimeRepository.recordImportedTranscript:query",
             "ProviderSessionRuntimeRepository.recordImportedTranscript:encodeRequest",
             { threadId: input.threadId },
@@ -359,7 +344,7 @@ export const make = Effect.gen(function* () {
     getRuntimeRowByThreadId(input).pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.getByThreadId:query",
           "ProviderSessionRuntimeRepository.getByThreadId:decodeRow",
           { threadId: input.threadId },
@@ -387,7 +372,7 @@ export const make = Effect.gen(function* () {
     listRuntimeRows({ excludeStopped: options?.excludeStopped === true }).pipe(
       NodeSqliteClient.readOnly,
       Effect.mapError(
-        toPersistenceSqlOrDecodeError(
+        toSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.list:query",
           "ProviderSessionRuntimeRepository.list:decodeRows",
         ),

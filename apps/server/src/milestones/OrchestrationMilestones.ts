@@ -160,11 +160,13 @@ const make = Effect.gen(function* () {
           const request = event.payload;
           const kind = inputKind(request.kind);
           if (kind === null) return;
-          if (request.status === "pending") {
-            if (!isNew(request.createdAt)) return;
-            const thread = yield* projections.getThread(event.threadId);
+          const pending = request.status === "pending";
+          const at = pending ? request.createdAt : (request.resolvedAt ?? event.occurredAt);
+          if (!isNew(at)) return;
+          const thread = yield* projections.getThread(event.threadId);
+          if (pending) {
             out.push({
-              ...envelope(`thread.needs_input:${request.id}`, thread, request.createdAt, {
+              ...envelope(`thread.needs_input:${request.id}`, thread, at, {
                 type: "agent",
               }),
               type: "thread.needs_input",
@@ -172,9 +174,6 @@ const make = Effect.gen(function* () {
               kind,
             });
           } else {
-            const at = request.resolvedAt ?? event.occurredAt;
-            if (!isNew(at)) return;
-            const thread = yield* projections.getThread(event.threadId);
             out.push({
               ...envelope(`thread.input_resolved:${request.id}`, thread, at, {
                 type: request.status === "resolved" ? "user" : "system",

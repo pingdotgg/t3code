@@ -54,12 +54,13 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           placement = "append",
           keepExisting = false,
         }) {
-          const existing = yield* sql<{ readonly ordinal: number }>`
+          const selectOrdinal = () => sql<{ readonly ordinal: number }>`
           SELECT ordinal
           FROM orchestration_v2_turn_item_positions
           WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
           LIMIT 1
         `;
+          const existing = yield* selectOrdinal();
           const runRows =
             runId === null || suppliedRunOrdinal !== undefined
               ? []
@@ -111,12 +112,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
             ON CONFLICT(thread_id, turn_item_id) DO NOTHING
           `;
           }
-          const rows = yield* sql<{ readonly ordinal: number }>`
-          SELECT ordinal
-          FROM orchestration_v2_turn_item_positions
-          WHERE thread_id = ${threadId} AND turn_item_id = ${turnItemId}
-          LIMIT 1
-        `;
+          const rows = yield* selectOrdinal();
           const ordinal = rows[0]?.ordinal;
           if (ordinal === undefined) {
             return yield* new TurnItemPositionStoreError({

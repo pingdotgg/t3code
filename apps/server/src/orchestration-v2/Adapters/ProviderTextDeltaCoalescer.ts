@@ -56,9 +56,11 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
       flushLock.withPermit(
         Effect.gen(function* () {
           const current = yield* Ref.get(buffered);
+          const isSelected = (message: BufferedProviderText) =>
+            options.predicate(message) && (!options.onlyDirty || message.dirty);
           const updates: Array<ProviderTextDeltaUpdate> = [];
           for (const message of current.values()) {
-            if (!options.predicate(message) || (options.onlyDirty && !message.dirty)) {
+            if (!isSelected(message)) {
               continue;
             }
             updates.push({
@@ -75,7 +77,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
           yield* Ref.update(buffered, (current) => {
             const next = new Map(current);
             for (const [key, message] of current) {
-              if (!options.predicate(message) || (options.onlyDirty && !message.dirty)) {
+              if (!isSelected(message)) {
                 continue;
               }
               if (options.completed) {

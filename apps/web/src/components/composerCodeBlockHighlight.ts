@@ -8,9 +8,11 @@ import { languageOfInfoString } from "~/composer-code-languages";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 import { highlighterLanguageOf } from "./chat/MarkdownCodeBlock.logic";
 
+type ColorDecoration = { from: number; to: number; color: string };
+
 interface HighlightedBlock {
   readonly signature: string;
-  readonly decorations: ReadonlyArray<{ from: number; to: number; color: string }>;
+  readonly decorations: ReadonlyArray<ColorDecoration>;
 }
 
 const composerCodeBlockHighlightKey = new PluginKey<DecorationSet>("composerCodeBlockHighlight");
@@ -171,7 +173,7 @@ export function tokenizeBlock(
   code: string,
   language: string,
   theme: DiffThemeName,
-): ReadonlyArray<{ from: number; to: number; color: string }> {
+): ReadonlyArray<ColorDecoration> {
   let tokens;
   try {
     tokens = highlighter.codeToTokens(code, { lang: language, theme }).tokens;
@@ -179,7 +181,7 @@ export function tokenizeBlock(
     return [];
   }
 
-  const decorations: Array<{ from: number; to: number; color: string }> = [];
+  const decorations: ColorDecoration[] = [];
   let offset = 0;
   for (const [lineIndex, line] of tokens.entries()) {
     // The separator between lines, which Shiki drops; CRLF is two characters.

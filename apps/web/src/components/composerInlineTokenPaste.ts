@@ -73,7 +73,9 @@ export function importPastedComposerText(
   const pastedText = readPastedPlainText(clipboardData);
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
-    fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+    importContextFragment && fragment && fragment.records.length > 0
+      ? importContextFragment(fragment)
+      : null;
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
   const nextId = (contextId: string) => {
     const id = rewrittenIds.get(contextId);

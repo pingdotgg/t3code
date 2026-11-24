@@ -70,6 +70,8 @@ const make = Effect.gen(function* () {
       cause._tag === "ProviderAdapterSessionStoppedError" ? "session-stopped" : "request-failed",
       cause,
     );
+  const requestFailed = (threadId: ThreadId) => (cause: unknown) =>
+    fail(threadId, "request-failed", cause);
 
   const resolveApp = Effect.fn("McpAppRequests.resolveApp")(function* (input: {
     readonly threadId: ThreadId;
@@ -77,7 +79,7 @@ const make = Effect.gen(function* () {
   }) {
     const item = yield* orchestrator
       .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
-      .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+      .pipe(Effect.mapError(requestFailed(input.threadId)));
     const app: McpAppReference | undefined =
       item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
     if (item === null || app === undefined || item.providerThreadId === null) {
@@ -93,7 +95,7 @@ const make = Effect.gen(function* () {
     const { app, providerThreadId } = yield* resolveApp(input);
     const projection = yield* threadManagement
       .getThreadRecords(input.threadId, ["providerThreads"])
-      .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+      .pipe(Effect.mapError(requestFailed(input.threadId)));
     const providerThread = projection.providerThreads.find(
       (candidate) => candidate.id === providerThreadId,
     );
@@ -103,7 +105,7 @@ const make = Effect.gen(function* () {
     const runtime = Option.getOrUndefined(
       yield* providerSessions
         .get(providerThread.providerSessionId)
-        .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause))),
+        .pipe(Effect.mapError(requestFailed(input.threadId))),
     );
     if (runtime === undefined) return yield* fail(input.threadId, "session-stopped");
     const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps | undefined = runtime.mcpApps;
@@ -175,7 +177,7 @@ const make = Effect.gen(function* () {
       seen.add(current);
       const records: { readonly thread: OrchestrationV2AppThread } = yield* threadManagement
         .getThreadRecords(current, [])
-        .pipe(Effect.mapError((cause) => fail(threadId, "request-failed", cause)));
+        .pipe(Effect.mapError(requestFailed(threadId)));
       const { lineage } = records.thread;
       current = lineage.relationshipToParent === "fork" ? lineage.parentThreadId : null;
     }
@@ -216,7 +218,7 @@ const make = Effect.gen(function* () {
         tool: app.tool,
         text,
       })
-      .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
+      .pipe(Effect.mapError(requestFailed(input.threadId)));
   });
 
   return McpAppRequests.of({ callTool, toolInfo, readResource, updateModelContext });

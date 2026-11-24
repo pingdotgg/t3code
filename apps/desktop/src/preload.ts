@@ -31,6 +31,15 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
   );
 }
 
+type IpcListener = Parameters<typeof ipcRenderer.on>[1];
+
+function subscribeIpc(channel: string, listener: IpcListener): () => void {
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 exposeClerkBridge({ passkeys: true });
 
 // Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
@@ -122,18 +131,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   onNotificationBadgeClear: (listener) => {
     const handler = () => listener();
-    ipcRenderer.on(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
+    return subscribeIpc(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, handler);
   },
   onTrackpadScrollBegin: (listener) => {
     const handler = () => listener();
-    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
+    return subscribeIpc(IpcChannels.TRACKPAD_SCROLL_BEGIN_CHANNEL, handler);
   },
   onTrackpadScrollEnd: (listener) => {
     const handler = () => listener();
-    ipcRenderer.on(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
+    return subscribeIpc(IpcChannels.TRACKPAD_SCROLL_END_CHANNEL, handler);
   },
   revealWindow: () => ipcRenderer.invoke(IpcChannels.REVEAL_WINDOW_CHANNEL),
   getPrimaryPasteEnabled: () => primaryPasteEnabled,
@@ -211,10 +217,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       listener(request as Parameters<typeof listener>[0]);
     };
 
-    ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, wrappedListener);
   },
   onSshPasswordPromptSettled: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
@@ -222,10 +225,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       listener(requestId);
     };
 
-    ipcRenderer.on(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.SSH_PASSWORD_PROMPT_SETTLED_CHANNEL, wrappedListener);
   },
   resolveSshPasswordPrompt: (requestId, password) =>
     ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL, { requestId, password }),
@@ -280,10 +280,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       listener(action);
     };
 
-    ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
   },
   onSnapShotEvent: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
@@ -291,10 +288,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       listener(event);
     };
 
-    ipcRenderer.on(IpcChannels.SNAP_SHOT_EVENT_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.SNAP_SHOT_EVENT_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.SNAP_SHOT_EVENT_CHANNEL, wrappedListener);
   },
   onQuitShortcut: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, hint: unknown) => {
@@ -312,10 +306,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       }
     };
 
-    ipcRenderer.on(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
   },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
@@ -326,10 +317,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       listener(fullscreen);
     };
 
-    ipcRenderer.on(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
   },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel, minimumVersion) =>
@@ -350,10 +338,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       listener(state as Parameters<typeof listener>[0]);
     };
 
-    ipcRenderer.on(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
-    };
+    return subscribeIpc(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
   },
   webLinks: {
     setReady: (ready) => ipcRenderer.invoke(IpcChannels.WEB_LINK_READY_CHANNEL, ready),
@@ -361,10 +346,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       const wrappedListener = (_event: Electron.IpcRendererEvent, url: unknown) => {
         if (typeof url === "string") listener(url);
       };
-      ipcRenderer.on(IpcChannels.WEB_LINK_OPEN_CHANNEL, wrappedListener);
-      return () => {
-        ipcRenderer.removeListener(IpcChannels.WEB_LINK_OPEN_CHANNEL, wrappedListener);
-      };
+      return subscribeIpc(IpcChannels.WEB_LINK_OPEN_CHANNEL, wrappedListener);
     },
   },
   appActivation: {
@@ -377,13 +359,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         if (typeof request !== "object" || request === null) return;
         listener(request as Parameters<typeof listener>[0]);
       };
-      ipcRenderer.on(IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, wrappedListener);
-      return () => {
-        ipcRenderer.removeListener(
-          IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL,
-          wrappedListener,
-        );
-      };
+      return subscribeIpc(IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, wrappedListener);
     },
   },
   preview: {
@@ -448,12 +424,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         if (typeof request !== "object" || request === null) return;
         listener(request as Parameters<typeof listener>[0]);
       };
-      ipcRenderer.on(IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(
-          IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL,
-          wrappedListener,
-        );
+      return subscribeIpc(IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL, wrappedListener);
     },
     resolveTunnelAccess: (requestId, url) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL, { requestId, url }),
@@ -469,9 +440,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         if (!Array.isArray(forwards)) return;
         listener(forwards);
       };
-      ipcRenderer.on(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
+      return subscribeIpc(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
     },
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
@@ -514,9 +483,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           if (typeof event !== "object" || event === null) return;
           listener(event as DesktopPreviewRecordingInputEvent);
         };
-        ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
-        return () =>
-          ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
+        return subscribeIpc(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
       },
       startScreencast: (tabId) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId }),
@@ -538,36 +505,28 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         if (typeof tabId !== "string" || typeof state !== "object" || state === null) return;
         listener(tabId, state as DesktopPreviewTabState);
       };
-      ipcRenderer.on(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
+      return subscribeIpc(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
     },
     onPointerEvent: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, pointerEvent: unknown) => {
         if (typeof pointerEvent !== "object" || pointerEvent === null) return;
         listener(pointerEvent as DesktopPreviewPointerEvent);
       };
-      ipcRenderer.on(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+      return subscribeIpc(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
     },
     onOpenLink: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, linkEvent: unknown) => {
         if (typeof linkEvent !== "object" || linkEvent === null) return;
         listener(linkEvent as DesktopPreviewOpenLinkEvent);
       };
-      ipcRenderer.on(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
+      return subscribeIpc(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, wrappedListener);
     },
     onFindResult: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, findEvent: unknown) => {
         if (typeof findEvent !== "object" || findEvent === null) return;
         listener(findEvent as DesktopPreviewFindResultEvent);
       };
-      ipcRenderer.on(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
-      return () =>
-        ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
+      return subscribeIpc(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
   },
 } satisfies DesktopBridge);

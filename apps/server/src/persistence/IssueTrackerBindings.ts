@@ -12,8 +12,8 @@ import {
 } from "@t3tools/contracts";
 
 import {
-  PersistenceDecodeError,
   PersistenceSqlError,
+  toSqlOrDecodeError,
   type IssueTrackerBindingsRepositoryError,
 } from "./Errors.ts";
 
@@ -76,13 +76,6 @@ export class IssueTrackerBindingsRepository extends Context.Service<
 >()("t3/persistence/IssueTrackerBindings/IssueTrackerBindingsRepository") {}
 
 const encodeAdditionalScopes = Schema.encodeEffect(BindingRow.fields.additionalScopes);
-
-function toSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
-  return (cause: unknown): IssueTrackerBindingsRepositoryError =>
-    Schema.isSchemaError(cause)
-      ? PersistenceDecodeError.fromSchemaError(decodeOperation, cause)
-      : new PersistenceSqlError({ operation: sqlOperation, cause });
-}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

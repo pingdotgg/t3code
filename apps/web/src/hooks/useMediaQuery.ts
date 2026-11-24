@@ -14,14 +14,16 @@ type Breakpoint = keyof typeof BREAKPOINTS;
 
 type BreakpointQuery = Breakpoint | `max-${Breakpoint}` | `${Breakpoint}:max-${Breakpoint}`;
 
+function breakpointPx(value: Breakpoint | number): number {
+  return typeof value === "number" ? value : BREAKPOINTS[value];
+}
+
 function resolveMin(value: Breakpoint | number): string {
-  const px = typeof value === "number" ? value : BREAKPOINTS[value];
-  return `(min-width: ${px}px)`;
+  return `(min-width: ${breakpointPx(value)}px)`;
 }
 
 function resolveMax(value: Breakpoint | number): string {
-  const px = typeof value === "number" ? value : BREAKPOINTS[value];
-  return `(max-width: ${px - 1}px)`;
+  return `(max-width: ${breakpointPx(value) - 1}px)`;
 }
 
 function parseQuery(query: BreakpointQuery | MediaQueryInput | (string & {})): string {

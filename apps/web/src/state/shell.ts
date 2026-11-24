@@ -1,6 +1,7 @@
 import {
   AVAILABLE_CONNECTION_STATE,
   connectionProjectionPhase,
+  type SupervisorConnectionState,
 } from "@t3tools/client-runtime/connection";
 import {
   createEnvironmentShellAtoms,
@@ -90,18 +91,27 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   return true;
 }).pipe(Atom.withLabel("web-all-environment-shells-bootstrapped"));
 
+export function catalogHasPrimaryEntry(catalog: EnvironmentCatalogState): boolean {
+  return Array.from(catalog.entries.values()).some(
+    (entry) => entry.target._tag === "PrimaryConnectionTarget",
+  );
+}
+
+export function isConnectionSettledOffline(connection: SupervisorConnectionState): boolean {
+  return (
+    connection.phase === "offline" ||
+    connection.phase === "blocked" ||
+    (connection.phase === "backoff" && connection.attempt > 2)
+  );
+}
+
 // Catalog can precede primary discovery; an empty or incomplete catalog cannot prove absence.
 function catalogIsComplete(
   catalog: EnvironmentCatalogState,
   requiresPrimaryEnvironment: boolean,
 ): boolean {
   if (!catalog.isReady || catalog.entries.size === 0) return false;
-  return (
-    !requiresPrimaryEnvironment ||
-    Array.from(catalog.entries.values()).some(
-      (entry) => entry.target._tag === "PrimaryConnectionTarget",
-    )
-  );
+  return !requiresPrimaryEnvironment || catalogHasPrimaryEntry(catalog);
 }
 
 export function createAllEnvironmentProjectSnapshotsReadyAtom(input: {
@@ -140,12 +150,7 @@ export const allReachableShellsLiveAtom = Atom.make((get) => {
     if (shell.status === "live" && Option.isSome(shell.snapshot)) continue;
     const state = AsyncResult.value(get(environmentCatalog.stateAtom(environmentId)));
     if (Option.isNone(state)) return false;
-    const connection = state.value;
-    const settledOffline =
-      connection.phase === "offline" ||
-      connection.phase === "blocked" ||
-      (connection.phase === "backoff" && connection.attempt > 2);
-    if (!settledOffline) return false;
+    if (!isConnectionSettledOffline(state.value)) return false;
   }
   return true;
 }).pipe(Atom.withLabel("web-all-reachable-shells-live"));

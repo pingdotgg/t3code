@@ -439,6 +439,26 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const insertTurnItemPositions = (threadId: ThreadId, messages: ReadonlyArray<LegacyMessageRow>) =>
+    Effect.forEach(
+      messages,
+      (message) =>
+        sql`
+          INSERT INTO orchestration_v2_turn_item_positions (
+            thread_id,
+            turn_item_id,
+            ordinal
+          )
+          VALUES (
+            ${threadId},
+            ${TurnItemId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${message.message_id}`)},
+            ${message.ordinal}
+          )
+          ON CONFLICT(thread_id, turn_item_id) DO NOTHING
+        `,
+      { discard: true },
+    );
+
   const reconcileShellsBase = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const repairRows = yield* sql<LegacyRepairRow>`
@@ -491,6 +511,10 @@ const make = Effect.gen(function* () {
       const current = decoded.value;
       const legacy = importedThread(row, now);
       const legacyPullRequests = legacy.pullRequests ?? [];
+      const linkedPullRequest =
+        current.linkedPullRequest === undefined
+          ? legacy.linkedPullRequest
+          : current.linkedPullRequest;
       const repaired: OrchestrationV2AppThread = {
         ...current,
         pinnedAt: current.pinnedAt === undefined ? legacy.pinnedAt : current.pinnedAt,
@@ -503,22 +527,14 @@ const make = Effect.gen(function* () {
           current.snoozedUntil === undefined ? legacy.snoozedUntil : current.snoozedUntil,
         snoozedAt: current.snoozedAt === undefined ? legacy.snoozedAt : current.snoozedAt,
         unsettledAt: current.unsettledAt === undefined ? legacy.unsettledAt : current.unsettledAt,
-        linkedPullRequest:
-          current.linkedPullRequest === undefined
-            ? legacy.linkedPullRequest
-            : current.linkedPullRequest,
+        linkedPullRequest,
         pullRequests:
           current.pullRequests === undefined
             ? current.linkedPullRequest === null
               ? []
               : legacyPullRequests.length > 0
                 ? legacyPullRequests
-                : threadPullRequestsOf({
-                    linkedPullRequest:
-                      current.linkedPullRequest === undefined
-                        ? legacy.linkedPullRequest
-                        : current.linkedPullRequest,
-                  })
+                : threadPullRequestsOf({ linkedPullRequest })
             : current.pullRequests,
         branchPullRequest:
           current.branchPullRequest === undefined
@@ -608,24 +624,7 @@ const make = Effect.gen(function* () {
       ];
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* Effect.forEach(
-            previews,
-            (message) =>
-              sql`
-                INSERT INTO orchestration_v2_turn_item_positions (
-                  thread_id,
-                  turn_item_id,
-                  ordinal
-                )
-                VALUES (
-                  ${thread.id},
-                  ${TurnItemId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${message.message_id}`)},
-                  ${message.ordinal}
-                )
-                ON CONFLICT(thread_id, turn_item_id) DO NOTHING
-              `,
-            { discard: true },
-          );
+          yield* insertTurnItemPositions(thread.id, previews);
           yield* eventSink.write({ events });
           yield* sql`
             INSERT INTO orchestration_v2_legacy_imports (
@@ -718,24 +717,7 @@ const make = Effect.gen(function* () {
           (message) => !existing.has(`${IMPORT_EVENT_PREFIX}:message:${message.message_id}`),
         );
         for (const batch of chunks(missing, TRANSCRIPT_EVENT_BATCH_SIZE / 2)) {
-          yield* Effect.forEach(
-            batch,
-            (message) =>
-              sql`
-                INSERT INTO orchestration_v2_turn_item_positions (
-                  thread_id,
-                  turn_item_id,
-                  ordinal
-                )
-                VALUES (
-                  ${threadId},
-                  ${TurnItemId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${message.message_id}`)},
-                  ${message.ordinal}
-                )
-                ON CONFLICT(thread_id, turn_item_id) DO NOTHING
-              `,
-            { discard: true },
-          );
+          yield* insertTurnItemPositions(threadId, batch);
           yield* eventSink.write({
             events: batch.flatMap((message) => messageEvents(message, importedAt)),
           });
