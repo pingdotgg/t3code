@@ -965,6 +965,51 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
+  it.effect("the tunnel requests only its own forward, not the host's configured ones", () =>
+    Effect.gen(function* () {
+      const sshCalls: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = commandArgs(command);
+        sshCalls.push(args);
+        if (args.includes("-N")) return Effect.succeed(makeRunningProcess(() => undefined));
+        if (args.includes("-O")) return Effect.succeed(makeSuccessfulProcess(""));
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      });
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const environment = yield* manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "devbox",
+          username: null,
+          port: null,
+        });
+        const tunnel = sshCalls.find((args) => args.includes("-N"));
+        assert.isDefined(tunnel);
+        if (tunnel === undefined) return;
+        // ClearAllForwardings drops -L as well, so T3's forward goes through the tunnel's master.
+        assert.include(tunnel, "ClearAllForwardings=yes");
+        assert.notInclude(tunnel, "-L");
+        const controlPath = tunnel.find((arg) => arg.startsWith("ControlPath="));
+        const forward = sshCalls.find((args) => args.includes("forward"));
+        assert.isDefined(forward);
+        if (forward === undefined || controlPath === undefined) return;
+        const localPort = new URL(environment.httpBaseUrl).port;
+        // -F none keeps the client from sending the host's configured forwards with it.
+        assert.includeMembers([...forward], ["-F", "none", controlPath]);
+        assert.equal(forward[forward.indexOf("-L") + 1], `127.0.0.1:${localPort}:127.0.0.1:3773`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect("fails with a readiness error when ssh never connects", () =>
     Effect.gen(function* () {
       const tunnelSpawned = yield* Deferred.make<void>();
@@ -1148,6 +1193,7 @@ describe("ssh tunnel scripts", () => {
               }
               return makeSuccessfulProcess('{"remotePort":3773}\n');
             }
+            if (args.includes("-O")) return makeSuccessfulProcess("");
             const stop = makeSuccessfulProcess('{"stopped":true}\n');
             if (!isTarget) return stop;
             const pause = ++stops === 1 && stalledStep === "remote server";
@@ -1229,8 +1275,9 @@ describe("ssh tunnel scripts", () => {
           if (args.includes("-G")) {
             return makeSuccessfulProcess("hostname devbox\ncontrolpath /tmp/t3-cm\n");
           }
+          const userMaster = masterLive && args.includes("ControlPath=/tmp/t3-cm");
           if (muxCommand === "check") {
-            return masterLive
+            return userMaster
               ? makeSuccessfulProcess("")
               : failed("Control socket connect: ENOENT\n");
           }
@@ -1238,9 +1285,11 @@ describe("ssh tunnel scripts", () => {
             cancelledForwards.push(forward);
             return makeSuccessfulProcess("");
           }
+          // A fresh login, the tunnel's own ControlMaster included, cannot pass the host's
+          // one-time-code prompt; only the user's signed-in master can.
+          if (args.includes("-N")) return failed(denied);
           if (forward !== undefined) {
-            // Only the signed-in master can pass the host's one-time-code prompt.
-            if (!masterLive || args.includes("ControlPath=none")) return failed(denied);
+            if (!userMaster) return failed(denied);
             openedForwards.push(forward);
             return muxCommand === "forward"
               ? makeSuccessfulProcess("")

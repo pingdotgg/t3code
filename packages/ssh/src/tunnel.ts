@@ -9,6 +9,7 @@ import type {
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -66,6 +67,7 @@ const REMOTE_LAUNCH_BASE_TIMEOUT_MS = 90_000;
 // Matches the node-script launch command's ssh run without the launch lock wait.
 const SSH_TUNNEL_CONNECT_TIMEOUT_MS = REMOTE_LAUNCH_BASE_TIMEOUT_MS;
 const SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS = 100;
+const SSH_TUNNEL_MASTER_PROBE_INTERVAL_MS = 250;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -1493,13 +1495,43 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
 const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
   readonly target: DesktopSshEnvironmentTarget;
   readonly localPort: number;
+  /** The tunnel's own ControlMaster, which opens without the forward until asked for it. */
+  readonly ownControlPath: string | null;
+  readonly forward: string;
 }) {
   const net = yield* NetService.NetService;
-  yield* net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
-    Effect.repeat({
-      schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
-      until: (listening) => listening,
-    }),
+  const { ownControlPath } = input;
+  const openForward =
+    ownControlPath === null
+      ? Effect.void
+      : runSshCommand(input.target, {
+          preHostArgs: [...controlMasterArgs(ownControlPath), "-O", "check"],
+        }).pipe(
+          // The control socket listens once the master has signed in.
+          Effect.retry({
+            schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_MASTER_PROBE_INTERVAL_MS)),
+          }),
+          Effect.andThen(
+            runSshCommand(input.target, {
+              preHostArgs: [
+                ...controlMasterArgs(ownControlPath),
+                "-O",
+                "forward",
+                "-L",
+                input.forward,
+              ],
+            }),
+          ),
+        );
+  yield* openForward.pipe(
+    Effect.andThen(
+      net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
+          until: (listening) => listening,
+        }),
+      ),
+    ),
     Effect.timeoutOrElse({
       duration: Duration.millis(SSH_TUNNEL_CONNECT_TIMEOUT_MS),
       orElse: () =>
@@ -1554,16 +1586,47 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
   );
+  const { controlPath, scope } = input;
+  // The master's own GatewayPorts would otherwise decide the bind address.
+  const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
+  // The host's configured LocalForward/RemoteForward lines would take the user's own ports, and
+  // a held one stops the tunnel. ClearAllForwardings also drops -L, so the tunnel is a private
+  // ControlMaster with no forwards and T3's one forward is added through it. Windows has no mux.
+  const ownControlPath =
+    controlPath === null && (yield* HostProcess.Platform) !== "win32"
+      ? yield* Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ssh-" });
+          return pathService.join(directory, "m");
+        }).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.mapError(
+            (cause) =>
+              new SshCommandError({
+                command: ["ssh"],
+                exitCode: null,
+                stderr: "",
+                message: "Failed to prepare the SSH tunnel control socket.",
+                cause,
+              }),
+          ),
+        )
+      : null;
   const directArgs = [
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
-    "-o",
-    "ExitOnForwardFailure=yes",
-    "-o",
-    "ControlMaster=no",
-    "-o",
-    "ControlPath=none",
+    ...(ownControlPath === null
+      ? ["-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none"]
+      : [
+          "-o",
+          "ClearAllForwardings=yes",
+          "-o",
+          "ControlMaster=yes",
+          "-o",
+          `ControlPath=${ownControlPath}`,
+        ]),
     "-o",
     "ControlPersist=no",
     "-o",
@@ -1572,14 +1635,10 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "ServerAliveCountMax=3",
     "-n",
     "-N",
-    "-L",
-    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    ...(ownControlPath === null ? ["-L", `${input.localPort}:127.0.0.1:${input.remotePort}`] : []),
     "--",
     hostSpec,
   ];
-  const { controlPath, scope } = input;
-  // The master's own GatewayPorts would otherwise decide the bind address.
-  const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
   const { args, stdin } =
     controlPath === null
       ? { args: directArgs, stdin: { stream: Stream.empty, endOnDone: true } }
@@ -1732,7 +1791,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+    waitForTunnelForward({
+      target: input.resolvedTarget,
+      localPort: input.localPort,
+      ownControlPath,
+      forward: controlMasterForward,
+    }).pipe(
       Effect.andThen(
         waitForHttpReady({
           baseUrl: input.httpBaseUrl,
