@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "{provider}-MCP-Server werden gestartet",
   "fedaa29ff8815a77": "{provider}-Hooks werden geladen",
   "57025ae4de5beb57": "{provider}-Regeln und -Skills werden geladen",
+  "1cbfbcad9f0d04fe": "{provider}-Sitzung wird fortgesetzt",
   "4729a188600f1501": "Verbindung zu {provider} wird hergestellt",
   "8c8977097681630f": "{provider} wird gestartet",
   "f1d27d127ab27ac6": "Wird gestartet",
@@ -3239,7 +3240,8 @@
   "49e3cf16b3ac3e5f": "Zugriff",
   "9699d255b374e215": "Was es tun darf",
   "86f5769278f5fa4d": "Über das reine Lesen hinaus kann es Threads starten, Nachrichten senden und Threads stoppen, und keiner davon kann mit mehr als dem gewählten Modus laufen.",
-  "693a1983e099523a": "Verbindung mit diesem Backend.",
+  "4f3982f640dfed5b": "Dieser Link fügt diesem Browser ein Backend hinzu. Fahre nur fort, wenn du ihm vertraust.",
+  "41b32a424841adb7": "Dieser Kopplungslink enthält einen ungültigen Backend-Host.",
   "ec2a82b05e616aa0": "Diesem Kopplungslink fehlen Backend-Host oder Token.",
   "630d4f04309bc19a": "Authentifizierung fehlgeschlagen.",
   "63bc32e8544f4de1": "Diese Umgebung erwartet vertrauenswürdige Kopplungsdaten, bevor die App sich verbinden kann.",
@@ -3253,11 +3255,13 @@
   "55c59743f7fdd7fa": "Einmaltoken oder Kopplungsgeheimnis einfügen",
   "ca6a0c94398d763d": "Wird gekoppelt...",
   "989f56b8297dd684": "Dieses einmalige Kopplungstoken wurde bereits übermittelt. Fordere einen neuen Kopplungslink an.",
+  "693a1983e099523a": "Verbindung mit diesem Backend.",
   "db3dcafc90d10405": "{environment} ist in diesem Browser gespeichert.",
   "47d4ab320c4c394c": "Die Umgebung ist in diesem Browser gespeichert.",
   "d235c6bfa25870a4": "{error} Falls das Backend dieses Einmaltoken akzeptiert hat, fordere vor einem neuen Versuch einen neuen Kopplungslink an.",
   "00c1dcaef4762f18": "Backend gekoppelt",
   "aac4a30e5912c01c": "Kopplung fehlgeschlagen",
+  "c142c3f3bed15f8d": "Dieses Backend hinzufügen?",
   "dbb27f4ee8ecfa8e": "Backend wird gekoppelt",
   "8049e9ba2e8b4867": "Kopplungstoken",
   "0528294df7656322": [
@@ -3274,6 +3278,7 @@
     }
   ],
   "ff5f1c260e87ecde": "Prüfe, ob das Backend von diesem Browser aus erreichbar ist, CORS für gehostete Clients unterstützt und über HTTPS ausgeliefert wird, wenn du diese Seite über HTTPS öffnest.",
+  "984c25ffcae69300": "Backend hinzufügen",
   "08570ee0982df89d": "Wird gekoppelt...",
   "3bbae7c96b6cbfc3": "App öffnen",
   "49cc06e79f21f85a": "{seconds} s",
@@ -6629,28 +6634,8 @@
   "a6d75a4380173c60": "Checks öffnen: {summary}",
   "be3d1766bad18693": "Checks: {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} fehlgeschlagen} other {{count} fehlgeschlagen}}",
+  "fd63b391898889f9": "{count, plural, one {{count} wartet auf Aktion} other {{count} warten auf Aktion}}",
   "cb116c139cdace98": "Keine Checks gemeldet",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "Checks"
-  ],
   "60b56e201607c7ec": "Die Check-Details sind veraltet. Aktualisiere den Pull Request, um sie zu aktualisieren.",
   "e74cd4e960cbb5e5": "Unveränderte Zeilen sind in einer Datei mit gekürzten Zeilen nicht verfügbar.",
   "38d6169e04a9a4ce": "Weitere Kommentare konnten nicht geladen werden",
@@ -6836,6 +6821,8 @@
   "45674081908ac8aa": "Checkout-Befehl kopiert",
   "d2970574ef7860d0": "{term, select, mr {Branch des Merge Requests kopieren} cr {Branch der Änderungsanfrage kopieren} other {Branch des Pull Requests kopieren}}",
   "45c92416a82cf22c": "Branch-Name kopiert",
+  "43a18c0bc37988f4": "Neue Commits wurden gepusht. Ein Merge oder Review gilt weiterhin für {sha}.",
+  "c930a7ffa49054f0": "Neue Commits laden",
   "63e533a9db74e8dc": "Checks",
   "4f7ca990d538a8bc": "Kommentare nicht verfügbar",
   "95601ce075194611": "{count, plural, one {{formatted} Kommentar} other {{formatted} Kommentare}}",
@@ -7554,6 +7541,11 @@
   "03338c6aec8edacd": "Lege fest, wie breit Nachrichten und das Eingabefeld auf großen Bildschirmen werden können.",
   "92785adb251da88c": "Chatbreite auf Standard zurücksetzen",
   "4d457bcce0c0e272": "Chatbreite",
+  "7d7f65967cc821e3": "Breite der HTML-Vorschau",
+  "70ce0af7f78d5957": "Lässt HTML-Vorschauen in einem Chat breiter werden als die Nachrichten, die zentriert bleiben.",
+  "f2b119bf02ae2558": "Breite der HTML-Vorschau auf Standard zurücksetzen",
+  "6287212fed0deec6": "Wie Chat",
+  "dc8e85ea0364649c": "Wie Chat (Standard)",
   "81f3a196537bbee0": "Komfortabel (Standard)",
   "e79e5388f669495f": "Den Denkaufwand im Eingabefeld als Namen, etwa Hoch, oder als Balken anzeigen.",
   "7f0365c7e4e8bcbf": "Anzeige des Aufwands auf Standard zurücksetzen",
@@ -11822,6 +11814,7 @@
   "9cf8308531b4ff31": "transparent transparenz deckend menüs dialoge eingabefeld",
   "d8d6cfd630cff22d": "rot grün blau orange hinzufügungen löschungen änderungen anzahl palette farbenblind",
   "717e49895cfee1c7": "breit volle breite spalte layout nachrichten eingabefeld monitor",
+  "9d5c7430a7ff76cf": "breit volle breite inline seite rendern diagramm dashboard artefakt zentriert",
   "88365077fd80787b": "anpassen anzeigen ausblenden panel karte umgebung editor skripte branch pull request git änderungen server automatisierungen herkunft nutzung limits 5 stunden wöchentlich kontingent tokens kontextfenster",
   "d561f74efa5f3920": "reasoning aufwand denken balken grafik wort bezeichnung stufe eingabefeld",
   "6113c17109ee0d57": "latex tex katex gleichungen formeln markdown",
@@ -12139,7 +12132,8 @@
   "f938bb483eb3d189": "startet zuletzt neu",
   "9bca02be2b4d612a": "nicht verbunden",
   "2dcc418b6a13b83c": "erfordert manuelles Update",
-  "5c8ebc36f84dee7a": "erfordert eine neuere Desktop-App",
+  "f13e08bd3614112e": "T3 Code auf diesem Rechner aktualisieren",
+  "3c3348c36a2695af": "Update-Kanal auf diesem Rechner ändern",
   "fa8faa732a2688ef": "im Kanal {channel}",
   "9b961309baafa09d": "keine Berechtigung",
   "9bafb2622c22d145": "wird bereits aktualisiert",
@@ -12781,5 +12775,24 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "99963c0142e17f00": "Für das neue {tracker}-Konto.",
-  "6d8e4ebc889bace9": "Konto hinzufügen"
+  "6d8e4ebc889bace9": "Konto hinzufügen",
+  "8a883c4fbc127b68": "Auto-Merge für den Stack wird aktiviert...",
+  "5fb2a26ae31e8983": "Auto-Merge für den Stack konnte nicht aktiviert werden",
+  "986d0dcbf4dd0098": "Auto-Merge für den Stack aktiviert",
+  "f3ed1f63c8a3eef2": "{host} mergt den Stack bis #{number}, sobald die Anforderungen erfüllt sind.",
+  "bd536a0a1754f6cb": "Auto-Merge für den Stack konnte nicht abgebrochen werden",
+  "bb90ac3b2f3a72d5": "Der Host hat das Abbrechen des Auto-Merge abgelehnt. Aktualisiere und versuche es erneut.",
+  "9c28753c777c37b7": "{count, plural, one {Auto-Merge für {count} {term, select, mr {Merge Request} cr {Änderungsanfrage} other {Pull Request}}?} other {Auto-Merge für {count} {term, select, mr {Merge Requests} cr {Änderungsanfragen} other {Pull Requests}}?}}",
+  "a86b49982e18784d": "#{number} und die darunterliegenden nicht gemergten Ebenen per {method} in {base} mergen, sobald jede davon die Anforderungen auf {host} erfüllt. Das kann sofort passieren.",
+  "b1afda5c964deee4": [
+    "Auto-Merge für Stack (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Auto-Merge für Stack abbrechen",
+  "012c67c7f1a99e33": "Auto-Merge für Stack"
 }

@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Iniciando servidores MCP de {provider}",
   "fedaa29ff8815a77": "Cargando hooks de {provider}",
   "57025ae4de5beb57": "Cargando reglas y skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reanudando la sesión de {provider}",
   "4729a188600f1501": "Conectando con {provider}",
   "8c8977097681630f": "Iniciando {provider}",
   "f1d27d127ab27ac6": "Iniciando",
@@ -5608,5 +5609,6 @@
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
   "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
   "99d51127f573296b": "Otra cuenta",
-  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}."
+  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
+  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato."
 }

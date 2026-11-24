@@ -61,3 +61,14 @@ export async function tryOpenExternalUrl(
     return false;
   }
 }
+
+/**
+ * For a link in rendered text, such as a pull request body: opens web, mail and phone links
+ * only.
+ */
+export async function tryOpenWebLink(
+  url: string,
+  target: ExternalUrlTarget = "external-link",
+): Promise<boolean> {
+  return /^(?:https?|mailto|tel):/i.test(url) && (await tryOpenExternalUrl(url, target));
+}

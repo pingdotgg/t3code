@@ -31,14 +31,16 @@ runs:
         echo "node=$(jq -r '.engines.node' package.json)" >> "$GITHUB_OUTPUT"
         echo "pnpm=$(jq -r '.packageManager' package.json)" >> "$GITHUB_OUTPUT"
 
+    # Restore only: "Save Vite+" below writes the toolchain before this job
+    # installs or runs project code.
     # Pinned because release-desktop.yml signs builds with this action in the job.
-    - name: Cache Vite+
+    - name: Restore Vite+
       id: vp_cache
       if: steps.vp.outputs.version != ''
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.vite-plus
-        key: vite-plus-home-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}-node${{ steps.vp.outputs.node }}-${{ steps.vp.outputs.pnpm }}
+        key: vite-plus-home-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}-node${{ steps.vp.outputs.node }}-${{ steps.vp.outputs.pnpm }}
 
     # setup-vp always runs the installer, which fetches vp from npm even when
     # this exact version is installed. A cache hit already has everything, so
@@ -63,6 +65,19 @@ runs:
         node-version-file: package.json
         cache: false
         run-install: false
+
+    # vp downloads pnpm on first use, which would otherwise be after the save.
+    - name: Fetch pnpm
+      if: steps.vp.outputs.version != '' && steps.vp_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: vp pm cache dir
+
+    - name: Save Vite+
+      if: steps.vp.outputs.version != '' && steps.vp_cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.vite-plus
+        key: ${{ steps.vp_cache.outputs.cache-primary-key }}
 
     # A shared key lets whichever install saves first, often a small filtered
     # one, become every job's store. Each set of install args gets its own.

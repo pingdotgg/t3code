@@ -1717,6 +1717,8 @@ it.layer(
       // BEL is DCS payload, not a terminator: only ST ends the string.
       process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("\u001b]11;rgb:44/55/66\u0007\u001b]12;rgb:A/BC/def\u001b\\");
+      process.emitData("\u001b]11;rgb:ffff/ffff/ffff\u0007\u001b]10;rgb:1/2/3\n;?\u0007");
       // Ghostty sets a colour beside a query, skips an LF, an empty field and a last index with no
       // colour in an OSC, and runs an OSC that CAN ends or that the next ESC cuts short.
       process.emitData("\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b]\n4;1;?;;2;?;3\u0018\u001b]4;3;?");
@@ -1732,6 +1734,7 @@ it.layer(
       expect(
         reopened.history.startsWith(
           'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
+            "\u001b]11;rgb:44/55/66\u0007\u001b]12;rgb:A/BC/def\u001b\\" +
             "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
             `\u001b[${"0".repeat(5000)}31mXdone\n`,
         ),
