@@ -7,11 +7,14 @@ export interface GrepOutputResult {
 // Search results ride the timeline wire, so matched text shares one budget; later matches keep
 // their file and line without the text.
 const PREVIEW_BUDGET_CHARS = 8_000;
+const NOTE_MAX_CHARS = 500;
 
 const SUMMARY_LINE = /^(?:Found \d+ (?:match|file)|No (?:files|matches) found)/i;
 const NOTE_LINE = /^\(.*\)$/;
 const FILE_HEADING = /^File: (.+)$/;
-const NUMBERED_LINE = /^\s*(?:Line |L)?(\d+): ?(.*)$/;
+// OpenCode and Gemini put a space after the colon; ripgrep's `--heading` lines start right after it.
+const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
+const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 const COLON_HEADING = /^(\S.*):$/;
 
@@ -28,8 +31,7 @@ export function parseGrepOutput(
   const matches: Array<{ fileName: string; line: number; text: string }> = [];
   const notes: string[] = [];
   let file: string | undefined;
-  for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
+  for (const line of output.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
     const heading = FILE_HEADING.exec(trimmed);
@@ -39,15 +41,18 @@ export function parseGrepOutput(
     }
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
     if (file !== undefined && numbered) {
-      matches.push({ fileName: file, line: Number(numbered[1]), text: numbered[2] ?? "" });
+      const lineNumber = numbered[1] ?? numbered[2];
+      matches.push({ fileName: file, line: Number(lineNumber), text: numbered[3] ?? "" });
       continue;
     }
+    // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
+    if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
     const inline = PATH_LINE_TEXT.exec(line);
     if (inline) {
       matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
       continue;
     }
-    const colonHeading = COLON_HEADING.exec(line);
+    const colonHeading = COLON_HEADING.exec(line.trimEnd());
     if (colonHeading) {
       file = colonHeading[1];
       continue;
@@ -57,14 +62,15 @@ export function parseGrepOutput(
       continue;
     }
     // ripgrep --heading prints the bare path above its numbered lines.
-    if (!/\s/.test(line)) {
-      file = line;
+    if (!/\s/.test(line.trimEnd())) {
+      file = line.trimEnd();
       continue;
     }
     return undefined;
   }
   if (matches.length === 0) return undefined;
-  let budget = PREVIEW_BUDGET_CHARS;
+  const note = notes.join("\n").slice(0, NOTE_MAX_CHARS);
+  let budget = PREVIEW_BUDGET_CHARS - note.length;
   const results: GrepOutputResult[] = matches.flatMap((match) => {
     if (match.line < 1 || !match.fileName.trim()) return [];
     const fits = match.text.length <= budget;
@@ -73,5 +79,5 @@ export function parseGrepOutput(
       { fileName: match.fileName, line: match.line, ...(fits ? { preview: match.text } : {}) },
     ];
   });
-  return notes.length === 0 ? results : [...results, { fileName: root, preview: notes.join("\n") }];
+  return note ? [...results, { fileName: root, preview: note }] : results;
 }

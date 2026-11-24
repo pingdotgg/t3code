@@ -33,7 +33,7 @@ describe("FileSearchResults", () => {
     ]);
   });
 
-  it("falls back to a case-insensitive highlight and skips patterns JavaScript can't parse", async () => {
+  it("falls back to a case-insensitive highlight and skips patterns JavaScript can't run safely", async () => {
     await using screen = await render(
       <div>
         <FileSearchResults
@@ -46,10 +46,16 @@ describe("FileSearchResults", () => {
           workspaceRoot={undefined}
           results={[{ fileName: "b.ts", line: 2, preview: "const needle = 2;" }]}
         />
+        <FileSearchResults
+          pattern="(a+)+$|needle"
+          workspaceRoot={undefined}
+          results={[{ fileName: "c.ts", line: 3, preview: `${"a".repeat(100)}!needle` }]}
+        />
       </div>,
       { router: false },
     );
     expect(marks(screen.container)).toEqual(["NEEDLE"]);
     expect(screen.container.textContent).toContain("const needle = 2;");
+    expect(screen.container.textContent).toContain(`${"a".repeat(100)}!needle`);
   });
 });

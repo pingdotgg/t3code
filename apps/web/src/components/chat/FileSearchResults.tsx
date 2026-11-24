@@ -7,11 +7,15 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 const MAX_HIGHLIGHTS_PER_LINE = 20;
 
+// JavaScript backtracks where ripgrep runs in linear time, so a quantified group like `(a+)+`
+// could hang rendering on a long line; those patterns go unhighlighted.
+const QUANTIFIED_GROUP = /\)[*+{]/;
+
 // Provider patterns are ripgrep regexes; JavaScript reads most of them the same way. Every
 // matched line is known to match, so when the case-sensitive form misses one the search
 // was case-insensitive. A pattern JavaScript can't parse just goes unhighlighted.
 function patternMatchers(pattern: string | undefined): ReadonlyArray<RegExp> {
-  if (!pattern?.trim()) return [];
+  if (!pattern?.trim() || QUANTIFIED_GROUP.test(pattern)) return [];
   try {
     return [new RegExp(pattern, "g"), new RegExp(pattern, "gi")];
   } catch {

@@ -33,8 +33,8 @@ describe("parseGrepOutput", () => {
       { fileName: "src/a.ts", line: 4, preview: "const a = 1;" },
       { fileName: "C:\\w\\b.ts", line: 9, preview: "b: 2" },
     ]);
-    expect(parseGrepOutput("src/a.ts\n4:const a = 1;\n7:a();", ".")).toEqual([
-      { fileName: "src/a.ts", line: 4, preview: "const a = 1;" },
+    expect(parseGrepOutput("src/a.ts\n4:  const a = 1;\n7:a();", ".")).toEqual([
+      { fileName: "src/a.ts", line: 4, preview: "  const a = 1;" },
       { fileName: "src/a.ts", line: 7, preview: "a();" },
     ]);
   });
@@ -61,6 +61,7 @@ describe("parseGrepOutput", () => {
     ["an error", "ripgrep failed: invalid regex"],
     ["a file list", "/repo/a.ts\n/repo/b.ts"],
     ["no matches", "No files found"],
+    ["ripgrep context lines", "a.ts\n1-before\n2:needle"],
   ])("leaves %s raw", (_name, output) => {
     expect(parseGrepOutput(output, "/repo")).toBeUndefined();
   });
@@ -72,5 +73,11 @@ describe("parseGrepOutput", () => {
       { fileName: "a.ts", line: 2 },
       { fileName: "a.ts", line: 3, preview: "short" },
     ]);
+  });
+
+  it("counts notes against the budget", () => {
+    const results = parseGrepOutput(`a.ts:1:x\n(${"n".repeat(9_000)})`, ".");
+    expect(results?.[0]).toEqual({ fileName: "a.ts", line: 1, preview: "x" });
+    expect(results?.[1]?.preview?.length).toBe(500);
   });
 });
