@@ -110,7 +110,7 @@ function getPageScrollVelocityPxPerMs({
   return (pageScrollDistancePx * getPageScrollMultiplier(holdElapsedMs)) / PAGE_SCROLL_ANIMATION_MS;
 }
 
-function getPageScrollDistancePx({
+export function getPageScrollDistancePx({
   containerHeightPx,
   scrollPaddingBottomPx,
 }: {
@@ -145,6 +145,59 @@ function easeInOut(progress: number): number {
   }
 
   return y(value);
+}
+
+export function scrollToHistoryOffset(
+  viewport: HTMLElement,
+  readOffset: () => number,
+  animated: boolean,
+  onArrival: () => void,
+) {
+  const target = () =>
+    Math.max(0, Math.min(readOffset(), viewport.scrollHeight - viewport.clientHeight));
+  const initialTarget = target();
+  const distance = Math.abs(initialTarget - viewport.scrollTop);
+  if (!animated || distance < 1) {
+    viewport.scrollTo({ top: initialTarget, behavior: "instant" });
+    onArrival();
+    return;
+  }
+
+  const durationFor = (pixels: number) =>
+    Math.min(900, 180 + 110 * Math.sqrt(pixels / Math.max(1, viewport.clientHeight)));
+  let duration = durationFor(distance);
+  let elapsed = 0;
+  let lastFrame: number | undefined;
+  let previousFraction = 0;
+  let frame: number;
+  const step = (now: number) => {
+    if (lastFrame !== undefined) elapsed += Math.min(now - lastFrame, 32);
+    lastFrame = now;
+    const top = target();
+    if (elapsed >= duration) {
+      viewport.scrollTo({ top, behavior: "instant" });
+      onArrival();
+      return;
+    }
+    const fraction = easeInOut(elapsed / duration);
+    const remainingStep = (fraction - previousFraction) / (1 - previousFraction);
+    viewport.scrollTo({
+      top: viewport.scrollTop + (top - viewport.scrollTop) * remainingStep,
+      behavior: "instant",
+    });
+    previousFraction = fraction;
+    frame = requestAnimationFrame(step);
+  };
+  frame = requestAnimationFrame(step);
+  return {
+    cancel: () => cancelAnimationFrame(frame),
+    retarget() {
+      const progress = Math.min(elapsed / duration, 0.5);
+      duration = durationFor(Math.abs(target() - viewport.scrollTop));
+      elapsed = progress * duration;
+      previousFraction = easeInOut(progress);
+    },
+  };
 }
 
 export function createPageScrollController({

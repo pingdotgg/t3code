@@ -246,6 +246,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-update-foreground: var(--update-foreground);
   --color-update: var(--update);
   --color-success-foreground: var(--success-foreground);
+  --color-vim-visual-foreground: light-dark(var(--color-violet-700), var(--color-violet-300));
   --color-success: var(--success);
   --color-diff-addition: var(--diff-addition);
   --color-diff-deletion: var(--diff-deletion);
@@ -693,6 +694,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer base {
+  [data-vim-message="VISUAL"]::selection,
+  [data-vim-message="VISUAL"] ::selection {
+    background-color: light-dark(
+      color-mix(in srgb, var(--color-violet-500) 32%, transparent),
+      color-mix(in srgb, var(--color-violet-400) 42%, transparent)
+    );
+  }
+  ::highlight(t3-vim-cursor) {
+    color: var(--background);
+    background-color: var(--foreground);
+  }
+  [data-user-message-body] ::highlight(t3-vim-cursor) {
+    color: var(--message-surface);
+    background-color: var(--contrast-message-foreground);
+  }
   ::highlight(t3-assistant-citation) {
     background-color: color-mix(
       in oklab,

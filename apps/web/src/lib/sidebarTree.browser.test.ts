@@ -17,8 +17,8 @@ function setup() {
   return {
     root,
     row,
-    install: () => {
-      dispose = installSidebarTree(root);
+    install: (vimEnabled?: () => boolean) => {
+      dispose = installSidebarTree(root, vimEnabled);
     },
     [Symbol.dispose]() {
       dispose?.();
@@ -43,6 +43,8 @@ describe("sidebar keyboard navigation", () => {
     tree.root.addEventListener("click", activate);
     tree.install();
     first.focus();
+    expect(press(first, "j").defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(first);
     press(first, "ArrowDown");
     expect(document.activeElement).toBe(second);
     press(second, "End");
@@ -53,6 +55,40 @@ describe("sidebar keyboard navigation", () => {
     expect(document.activeElement).toBe(first);
     expect(activate).not.toHaveBeenCalled();
     expect([first.tabIndex, second.tabIndex, last.tabIndex]).toEqual([0, 0, 0]);
+  });
+
+  it("takes Vim motions at the focused row while leaving rename text and modified keys alone", () => {
+    using tree = setup();
+    const first = tree.row("first");
+    const middle = tree.row("middle");
+    const last = tree.row("last");
+    const rename = document.createElement("input");
+    middle.append(rename);
+    let vim = true;
+    tree.install(() => vim);
+    first.focus();
+    press(first, "j");
+    expect(document.activeElement).toBe(middle);
+    for (const modifiers of [
+      { ctrlKey: true },
+      { altKey: true },
+      { metaKey: true },
+      { isComposing: true },
+    ])
+      expect(press(middle, "j", modifiers).defaultPrevented).toBe(false);
+    rename.focus();
+    for (const key of ["h", "j", "k", "l", "g", "m"])
+      expect(press(rename, key).defaultPrevented).toBe(false);
+    middle.focus();
+    press(middle, "G", { shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    press(last, "g");
+    expect(document.activeElement).toBe(last);
+    press(last, "g");
+    expect(document.activeElement).toBe(first);
+    vim = false;
+    expect(press(first, "j").defaultPrevented).toBe(false);
+    expect(press(first, "m").defaultPrevented).toBe(false);
   });
 
   it("expands a group before entering its first child and returns to the parent", () => {

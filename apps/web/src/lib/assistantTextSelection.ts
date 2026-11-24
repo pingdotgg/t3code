@@ -48,18 +48,18 @@ type TextChunk = { node: Text | Element; start: number; end: number };
 
 const isText = (node: Node): node is Text => node.nodeType === 3;
 
-function readAssistantText(root: HTMLElement) {
+export function readMessageText(root: HTMLElement, paragraphSeparator: "\n" | "\n\n" = "\n") {
   const parts: string[] = [];
   const chunks: TextChunk[] = [];
   let length = 0;
-  let separator = false;
+  let separator = "";
 
   const append = (node: Text | Element, text: string) => {
     if (separator && length > 0) {
-      parts.push("\n");
-      length += 1;
+      parts.push(separator);
+      length += separator.length;
     }
-    separator = false;
+    separator = "";
     chunks.push({ node, start: length, end: length + text.length });
     parts.push(text);
     length += text.length;
@@ -68,6 +68,13 @@ function readAssistantText(root: HTMLElement) {
   const visit = (node: Node) => {
     if (node.nodeType === 3) {
       const text = node as Text;
+      if (
+        paragraphSeparator === "\n\n" &&
+        separator &&
+        /^[\t \r]*\n\s*$/.test(text.data) &&
+        !text.parentElement?.closest("pre")
+      )
+        return;
       if (text.length > 0) append(text, text.data);
       return;
     }
@@ -75,13 +82,26 @@ function readAssistantText(root: HTMLElement) {
     const element = node as Element;
     if (element.matches(EXCLUDED_SELECTOR)) return;
     const block = element.matches(BLOCK_SELECTOR);
-    if (block || element.tagName === "BR") separator = true;
+    if (element.tagName === "BR") {
+      const next = element.nextSibling;
+      if (paragraphSeparator === "\n\n" && next && isText(next) && next.data.startsWith("\n"))
+        return;
+      separator = paragraphSeparator === "\n" ? "\n" : separator + "\n";
+      return;
+    }
+    const gap =
+      paragraphSeparator === "\n\n" &&
+      block &&
+      element.matches("p, pre, h1, h2, h3, h4, h5, h6, blockquote, ol, ul, table")
+        ? paragraphSeparator
+        : "\n";
+    if (block && separator.length < gap.length) separator = gap;
     if (element.matches("[data-markdown-math]")) {
       append(element, element.getAttribute("data-markdown-copy")?.trim() ?? "");
     } else {
       for (const child of element.childNodes) visit(child);
     }
-    if (block) separator = true;
+    if (block && separator.length < gap.length) separator = gap;
   };
 
   visit(root);
@@ -155,7 +175,7 @@ export function captureAssistantTextSelection(
   else range.setEnd(last, last === range.endContainer ? range.endOffset : last.length);
   if (!isUsableRange(source, range)) return null;
 
-  const stream = readAssistantText(source);
+  const stream = readMessageText(source);
   let rawStart: number | null = null;
   let rawEnd = 0;
   for (const chunk of stream.chunks) {
@@ -180,7 +200,7 @@ export function captureAssistantMessageOpening(
   source: HTMLElement | null,
   fallbackText: string,
 ): AssistantTextSelector | null {
-  const rendered = source ? readAssistantText(source).text : "";
+  const rendered = source ? readMessageText(source).text : "";
   const text = rendered.trim() ? rendered : fallbackText;
   const rawStart = text.length - text.trimStart().length;
   let rawEnd = Math.min(text.trimEnd().length, rawStart + RESPONSE_OPENING_LENGTH);
@@ -209,12 +229,21 @@ export function resolveAssistantCitationRange(
   selector: AssistantTextSelector,
 ): Range | null {
   if (excludedAncestor(root) !== null) return null;
-  const stream = readAssistantText(root);
+  const stream = readMessageText(root);
   const match = findAssistantCitationText(stream.text, selector);
   if (match === null) return null;
 
   const start = rawTextOffset(stream.text, match.start);
   const end = rawTextOffset(stream.text, match.end);
+  return messageTextRange(root, stream, start, end);
+}
+
+export function messageTextRange(
+  root: HTMLElement,
+  stream: ReturnType<typeof readMessageText>,
+  start: number,
+  end: number,
+): Range | null {
   const first = stream.chunks.find((chunk) => chunk.end > start);
   const last = stream.chunks.findLast((chunk) => chunk.start < end);
   if (first === undefined || last === undefined) return null;

@@ -371,6 +371,7 @@ export function AssistantCitationSource({
       ref={rootRef}
       tabIndex={-1}
       className="outline-none"
+      data-vim-message-source=""
       data-assistant-citation-source={messageId}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}

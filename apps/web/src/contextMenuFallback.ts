@@ -2,6 +2,7 @@ import type { ContextMenuItem, ContextMenuSource } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { m } from "./i18n/messages";
+import { createVimListKeys } from "./lib/vimListKeys";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -245,7 +246,7 @@ export function dismissContextMenu(restoreFocus = true): void {
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },
-  source?: ContextMenuSource,
+  source?: ContextMenuSource | "vim",
 ): Promise<T | null> {
   dismissContextMenu();
   return new Promise<T | null>((resolve) => {
@@ -254,8 +255,11 @@ export function showContextMenuFallback<T extends string>(
       focusedElement = focusedElement.shadowRoot.activeElement;
     }
     const previouslyFocusedElement = focusedElement instanceof HTMLElement ? focusedElement : null;
+    const host =
+      (source === "vim" && previouslyFocusedElement?.closest('[role="dialog"]')) || document.body;
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
+    const vimKeys = source === "vim" ? createVimListKeys() : null;
     let isDisposed = false;
     let canDismissFromPointer = false;
 
@@ -289,6 +293,7 @@ export function showContextMenuFallback<T extends string>(
       if (
         event.defaultPrevented ||
         event.isComposing ||
+        (vimKeys && event.keyCode === 229) ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey
@@ -304,7 +309,9 @@ export function showContextMenuFallback<T extends string>(
       );
       const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
       let target: HTMLButtonElement | undefined;
-      switch (event.key) {
+      switch (vimKeys ? vimKeys.read(event, true) : event.key) {
+        case null:
+          break;
         case "ArrowDown":
           target = buttons[(index + 1) % buttons.length];
           break;
@@ -354,6 +361,7 @@ export function showContextMenuFallback<T extends string>(
     };
 
     const onFocusIn = (event: FocusEvent) => {
+      vimKeys?.reset();
       if (!isNodeWithinMenuStack(event.target, menuStack)) cleanup(null, false);
     };
     const onWindowBlur = () => cleanup(null, false);
@@ -445,6 +453,14 @@ export function showContextMenuFallback<T extends string>(
           : isLeafDestructive
             ? `${rowBase} text-destructive-foreground hover:bg-destructive/10 hover:text-destructive-foreground`
             : `${rowBase} text-foreground hover:bg-accent hover:text-accent-foreground`;
+        if (source === "vim") {
+          button.classList.add(
+            "focus-visible:outline-solid",
+            "focus-visible:outline-1",
+            "focus-visible:-outline-offset-1",
+            "outline-current",
+          );
+        }
         button.style.cssText =
           "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--radius-sm);background:transparent;padding:0.25rem 0.5rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.875rem;line-height:1.25rem;text-align:left;cursor:default;";
         if (isLeafDestructive) {
@@ -599,8 +615,9 @@ export function showContextMenuFallback<T extends string>(
       };
       menu.addEventListener("mousedown", swallowThumbButton);
       menu.addEventListener("mouseup", swallowThumbButton);
+      if (vimKeys) menu.addEventListener("keydown", onKeyDown);
 
-      document.body.appendChild(menu);
+      host.appendChild(menu);
       menuStack[level] = menu;
       submenuTriggerStack[level] = parentTrigger;
 
@@ -620,7 +637,7 @@ export function showContextMenuFallback<T extends string>(
       });
     };
 
-    document.addEventListener("keydown", onKeyDown);
+    if (!vimKeys) document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("contextmenu", onContextMenu, true);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
@@ -630,6 +647,7 @@ export function showContextMenuFallback<T extends string>(
     // Text fields always match :focus-visible, so they say nothing about how the menu opened.
     const openedFromKeyboard =
       source === "keyboard" ||
+      source === "vim" ||
       (previouslyFocusedElement?.matches(":focus-visible") &&
         !previouslyFocusedElement.matches('input, textarea, select, [contenteditable="true"]'));
     const firstAction = openedFromKeyboard

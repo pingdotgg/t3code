@@ -1,29 +1,45 @@
-const ROW = "[data-sidebar-row]";
+import { createVimListKeys } from "./vimListKeys";
 
-/** Ref callback for a sidebar list; installs its keyboard navigation and returns its cleanup. */
-export function attachSidebarTree(element: HTMLElement | null) {
-  return element ? installSidebarTree(element) : undefined;
+const ROW = "[data-sidebar-row]";
+const MENU_BUTTON = '[data-sidebar="menu-button"]';
+
+function isVisibleRow(row: HTMLElement, sidebar: HTMLElement) {
+  const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
+  return (!hidden || !sidebar.contains(hidden)) && !row.matches(":disabled");
+}
+
+function visibleRows(root: HTMLElement) {
+  return Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter((row) =>
+    isVisibleRow(row, root),
+  );
+}
+
+function focusRow(row: HTMLElement, smooth = false) {
+  row.scrollIntoView({ block: "nearest", behavior: smooth ? "smooth" : "auto" });
+  row.focus({ preventScroll: true });
+}
+
+export function focusCurrentSidebarRow(sidebar: HTMLElement) {
+  const rows = visibleRows(sidebar);
+  const row =
+    rows.find((candidate) => candidate.getAttribute("aria-current") === "page") ?? rows[0];
+  if (!row) return false;
+  focusRow(row);
+  return row.ownerDocument.activeElement === row;
 }
 
 /**
  * Arrow keys move focus between rows without opening them, as in VS Code's list commands.
  * Rows stay ordinary buttons in the Tab order so screen readers can browse the list.
  */
-export function installSidebarTree(root: HTMLElement) {
+export function installSidebarTree(root: HTMLElement, isVimEnabled = () => false) {
+  const sidebar = root.closest<HTMLElement>("[data-app-sidebar]") ?? root;
   let focusedId: string | undefined;
   let focusedParent: string | undefined;
   let focusedIndex = -1;
   let ownsFocus = false;
-  let contextMenuRow: HTMLElement | undefined;
-
-  const isVisibleRow = (row: HTMLElement) => {
-    const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
-    // A dialog can temporarily make the whole workspace inert. Keep rows navigable
-    // for its return while still excluding exiting row clones.
-    return (!hidden || !root.contains(hidden)) && !row.matches(":disabled");
-  };
-  const visibleRows = () =>
-    Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter(isVisibleRow);
+  let contextMenu: { row: HTMLElement; key: string } | undefined;
+  const vimKeys = createVimListKeys();
 
   const ownerRow = (element: HTMLElement) => {
     const row = element.closest<HTMLElement>(ROW);
@@ -32,12 +48,6 @@ export function installSidebarTree(root: HTMLElement) {
     return linked
       ? root.querySelector<HTMLElement>(`[data-sidebar-row="${CSS.escape(linked)}"]`)
       : null;
-  };
-
-  const focusRow = (row: HTMLElement) => {
-    // Revealing before focusing also materializes content-visibility:auto descendants.
-    row.scrollIntoView({ block: "nearest" });
-    row.focus({ preventScroll: true });
   };
 
   // A row that moves shelves remounts and drops focus to the body; follow it.
@@ -49,9 +59,9 @@ export function installSidebarTree(root: HTMLElement) {
       (active instanceof HTMLElement &&
         root.contains(active) &&
         active.matches(ROW) &&
-        !isVisibleRow(active));
+        !isVisibleRow(active, sidebar));
     if (!lost) return;
-    const rows = visibleRows();
+    const rows = visibleRows(root);
     const target =
       rows.find((row) => row.dataset.sidebarRow === focusedId) ??
       rows.find((row) => row.dataset.sidebarRow === focusedParent) ??
@@ -70,46 +80,70 @@ export function installSidebarTree(root: HTMLElement) {
     ownsFocus = focusable !== null && root.contains(focusable);
   };
   const onFocus = (event: FocusEvent) => {
+    vimKeys.reset();
+    contextMenu = undefined;
     ownsFocus = root.contains(event.target as Node);
     if (!ownsFocus || !(event.target instanceof HTMLElement)) return;
     const row = ownerRow(event.target);
     if (!row) return;
     focusedId = row.dataset.sidebarRow;
     focusedParent = row.dataset.sidebarParent;
-    focusedIndex = visibleRows().indexOf(row);
+    focusedIndex = visibleRows(root).indexOf(row);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const row = event.target;
+    if (!(row instanceof HTMLElement)) return;
+    const inTree = row.matches(ROW) && root.contains(row);
+    const vim = isVimEnabled();
     if (
-      !event.defaultPrevented &&
-      !event.isComposing &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) &&
-      row instanceof HTMLElement &&
-      row.matches(ROW)
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      contextMenuRow = row;
+      !inTree &&
+      !(vim && row.matches(MENU_BUTTON) && ["j", "k", "g", "G", "/"].includes(event.key))
+    )
       return;
-    }
+    const key = vimKeys.read(event, vim);
     if (
       event.defaultPrevented ||
       event.isComposing ||
+      event.keyCode === 229 ||
       event.altKey ||
       event.ctrlKey ||
-      event.metaKey ||
-      event.shiftKey
+      event.metaKey
     )
       return;
-    if (!(row instanceof HTMLElement) || !row.matches(ROW)) return;
-    const rows = visibleRows();
+    if (
+      inTree &&
+      (key === "ContextMenu" ||
+        (event.shiftKey && key === "F10") ||
+        (vim && key === "m" && !event.shiftKey))
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      contextMenu = { row, key: event.key };
+      return;
+    }
+    if (event.shiftKey && !(vim && (event.key === "G" || event.key === "/"))) return;
+    if (vim && key === "/") {
+      const search = sidebar.querySelector<HTMLInputElement>('input[type="search"]');
+      if (!search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      search.focus();
+      return;
+    }
+    const vimStep = key !== event.key && (key === "ArrowDown" || key === "ArrowUp");
+    const rows = vimStep
+      ? Array.from(sidebar.querySelectorAll<HTMLElement>(`${ROW}, ${MENU_BUTTON}`)).filter(
+          (element) =>
+            isVisibleRow(element, sidebar) &&
+            (element.matches(ROW) || element.getClientRects().length > 0),
+        )
+      : visibleRows(root);
     const index = rows.indexOf(row);
-    if (index < 0) return;
+    if (inTree && index < 0) return;
     let target: HTMLElement | undefined;
-    switch (event.key) {
+    switch (key) {
+      case null:
+        break;
       case "ArrowDown":
         target = rows[Math.min(index + 1, rows.length - 1)];
         break;
@@ -142,12 +176,16 @@ export function installSidebarTree(root: HTMLElement) {
     }
     event.preventDefault();
     event.stopPropagation();
-    if (target) focusRow(target);
+    if (target)
+      focusRow(
+        target,
+        key !== event.key && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      );
   };
   const onKeyUp = (event: KeyboardEvent) => {
-    if (!contextMenuRow || (event.key !== "ContextMenu" && event.key !== "F10")) return;
-    const row = contextMenuRow;
-    contextMenuRow = undefined;
+    if (contextMenu?.key !== event.key) return;
+    const { row } = contextMenu;
+    contextMenu = undefined;
     event.preventDefault();
     event.stopPropagation();
     if (document.activeElement !== row || !row.isConnected) return;
@@ -175,13 +213,13 @@ export function installSidebarTree(root: HTMLElement) {
   });
   document.addEventListener("focusin", onFocus);
   document.addEventListener("pointerdown", onPointerDown, true);
-  root.addEventListener("keydown", onKeyDown, true);
-  root.addEventListener("keyup", onKeyUp, true);
+  sidebar.addEventListener("keydown", onKeyDown, true);
+  sidebar.addEventListener("keyup", onKeyUp, true);
   return () => {
     observer.disconnect();
     document.removeEventListener("focusin", onFocus);
     document.removeEventListener("pointerdown", onPointerDown, true);
-    root.removeEventListener("keydown", onKeyDown, true);
-    root.removeEventListener("keyup", onKeyUp, true);
+    sidebar.removeEventListener("keydown", onKeyDown, true);
+    sidebar.removeEventListener("keyup", onKeyUp, true);
   };
 }

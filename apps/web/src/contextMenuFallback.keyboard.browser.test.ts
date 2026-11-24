@@ -59,24 +59,38 @@ it("starts a keyboard-opened menu on its first action and wraps through enabled 
   expect(label()).toBe("Rename");
 });
 
-it("opens and cancels one submenu level at a time, then returns to the thread", async () => {
-  using fixture = setup();
-  const result = showContextMenuFallback(items);
-  press("End");
-  const parent = document.activeElement;
-  press("ArrowRight");
-  expect(label()).toBe("Path");
-  press("ArrowLeft");
-  expect(document.activeElement).toBe(parent);
-  press("Enter");
-  expect(label()).toBe("Path");
-  press("Escape");
-  expect(document.activeElement).toBe(parent);
-  expect(isContextMenuOpen()).toBe(true);
-  press("Escape");
-  expect(document.activeElement).toBe(fixture.origin);
-  await expect(result).resolves.toBeNull();
-});
+it.each([false, true])(
+  "opens and cancels one submenu level at a time, then returns to the thread (Vim: %s)",
+  async (vim) => {
+    using fixture = setup();
+    const result = showContextMenuFallback(items, undefined, vim ? "vim" : "keyboard");
+    press(vim ? "G" : "End", vim);
+    if (vim) {
+      press("g");
+      expect(label()).toBe("Copy");
+      press("g");
+      expect(label()).toBe("Rename");
+      press("G", true);
+    }
+    const parent = document.activeElement;
+    press(vim ? "l" : "ArrowRight");
+    expect(label()).toBe("Path");
+    press(vim ? "j" : "ArrowDown");
+    expect(label()).toBe("Branch");
+    press(vim ? "k" : "ArrowUp");
+    expect(label()).toBe("Path");
+    press(vim ? "h" : "ArrowLeft");
+    expect(document.activeElement).toBe(parent);
+    press("Enter");
+    expect(label()).toBe("Path");
+    press("Escape");
+    expect(document.activeElement).toBe(parent);
+    expect(isContextMenuOpen()).toBe(true);
+    press("Escape");
+    expect(document.activeElement).toBe(fixture.origin);
+    await expect(result).resolves.toBeNull();
+  },
+);
 
 it("activates the focused action with Space or Enter", async () => {
   using _fixture = setup();

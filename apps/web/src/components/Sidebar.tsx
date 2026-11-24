@@ -1,7 +1,9 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
-import { attachSidebarTree } from "../lib/sidebarTree";
+import { installSidebarTree } from "../lib/sidebarTree";
+import { requestWorkspaceFocus } from "../lib/workspaceFocus";
+import { showContextMenuFallback } from "../contextMenuFallback";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import {
@@ -59,6 +61,8 @@ import {
 import {
   AuthOrchestrationOperateScope,
   type ContextMenuSource,
+  type ContextMenuItem,
+  type LocalApi,
   ProjectId,
   type ScopedThreadRef,
   type ThreadId,
@@ -137,7 +141,7 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -380,6 +384,19 @@ interface SidebarThreadPartitionInput {
 
 function scrollSidebarToTop(content: HTMLElement | null) {
   content?.closest("[data-slot=scroll-area-viewport]")?.scrollTo({ top: 0 });
+}
+
+const sidebarVimEnabled = () => getClientSettings().vimModeEnabled;
+
+function showSidebarContextMenu<T extends string>(
+  api: LocalApi,
+  items: readonly ContextMenuItem<T>[],
+  position: { x: number; y: number },
+  source: ContextMenuSource,
+) {
+  if (source === "keyboard" && sidebarVimEnabled())
+    return showContextMenuFallback(items, position, "vim");
+  return api.contextMenu.show(items, position, source);
 }
 
 function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
@@ -1291,7 +1308,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (!api) return;
       void (async () => {
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
+          showSidebarContextMenu(
+            api,
             [
               { id: "new-thread", label: gt("New thread") },
               { id: "copy-path", label: gt("Copy path") },
@@ -1548,10 +1566,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const handleThreadSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === "Escape" && isSearchingThreads) {
+    if (event.key === "Escape" && (isSearchingThreads || sidebarVimEnabled())) {
       event.preventDefault();
       event.stopPropagation();
       clearThreadSearch();
+      if (sidebarVimEnabled()) requestWorkspaceFocus({ area: "sidebar", restore: false });
       return;
     }
     if (threadSearchResults.length === 0) return;
@@ -1766,9 +1785,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const attachTreeRef = (node: HTMLUListElement) => {
     const detachMotion = attachListMotionRef(node);
-    const detachTree = attachSidebarTree(node);
+    const detachTree = installSidebarTree(node, sidebarVimEnabled);
     return () => {
-      detachTree?.();
+      detachTree();
       detachMotion();
     };
   };
@@ -2395,7 +2414,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         selectedThreads[0]!.environmentId,
       );
       const clicked = await settlePromise(() =>
-        api.contextMenu.show(
+        showSidebarContextMenu(
+          api,
           [
             ...(unpinMenuItem
               ? [{ ...unpinMenuItem, disabled: !canOperateThreads(pinnedSelectedThreads) }]
@@ -2620,7 +2640,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           session.worktreePath ??
           projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
+          showSidebarContextMenu(
+            api,
             buildDraftActionMenuItems({
               hasPath: Boolean(workspacePath),
               hasBranch: Boolean(session.branch),
@@ -2708,7 +2729,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ) ?? null;
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
+          showSidebarContextMenu(
+            api,
             buildThreadActionMenuItems({
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,

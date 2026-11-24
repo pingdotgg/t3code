@@ -101,10 +101,15 @@ function Button({ className, variant, size, render, ...props }: ButtonProps) {
 export { Button, buttonVariants, type ButtonSize, type ButtonVariant };
 
 const inlineButtonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 [text-align:var(--inline-button-text-align,center)] [white-space:var(--inline-button-white-space,nowrap)] hover:underline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64",
+  "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium [text-align:var(--inline-button-text-align,center)] [white-space:var(--inline-button-white-space,nowrap)] disabled:pointer-events-none disabled:opacity-64",
   {
-    defaultVariants: { tone: "default" },
+    defaultVariants: { tone: "default", emphasis: "underline" },
     variants: {
+      emphasis: {
+        underline:
+          "underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring",
+        weight: "hover:font-bold focus-visible:font-bold focus-visible:outline-none",
+      },
       touchTarget: {
         padded: "pointer-coarse:min-h-11 pointer-coarse:px-1.5",
       },
@@ -122,12 +127,13 @@ const inlineButtonVariants = cva(
 export function InlineButton({
   className,
   tone,
+  emphasis,
   touchTarget,
   render,
   ...props
 }: useRender.ComponentProps<"button"> & VariantProps<typeof inlineButtonVariants>) {
   const defaultProps = {
-    className: cn(inlineButtonVariants({ tone, touchTarget }), className),
+    className: cn(inlineButtonVariants({ tone, touchTarget, emphasis }), className),
     "data-slot": "inline-button",
     type: render ? undefined : ("button" as const),
   };

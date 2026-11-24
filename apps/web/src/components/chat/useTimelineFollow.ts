@@ -284,6 +284,9 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
+  const navigateTimeline = useStableCallback(() =>
+    viewportRef.current?.navigate({ releasesFollow: true }),
+  );
   const handlePageScrollStart = useStableCallback((key: PageScrollKey) => {
     if ((key === "PageUp" && timelineRealContentOverflowsViewport()) || !isTimelineAtLogicalEnd()) {
       // Through the viewport, so a running position restore stops too.
@@ -536,6 +539,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
     onComposerPageScrollReleaseStable,
+    navigateTimeline,
     scrollToEnd,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,

@@ -588,6 +588,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? [gt("Rich text composer")]
       : []),
+    ...(settings.vimModeEnabled !== DEFAULT_UNIFIED_SETTINGS.vimModeEnabled
+      ? [gt("Vim mode")]
+      : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut
       ? [gt("Send shortcut")]
       : []),
@@ -727,6 +730,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      vimModeEnabled: DEFAULT_UNIFIED_SETTINGS.vimModeEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       sideThreadOpenTarget: DEFAULT_UNIFIED_SETTINGS.sideThreadOpenTarget,
@@ -1271,6 +1275,29 @@ export function ChatSettingsPanel() {
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
               aria-label={gt("Rich text composer")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("vim-mode")}
+          description={gt(
+            "Press Esc to navigate controls and select text in your messages and replies. Press i to return to the composer.",
+          )}
+          resetAction={
+            settings.vimModeEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset Vim mode to default")}
+                onClick={() =>
+                  updateSettings({ vimModeEnabled: DEFAULT_UNIFIED_SETTINGS.vimModeEnabled })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.vimModeEnabled}
+              onCheckedChange={(checked) => updateSettings({ vimModeEnabled: checked })}
+              aria-label={gt("Vim mode")}
             />
           }
         />

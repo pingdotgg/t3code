@@ -142,7 +142,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -404,6 +404,7 @@ import { ThreadNow } from "./chat/ThreadNow";
 import { threadRuntimeIsActive, type ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
+import { ChatVimMode } from "./chat/ChatVimMode";
 import {
   type EnvironmentUnavailableState,
   useSystemComposerBanners,
@@ -782,6 +783,7 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadStartFromOriginByThreadId,
   ] = useState<Record<string, boolean>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
+  const enterVimNormalModeRef = useRef<((event: KeyboardEvent) => boolean) | null>(null);
   const conversationArea = workspaceAreaProps("conversation", 1, gt("Conversation"));
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
@@ -1797,6 +1799,7 @@ export default function ChatView(props: ChatViewProps) {
   };
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
+  const hiddenThread = use(HiddenThreadContext);
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -2265,6 +2268,7 @@ export default function ChatView(props: ChatViewProps) {
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
     onComposerPageScrollReleaseStable,
+    navigateTimeline,
     scrollToEnd,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,
@@ -2314,7 +2318,7 @@ export default function ChatView(props: ChatViewProps) {
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
-          if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
+          if (document.querySelector("[data-mcp-app-fullscreen], [data-vim-navigation]")) return;
           if (
             !isInSideChatPane(document.activeElement) &&
             shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
@@ -3991,6 +3995,7 @@ export default function ChatView(props: ChatViewProps) {
                                 getModelDisabledReason={getModelDisabledReason}
                                 handleRuntimeModeChange={handleRuntimeModeChangeStable}
                                 focusComposer={focusComposerStable}
+                                enterVimNormalModeRef={enterVimNormalModeRef}
                                 scheduleComposerFocus={scheduleComposerFocusStable}
                                 setThreadError={setThreadError}
                                 onExpandImage={onExpandTimelineImageStable}
@@ -4078,6 +4083,15 @@ export default function ChatView(props: ChatViewProps) {
                           </div>
                         </div>
                       </ComposerSurface.Shell>
+                      {settings.vimModeEnabled && !hiddenThread && !rightPanelMaximized ? (
+                        <ChatVimMode
+                          key={displayedTimelineKey}
+                          listRef={legendListRef}
+                          enterVimNormalModeRef={enterVimNormalModeRef}
+                          navigateTimeline={navigateTimeline}
+                          composerRef={composerRef}
+                        />
+                      ) : null}
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.
                         // Short windows pin the composer to the bottom, where an out-of-flow notice

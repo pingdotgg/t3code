@@ -1099,6 +1099,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               <div onCopyCapture={onBodyCopyCapture}>
                 <CollapsibleUserMessageBody
                   text={resolvedContext.text}
+                  ownMessage={userMessage.attribution === null}
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
                   markdownCwd={ctx.markdownCwd}
@@ -1214,6 +1215,7 @@ const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
+  ownMessage: boolean;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
   markdownCwd: string | undefined;
@@ -1234,7 +1236,11 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
       {hasVisibleBody ? (
         <div
           ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
+          className={cn(
+            "relative data-vim-message:outline-none",
+            isCollapsed && "max-h-44 overflow-hidden",
+          )}
+          data-vim-message-source={props.ownMessage ? "" : undefined}
           data-user-message-body="true"
           data-thread-find-text="true"
           data-thread-find-fold={isCollapsed ? "" : undefined}

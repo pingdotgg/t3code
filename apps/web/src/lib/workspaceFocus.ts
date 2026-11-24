@@ -1,6 +1,7 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { dismissContextMenu } from "../contextMenuFallback";
 import { useRightPanelStore } from "../rightPanelStore";
+import { focusCurrentSidebarRow } from "./sidebarTree";
 
 const AREA_SELECTOR = "[data-workspace-area]";
 const FOCUS_BOUNDARY_SELECTOR =
@@ -49,6 +50,29 @@ function isWorkspaceElementVisible(element: HTMLElement): boolean {
   )
     return false;
   return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);
+}
+
+export function focusAdjacentWorkspaceControl(from: HTMLElement, direction: 1 | -1) {
+  const area = workspaceArea(from) ?? from.closest("[data-chat-column]");
+  if (!area) return false;
+  const controls = Array.from(
+    area.querySelectorAll<HTMLElement>(
+      from.matches("[data-sidebar-row]") ? "[data-sidebar-row]" : FOCUSABLE_SELECTOR,
+    ),
+  );
+  if (direction < 0) controls.reverse();
+  const after = direction > 0 ? Node.DOCUMENT_POSITION_FOLLOWING : Node.DOCUMENT_POSITION_PRECEDING;
+  const next = controls.find(
+    (control) =>
+      (from.compareDocumentPosition(control) & after) !== 0 &&
+      control.tabIndex >= 0 &&
+      !control.matches(":disabled, [aria-disabled=true]") &&
+      isWorkspaceElementVisible(control),
+  );
+  if (!next) return false;
+  next.focus({ preventScroll: true });
+  revealInScrollers(next);
+  return true;
 }
 
 function scrollingAncestors(target: HTMLElement) {
@@ -142,6 +166,8 @@ export function createWorkspaceFocusController(doc: Document) {
     const usable = (element: HTMLElement) =>
       isWorkspaceElementVisible(element) && !element.matches(":disabled");
     const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
+    if (!restore && area.dataset.workspaceArea === "sidebar" && focusCurrentSidebarRow(area))
+      return true;
     // A side chat's message input sits in its own area inside the panel. Opening the
     // panel focuses it, but F6 visits that area on its own, so it moves past it here.
     // A nested timeline stands in only for its own area, never ahead of that input.

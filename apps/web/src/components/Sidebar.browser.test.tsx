@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -443,6 +443,9 @@ describe("sidebar thread click", () => {
 
 describe("sidebar thread menu", () => {
   it("tells the menu whether the keyboard opened it", async () => {
+    const previousSettings = getClientSettings();
+    using _settings = { [Symbol.dispose]: () => __setClientSettingsForTests(previousSettings) };
+    __setClientSettingsForTests({ ...previousSettings, vimModeEnabled: false });
     const activeProject = project("active");
     const thread = threadShell(activeProject.id, 0);
     const threadRef = { environmentId: activeProject.environmentId, threadId: thread.id };
@@ -476,6 +479,15 @@ describe("sidebar thread menu", () => {
     expect(show.mock.lastCall?.[2]).toBe("keyboard");
     await userEvent.click(row, { button: "right" });
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
+    expect(show.mock.lastCall?.[2]).toBe("mouse");
+    __setClientSettingsForTests({ ...getClientSettings(), vimModeEnabled: true });
+    row.element().closest<HTMLElement>("[data-sidebar-row]")!.focus();
+    await userEvent.keyboard("m");
+    await expect.element(page.getByRole("menu", { name: "Context menu" })).toBeVisible();
+    expect(show).toHaveBeenCalledTimes(2);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(row, { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(3));
     expect(show.mock.lastCall?.[2]).toBe("mouse");
   });
 });

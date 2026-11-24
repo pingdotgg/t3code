@@ -157,12 +157,12 @@ import type { ComposerDraftContextRecords } from "./composerContextPresentation"
 
 export interface ComposerPromptEditorHandle {
   focus: () => void;
-  focusAt: (cursor: number) => void;
+  focusAt: (cursor: number, expandedCursor?: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
   captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
-  readSnapshot: () => {
+  readSnapshot: (selectionSource?: "dom") => {
     value: string;
     cursor: number;
     expandedCursor: number;
@@ -1658,11 +1658,18 @@ function ComposerPromptEditorTiptapInner(
     editor.view.setProps({ attributes: editorAttributes });
   }, [editor, editorAttributes]);
 
-  const readSnapshot = () => {
+  const readSnapshot = (selectionSource?: "dom") => {
     const snapshot = snapshotRef.current;
     if (!editor) return snapshot;
     const map = serializeEditorDoc(editor.state.doc);
-    const { from, to } = editor.state.selection;
+    let { from, to } = editor.state.selection;
+    const selection =
+      selectionSource === "dom" ? editor.view.dom.ownerDocument.getSelection() : null;
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (range && editor.view.dom.contains(range.commonAncestorContainer)) {
+      from = editor.view.posAtDOM(range.startContainer, range.startOffset);
+      to = editor.view.posAtDOM(range.endContainer, range.endOffset);
+    }
     const fromFlat = pmToFlat(map, from);
     const expandedCursor = Math.max(0, Math.min(map.value.length, flatToMarkdown(map, fromFlat)));
     const next: typeof snapshot = {
@@ -1873,7 +1880,7 @@ function ComposerPromptEditorTiptapInner(
         // sits, so restoring the caret passes along its exact offset.
         focusAt(snapshotRef.current.cursor, snapshotRef.current.expandedCursor);
       },
-      focusAt: (cursor) => focusAt(cursor),
+      focusAt,
       focusAtEnd: () => {
         focusAt(
           literalText
