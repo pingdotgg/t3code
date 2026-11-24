@@ -741,25 +741,35 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return [...seen.values()].toSorted((left, right) => left.port - right.port);
   });
 
-  const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")((url: string) =>
-    httpClient.get(url).pipe(
-      Effect.map((response) => {
-        const location = response.headers.location?.trim();
-        if (NAVIGATION_REDIRECT_STATUSES.has(response.status) && location) return url;
-        if (response.status < 200 || response.status >= 300) return null;
-        if (response.status === 204 || response.status === 205) return null;
-        const contentType = response.headers["content-type"]
-          ?.split(";", 1)[0]
-          ?.trim()
-          .toLowerCase();
-        return contentType === "text/html" || contentType === "application/xhtml+xml" ? url : null;
-      }),
-      Effect.scoped,
-      Effect.timeoutOption(WEB_PROBE_TIMEOUT),
-      Effect.map(Option.getOrNull),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-    ),
+  /**
+   * What a configured-URL probe learned: the listener serves a web page, it answered
+   * HTTP but is not a web page, or the request failed before any usable HTTP response.
+   * Only the last case may fall back to a TLS handshake.
+   */
+  type WebProbeOutcome = "web" | "rejected" | null;
+
+  const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")(
+    (url: string): Effect.Effect<WebProbeOutcome> =>
+      httpClient.get(url).pipe(
+        Effect.map((response) => {
+          const location = response.headers.location?.trim();
+          if (NAVIGATION_REDIRECT_STATUSES.has(response.status) && location) return "web";
+          if (response.status < 200 || response.status >= 300) return "rejected";
+          if (response.status === 204 || response.status === 205) return "rejected";
+          const contentType = response.headers["content-type"]
+            ?.split(";", 1)[0]
+            ?.trim()
+            .toLowerCase();
+          return contentType === "text/html" || contentType === "application/xhtml+xml"
+            ? "web"
+            : "rejected";
+        }),
+        Effect.scoped,
+        Effect.timeoutOption(WEB_PROBE_TIMEOUT),
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+      ),
   );
 
   const makeWebProbeGroups = (
@@ -816,14 +826,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ? Effect.succeed({ group, probe: cachedProbe, fresh: false })
           : probeWebUrl(group.url).pipe(
               Effect.flatMap((result) => {
-                if (result !== null) {
+                if (result === "web") {
                   return Effect.succeed({
                     group,
                     probe: { pid, isWeb: true, expiresAtMillis: 0 },
                     fresh: true,
                   });
                 }
-                if (new URL(group.url).protocol !== "https:") {
+                if (result === "rejected") {
+                  // The listener answered HTTP, so it speaks HTTP rather than TLS-only:
+                  // keep the rejection instead of letting the TLS fallback reclassify
+                  // it as web.
+                  return Effect.succeed({
+                    group,
+                    probe: { pid, isWeb: false, expiresAtMillis: 0 },
+                    fresh: true,
+                  });
+                }
+                const url = new URL(group.url);
+                if (url.protocol !== "https:") {
                   return Effect.succeed({
                     group,
                     probe: { pid, isWeb: false, expiresAtMillis: 0 },
@@ -831,9 +852,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                   });
                 }
                 // A failed https:// probe falls back to a TLS handshake, so a listener with
-                // a locally issued certificate (mkcert) still counts as web.
+                // a locally issued certificate (mkcert) still counts as web. Probe the
+                // configured URL's host, not the discovered record's: the record may name
+                // a different loopback address than the URL the user configured.
                 return probeTlsListener({
-                  host: group.server.host,
+                  host: url.hostname,
                   port: group.server.port,
                 }).pipe(
                   Effect.map((tls) => ({

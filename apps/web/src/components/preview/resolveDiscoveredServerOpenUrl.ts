@@ -38,6 +38,10 @@ export async function resolveDiscoveredServerOpenUrl<E>(input: {
     })
     .catch(() => null);
   if (result?._tag !== "Success" || !result.value.tls) return url;
+  // `http://localhost:80` drops the default port when parsed, so record the effective
+  // port before switching schemes or the upgrade would target 443.
+  const port = parsed.port === "" ? "80" : parsed.port;
   parsed.protocol = "https:";
+  parsed.port = port;
   return parsed.toString();
 }

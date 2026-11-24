@@ -396,11 +396,11 @@ const testCertificates = {
   cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
 };
 
-const listenOnLoopback = (server: NodeHttps.Server) =>
+const listenOnLoopback = (server: NodeHttps.Server, host = "127.0.0.1") =>
   Effect.promise(
     () =>
       new Promise<number>((resolve) => {
-        server.listen(0, "127.0.0.1", () => {
+        server.listen(0, host, () => {
           const address = server.address();
           resolve(typeof address === "object" && address !== null ? address.port : 0);
         });
@@ -443,6 +443,97 @@ effectIt.effect(
     );
   },
 );
+
+effectIt.effect.each([
+  { label: "404", response: new Response("not found", { status: 404 }) },
+  {
+    label: "200 application/json",
+    response: new Response("{}", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  },
+] as const)(
+  "does not let a TLS handshake reclassify a rejected HTTPS response as web: $label",
+  ({ response }) => {
+    const server = NodeHttps.createServer(testCertificates, (_request, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("ok");
+    });
+    return Effect.acquireUseRelease(
+      listenOnLoopback(server),
+      (port) => {
+        const configuredUrl = `https://localhost:${port}/app`;
+        const fetchFn = ((_input: Parameters<typeof globalThis.fetch>[0]) =>
+          Promise.resolve(response)) as typeof globalThis.fetch;
+        const layer = layerLsofScanner({
+          pid: () => 1234,
+          fetch: fetchFn,
+          stdout: () => `p1234\ncnode\nn*:${port}\n`,
+        });
+        return Effect.gen(function* () {
+          const scanner = yield* PortScanner.PortDiscovery;
+          // The listener answered HTTP, so it is not a TLS-only server: the TLS
+          // fallback must not run, and the unowned listener stays unlisted.
+          expect(yield* scanner.scan([configuredUrl])).toEqual([]);
+        }).pipe(Effect.scoped, Effect.provide(layer));
+      },
+      () => Effect.sync(() => server.close()),
+    );
+  },
+);
+
+effectIt.effect(
+  "probes a configured HTTPS URL on its own host, not the discovered localhost record",
+  () => {
+    const server = NodeHttps.createServer(testCertificates, (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end("ok");
+    });
+    return Effect.acquireUseRelease(
+      // TLS listens on ::1 only; the configured URL names the unreachable 127.0.0.1.
+      listenOnLoopback(server, "::1"),
+      (port) => {
+        const configuredUrl = `https://127.0.0.1:${port}/app`;
+        const layer = layerLsofScanner({
+          pid: () => 1234,
+          fetch: certFailureFetch,
+          stdout: () => `p1234\ncnode\nn*:${port}\n`,
+        });
+        return Effect.gen(function* () {
+          const scanner = yield* PortScanner.PortDiscovery;
+          expect(yield* scanner.scan([configuredUrl])).toEqual([]);
+        }).pipe(Effect.scoped, Effect.provide(layer));
+      },
+      () => Effect.sync(() => server.close()),
+    );
+  },
+);
+
+effectIt.effect("keeps a configured HTTPS URL when its own host serves self-signed TLS", () => {
+  const server = NodeHttps.createServer(testCertificates, (_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end("ok");
+  });
+  return Effect.acquireUseRelease(
+    listenOnLoopback(server, "127.0.0.1"),
+    (port) => {
+      const configuredUrl = `https://127.0.0.1:${port}/app`;
+      const layer = layerLsofScanner({
+        pid: () => 1234,
+        fetch: certFailureFetch,
+        stdout: () => `p1234\ncnode\nn*:${port}\n`,
+      });
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+          { pid: 1234, url: configuredUrl },
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    },
+    () => Effect.sync(() => server.close()),
+  );
+});
 
 effectIt.effect("discovers owned listeners without sending HTTP or TLS probes", () => {
   const owned = `p1234\ncnode\nn[::1]:${LSOF_TEST_PORT}\n`;
@@ -949,8 +1040,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
     const agentPort = 43_124;
     const otherPort = 43_125;
     // The agent CLI has the thread in its environment too; its own port is not a server.
-    const agentListener =
-      `p4242\ncnode\nn127.0.0.1:${agentPort}\n` + `p4300\ncagy\nn127.0.0.1:43126\n`;
+    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\np4300\ncagy\nn127.0.0.1:43126\n`;
     const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
     let lsofStdout = otherListener;
     let lsofFails = false;

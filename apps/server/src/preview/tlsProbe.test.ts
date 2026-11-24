@@ -1,10 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off -- the test drives real TLS and plain servers.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- the test drives real TLS and plain servers; the dribble server ticks in a plain Node callback, outside the Effect runtime.
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
+import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { expect } from "vite-plus/test";
 
 import { probeTlsListener } from "./tlsProbe.ts";
@@ -31,6 +34,17 @@ const withServer = <A, E, R>(
     Effect.sync(make),
     (server) => listen(server).pipe(Effect.flatMap(use)),
     (server) => Effect.sync(() => server.close()),
+  );
+
+const listenOnHost = (server: NodeNet.Server, host: string) =>
+  Effect.promise(
+    () =>
+      new Promise<number>((resolve) => {
+        server.listen(0, host, () => {
+          const address = server.address();
+          resolve(typeof address === "object" && address !== null ? address.port : 0);
+        });
+      }),
   );
 
 effectIt.effect("detects a TLS listener with a self-signed certificate", () =>
@@ -67,3 +81,44 @@ effectIt.effect("never probes a non-loopback host", () =>
     expect(yield* probeTlsListener({ host: "192.168.1.25", port: 3000 })).toBe(false);
   }),
 );
+
+effectIt.effect("accepts a bracketed IPv6 loopback host", () =>
+  Effect.acquireUseRelease(
+    Effect.sync(() =>
+      NodeHttps.createServer({ key, cert }, (_request, response) => {
+        response.writeHead(200, { "content-type": "text/html" });
+        response.end("ok");
+      }),
+    ),
+    (server) =>
+      listenOnHost(server, "::1").pipe(
+        Effect.flatMap((port) =>
+          Effect.gen(function* () {
+            expect(yield* probeTlsListener({ host: "[::1]", port })).toBe(true);
+          }),
+        ),
+      ),
+    (server) => Effect.sync(() => server.close()),
+  ),
+);
+
+effectIt.live("applies a total handshake deadline when fragments keep arriving", () => {
+  const server = NodeNet.createServer((socket) => {
+    // Dribble one byte at a time: each byte resets an inactivity timer, but no
+    // complete handshake record ever arrives, so only a total deadline ends this.
+    const timer = setInterval(() => socket.write(Buffer.from([0x16])), 900);
+    socket.on("close", () => clearInterval(timer));
+    socket.on("error", () => clearInterval(timer));
+  });
+  return Effect.acquireUseRelease(
+    listenOnHost(server, "127.0.0.1"),
+    (port) =>
+      probeTlsListener({ host: "127.0.0.1", port }).pipe(
+        Effect.timeoutOption(Duration.seconds(3)),
+        Effect.map((result) => {
+          expect(result).toEqual(Option.some(false));
+        }),
+      ),
+    () => Effect.sync(() => server.close()),
+  );
+});

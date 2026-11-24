@@ -41,6 +41,31 @@ describe("resolveDiscoveredServerOpenUrl", () => {
     });
   });
 
+  it("keeps the listener port when it is the HTTP default (80)", async () => {
+    const probeTls = vi.fn<ProbeDiscoveredServerTlsMutation>(async () =>
+      AsyncResult.success({ tls: true }),
+    );
+    expect(
+      await resolveDiscoveredServerOpenUrl({
+        threadRef,
+        port: { ...server("http://localhost:80"), port: 80 },
+        probeTls,
+      }),
+    ).toBe("https://localhost:80/");
+    expect(probeTls).toHaveBeenCalledWith({
+      environmentId: threadRef.environmentId,
+      input: { host: "localhost", port: 80 },
+    });
+    // No explicit port in the URL still means port 80 for the probed listener.
+    expect(
+      await resolveDiscoveredServerOpenUrl({
+        threadRef,
+        port: { ...server("http://localhost"), port: 80 },
+        probeTls,
+      }),
+    ).toBe("https://localhost:80/");
+  });
+
   it("keeps http:// when the probe fails or throws", async () => {
     const failing = vi.fn<ProbeDiscoveredServerTlsMutation>(async () =>
       AsyncResult.failure(Cause.fail(new Error("boom"))),
