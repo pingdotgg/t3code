@@ -8553,6 +8553,53 @@ async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
     }
 }
 
+/// A settle close stored by an earlier build (`"reason": "settled"`, before closes named their
+/// settlement) still decodes after a restart and reaches the host, which then cannot tell
+/// whether its settle script ran.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settle_close_stored_without_its_settlement_still_runs() {
+    let db = TempDb::new("legacy-settle-close");
+    // The earlier process, opened off the runtime so its own worker never claims the row.
+    let previous = std::thread::spawn({
+        let path = db.path();
+        move || SqliteEngine::open(EngineConfig::new(path)).unwrap()
+    })
+    .join()
+    .unwrap();
+    previous
+        .inner()
+        .db(|store| {
+            store.raw().execute(
+                "INSERT INTO effect_outbox (thread_id, lane, effect_type, payload, status,
+                   created_at, updated_at)
+                 VALUES ('t1', 'thread', 'thread.closed',
+                   '{\"type\":\"thread.closed\",\"threadId\":\"t1\",\"reason\":\"settled\"}',
+                   'pending', '', '')",
+                [],
+            )
+        })
+        .await
+        .unwrap();
+    drop(previous);
+
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    timeout(Duration::from_secs(5), async {
+        while host.closed.lock().unwrap().is_empty() {
+            host.closed_event.notified().await;
+        }
+    })
+    .await
+    .expect("the stored close reached the host");
+    let closed = host.closed.lock().unwrap().clone();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].0, "t1");
+    assert_eq!(format!("{:?}", closed[0].1), "SettledUnnamed");
+    drop(engine);
+}
+
 /// A thread's effects run in the order their writes committed (T3's outbox claims by row
 /// order). A write that rolled back leaves no row and holds nothing.
 #[tokio::test(flavor = "current_thread")]

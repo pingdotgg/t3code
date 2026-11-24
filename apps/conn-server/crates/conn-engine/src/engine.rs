@@ -1625,6 +1625,19 @@ impl Engine for SqliteEngine {
             .as_ref()
             .is_none_or(|host| host.provider_instance_enabled(Some(project_id), instance_id))
     }
+    fn claim_settle_script<'a>(
+        &'a self,
+        thread_id: &'a str,
+        settled_at: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        let (thread_id, settled_at) = (thread_id.to_owned(), settled_at.to_owned());
+        Box::pin(async move {
+            self.inner
+                .db(move |store| store.claim_settle_script(&thread_id, &settled_at))
+                .await
+        })
+    }
+
     fn has_receipt<'a>(&'a self, command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         let command_id = command_id.to_owned();
         Box::pin(async move {

@@ -47,6 +47,13 @@ WHERE status IN ('pending', 'running');
 -- Retention.
 CREATE INDEX IF NOT EXISTS effect_outbox_settled ON effect_outbox(completed_at)
 WHERE status IN ('succeeded', 'cancelled');
+-- The settlements whose settle script started. A settle close a restart runs again finds its
+-- row and starts no second script.
+CREATE TABLE IF NOT EXISTS settle_scripts (
+  thread_id  TEXT NOT NULL,
+  settled_at TEXT NOT NULL,
+  PRIMARY KEY (thread_id, settled_at)
+);
 ";
 
 /// `SETTLED_EFFECT_RETENTION`: settled rows are kept 7 days. Failed rows stay, as in T3.
@@ -696,6 +703,33 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    /// Records that the settle script of `thread_id`'s settlement `settled_at` starts: `true`
+    /// the first time, `false` when this or an earlier process recorded it already.
+    pub(crate) fn claim_settle_script(
+        &self,
+        thread_id: &str,
+        settled_at: &str,
+    ) -> StoreResult<bool> {
+        let tx = rusqlite::Transaction::new_unchecked(
+            self.raw(),
+            rusqlite::TransactionBehavior::Immediate,
+        )
+        .map_err(err)?;
+        if !owns(&tx, self.owner())? {
+            return Err(NOT_OWNER.into());
+        }
+        let taken = tx
+            .execute(
+                "INSERT INTO settle_scripts (thread_id, settled_at) VALUES (?1, ?2)
+                 ON CONFLICT DO NOTHING",
+                params![thread_id, settled_at],
+            )
+            .map_err(err)?
+            == 1;
+        tx.commit().map_err(err)?;
+        Ok(taken)
     }
 
     /// The status of an outbox row.
