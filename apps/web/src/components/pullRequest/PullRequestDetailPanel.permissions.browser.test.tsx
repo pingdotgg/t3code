@@ -223,9 +223,22 @@ it("keeps a merge and a review on the head the reader was shown until they load 
   await vi.waitFor(() => expect(sent("verdict")).toEqual(["shown-head"]));
   expect(sent("action")).toEqual(["shown-head"]);
 
+  // The pin moves once the reload has been asked of the host, not at the click.
+  const reload = Promise.withResolvers<{ _tag: "Success"; value: undefined }>();
+  command.mockImplementation((call) =>
+    call?.input?.reference === undefined
+      ? Promise.resolve({ _tag: "Success", value: undefined })
+      : reload.promise,
+  );
   await screen.getByRole("button", { name: "Load new commits" }).click();
   await merge();
-  await vi.waitFor(() => expect(sent("action")).toEqual(["shown-head", "pushed-head"]));
+  await vi.waitFor(() => expect(sent("action")).toEqual(["shown-head", "shown-head"]));
+  reload.resolve({ _tag: "Success", value: undefined });
+  await expect.element(screen.getByText(/still applies to/)).not.toBeInTheDocument();
+  await merge();
+  await vi.waitFor(() =>
+    expect(sent("action")).toEqual(["shown-head", "shown-head", "pushed-head"]),
+  );
 });
 
 it("reads the first diff page once the pointer rests on the Code tab", async () => {
