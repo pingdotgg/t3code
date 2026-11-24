@@ -58,6 +58,41 @@ fn fixture_with_provider(
     provider: Arc<dyn conn_provider::Provider>,
     peers: Option<Arc<dyn crate::Peers>>,
 ) -> Fixture {
+    let listed = vec![json!({
+        "instanceId": "claudeAgent", "driver": "claudeAgent", "displayName": "Claude",
+        "enabled": true, "installed": true, "status": "ready",
+        "models": [{"slug": "claude-haiku-5-5", "name": "Claude Haiku 5.5"}],
+    })];
+    fixture_with_providers(name, host, vec![provider], listed, peers)
+}
+
+/// The engine runs `providers`; `/mcp` lists `listed` as the server's provider snapshot.
+fn fixture_with_providers(
+    name: &str,
+    host: Option<Arc<dyn conn_engine::EngineHost>>,
+    providers: Vec<Arc<dyn conn_provider::Provider>>,
+    listed: Vec<Value>,
+    peers: Option<Arc<dyn crate::Peers>>,
+) -> Fixture {
+    fixture_listing(
+        name,
+        host,
+        providers,
+        Arc::new(move || listed.clone()),
+        None,
+        peers,
+    )
+}
+
+/// [`fixture_with_providers`] with a live provider listing and a refresh hook.
+fn fixture_listing(
+    name: &str,
+    host: Option<Arc<dyn conn_engine::EngineHost>>,
+    providers: Vec<Arc<dyn conn_provider::Provider>>,
+    listed: Arc<dyn Fn() -> Vec<Value> + Send + Sync>,
+    refresh_provider: Option<crate::ProviderRefresh>,
+    peers: Option<Arc<dyn crate::Peers>>,
+) -> Fixture {
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -68,14 +103,14 @@ fn fixture_with_provider(
         title: "Project".into(),
         workspace_root: ROOT.into(),
     }];
-    config.providers = vec![provider];
+    config.providers = providers;
     config.host = host.or_else(|| Some(Arc::new(threads_handoff::FilesHost(files.clone()))));
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
         listen_address: "0.0.0.0:4711".parse().unwrap(),
         preview: Some(conn_preview::tabs::Preview::new(dir.clone())),
         devices: None,
-        refresh_provider: None,
+        refresh_provider,
         files: Some(files),
         worktrees: Some(crate::WorktreeConfig {
             directory: Arc::new({
@@ -102,13 +137,7 @@ fn fixture_with_provider(
         label: "Test".into(),
         server_version: "0.0.0".into(),
         platform: json!({"os": "linux", "arch": "x64"}),
-        providers: Arc::new(|| {
-            vec![json!({
-                "instanceId": "claudeAgent", "driver": "claudeAgent", "displayName": "Claude",
-                "enabled": true, "installed": true, "status": "ready",
-                "models": [{"slug": "claude-haiku-5-5", "name": "Claude Haiku 5.5"}],
-            })]
-        }),
+        providers: listed,
         hosted_app_url: crate::DEFAULT_HOSTED_APP_URL.into(),
         scheduled_tasks: None,
         annotations: None,
@@ -3799,4 +3828,493 @@ async fn fill_credential_answers_with_a_status_only() {
         .await;
     assert_eq!(result["status"], "tab_unavailable");
     assert!(!result.to_string().contains("fixture-only"));
+}
+
+/// T3 `resolveTarget` (`OrchestratorMcpService.ts:1576`): an explicit `driverKind` with no
+/// instance of that driver fails before any work starts; it never falls back to the parent's.
+#[tokio::test(flavor = "current_thread")]
+async fn delegate_task_with_an_absent_driver_fails_before_it_runs() {
+    let fake = FakeProvider::new("claudeAgent");
+    let sessions = fake.sessions.clone();
+    let f = fixture_with_provider("delegate-driver", None, Arc::new(fake), None);
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let (code, message) = agent
+        .failure(
+            "delegate_task",
+            json!({"task":"driver probe","target":{"driverKind":"codex"},"mode":"wait"}),
+        )
+        .await;
+    assert_eq!(code, "provider_unavailable");
+    assert_eq!(
+        message,
+        "No V2 provider adapter is registered for driver codex."
+    );
+    let (code, message) = agent
+        .failure(
+            "delegate_task",
+            json!({"task":"driver probe","target":{"providerInstanceId":"claudeAgent","driverKind":"codex"}}),
+        )
+        .await;
+    assert_eq!(code, "invalid_request");
+    assert_eq!(
+        message,
+        "Provider instance claudeAgent uses driver claudeAgent, not codex."
+    );
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(parent.as_str().into())
+        .await
+        .unwrap();
+    assert_eq!(projection["subagents"], json!([]));
+    assert_eq!(
+        sessions.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "only the parent's session started"
+    );
+    // The parent's own driver still resolves to its instance.
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task":"same driver","target":{"driverKind":"claudeAgent"},"mode":"wait"}),
+        )
+        .await;
+    assert_eq!(task["providerInstanceId"], "claudeAgent");
+    assert_eq!(task["summary"], "echo: same driver");
+}
+
+/// A provider listing for `/mcp`: a ready instance of `driver` with one model.
+fn listed_provider(instance: &str, driver: &str, auth: &str) -> Value {
+    json!({
+        "instanceId": instance, "driver": driver, "displayName": instance,
+        "enabled": true, "installed": true, "status": "ready", "auth": {"status": auth},
+        "models": [{"slug": "model-1", "name": "Model 1"}],
+    })
+}
+
+/// A fixture whose engine runs Claude and the named Codex instances, each counting its
+/// sessions, with `enabled` deciding per instance whether the project may use it.
+fn codex_fixture(
+    name: &str,
+    codex: &[(&str, &str)],
+    enabled: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+) -> (Fixture, Vec<Arc<std::sync::atomic::AtomicUsize>>) {
+    struct Policy(Arc<dyn Fn(&str) -> bool + Send + Sync>);
+    impl conn_engine::EngineHost for Policy {
+        fn provider_instance_enabled(&self, _: Option<&str>, instance: &str) -> bool {
+            (self.0)(instance)
+        }
+    }
+    let mut providers: Vec<Arc<dyn conn_provider::Provider>> =
+        vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    let mut listed = vec![listed_provider(
+        "claudeAgent",
+        "claudeAgent",
+        "authenticated",
+    )];
+    let mut sessions = Vec::new();
+    for (instance, auth) in codex {
+        let fake = FakeProvider::new(instance);
+        sessions.push(fake.sessions.clone());
+        providers.push(Arc::new(fake));
+        listed.push(listed_provider(instance, "codex", auth));
+    }
+    let f = fixture_with_providers(
+        name,
+        Some(Arc::new(Policy(enabled))),
+        providers,
+        listed,
+        None,
+    );
+    (f, sessions)
+}
+
+/// T3 `resolveTarget` (`OrchestratorMcpService.ts:1598`): a driver resolves to a healthy
+/// instance this project enables, skipping one it disables; with none enabled it fails before
+/// any work starts.
+#[tokio::test(flavor = "current_thread")]
+async fn delegate_task_picks_a_driver_instance_the_project_enables() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let both_disabled = Arc::new(AtomicBool::new(false));
+    let gate = both_disabled.clone();
+    let (f, sessions) = codex_fixture(
+        "delegate-driver-project",
+        &[("codex-a", "authenticated"), ("codex-b", "authenticated")],
+        Arc::new(move |instance| {
+            !(instance == "codex-a" || (instance == "codex-b" && gate.load(Ordering::SeqCst)))
+        }),
+    );
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task":"routed","target":{"driverKind":"codex"},"mode":"wait","timeoutMs":5000}),
+        )
+        .await;
+    assert_eq!(task["providerInstanceId"], "codex-b", "{task}");
+    assert_eq!(task["summary"], "echo: routed");
+    let count = |i: usize| sessions[i].load(Ordering::SeqCst);
+    assert_eq!((count(0), count(1)), (0, 1));
+
+    both_disabled.store(true, Ordering::SeqCst);
+    let (code, message) = agent
+        .failure(
+            "delegate_task",
+            json!({"task":"nowhere","target":{"driverKind":"codex"}}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        (
+            "provider_unavailable",
+            "No instance of driver codex is enabled for this project."
+        )
+    );
+    assert_eq!((count(0), count(1)), (0, 1), "no new child session");
+}
+
+/// T3 `resolveTarget` (`OrchestratorMcpService.ts:1634`): a named instance passes the same
+/// health check as a resolved one, so an unauthenticated one runs nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn delegate_task_refuses_a_named_unhealthy_instance() {
+    use std::sync::atomic::Ordering;
+    let (f, sessions) = codex_fixture(
+        "delegate-named-health",
+        &[("codex-c", "unauthenticated")],
+        Arc::new(|_| true),
+    );
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    for target in [
+        json!({"driverKind":"codex","providerInstanceId":"codex-c"}),
+        json!({"providerInstanceId":"codex-c"}),
+    ] {
+        let (code, message) = agent
+            .failure("delegate_task", json!({"task":"sick","target":target}))
+            .await;
+        assert_eq!(
+            (code.as_str(), message.as_str()),
+            (
+                "provider_unavailable",
+                "Provider codex-c cannot run a child task: Provider is not authenticated."
+            )
+        );
+    }
+    assert_eq!(sessions[0].load(Ordering::SeqCst), 0);
+    assert_eq!(
+        projection_of_thread(&f, &parent).await["subagents"],
+        json!([])
+    );
+}
+
+async fn projection_of_thread(f: &Fixture, thread: &str) -> Value {
+    f.service
+        .config
+        .engine
+        .get_thread_projection(thread.into())
+        .await
+        .unwrap()
+}
+
+/// A ready provider listing for `/mcp` with the given models.
+fn listing(instance: &str, driver: &str, auth: &str, models: Value) -> Value {
+    json!({
+        "instanceId": instance, "driver": driver, "displayName": instance,
+        "enabled": true, "installed": true, "status": "ready", "auth": {"status": auth},
+        "models": models,
+    })
+}
+
+/// T3 "rechecks a delegated model that is %s" (`OrchestratorMcpService.test.ts:2340`): a named
+/// or inherited instance whose snapshot refuses the target is refreshed once and resolved
+/// again; a driver-only target is not, as T3 `resolveTargetRechecking`.
+#[tokio::test(flavor = "current_thread")]
+async fn delegate_task_rechecks_a_stale_provider_snapshot() {
+    use std::sync::Mutex;
+    let wonder = json!([{"slug": "muse-wonder-1.0", "name": "Wonder"}]);
+    let spark = json!([{"slug": "muse-spark-1.3", "name": "Spark"}]);
+    let haiku = json!([{"slug": "claude-haiku-5-5", "name": "Haiku"}]);
+    let opus = json!([{"slug": "claude-haiku-5-5", "name": "Haiku"}, {"slug": "claude-opus-5-5", "name": "Opus"}]);
+    let muse = |auth: &str, models: &Value| listing("muse", "muse", auth, models.clone());
+    let claude = |models: &Value| {
+        listing(
+            "claudeAgent",
+            "claudeAgent",
+            "authenticated",
+            models.clone(),
+        )
+    };
+    let named = json!({"providerInstanceId": "muse", "model": "muse-wonder-1.0"});
+    // (case, target, listing before, listing after a refresh, refreshed, expected code)
+    let cases = [
+        (
+            "already advertised",
+            named.clone(),
+            muse("authenticated", &wonder),
+            muse("authenticated", &wonder),
+            vec![],
+            None,
+            claude(&haiku),
+            claude(&haiku),
+        ),
+        (
+            "newly advertised",
+            named.clone(),
+            muse("authenticated", &spark),
+            muse("authenticated", &wonder),
+            vec!["muse"],
+            None,
+            claude(&haiku),
+            claude(&haiku),
+        ),
+        (
+            "still unavailable",
+            named.clone(),
+            muse("authenticated", &spark),
+            muse("authenticated", &spark),
+            vec!["muse"],
+            Some("model_unavailable"),
+            claude(&haiku),
+            claude(&haiku),
+        ),
+        (
+            "newly authenticated",
+            named.clone(),
+            muse("unauthenticated", &wonder),
+            muse("authenticated", &wonder),
+            vec!["muse"],
+            None,
+            claude(&haiku),
+            claude(&haiku),
+        ),
+        (
+            "inherited instance",
+            json!({"model": "claude-opus-5-5"}),
+            muse("authenticated", &wonder),
+            muse("authenticated", &wonder),
+            vec!["claudeAgent"],
+            None,
+            claude(&haiku),
+            claude(&opus),
+        ),
+        (
+            "driver only",
+            json!({"driverKind": "muse", "model": "muse-wonder-1.0"}),
+            muse("authenticated", &spark),
+            muse("authenticated", &wonder),
+            vec![],
+            Some("model_unavailable"),
+            claude(&haiku),
+            claude(&haiku),
+        ),
+    ];
+    for (case, target, muse_before, muse_after, refreshed, failure, claude_before, claude_after) in
+        cases
+    {
+        let listed = Arc::new(Mutex::new(vec![claude_before, muse_before]));
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let refresh: crate::ProviderRefresh = {
+            let (listed, calls) = (listed.clone(), calls.clone());
+            let after = vec![claude_after, muse_after];
+            Arc::new(move |id: String| {
+                calls.lock().unwrap().push(id);
+                *listed.lock().unwrap() = after.clone();
+                Box::pin(async {})
+            })
+        };
+        let muse_provider = FakeProvider::new("muse");
+        let muse_sessions = muse_provider.sessions.clone();
+        let f = fixture_listing(
+            &format!("delegate-recheck-{}", case.replace(' ', "-")),
+            None,
+            vec![
+                Arc::new(FakeProvider::new("claudeAgent")),
+                Arc::new(muse_provider),
+            ],
+            {
+                let listed = listed.clone();
+                Arc::new(move || listed.lock().unwrap().clone())
+            },
+            Some(refresh),
+            None,
+        );
+        let mut operator = Client::open(&f.service, client(true)).await;
+        let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+        until_provider_turn(&f, &parent).await;
+        let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+        let args = json!({"task": "Review the change.", "target": target, "mode": "async", "clientRequestId": case});
+        if let Some(code) = failure {
+            let (got, message) = agent.failure("delegate_task", args).await;
+            assert_eq!(got, code, "{case}: {message}");
+            assert_eq!(
+                projection_of_thread(&f, &parent).await["subagents"],
+                json!([]),
+                "{case}"
+            );
+        } else {
+            let task = agent.ok("delegate_task", args).await;
+            let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+            assert_eq!(
+                child["thread"]["modelSelection"]["model"], target["model"],
+                "{case}: {task}"
+            );
+        }
+        assert_eq!(*calls.lock().unwrap(), refreshed, "{case}");
+        if failure.is_some() {
+            assert_eq!(
+                muse_sessions.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "{case}"
+            );
+        }
+    }
+}
+
+/// T3 "old Ultracode effort level" (`OrchestratorMcpService.test.ts:4251`): `effort:
+/// "ultracode"` becomes `effort: "xhigh"` plus `ultracode: true` on a model that advertises the
+/// boolean, for requested options and for options the child inherits.
+#[tokio::test(flavor = "current_thread")]
+async fn delegate_task_converts_the_old_ultracode_effort() {
+    let descriptors = json!([
+        {"id": "effort", "label": "Reasoning", "type": "select",
+         "options": [{"id": "high", "label": "High"}, {"id": "xhigh", "label": "Extra High"}]},
+        {"id": "ultracode", "label": "Ultracode", "type": "boolean"},
+    ]);
+    let models = json!([
+        {"slug": "claude-haiku-5-5", "name": "Haiku"},
+        {"slug": "claude-opus-5-5", "name": "Opus", "capabilities": {"optionDescriptors": descriptors}},
+    ]);
+    let listed = vec![listing(
+        "claudeAgent",
+        "claudeAgent",
+        "authenticated",
+        models,
+    )];
+    let f = fixture_with_providers(
+        "delegate-ultracode",
+        None,
+        vec![Arc::new(FakeProvider::new("claudeAgent"))],
+        listed,
+        None,
+    );
+    let converted = json!([{"id": "effort", "value": "xhigh"}, {"id": "ultracode", "value": true}]);
+    let mut operator = Client::open(&f.service, client(true)).await;
+
+    // Requested: the parent runs another model, so nothing is inherited.
+    let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "requested", "mode": "async",
+                   "target": {"model": "claude-opus-5-5", "options": {"effort": "ultracode"}}}),
+        )
+        .await;
+    let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+    assert_eq!(
+        child["thread"]["modelSelection"],
+        json!({"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": converted}),
+        "requested"
+    );
+
+    // Inherited: the parent's own selection still holds the old effort level.
+    let launched = operator
+        .ok(
+            "conn_thread_launch",
+            json!({
+                "projectId": project_id(), "title": "Ultracode parent", "message": "hang",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-opus-5-5",
+                                   "options": [{"id": "effort", "value": "ultracode"}]},
+                "runtimeMode": "auto", "interactionMode": "default",
+            }),
+        )
+        .await;
+    let parent = launched["threadId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &parent).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "inherited", "mode": "async"}),
+        )
+        .await;
+    let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+    assert_eq!(
+        child["thread"]["modelSelection"],
+        json!({"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": converted}),
+        "inherited"
+    );
+}
+
+/// T3 `resolveRuntimeMode` (`OrchestratorMcpService.test.ts:4554`): a child inherits the
+/// broadest mode its provider offers, and an explicit mode the provider lacks is refused.
+#[tokio::test(flavor = "current_thread")]
+async fn delegate_task_fits_the_runtime_mode_to_the_target_provider() {
+    let mut antigravity = listing(
+        "antigravity",
+        "antigravity",
+        "authenticated",
+        json!([{"slug": "gemini-3-pro", "name": "Gemini"}]),
+    );
+    antigravity["supportedRuntimeModes"] =
+        json!(["approval-required", "auto-accept-edits", "full-access"]);
+    let listed = vec![
+        listing(
+            "claudeAgent",
+            "claudeAgent",
+            "authenticated",
+            json!([{"slug": "claude-haiku-5-5", "name": "Haiku"}]),
+        ),
+        antigravity,
+    ];
+    let f = fixture_with_providers(
+        "delegate-runtime-mode",
+        None,
+        vec![
+            Arc::new(FakeProvider::new("claudeAgent")),
+            Arc::new(FakeProvider::new("antigravity")),
+        ],
+        listed,
+        None,
+    );
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut operator, "Parent", "hang", "auto", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let target = json!({"providerInstanceId": "antigravity", "model": "gemini-3-pro"});
+
+    let (code, message) = agent
+        .failure(
+            "delegate_task",
+            json!({"task": "explicit", "target": target, "runtimeMode": "auto"}),
+        )
+        .await;
+    assert_eq!(code, "invalid_request", "{message}");
+    assert!(
+        message.contains("approval-required, auto-accept-edits, full-access"),
+        "{message}"
+    );
+    assert_eq!(
+        projection_of_thread(&f, &parent).await["subagents"],
+        json!([])
+    );
+
+    let task = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "inherited", "target": target, "mode": "async"}),
+        )
+        .await;
+    let child = projection_of_thread(&f, task["childThreadId"].as_str().unwrap()).await;
+    assert_eq!(child["thread"]["runtimeMode"], "auto-accept-edits");
 }
