@@ -513,7 +513,7 @@ describe("resolveAutoModelSelection", () => {
     ).toBe("claudeAuto");
   });
 
-  it("falls back to Claude on the Antigravity subscription before other providers", () => {
+  it("falls back to Claude on the Antigravity subscription", () => {
     const antigravity = {
       ...claude("antigravity", 0, false),
       driver: ProviderDriverKind.make("antigravity"),
@@ -564,46 +564,119 @@ describe("resolveAutoModelSelection", () => {
     ).toBeNull();
   });
 
-  it("after every Claude subscription, uses ChatGPT, then Grok, then Gemini", () => {
-    const other = (id: string, driver: string, slug: string, optionId: string) =>
+  it("after Claude, spends ChatGPT Plus ahead of Claude on Antigravity, then Grok, then Gemini", () => {
+    const other = (
+      id: string,
+      driver: string,
+      slugs: string | ReadonlyArray<string>,
+      optionId: string,
+    ) =>
       ({
         ...claude(id, 0, false),
         driver: ProviderDriverKind.make(driver),
-        models: [
-          {
-            slug,
-            name: slug,
-            isCustom: false,
-            capabilities: {
-              optionDescriptors: [
-                {
-                  id: optionId,
-                  label: "Effort",
-                  type: "select" as const,
-                  options: ["low", "medium", "high"].map((value) => ({ id: value, label: value })),
-                },
-              ],
-            },
+        models: [slugs].flat().map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: optionId,
+                label: "Effort",
+                type: "select" as const,
+                options: ["low", "medium", "high"].map((value) => ({ id: value, label: value })),
+              },
+            ],
           },
-        ],
+        })),
         usageLimits: undefined,
       }) as unknown as ServerProvider;
     const claudeOut = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
+    // The models reported by the Plus account.
+    const plus = [
+      "gpt-6.2-sol",
+      "gpt-6.2-astra",
+      "gpt-6.1-terra",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
+    ];
+    const without = (...dropped: string[]) => plus.filter((slug) => !dropped.includes(slug));
+    const opus = other("agyOpus", "antigravity", "claude-opus-4-6-thinking", "thinking_level");
+    const pick = (level: string, slugs: ReadonlyArray<string>) =>
+      resolveAutoModelSelection({
+        selection: auto(level),
+        providers: [...claudeOut, opus, other("codex", "codex", slugs, "reasoningEffort")],
+        now,
+      })?.selection;
+
+    // Each level has its own ChatGPT models at its own effort; unlisted ones are skipped.
+    expect(pick("high", plus)).toMatchObject({
+      instanceId: "codex",
+      model: "gpt-6.2-astra",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "auto", value: "high" },
+      ],
+    });
+    expect(pick("high", without("gpt-6.2-astra"))?.model).toBe("gpt-6-astra");
+    expect(pick("high", without("gpt-6.2-astra", "gpt-6-astra"))?.model).toBe("gpt-6.2-sol");
+    expect(pick("medium", plus)).toMatchObject({
+      instanceId: "codex",
+      model: "gpt-6.2-sol",
+      options: [
+        { id: "reasoningEffort", value: "medium" },
+        { id: "auto", value: "medium" },
+      ],
+    });
+    expect(pick("medium", without("gpt-6.2-sol"))?.model).toBe("gpt-6.1-sol");
+    // Low reaches ChatGPT only after the free models, none of which are listed here.
+    expect(pick("low", plus)).toMatchObject({
+      instanceId: "codex",
+      model: "gpt-6-luna",
+      options: [
+        { id: "reasoningEffort", value: "low" },
+        { id: "auto", value: "low" },
+      ],
+    });
+    expect(pick("low", without("gpt-6-luna"))?.model).toBe("gpt-6.1-terra");
+    // A listing with only Luna is skipped at high and medium.
+    expect(pick("high", ["gpt-6-luna"])?.instanceId).toBe("agyOpus");
+    expect(pick("medium", ["gpt-6-luna"])?.instanceId).toBe("agyOpus");
+
+    for (const level of ["high", "medium", "low"]) {
+      expect(
+        resolveAutoModelSelection({
+          selection: auto(level),
+          providers: [other("codex", "codex", plus, "reasoningEffort"), claude("claudeAuto", 0)],
+          now,
+        })?.selection.instanceId,
+      ).toBe("claudeAuto");
+    }
+    for (const [id, driver, model, option] of [
+      ["agy", "antigravity", "claude-sonnet-4-6", "thinking_level"],
+      ["free", "opencode", "opencode/big-pickle", "variant"],
+    ] as const) {
+      expect(
+        resolveAutoModelSelection({
+          selection: auto("low"),
+          providers: [
+            other("codex", "codex", plus, "reasoningEffort"),
+            other(id, driver, model, option),
+          ],
+          now,
+        })?.selection.instanceId,
+      ).toBe(id);
+    }
+
     const codex = other("codex", "codex", "gpt-6-luna", "reasoningEffort");
     const grok = other("grok", "grok", "grok-4.7", "reasoningEffort");
     const gemini = other("antigravity", "antigravity", "gemini-3.8-flash", "thinking_level");
     const route = (providers: ServerProvider[]) =>
       resolveAutoModelSelection({ selection: auto("high"), providers, now })?.selection;
 
-    expect(route([...claudeOut, gemini, grok, codex])).toMatchObject({
-      instanceId: "codex",
-      model: "gpt-6-luna",
-      options: [
-        { id: "reasoningEffort", value: "high" },
-        { id: "auto", value: "high" },
-      ],
-    });
-    expect(route([...claudeOut, gemini, grok])?.instanceId).toBe("grok");
+    expect(route([...claudeOut, gemini, grok, codex])?.instanceId).toBe("grok");
     expect(route([...claudeOut, gemini])).toMatchObject({
       instanceId: "antigravity",
       model: "gemini-3.8-flash",

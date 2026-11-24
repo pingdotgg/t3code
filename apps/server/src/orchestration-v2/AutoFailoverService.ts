@@ -26,6 +26,8 @@ const CAPACITY_CODES: ReadonlySet<string> = new Set([
   "api_error_529",
   "overloaded_error",
 ]);
+/** A cancelled or unpaid Claude plan: its token still looks valid, but every turn fails. */
+const LAPSED_PLAN_ERROR = /can.t use your Claude subscription/i;
 /** A limit without a reported reset benches the instance this long. */
 const LIMIT_COOLDOWN_MS = 30 * 60_000;
 /** No capacity is usually short-lived. */
@@ -80,7 +82,8 @@ export function autoFailoverPlan(input: {
   const routed = routedAutoLevel(shell.modelSelection);
   if (routed === undefined && isDelegatedAppThread(shell)) return null;
   const level = routed ?? impliedAutoLevel(shell.modelSelection.model);
-  const limited = shell.lastErrorClass === "usage_limit";
+  const limited =
+    shell.lastErrorClass === "usage_limit" || LAPSED_PLAN_ERROR.test(shell.lastError ?? "");
   const noCapacity = !limited && CAPACITY_CODES.has(shell.lastErrorCode ?? "");
   if (!limited && !noCapacity) return null;
   const resetMs = shell.usageLimitResetAt ? Date.parse(shell.usageLimitResetAt) : Number.NaN;
@@ -111,8 +114,8 @@ export function autoFailoverPlan(input: {
 
 /** The Auto level whose orchestrator is closest to a hand-picked model. */
 function impliedAutoLevel(model: string): "low" | "medium" | "high" {
-  if (/gpt-6\.1-sol|astra/i.test(model)) return "high";
-  if (/sonnet|haiku|flash|opencode\/|luna/i.test(model)) return "low";
+  if (/astra/i.test(model)) return "high";
+  if (/sonnet|haiku|flash|opencode\/|luna|terra/i.test(model)) return "low";
   return "medium";
 }
 
