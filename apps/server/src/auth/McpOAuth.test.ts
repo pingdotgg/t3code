@@ -29,6 +29,7 @@ import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
 import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerHttp from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -84,6 +85,7 @@ const makeLayerRoutes = (
         ),
       ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      Layer.provide(ServerHttp.layerApiBodyLimit),
     ),
   ).pipe(
     Layer.provideMerge(layerEnvironmentAuth),
@@ -226,8 +228,29 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
         authorization_endpoint: `${ORIGIN}/oauth/mcp/authorize`,
         token_endpoint: `${ORIGIN}/oauth/mcp/token`,
         registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
+        revocation_endpoint: `${ORIGIN}/oauth/mcp/revoke`,
         code_challenge_methods_supported: ["S256"],
       });
+    }),
+  ),
+);
+
+it.effect("answers 413 to a body over the API limit", () =>
+  withRoutes((handler) =>
+    Effect.gen(function* () {
+      const body = "x".repeat(ServerHttp.API_MAX_BODY_BYTES + 1);
+      for (const [path, contentType] of [
+        ["/api/auth/browser-session", "application/json"],
+        ["/oauth/token", "application/x-www-form-urlencoded"],
+        ["/oauth/mcp/register", "application/json"],
+      ]) {
+        const init = { method: "POST", headers: { "content-type": contentType! } };
+        expect((yield* handler(at(path!, { ...init, body }))).status, path).toBe(413);
+        // A chunked body declares no length, so the reader itself has to stop.
+        const chunked = new Blob([body]).stream();
+        const streamed = at(path!, { ...init, body: chunked, duplex: "half" } as RequestInit);
+        expect((yield* handler(streamed)).status, `${path} chunked`).toBe(413);
+      }
     }),
   ),
 );
@@ -447,6 +470,34 @@ it.effect.each([
   ),
 );
 
+it.effect("revokes an MCP token and leaves other sessions active", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const { token } = yield* auth.issueMcpClientSession({
+        label: "Claude Code",
+        access: "auto",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      });
+      const owner = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        (yield* auth.issuePairingCredential()).credential,
+        undefined,
+        { deviceType: "desktop" },
+      );
+      const bearer = (token: string) =>
+        HttpServerRequest.fromWeb(at("/api", { headers: { authorization: `Bearer ${token}` } }));
+      for (const other of ["not-a-token", owner.access_token]) {
+        expect((yield* handler(at("/oauth/mcp/revoke", form({ token: other })))).status).toBe(200);
+      }
+      yield* auth.authenticateHttpRequest(bearer(owner.access_token));
+      yield* auth.authenticateMcpClient(bearer(token));
+      const revoked = yield* handler(at("/oauth/mcp/revoke", form({ token })));
+      expect(revoked.status).toBe(200);
+      yield* auth.authenticateMcpClient(bearer(token)).pipe(Effect.flip);
+    }),
+  ),
+);
+
 it.live("signs in a hosted agent with an https callback that asked for a client secret", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
@@ -542,6 +593,44 @@ it.live("signs in Gemini, which registers six user-bound redirect URIs for one c
       });
       const callback = new URL(approved.redirectTo!);
       expect(`${callback.origin}${callback.pathname}`).toBe(callbackUrl);
+    }),
+  ),
+);
+
+it.live("issues no session for a sign-in approved before all other sessions were revoked", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const params = authorizeParams(clientId);
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: (yield* auth.issuePairingCredential()).credential,
+      });
+      const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+      const owner = yield* auth.issueSession();
+      yield* auth.revokeOtherClientSessions(owner.sessionId);
+
+      const response = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: params.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+          }),
+        ),
+      );
+      expect(response.status).toBe(400);
+      expect(yield* json<unknown>(response)).toEqual({
+        error: "invalid_grant",
+        error_description: "The authorization code is invalid or expired.",
+      });
+      expect((yield* auth.listSessions()).map((session) => session.sessionId)).toEqual([
+        owner.sessionId,
+      ]);
     }),
   ),
 );

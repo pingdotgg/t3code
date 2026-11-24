@@ -111,7 +111,7 @@ function parseField(
       const values = new Set(options.map(optionValue));
       const minItems = typeof property.minItems === "number" ? property.minItems : 0;
       const maxItems = typeof property.maxItems === "number" ? property.maxItems : Infinity;
-      // Clients require a selection, so empty-only questions cannot be answered.
+      // Empty-only questions carry no choice worth asking.
       if (maxItems === 0 || minItems > maxItems || minItems > values.size) return undefined;
       return { field: { kind: "multiChoice", values, minItems, maxItems }, options };
     }
@@ -177,9 +177,11 @@ function typedAnswer(
 }
 
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
+// `allowOther` lets single choices take typed text, sent as the field's value.
 export function parseElicitationForm(
   requestedSchema: unknown,
   message: string,
+  { allowOther = false }: { readonly allowOther?: boolean } = {},
 ): ElicitationForm | undefined {
   const schema = unknownRecord(requestedSchema);
   const required = new Set(
@@ -220,16 +222,24 @@ export function parseElicitationForm(
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const { id, property, options } of parsedFields) {
     if (folded.has(id)) continue;
-    const kind = fields.get(id)?.kind;
+    const field = fields.get(id);
+    const kind = field?.kind;
     questions.push({
       id,
       header: text(property.title) ?? `Question ${questions.length + 1}`,
       question: text(property.description) ?? message,
       options,
-      ...(kind === "text" || kind === "number" || companions.has(id)
+      ...(kind === "text" ||
+      kind === "number" ||
+      companions.has(id) ||
+      (allowOther && kind === "choice")
         ? {}
         : { allowCustomAnswer: false }),
       ...(kind === "multiChoice" ? { multiSelect: true } : {}),
+      // An empty selection answers "none" unless the schema demands a choice.
+      ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
+        ? { required: true }
+        : {}),
       ...(kind === "text" && !required.has(id) ? { required: false } : {}),
     });
   }
@@ -243,7 +253,14 @@ export function parseElicitationForm(
         const typed = answer === undefined ? undefined : typedAnswer(field, answer);
         const companionId = companions.get(id);
         if (typed !== undefined) entries.push([id, typed]);
-        else if (companionId !== undefined && typeof answer === "string") {
+        else if (
+          allowOther &&
+          field.kind === "choice" &&
+          typeof answer === "string" &&
+          answer.trim() !== ""
+        ) {
+          entries.push([id, answer]);
+        } else if (companionId !== undefined && typeof answer === "string") {
           entries.push([companionId, answer]);
         } else if (required.has(id)) return undefined;
       }

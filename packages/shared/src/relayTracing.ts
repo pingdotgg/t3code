@@ -139,9 +139,18 @@ export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
+/** Spans started while `isEnabled` says no stay local instead of being exported. */
+function gatedTracer(delegate: Tracer.Tracer, isEnabled: () => boolean): Tracer.Tracer {
+  return Tracer.make({
+    span: (options) => (isEnabled() ? delegate.span(options) : Tracer.nativeTracer.span(options)),
+    ...(delegate.context ? { context: delegate.context } : {}),
+  });
+}
+
 export function layer(
   config: RelayClientTracingConfig | null,
   resource: RelayClientTracingResource,
+  options?: { readonly isEnabled?: () => boolean },
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
   if (config === null) {
     return Layer.succeed(RelayClientTracer, Option.none());
@@ -169,6 +178,12 @@ export function layer(
 
   return Layer.effect(
     RelayClientTracer,
-    Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
+    Tracer.Tracer.pipe(
+      Effect.map(nonInterferingTracer),
+      Effect.map((tracer) =>
+        options?.isEnabled ? gatedTracer(tracer, options.isEnabled) : tracer,
+      ),
+      Effect.asSome,
+    ),
   ).pipe(Layer.provide(layerTracer));
 }
