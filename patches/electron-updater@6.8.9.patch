@@ -1,8 +1,193 @@
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..c298ffe7808c421c29e16f1e2ba8510f0cd31142 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b0d202ca5 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
-@@ -61,6 +61,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -3,7 +3,34 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.ElectronHttpExecutor = exports.NET_SESSION_NAME = void 0;
+ exports.getNetSession = getNetSession;
+ const builder_util_runtime_1 = require("builder-util-runtime");
++const fs_1 = require("fs");
++const stream_1 = require("stream");
+ exports.NET_SESSION_NAME = "electron-updater";
++// A stall on a slow link is retried, resuming after the bytes earlier attempts wrote.
++const DOWNLOAD_STALL_RETRIES = 3;
++function isDownloadStall(error) {
++    return error != null && (error.message === "Request timed out" || error.message === "net::ERR_TIMED_OUT");
++}
++// doDownload turns any status >= 400 into this error before a response handler sees it.
++function isRangeNotSatisfiable(error) {
++    return error != null && /", status 416: /.test(error.message);
++}
++function createDigest(options) {
++    const sha512 = options.sha512;
++    if (sha512 != null) {
++        return new builder_util_runtime_1.DigestTransform(sha512, "sha512", sha512.length === 128 && !sha512.includes("+") && !sha512.includes("Z") && !sha512.includes("=") ? "hex" : "base64");
++    }
++    return options.sha2 == null ? null : new builder_util_runtime_1.DigestTransform(options.sha2, "sha256", "hex");
++}
++function verifyFile(destination, digest, cancellationToken) {
++    return cancellationToken.createPromise((resolve, reject, onCancel) => {
++        const controller = new AbortController();
++        onCancel(() => controller.abort());
++        stream_1.promises
++            .pipeline((0, fs_1.createReadStream)(destination, { signal: controller.signal }), digest, new stream_1.Writable({ write: (chunk, encoding, next) => next() }))
++            .then(() => resolve(), reject);
++    });
++}
+ function getNetSession() {
+     return require("electron").session.fromPartition(exports.NET_SESSION_NAME, {
+         cache: false,
+@@ -16,27 +43,133 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+         this.cachedSession = null;
+     }
+     async download(url, destination, options) {
+-        return await options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++        // Only bytes this call wrote are resumed: the differential downloader leaves its own output
++        // at the same destination, and an attempt that fails before headers keeps the last count.
++        const held = { bytes: 0 };
++        for (let attempt = 0;; attempt++) {
++            const offset = held.bytes;
++            try {
++                return await this.downloadFrom(url, destination, options, held);
++            }
++            catch (e) {
++                // A 416 refuses the range; the digest decides whether the file already holds the release.
++                const digest = offset > 0 && isRangeNotSatisfiable(e) ? createDigest(options) : null;
++                if (digest != null) {
++                    await verifyFile(destination, digest, options.cancellationToken);
++                    return destination;
++                }
++                if (attempt >= DOWNLOAD_STALL_RETRIES || !isDownloadStall(e)) {
++                    throw e;
++                }
++            }
++            await options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++                const timer = setTimeout(resolve, 2000 * 2 ** attempt);
++                onCancel(() => clearTimeout(timer));
++            });
++        }
++    }
++    // Appends from `offset` when the server answers the Range with 206, then checks the digest over
++    // the whole file so the bytes from earlier attempts are verified too. A 200 starts over.
++    downloadFrom(url, destination, options, held) {
++        const offset = held.bytes;
++        const cancellationToken = options.cancellationToken;
++        return new Promise((resolve, reject) => {
+             const requestOptions = {
+-                headers: options.headers || undefined,
++                headers: offset > 0 ? { ...options.headers, Range: `bytes=${offset}-` } : options.headers || undefined,
+                 redirect: "manual",
+             };
+             (0, builder_util_runtime_1.configureRequestUrl)(url, requestOptions);
+             (0, builder_util_runtime_1.configureRequestOptions)(requestOptions);
+-            this.doDownload(requestOptions, {
+-                destination,
+-                options,
+-                onCancel,
+-                callback: error => {
+-                    if (error == null) {
+-                        resolve(destination);
+-                    }
+-                    else {
+-                        reject(error);
+-                    }
+-                },
+-                responseHandler: null,
+-            }, 0);
++            let fileOut = null;
++            let upstream = null;
++            let settled = false;
++            const callback = error => {
++                if (settled) {
++                    return;
++                }
++                settled = true;
++                cancellationToken.removeListener("cancel", cancel);
++                const settle = () => (error == null ? resolve(destination) : reject(error));
++                if (fileOut == null || fileOut.closed) {
++                    settle();
++                    return;
++                }
++                // Let the bytes already handed to the file land, so a retry resumes after them.
++                fileOut.once("close", settle);
++                upstream.unpipe(fileOut);
++                if (!fileOut.destroyed && !fileOut.writableEnded) {
++                    fileOut.end();
++                }
++            };
++            // doDownload never calls onCancel, so a cancel settles here once the file is closed, and a
++            // response that arrives after it is not written. The request runs on until its idle timeout.
++            const cancel = () => callback(new builder_util_runtime_1.CancellationError());
++            cancellationToken.onCancel(cancel);
++            if (settled) {
++                return;
++            }
++            try {
++                this.doDownload(requestOptions, {
++                    destination,
++                    options,
++                    callback,
++                    responseHandler: response => {
++                        if (settled) {
++                            return;
++                        }
++                        const resumed = offset > 0 && response.statusCode === 206;
++                        const contentRange = (0, builder_util_runtime_1.safeGetHeader)(response, "content-range");
++                        if (resumed && (contentRange == null || !contentRange.startsWith(`bytes ${offset}-`))) {
++                            callback(new Error(`Cannot resume download at byte ${offset}, got Content-Range ${contentRange}`));
++                            return;
++                        }
++                        const sha2Header = (0, builder_util_runtime_1.safeGetHeader)(response, "X-Checksum-Sha2");
++                        if (sha2Header != null && options.sha2 != null && sha2Header !== options.sha2) {
++                            callback(new Error(`checksum mismatch: expected ${options.sha2} but got ${sha2Header} (X-Checksum-Sha2 header)`));
++                            return;
++                        }
++                        const start = resumed ? offset : 0;
++                        const streams = [];
++                        const contentLength = (0, builder_util_runtime_1.safeGetHeader)(response, "content-length");
++                        if (options.onProgress != null && contentLength != null) {
++                            const progress = new builder_util_runtime_1.ProgressCallbackTransform(start + parseInt(contentLength, 10), options.cancellationToken, options.onProgress);
++                            progress.transferred = start;
++                            streams.push(progress);
++                        }
++                        const digest = resumed ? null : createDigest(options);
++                        if (digest != null) {
++                            streams.push(digest);
++                        }
++                        fileOut = (0, fs_1.createWriteStream)(destination, { flags: resumed ? "a" : "w" });
++                        fileOut.once("close", () => {
++                            held.bytes = start + fileOut.bytesWritten;
++                        });
++                        upstream = response;
++                        for (const stream of streams) {
++                            stream.on("error", callback);
++                            upstream = upstream.pipe(stream);
++                        }
++                        fileOut.on("error", callback);
++                        upstream.pipe(fileOut);
++                        fileOut.on("finish", () => {
++                            if (settled) {
++                                return;
++                            }
++                            fileOut.once("close", () => {
++                                const fileDigest = resumed ? createDigest(options) : null;
++                                if (fileDigest == null) {
++                                    callback(null);
++                                    return;
++                                }
++                                verifyFile(destination, fileDigest, options.cancellationToken).then(() => callback(null), callback);
++                            });
++                        });
++                    },
++                }, 0);
++            }
++            catch (error) {
++                callback(error);
++            }
+         });
+     }
+     createRequest(options, callback) {
+@@ -61,6 +194,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          }
          return request;
      }

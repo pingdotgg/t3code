@@ -29,8 +29,8 @@ import { isWindowsRenameLock } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.10.4";
-// Minimum for --output support; older connectors exit on that flag.
-export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
+// Minimum for --output support and the eMudhra fix, which 2026.10.2 macOS builds lack.
+export const CLOUDFLARED_MIN_VERSION = "2026.10.3";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
 const CLOUDFLARED_DOWNLOAD_TIMEOUT = "10 minutes";
@@ -374,13 +374,21 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
   const resolvePathExecutable = Effect.gen(function* () {
     // Read hydrated PATH directly; ConfigProvider may have cached it before fixPath.
-    const pathValue = (yield* HostProcess.Environment).PATH?.trim();
+    const rawPathValue = (yield* HostProcess.Environment).PATH;
+    // POSIX keeps the raw value, so trimming never turns " :/bin" into an empty entry.
+    const pathValue = platform === "win32" ? rawPathValue?.trim() : rawPathValue;
     if (!pathValue) return null;
     const delimiter = platform === "win32" ? ";" : ":";
+    const cwd = yield* HostProcess.WorkingDirectory;
     for (const directory of pathValue.split(delimiter)) {
+      // POSIX shells search the working directory for an empty entry. Resolve it now: the
+      // connector may be launched from elsewhere.
+      const workingDirectoryEntry = directory === "" && platform !== "win32";
       const trimmed = directory.trim().replace(/^"|"$/gu, "");
-      if (trimmed.length === 0) continue;
-      const candidate = path.join(trimmed, executableFileName(platform));
+      if (trimmed.length === 0 && !workingDirectoryEntry) continue;
+      const candidate = workingDirectoryEntry
+        ? path.resolve(cwd, executableFileName(platform))
+        : path.join(trimmed, executableFileName(platform));
       if (!(yield* isExecutableFile(candidate))) continue;
       const available = yield* compatibleCandidate(candidate, "path");
       if (available) return available;
