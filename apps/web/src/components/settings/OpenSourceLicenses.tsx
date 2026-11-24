@@ -214,8 +214,12 @@ function LicenseHeaderAction({
           }}
           onChange={(event) => onQueryChange(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            if (event.key !== "Escape") return;
+            if (event.nativeEvent.isComposing || event.keyCode === 229) {
+              // Base UI's dismiss skips composing keys but not keyCode 229, so Settings would close.
+              event.stopPropagation();
               return;
+            }
             event.preventDefault();
             event.stopPropagation();
             // Unmounting the focused input lets the dialog move focus to a control whose

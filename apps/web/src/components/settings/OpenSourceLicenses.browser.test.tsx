@@ -41,9 +41,12 @@ it("Esc in the license search closes it without closing Settings", async () => {
   await openSearch();
   await search.fill("react");
 
-  for (const composition of [
-    { key: "Escape", isComposing: true, keyCode: 27 },
-    { key: "Escape", isComposing: false, keyCode: 229 },
+  for (const { compositionEnd, ...composition } of [
+    { key: "Escape", isComposing: true, keyCode: 27, compositionEnd: false },
+    // Safari ends the composition just before the Escape keydown.
+    { key: "Escape", isComposing: false, keyCode: 229, compositionEnd: true },
+    // A 229 Escape outside the dialog's composition window must not reach it either.
+    { key: "Escape", isComposing: false, keyCode: 229, compositionEnd: false },
   ]) {
     const keydown = new KeyboardEvent("keydown", {
       ...composition,
@@ -51,11 +54,11 @@ it("Esc in the license search closes it without closing Settings", async () => {
       cancelable: true,
     });
     await act(() => {
-      // Safari ends the composition just before the Escape keydown.
-      if (!composition.isComposing)
+      if (compositionEnd)
         search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
       search.element().dispatchEvent(keydown);
     });
+    await expect.element(settings).toHaveAttribute("data-open");
     expect(keydown.defaultPrevented).toBe(false);
     await expect.element(search).toHaveValue("react");
     await expect.element(search).toHaveFocus();
