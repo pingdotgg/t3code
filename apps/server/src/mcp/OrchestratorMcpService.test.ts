@@ -5652,7 +5652,11 @@ describe("OrchestratorMcpService thread list", () => {
       : [],
   });
   const shells = [
-    shell("thread:a-snoozed", "project:a", true),
+    {
+      ...shell("thread:a-snoozed", "project:a", true),
+      branch: "agent/renamed",
+      worktreePath: "/projects/agent-renamed",
+    },
     shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true, true, true),
     {
@@ -5740,6 +5744,13 @@ describe("OrchestratorMcpService thread list", () => {
         snoozed: true,
       });
       assert.equal(listed.projectId, null);
+      assert.deepStrictEqual(
+        listed.threads.map(({ branch, worktreePath }) => [branch, worktreePath]),
+        [
+          ["agent/renamed", "/projects/agent-renamed"],
+          [null, null],
+        ],
+      );
       assert.deepStrictEqual(
         listed.threads.map((thread) => [thread.threadId, thread.projectId]),
         [
