@@ -2730,7 +2730,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         status: "running",
         result: null,
       };
-      const parent = parentProjection([]);
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -2739,10 +2738,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
-                ? ({
-                    ...parent,
-                    thread: { ...parent.thread, worktreePath: null },
-                  } as OrchestrationV2ThreadProjection)
+                ? (() => {
+                    const parent = parentProjection(commands.length > 0 ? [task] : []);
+                    return {
+                      ...parent,
+                      thread: { ...parent.thread, worktreePath: null },
+                    } as OrchestrationV2ThreadProjection;
+                  })()
                 : childProjection,
             ),
           dispatch: (command) =>
@@ -2779,11 +2781,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           detail: "fatal: not a git repository (or any of the parent directories): .git",
         });
       const layerService = OrchestratorMcpService.layer.pipe(
-        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            isNonGitProject: () => Effect.succeed(true),
+          }),
+        ),
         Layer.provide(
           Layer.mock(GitVcsDriver.GitVcsDriver)({
             resolveCommit: ({ cwd }) => Effect.fail(notARepository(cwd)),
-            repositoryRoot: (cwd) => Effect.fail(notARepository(cwd)),
           }),
         ),
         Layer.provide(dependencies),
