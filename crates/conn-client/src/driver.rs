@@ -37,9 +37,12 @@ const PING_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MISSED_PONGS: u8 = 2;
 
 pub(crate) enum Command {
-    SubscribeShell,
+    SubscribeShell {
+        include_idle_subagents: bool,
+    },
     SubscribeServerConfig,
     SubscribeThread(String),
+    RefreshThread(String),
     UnsubscribeThread(String),
     SubscribePanelRequests(Option<String>),
     UnsubscribePanelRequests,
@@ -100,6 +103,7 @@ struct DriverState {
     backoff: Backoff,
     next_request_id: i64,
     shell_subscribed: bool,
+    include_idle_subagents: bool,
     shell_after_sequence: Option<i64>,
     shell_request_id: Option<RequestId>,
     server_config_subscribed: bool,
@@ -132,6 +136,7 @@ impl DriverState {
             backoff: Backoff::new(),
             next_request_id: 1,
             shell_subscribed: false,
+            include_idle_subagents: false,
             shell_after_sequence: None,
             shell_request_id: None,
             server_config_subscribed: false,
@@ -185,13 +190,33 @@ impl DriverState {
         }
     }
 
+    fn reset_thread(&mut self, thread_id: &str) -> Option<RequestId> {
+        self.thread_last_sequences.remove(thread_id);
+        self.thread_subs
+            .insert(
+                thread_id.to_owned(),
+                ThreadSubState {
+                    after_sequence: None,
+                    request_id: None,
+                    subscribed_at: None,
+                },
+            )
+            .and_then(|sub| sub.request_id)
+    }
+
     fn handle_offline_command(&mut self, cmd: Command) {
         match cmd {
-            Command::SubscribeShell => {
+            Command::SubscribeShell {
+                include_idle_subagents,
+            } => {
+                self.include_idle_subagents = include_idle_subagents;
                 self.shell_subscribed = true;
             }
             Command::SubscribeServerConfig => {
                 self.server_config_subscribed = true;
+            }
+            Command::RefreshThread(thread_id) => {
+                self.reset_thread(&thread_id);
             }
             Command::SubscribeThread(thread_id) => {
                 let last_seq = self.thread_last_sequences.get(&thread_id).copied();
@@ -652,7 +677,10 @@ where
     S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
     match cmd {
-        Command::SubscribeShell => {
+        Command::SubscribeShell {
+            include_idle_subagents,
+        } => {
+            state.include_idle_subagents = include_idle_subagents;
             state.shell_subscribed = true;
             if state.shell_request_id.is_none() {
                 send_shell_subscribe(state, ws_write).await?;
@@ -663,6 +691,13 @@ where
             if state.server_config_request_id.is_none() {
                 send_server_config_subscribe(state, ws_write).await?;
             }
+        }
+        Command::RefreshThread(thread_id) => {
+            if let Some(request_id) = state.reset_thread(&thread_id) {
+                state.in_flight_streams.remove(&request_id);
+                send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
+            }
+            send_thread_subscribe(state, &thread_id, ws_write).await?;
         }
         Command::SubscribeThread(thread_id) => {
             let needs_send = match state.thread_subs.get(&thread_id) {
@@ -764,7 +799,7 @@ where
         http_snapshot_fallback: None,
         known_project_identities: None,
         request_completion_marker: Some(true),
-        omit_idle_subagents: Some(true),
+        omit_idle_subagents: Some(!state.include_idle_subagents),
         omit_older_settled: Some(true),
     };
     let payload = serde_json::to_value(&input)

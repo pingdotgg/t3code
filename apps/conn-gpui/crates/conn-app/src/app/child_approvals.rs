@@ -70,6 +70,7 @@ impl ConnApp {
             // The open thread keeps its own stream.
             if let Some(connection) = connection
                 && self.subscribed_thread_id.as_deref() != Some(id.as_str())
+                && !self.offline.watching(self.cache_env(&id), &id)
             {
                 connection.unsubscribe_thread(&id);
             }

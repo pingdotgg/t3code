@@ -226,7 +226,8 @@ Conn ends a stopped run only on the provider's terminal event: the Codex adapter
 reply, then waits up to 10 s for the terminal; past that the Stop is marked unresponsive and
 the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff` lists the
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
-match T3 is open.
+match T3 is open. After Stop completes, the transcript check waits for T3 to commit the
+run's checkpoint so the transcript and snapshot include the same final row.
 
 **WebSocket heartbeat as T3 (2026-11-23):** the server no longer closes a socket after 60 s
 without inbound frames. As in T3, the client pings every 5 s and decides when the server is

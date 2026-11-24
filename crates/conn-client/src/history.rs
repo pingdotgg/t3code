@@ -70,6 +70,63 @@ impl Connection {
         self.get_history_json(url).await
     }
 
+    /// Reads a history page for the native message cache, omitting tool work.
+    ///
+    /// # Errors
+    /// Returns the URL, transport, authentication or decoding error.
+    pub async fn fetch_thread_conversation_page(
+        &self,
+        thread_id: &str,
+        cursor: &str,
+    ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
+        let mut url = build_thread_history_url(&self.http_base_url, thread_id, cursor)?;
+        url.query_pairs_mut().append_pair("view", "messages");
+        self.get_history_json(url).await
+    }
+
+    /// Loads the unfiltered page directly before a cached message. Indexed conversation
+    /// pages locate its neighborhood even when the cache starts on an assistant reply.
+    ///
+    /// # Errors
+    /// Returns a transport or protocol error if the boundary no longer exists.
+    pub async fn fetch_history_before_message(
+        &self,
+        thread: &str,
+        snapshot_cursor: &str,
+        anchor: &str,
+    ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
+        let mut cursor = snapshot_cursor.to_owned();
+        let mut visited = std::collections::HashSet::new();
+        let mut indexed = true;
+        loop {
+            if !visited.insert((indexed, cursor.clone())) {
+                return Err(ClientError::Connection(
+                    "repeated history cursor".to_owned(),
+                ));
+            }
+            let mut page = if indexed {
+                self.fetch_thread_conversation_page(thread, &cursor).await?
+            } else {
+                self.fetch_thread_history_page(thread, &cursor).await?
+            };
+            if let Some(i) = page
+                .items
+                .iter()
+                .position(|row| row.source_item_id == anchor)
+            {
+                if indexed {
+                    indexed = false;
+                    continue;
+                }
+                page.items.truncate(i);
+                return Ok(page);
+            }
+            cursor = page.next_cursor.ok_or_else(|| {
+                ClientError::Connection("cached message is outside server history".to_owned())
+            })?;
+        }
+    }
+
     /// Fetches the ordered prompt index without downloading transcript bodies.
     ///
     /// # Errors

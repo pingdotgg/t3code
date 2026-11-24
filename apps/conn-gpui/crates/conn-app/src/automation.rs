@@ -119,6 +119,13 @@ async fn run(
         "dump" => app
             .read_with(cx, |app, cx| app.automation_dump(cx))
             .map_err(|e| err(e.into())),
+        "connect-saved-environment" => {
+            app.update(cx, |app, cx| {
+                app.automation_connect_saved(text(cmd, "id"), cx)
+            })
+            .map_err(|e| err(e.into()))??;
+            Ok(json!(true))
+        }
         "seed-big-thread" => {
             let turns = cmd
                 .get("turns")

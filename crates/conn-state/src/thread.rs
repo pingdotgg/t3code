@@ -520,6 +520,7 @@ pub struct ThreadState {
     pub revision: u64,
     /// Opaque server cursor for fetching older history pages before `entries`.
     pub history_cursor: Option<String>,
+    history_prefix_len: usize,
     /// True when older history pages exist on the server before `entries`.
     pub has_more_history: bool,
     /// True while an on-demand earlier-history page request is in flight.
@@ -958,6 +959,7 @@ impl ThreadState {
             }
         }
         self.entries = entries;
+        self.history_prefix_len = 0;
         self.history_cursor = None;
         self.has_more_history = false;
         self.loading_earlier = false;
@@ -1037,6 +1039,7 @@ impl ThreadState {
 
         let prepended_count = prepended.len();
         if prepended_count > 0 {
+            self.history_prefix_len += prepended_count;
             prepended.append(&mut self.entries);
             self.entries = prepended;
         }
@@ -1046,6 +1049,39 @@ impl ThreadState {
         self.loading_earlier = false;
         self.revision = next_revision();
         prepended_count
+    }
+
+    /// Attaches chronological cached messages before the current timeline. An overlap
+    /// marks the end of the prefix, so live entries keep their current contents.
+    pub fn prepend_cached_messages(&mut self, mut entries: Vec<TimelineEntry>) {
+        let current: HashSet<_> = self.entries.iter().map(TimelineEntry::id).collect();
+        if let Some(overlap) = entries
+            .iter()
+            .position(|entry| current.contains(entry.id()))
+        {
+            entries.truncate(overlap);
+        }
+        if !entries.is_empty() {
+            self.history_prefix_len += entries.len();
+            entries.append(&mut self.entries);
+            self.entries = entries;
+            self.revision = next_revision();
+        }
+    }
+
+    /// Number of timeline rows loaded before the live projection.
+    pub fn history_prefix_len(&self) -> usize {
+        self.history_prefix_len.min(self.entries.len())
+    }
+
+    /// Reconciles the preview after backfill without treating its rows as live updates.
+    pub fn replace_cached_prefix(&mut self, rows: Vec<TimelineEntry>) {
+        let count = self.history_prefix_len();
+        if self.entries[..count] != rows {
+            self.history_prefix_len = rows.len();
+            self.entries.splice(..count, rows);
+            self.revision = next_revision();
+        }
     }
 
     /// Applies one `subscribeThread` stream item.

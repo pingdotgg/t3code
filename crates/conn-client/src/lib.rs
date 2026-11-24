@@ -498,7 +498,16 @@ impl Connection {
     /// Items arrive as [`ClientEvent::Shell`]. Automatically resubscribes after reconnect using
     /// the last observed sequence as `afterSequence`.
     pub fn subscribe_shell(&self) {
-        let _ = self.cmd_tx.send(Command::SubscribeShell);
+        let _ = self.cmd_tx.send(Command::SubscribeShell {
+            include_idle_subagents: false,
+        });
+    }
+
+    /// Includes idle children so an unsettled subagent can be cached before it is opened.
+    pub fn subscribe_shell_with_idle_subagents(&self) {
+        let _ = self.cmd_tx.send(Command::SubscribeShell {
+            include_idle_subagents: true,
+        });
     }
 
     /// Subscribes to `subscribeServerConfig`, which sends the server config and then every
@@ -518,6 +527,13 @@ impl Connection {
         let _ = self
             .cmd_tx
             .send(Command::SubscribeThread(thread_id.to_owned()));
+    }
+
+    /// Requests a new bounded projection even when a previous stream can resume.
+    pub fn refresh_thread(&self, thread_id: &str) {
+        let _ = self
+            .cmd_tx
+            .send(Command::RefreshThread(thread_id.to_owned()));
     }
 
     /// Interrupts and removes the thread subscription for `thread_id`.
@@ -964,6 +980,11 @@ mod tests {
             json!(true),
             "resubscribe must keep acceptBoundedSnapshot=true"
         );
+
+        conn.refresh_thread("thread-1");
+        let fresh = sub_payloads_rx.recv().await.ok_or("missing refresh")?;
+        assert!(fresh.get("afterSequence").is_none());
+        assert_eq!(fresh["acceptBoundedSnapshot"], json!(true));
 
         // Typed orchestration.getTurnItem RPC.
         let item = conn

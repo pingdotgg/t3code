@@ -50,6 +50,7 @@ use gpui_kit::{
 };
 
 use self::cache::{CachedRow, RowCache, VirtualItem};
+pub(crate) use self::cache::{ThreadOutline, TocEntry};
 use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foreground};
 pub(crate) use self::composer::{BranchAction, BranchContext, SendDispatch};
 use self::composer::{Composer, ComposerEvent};
@@ -114,6 +115,8 @@ struct UserBubble<'a> {
     grouped_with_previous: bool,
     grouped_with_next: bool,
 }
+
+pub(crate) const OFFLINE_PROMPT_NOTICE: &str = "Connect to load this message";
 
 /// Events emitted by [`ChatView`] to the host shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -192,6 +195,8 @@ pub(crate) enum ChatEvent {
     SlashCommand(String),
     /// Request the next older history page for the active bounded thread.
     LoadEarlierHistory,
+    JumpToPrompt(String),
+    ReturnToLatest,
     /// Promote a queued message to steer the active turn (or start it when stopped).
     PromoteQueuedMessage {
         run_id: String,
@@ -250,6 +255,9 @@ pub(crate) struct ChatView {
     /// Project root; tool row paths under it show relative, as in Conn.
     workspace_root: Option<String>,
     list_state: ListState,
+    whole_outline: Option<std::sync::Arc<ThreadOutline>>,
+    anchored_prompt: Option<String>,
+    pending_prompt: Option<String>,
     toc_hovered_slot: Option<usize>,
     toc_pinned_slot: Option<usize>,
     editing_queued_run_id: Option<String>,
@@ -320,6 +328,9 @@ pub(crate) struct TimelineMetrics {
     pub(crate) total_entries: usize,
     pub(crate) virtual_items: usize,
     pub(crate) toc_turns: usize,
+    pub(crate) anchor_prompt: Option<String>,
+    pub(crate) top_prompt: Option<String>,
+    pub(crate) jump_error: Option<String>,
     pub(crate) parsed_markdown_rows: usize,
     pub(crate) active_toc_turn: Option<usize>,
     pub(crate) scroll_top_item: usize,
@@ -476,6 +487,9 @@ impl ChatView {
             model_label: "Default model".to_owned(),
             workspace_root: None,
             list_state,
+            whole_outline: None,
+            anchored_prompt: None,
+            pending_prompt: None,
             toc_hovered_slot: None,
             toc_pinned_slot: None,
             editing_queued_run_id: None,
@@ -644,6 +658,12 @@ impl ChatView {
             .update(cx, |c, cx| c.set_draft_mode(is_draft, launching, cx));
     }
 
+    pub(crate) fn clear_offline_prompt_notice(&mut self, cx: &mut Context<'_, Self>) {
+        if self.error_banner.as_deref() == Some(OFFLINE_PROMPT_NOTICE) {
+            self.set_error(None, cx);
+        }
+    }
+
     /// Displays (or clears) a dismissible error banner directly above the composer.
     pub(crate) fn set_error(&mut self, error: Option<String>, cx: &mut Context<'_, Self>) {
         if self.error_banner != error {
@@ -680,6 +700,8 @@ impl ChatView {
             self.synced_revision = None;
             self.has_thread = false;
             self.thread_id = None;
+            self.anchored_prompt = None;
+            self.pending_prompt = None;
             self.synchronized = true;
             self.working = false;
             self.has_more_history = false;
@@ -713,6 +735,8 @@ impl ChatView {
 
         let switched_thread = self.thread_id.as_deref() != Some(thread.thread_id.as_str());
         if switched_thread {
+            self.anchored_prompt = None;
+            self.pending_prompt = None;
             self.thread_id = Some(thread.thread_id.clone());
             self.expanded_ids.clear();
             self.wrapped_code_keys.clear();
@@ -831,51 +855,52 @@ impl ChatView {
         self.schedule_typing_guard_idle(cx);
         self.sync_question_panel(thread);
         self.sync_working_timer(cx);
-        let sync_start = std::time::Instant::now();
-        let stats = self.cache.sync(
-            &thread.entries,
-            &self.entry_timings,
-            &self.turn_checkpoints,
-            self.working,
-            self.has_more_history,
-            self.loading_earlier,
-        );
-        if let Some((perf_thread, opened_at)) = &self.perf_open
-            && perf_thread == &thread.thread_id
-        {
-            conn_client::perf_log!(
-                "app.chat_synced thread={perf_thread} entries={} items={} synchronized={} row_cache_ms={:.1} +{:.1}ms",
-                stats.total,
-                stats.new_item_count,
-                thread.synchronized,
-                conn_client::perf::ms_since(sync_start),
-                conn_client::perf::ms_since(*opened_at),
+        if self.anchored_prompt.is_none() {
+            let sync_start = std::time::Instant::now();
+            let stats = self.cache.sync(
+                &thread.entries,
+                &self.entry_timings,
+                &self.turn_checkpoints,
+                self.working,
+                self.has_more_history,
+                self.loading_earlier,
             );
-        }
+            if let Some((perf_thread, opened_at)) = &self.perf_open
+                && perf_thread == &thread.thread_id
+            {
+                conn_client::perf_log!(
+                    "app.chat_synced thread={perf_thread} entries={} items={} synchronized={} row_cache_ms={:.1} +{:.1}ms",
+                    stats.total,
+                    stats.new_item_count,
+                    thread.synchronized,
+                    conn_client::perf::ms_since(sync_start),
+                    conn_client::perf::ms_since(*opened_at),
+                );
+            }
 
-        if switched_thread || stats.old_item_count == 0 {
-            self.list_state.reset(stats.new_item_count);
-            self.list_state.set_follow_mode(FollowMode::Tail);
-            self.list_state.scroll_to_end();
-        } else if stats.splice_start < stats.splice_old_end
-            || stats.splice_start < stats.splice_new_end
-        {
-            self.list_state.splice(
-                stats.splice_start..stats.splice_old_end,
-                stats.splice_new_end - stats.splice_start,
-            );
-            if !was_following_tail && stats.prepended_delta != 0 && stats.new_item_count > 0 {
-                let next_ix = prev_scroll
-                    .item_ix
-                    .saturating_add_signed(stats.prepended_delta)
-                    .min(stats.new_item_count - 1);
-                self.list_state.scroll_to(ListOffset {
-                    item_ix: next_ix,
-                    offset_in_item: prev_scroll.offset_in_item,
-                });
+            if switched_thread || stats.old_item_count == 0 {
+                self.list_state.reset(stats.new_item_count);
+                self.list_state.set_follow_mode(FollowMode::Tail);
+                self.list_state.scroll_to_end();
+            } else if stats.splice_start < stats.splice_old_end
+                || stats.splice_start < stats.splice_new_end
+            {
+                self.list_state.splice(
+                    stats.splice_start..stats.splice_old_end,
+                    stats.splice_new_end - stats.splice_start,
+                );
+                if !was_following_tail && stats.prepended_delta != 0 && stats.new_item_count > 0 {
+                    let next_ix = prev_scroll
+                        .item_ix
+                        .saturating_add_signed(stats.prepended_delta)
+                        .min(stats.new_item_count - 1);
+                    self.list_state.scroll_to(ListOffset {
+                        item_ix: next_ix,
+                        offset_in_item: prev_scroll.offset_in_item,
+                    });
+                }
             }
         }
-
         cx.notify();
         let working = self.working;
         let can_resume = !working && self.interrupted_run_id.is_some();
@@ -1204,12 +1229,86 @@ impl ChatView {
         }
     }
 
+    pub(crate) fn set_outline(
+        &mut self,
+        outline: Option<std::sync::Arc<ThreadOutline>>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let changed = match (&self.whole_outline, &outline) {
+            (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            self.whole_outline = outline;
+            self.toc_hovered_slot = None;
+            self.toc_pinned_slot = None;
+            cx.notify();
+        }
+    }
+
+    fn toc_entries(&self) -> &[TocEntry] {
+        self.whole_outline
+            .as_ref()
+            .map_or_else(|| self.cache.toc(), |outline| outline.markers.as_slice())
+    }
+
+    fn prompt_index(&self, id: &str) -> Option<usize> {
+        self.cache.items().iter().position(|item|matches!(item, VirtualItem::User { row_idx,.. } if self.cache.rows()[*row_idx].entry.id()==id))
+    }
+
+    pub(super) fn jump_to_prompt(&mut self, id: &str, cx: &mut Context<'_, Self>) -> Option<usize> {
+        self.pending_prompt = None;
+        self.set_error(None, cx);
+        if let Some(index) = self.prompt_index(id) {
+            self.anchored_prompt = Some(id.to_owned());
+            self.jump_to_toc_item(index, cx);
+            Some(index)
+        } else {
+            self.pending_prompt = Some(id.to_owned());
+            cx.emit(ChatEvent::JumpToPrompt(id.to_owned()));
+            None
+        }
+    }
+
+    pub(crate) fn awaiting_prompt(&self, id: &str) -> bool {
+        self.pending_prompt.as_deref() == Some(id)
+    }
+
+    pub(crate) fn show_prompt_window(
+        &mut self,
+        id: &str,
+        entries: &[TimelineEntry],
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.awaiting_prompt(id) {
+            return;
+        }
+        if !entries
+            .iter()
+            .any(|e| matches!(e,TimelineEntry::User{id:target,..} if target==id))
+        {
+            self.set_error(Some("This message is no longer available".to_owned()), cx);
+            return;
+        }
+        let stats = self.cache.sync(
+            entries,
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+            false,
+            false,
+        );
+        self.list_state.reset(stats.new_item_count);
+        self.jump_to_prompt(id, cx);
+    }
+
     /// Pins or unpins the minimap preview on the active tick (used by automation / inspection).
     #[cfg(feature = "automation")]
     pub(crate) fn set_toc_pinned(&mut self, pinned: bool, cx: &mut Context<'_, Self>) {
         let next = if pinned {
             let active = self.active_toc_index();
-            let sampled = toc::sample_tick_indices(self.cache.toc().len(), active);
+            let sampled = toc::sample_tick_indices(self.toc_entries().len(), active);
             active
                 .and_then(|idx| sampled.iter().position(|&s| s == idx))
                 .or_else(|| (!sampled.is_empty()).then_some(0))
@@ -1241,25 +1340,29 @@ impl ChatView {
         &mut self,
         turn_number: usize,
         cx: &mut Context<'_, Self>,
-    ) -> Result<usize, String> {
+    ) -> Result<Option<usize>, String> {
         let Some(entry) = self
-            .cache
-            .toc()
+            .toc_entries()
             .iter()
             .find(|entry| entry.turn_number == turn_number)
         else {
             return Err(format!(
                 "turn {turn_number} out of range (1..={})",
-                self.cache.toc().len()
+                self.toc_entries().len()
             ));
         };
-        let item_index = entry.item_index;
-        self.jump_to_toc_item(item_index, cx);
-        Ok(item_index)
+        let id = entry.entry_id.clone();
+        Ok(self.jump_to_prompt(&id, cx))
     }
 
     /// Jumps back to the live tail and re-engages bottom auto-follow.
     pub(crate) fn scroll_to_latest(&mut self, cx: &mut Context<'_, Self>) {
+        self.pending_prompt = None;
+        if self.anchored_prompt.take().is_some() {
+            self.synced_revision = None;
+            cx.emit(ChatEvent::ReturnToLatest);
+        }
+        self.set_error(None, cx);
         self.list_state.set_follow_mode(FollowMode::Tail);
         self.list_state.scroll_to_end();
         cx.notify();
@@ -1267,7 +1370,7 @@ impl ChatView {
 
     /// Emits [`ChatEvent::LoadEarlierHistory`] once while more history is available and idle.
     fn request_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
-        if !self.has_more_history || self.loading_earlier {
+        if self.anchored_prompt.is_some() || !self.has_more_history || self.loading_earlier {
             return;
         }
         self.loading_earlier = true;
@@ -1299,17 +1402,17 @@ impl ChatView {
             || self.list_state.is_scrolled_to_end() == Some(true)
     }
 
-    /// Index into `self.cache.toc()` for the turn currently visible in the viewport.
+    /// Index into the displayed outline for the turn at the top of the viewport.
     fn active_toc_index(&self) -> Option<usize> {
-        let toc = self.cache.toc();
-        if toc.is_empty() {
-            return None;
+        let entries = self.toc_entries();
+        if self.anchored_prompt.is_none() && self.is_at_bottom() {
+            return entries.len().checked_sub(1);
         }
-        if self.is_at_bottom() {
-            return Some(toc.len() - 1);
+        let top = self.list_state.logical_scroll_top().item_ix;
+        match &self.whole_outline {
+            Some(outline) => self.cache.active_outline_index(top, outline),
+            None => self.cache.active_toc_index(top),
         }
-        let top = self.list_state.logical_scroll_top();
-        self.cache.active_toc_index(top.item_ix)
     }
 
     /// Returns diagnostic metrics for the virtualized timeline & TOC rail.
@@ -1318,12 +1421,15 @@ impl ChatView {
         let top = self.list_state.logical_scroll_top();
         let active_toc_turn = self
             .active_toc_index()
-            .and_then(|idx| self.cache.toc().get(idx))
+            .and_then(|idx| self.toc_entries().get(idx))
             .map(|entry| entry.turn_number);
         TimelineMetrics {
             total_entries: self.cache.rows().len(),
             virtual_items: self.cache.items().len(),
-            toc_turns: self.cache.toc().len(),
+            toc_turns: self.toc_entries().len(),
+            anchor_prompt: self.anchored_prompt.clone(),
+            top_prompt: self.cache.prompt_at(top.item_ix).map(str::to_owned),
+            jump_error: self.error_banner.clone(),
             parsed_markdown_rows: self.cache.parsed_markdown_count(),
             active_toc_turn,
             scroll_top_item: top.item_ix,
@@ -3307,7 +3413,8 @@ impl Render for ChatView {
                 self.list_state.remeasure_items(count - 1..count);
             }
         }
-        let timeline: AnyElement = if self.cache.items().is_empty() && !self.synchronized {
+        let empty = self.cache.items().is_empty() && self.toc_entries().is_empty();
+        let timeline: AnyElement = if empty && !self.synchronized {
             let muted = hsla(self.tokens.muted_foreground);
             div()
                 .id("chat-timeline-scroll")
@@ -3334,7 +3441,7 @@ impl Render for ChatView {
                         .child("Loading thread…"),
                 )
                 .into_any_element()
-        } else if self.cache.items().is_empty() {
+        } else if empty {
             div()
                 .id("chat-timeline-scroll")
                 .a11y(
@@ -3370,7 +3477,7 @@ impl Render for ChatView {
 
             let active_toc = self.active_toc_index();
             let hovered_slot = self.toc_hovered_slot.or(self.toc_pinned_slot);
-            let show_latest_pill = !self.is_at_bottom();
+            let show_latest_pill = self.anchored_prompt.is_some() || !self.is_at_bottom();
 
             let mut container = div()
                 .id("chat-timeline-scroll")
@@ -3401,7 +3508,7 @@ impl Render for ChatView {
                 );
 
             if let Some(toc_overlay) = toc::render_toc_overlay(
-                self.cache.toc(),
+                self.toc_entries(),
                 active_toc,
                 hovered_slot,
                 &self.tokens,

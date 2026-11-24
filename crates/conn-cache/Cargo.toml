@@ -1,0 +1,23 @@
+[package]
+name = "conn-cache"
+description = "SQLite message cache for Conn's native clients."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+conn-client.workspace = true
+conn-contract.workspace = true
+conn-state.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "json"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
