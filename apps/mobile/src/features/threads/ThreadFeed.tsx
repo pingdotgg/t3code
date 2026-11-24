@@ -3446,6 +3446,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
 
+    if (presentation.kind === "workflowRun") {
+      navigation.navigate("WorkflowRun", {
+        environmentId: presentation.environmentId,
+        runId: presentation.runId,
+      });
+      return;
+    }
+
     if (presentation.href) {
       if (/^https?:\/\//i.test(presentation.href) && isPdfFile({ name: presentation.href })) {
         openPreview(markdownLinkScope, {

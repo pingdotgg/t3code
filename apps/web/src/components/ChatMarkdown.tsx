@@ -22,6 +22,7 @@ import {
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
 import { chatMarkdownImageSource } from "@t3tools/shared/markdownHast";
+import { parseWorkflowRunHref } from "@t3tools/shared/workflowRunLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import {
@@ -405,14 +406,6 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
     titleClassName: "text-red-600 dark:text-red-400",
   },
 };
-
-function parseWorkflowRunLink(href: string | undefined) {
-  if (!href?.startsWith("/workflows?")) return null;
-  const { searchParams } = new URL(href, "https://example.invalid");
-  const env = searchParams.get("env");
-  const run = searchParams.get("run");
-  return env && run ? { env, run } : null;
-}
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
@@ -1334,7 +1327,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
-    const workflowRun = parseWorkflowRunLink(href);
+    const workflowRun = parseWorkflowRunHref(href);
     if (workflowRun) {
       return (
         <Link
