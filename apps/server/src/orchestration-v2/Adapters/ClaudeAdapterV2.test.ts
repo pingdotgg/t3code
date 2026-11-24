@@ -1353,6 +1353,149 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
     ),
   );
 
+  it.effect(
+    "an ask-rule edit approval in Full access shows the change, not just the file name",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-edit-approval-",
+        });
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-edit-approval"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const threadId = ThreadId.make("thread-claude-edit-approval");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-edit-approval"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-edit-approval"),
+            text: "Edit AGENTS.md.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        assert.equal(openedOptions?.permissionMode, "bypassPermissions");
+        const canUseTool = openedOptions?.canUseTool;
+        assert.isFunction(canUseTool);
+
+        const requestEvent = yield* runtime.events.pipe(
+          Stream.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          ),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const edit = {
+          file_path: "/workspace/AGENTS.md",
+          old_string: "Use tabs.",
+          new_string: "Use two spaces.",
+        };
+        const decision = yield* Effect.promise(() =>
+          canUseTool!("Edit", edit, {
+            signal: new AbortController().signal,
+            toolUseID: "tool-edit-ask-rule",
+            requestId: "request-edit-ask-rule",
+            // What Claude Code passes for an Edit that a permissions.ask rule stopped.
+            title: "AGENTS.md",
+          }),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Fiber.join(requestEvent).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
+        );
+        assert.equal(first.type, "request", "the edit ran without asking");
+        if (first.type !== "request") return;
+        const event = first.event.find((event) => event.type === "runtime_request.updated");
+        assert.equal(event?.runtimeRequest.kind, "file-change");
+        const approval = first.event.findLast((event) => event.type === "turn_item.updated");
+        const turnItem =
+          approval?.turnItem.type === "approval_request" ? approval.turnItem : undefined;
+        const shown = [turnItem?.prompt, turnItem?.reason]
+          .filter((text) => text !== undefined)
+          .join("\n");
+        assert.include(shown, edit.old_string, "the card does not show the text being replaced");
+        assert.include(shown, edit.new_string, "the card does not show the replacement text");
+
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event!.runtimeRequest.id,
+          decision: "accept",
+        });
+        assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps an MCP approval prompt on a code point boundary", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
