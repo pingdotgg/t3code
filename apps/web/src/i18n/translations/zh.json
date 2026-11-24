@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "正在启动 {provider} MCP 服务器",
   "fedaa29ff8815a77": "正在加载 {provider} 钩子",
   "57025ae4de5beb57": "正在加载 {provider} 规则和技能",
+  "1cbfbcad9f0d04fe": "正在恢复 {provider} 会话",
   "4729a188600f1501": "正在连接 {provider}",
   "8c8977097681630f": "正在启动 {provider}",
   "f1d27d127ab27ac6": "正在启动",

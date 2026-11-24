@@ -5957,12 +5957,26 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const startup = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" ||
+            (event.type === "provider_turn.updated" && event.providerTurn.status === "running"),
+        ),
+        Stream.runCollect,
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
+      // Loading the thread into the replacement agent is reported, and cleared before the turn runs.
+      assert.deepEqual(
+        Array.from(startup, (event) =>
+          event.type === "provider_session.updated"
+            ? (event.providerSession.startupPhase ?? null)
+            : "turn running",
+        ).slice(0, 3),
+        ["resume", null, "turn running"],
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 

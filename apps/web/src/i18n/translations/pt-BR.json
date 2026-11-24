@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Iniciando servidores MCP do {provider}",
   "fedaa29ff8815a77": "Carregando hooks do {provider}",
   "57025ae4de5beb57": "Carregando regras e skills do {provider}",
+  "1cbfbcad9f0d04fe": "Retomando a sessão do {provider}",
   "4729a188600f1501": "Conectando ao {provider}",
   "8c8977097681630f": "Iniciando {provider}",
   "f1d27d127ab27ac6": "Iniciando",

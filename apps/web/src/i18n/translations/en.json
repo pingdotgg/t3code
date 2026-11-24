@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Starting {provider} MCP servers",
   "fedaa29ff8815a77": "Loading {provider} hooks",
   "57025ae4de5beb57": "Loading {provider} rules and skills",
+  "1cbfbcad9f0d04fe": "Resuming {provider} session",
   "4729a188600f1501": "Connecting to {provider}",
   "8c8977097681630f": "Starting {provider}",
   "f1d27d127ab27ac6": "Starting",
