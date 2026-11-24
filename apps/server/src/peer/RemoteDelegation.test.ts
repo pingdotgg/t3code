@@ -1833,7 +1833,7 @@ it.effect.each([
         const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
         // The thread's final page starts at its canonical 100-item boundary.
         const tailPosition = Math.floor((timeline.length - 1) / 100) * 100 - 1;
-        expect(pages.at(0)?.afterPosition).toBeUndefined();
+        expect(pages.at(0)?.afterPosition).toBe(-1);
         expect(
           pages.every(
             (read) =>

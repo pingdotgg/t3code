@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { T, useGT } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
@@ -6,7 +7,6 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
@@ -28,6 +28,7 @@ const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest
     url: detail.url,
     openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
     position: { x: event.clientX, y: event.clientY },
+    source: contextMenuSourceOf(event),
   });
 };
 
@@ -132,6 +133,7 @@ export function PullRequestDetailCrumbs({
   onBack: (() => void) | undefined;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   const ready = detail !== null && toneClassName !== null;
   return (
     <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
@@ -155,7 +157,13 @@ export function PullRequestDetailCrumbs({
                   repositoryUrl ? (
                     <button
                       type="button"
-                      onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+                      onClick={(event) =>
+                        void openLink(repositoryUrl, { event }).catch(console.error)
+                      }
+                      onAuxClick={(event) => {
+                        if (event.button === 1)
+                          void openLink(repositoryUrl, { event }).catch(console.error);
+                      }}
                       className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                     >
                       {detail.repository}

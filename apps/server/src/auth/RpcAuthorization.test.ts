@@ -54,6 +54,13 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets only a session that operates threads approve sending a feedback report", () => {
+    // Guest links have no RPC session, and read-only sessions lack this scope.
+    expect(requiredScopeForRpcMethod(WS_METHODS.agentFeedbackAnswerRequest)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
       AuthOrchestrationOperateScope,
@@ -81,6 +88,13 @@ describe("RPC authorization scopes", () => {
     for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }
+  });
+
+  it("lets file readers see a task folder and takes source control to add a repository to it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.workspaceTaskFolder)).toBe(AuthFilesystemReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.workspaceAddTaskFolderRepository)).toBe(
+      AuthSourceControlWriteScope,
+    );
   });
 
   it("still lets readers load settings the way installed Swift clients ask", () => {
@@ -338,6 +352,76 @@ it.effect("pairs a client with a linked environment only for one that may hand o
       "unsupported",
     );
     expect(asked).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("hands out a link code or a guest link only within what the session itself holds", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksPairLink | typeof WS_METHODS.guestShareCreate
+        > => tag !== WS_METHODS.peerLinksPairLink && tag !== WS_METHODS.guestShareCreate,
+      ),
+    );
+    let handled = 0;
+    const environmentId = EnvironmentId.make("environment-box");
+    const threadId = ThreadId.make("thread-1");
+    const handlers = Layer.mergeAll(
+      group.toLayerHandler(WS_METHODS.peerLinksPairLink, () =>
+        Effect.sync(() => {
+          handled++;
+          return {
+            type: "unsupported" as const,
+            reason: "link_access" as const,
+            environmentId,
+            label: "Box",
+            urls: [],
+          };
+        }),
+      ),
+      group.toLayerHandler(WS_METHODS.guestShareCreate, () =>
+        Effect.sync(() => handled++).pipe(Effect.andThen(Effect.die("no share in this test"))),
+      ),
+    );
+    const clientWith = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer(scopes))),
+      );
+
+    // Managing access alone is not running agents or reading threads.
+    const manager = yield* clientWith([AuthAccessWriteScope]);
+    expect(
+      yield* manager[WS_METHODS.peerLinksPairLink]({ environmentId, access: "read-only" }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+    expect(
+      yield* manager[WS_METHODS.guestShareCreate]({ threadId }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+
+    const supervisor = yield* clientWith([
+      AuthAccessWriteScope,
+      AuthOrchestrationReadScope,
+      AuthOrchestrationOperateScope,
+    ]);
+    expect(
+      yield* supervisor[WS_METHODS.peerLinksPairLink]({
+        environmentId,
+        access: "full-access",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+    expect(handled).toBe(0);
+
+    expect(
+      (yield* supervisor[WS_METHODS.peerLinksPairLink]({ environmentId, access: "auto" })).type,
+    ).toBe("unsupported");
+    expect(handled).toBe(1);
+    yield* supervisor[WS_METHODS.guestShareCreate]({ threadId }).pipe(Effect.exit);
+    expect(handled).toBe(2);
   }).pipe(Effect.scoped),
 );
 

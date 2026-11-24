@@ -838,6 +838,27 @@ layer("GitHubPullRequestApi.layer", (it) => {
             }),
           );
         }
+        // Job 16 never started, so GitHub holds no log; its check run explains why.
+        if (log?.[1] === "16") {
+          return Effect.fail(
+            new GitHubRequestPolicy.GitHubApiNotFoundError({
+              host: "github.com",
+              operation: "readCheckLog",
+            }),
+          );
+        }
+        if (/check-runs\/16\/annotations/.test(call.path)) {
+          return Effect.succeed(
+            output(
+              encodeJson([
+                {
+                  annotation_level: "failure",
+                  message: "The job was not started because of a billing problem.",
+                },
+              ]),
+            ),
+          );
+        }
         if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
         const job = /actions\/jobs\/(\d+)$/.exec(call.path);
         if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
@@ -871,6 +892,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { log: "one long line", truncated: true },
       ]);
       const refused = yield* Effect.flip(api.readCheckLogs({ ...capped, checks: [job(14, 30)] }));
+      const [unstarted] = yield* api.readCheckLogs({ ...capped, checks: [job(16, 30)] });
+      expect(unstarted?.detail).toContain("The job was not started because of a billing problem.");
       const [huge] = yield* api.readCheckLogs({ ...capped, checks: [job(15, 30)] });
       expect(huge?.log?.length).toBe(32_000);
       expect(huge?.truncated).toBe(true);
@@ -3810,6 +3833,46 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // regression: #41735 a thread id from another pull request is refused before any write
+  it.effect.each([
+    { mutation: "AddReviewThreadReply", body: "hello" },
+    { mutation: "ResolveReviewThread", resolved: true },
+    { mutation: "UnresolveReviewThread", resolved: false },
+  ])("refuses $mutation on a review thread from another pull request", (write) =>
+    Effect.gen(function* () {
+      route([
+        SUBJECT_SCOPE_QUERY,
+        {
+          data: {
+            repository: { pullRequest: { id: "PR_thisOne" } },
+            node: {
+              __typename: "PullRequestReviewThread",
+              id: "PRRT_other",
+              threadPullRequest: { id: "PR_someOtherOne" },
+            },
+          },
+        },
+      ]);
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const target = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        threadId: "PRRT_other",
+      };
+
+      const error = yield* Effect.flip(
+        write.body === undefined
+          ? cli.setReviewThreadResolution({ ...target, resolved: write.resolved })
+          : cli.replyToReviewThread({ ...target, body: write.body }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubSubjectScopeError");
+      expect(variablesOf(write.mutation)).toEqual([]);
+    }),
+  );
+
   // regression: #19564 only a refused reviewer path is retried; other failures surface as-is
   it.effect.each([
     {
@@ -3926,13 +3989,25 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
-                                checkSuite: { workflowRun: { workflow: { name: "linux" } } },
+                                checkSuite: {
+                                  workflowRun: {
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_linux", name: "linux" },
+                                  },
+                                },
                               }),
                               checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
-                                checkSuite: { workflowRun: { workflow: { name: "windows" } } },
+                                checkSuite: {
+                                  workflowRun: {
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_windows", name: "windows" },
+                                  },
+                                },
                               }),
                             ],
                             pageInfo: { hasNextPage: false, endCursor: null },

@@ -1,10 +1,10 @@
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
+import { MessageId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { T, useGT, useMessages } from "gt-react";
-import { memo, use, useState } from "react";
-import { type ChatMessage, type TurnDiffSummary } from "../../types";
+import { use, useState } from "react";
+import { type ChatMessage } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
 import { GitForkIcon, ReplyIcon } from "lucide-react";
 import { captureAssistantMessageOpening } from "~/lib/assistantTextSelection";
@@ -13,31 +13,17 @@ import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
-import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { ChangedFilesCard } from "./ChangedFilesTree";
-import { useFileContextMenuHandler } from "../../fileContextMenu";
-import {
-  readResponseSubagents,
-  useAssistantMessageText,
-  useProject,
-  useQuietThreadShell,
-} from "../../state/entities";
+import { readResponseSubagents, useAssistantMessageText } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-import { useUiStateStore } from "~/uiStateStore";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { readThreadTurnItems } from "../../state/entities";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult, Atom } from "effect/reactivity";
-import { vcsEnvironment } from "../../state/vcs";
-
-const NO_VCS_STATUS = Atom.make(AsyncResult.initial());
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -83,14 +69,6 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             />
           </AssistantCitationSource>
         </div>
-        {ctx.onOpenTurnDiff ? (
-          <AssistantChangedFilesSection
-            turnSummary={row.assistantTurnDiffSummary}
-            routeThreadKey={ctx.routeThreadKey}
-            resolvedTheme={ctx.resolvedTheme}
-            onOpenTurnDiff={ctx.onOpenTurnDiff}
-          />
-        ) : null}
         {!row.showAssistantMeta && row.projectedItem?.item.status === "interrupted" ? (
           <div className="mt-1.5 flex">
             <AssistantStatusBadge status="interrupted" />
@@ -420,102 +398,5 @@ export function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
         onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
       />
     </div>
-  );
-}
-
-/** Subscribes directly to the UI state store for expand/collapse state,
- *  so toggling re-renders only this component — not the entire list. */
-const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection({
-  turnSummary,
-  routeThreadKey,
-  resolvedTheme,
-  onOpenTurnDiff,
-}: {
-  turnSummary: TurnDiffSummary | undefined;
-  routeThreadKey: string;
-  resolvedTheme: "light" | "dark";
-  displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
-}) {
-  if (!turnSummary) return null;
-  const checkpointFiles = turnSummary.files;
-  if (checkpointFiles.length === 0) return null;
-
-  return (
-    <AssistantChangedFilesSectionInner
-      turnSummary={turnSummary}
-      checkpointFiles={checkpointFiles}
-      routeThreadKey={routeThreadKey}
-      resolvedTheme={resolvedTheme}
-      onOpenTurnDiff={onOpenTurnDiff}
-    />
-  );
-});
-
-function AssistantChangedFilesSectionInner({
-  turnSummary,
-  checkpointFiles,
-  routeThreadKey,
-  resolvedTheme,
-  onOpenTurnDiff,
-}: {
-  turnSummary: TurnDiffSummary;
-  checkpointFiles: TurnDiffSummary["files"];
-  routeThreadKey: string;
-  resolvedTheme: "light" | "dark";
-  displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const persistedExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
-  );
-  const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
-  const allDirectoriesExpanded = persistedExpanded ?? false;
-
-  const thread = useQuietThreadShell(ctx.threadRef);
-  const activeProject = useProject(
-    thread && thread.projectId
-      ? { environmentId: thread.environmentId, projectId: thread.projectId }
-      : null,
-  );
-  const onFileContextMenu = useFileContextMenuHandler(ctx.activeThreadEnvironmentId);
-  const repositoryRoot = useAtomValue(
-    ctx.workspaceRoot
-      ? vcsEnvironment.status({
-          environmentId: ctx.activeThreadEnvironmentId,
-          input: { cwd: ctx.workspaceRoot },
-        })
-      : NO_VCS_STATUS,
-    (status) => AsyncResult.getOrElse(status, () => null)?.workingTree.rootPath,
-  );
-
-  return (
-    <ChangedFilesCard
-      runId={turnSummary.runId}
-      files={checkpointFiles}
-      totals={checkpointFileTotals(turnSummary)}
-      allDirectoriesExpanded={allDirectoriesExpanded}
-      resolvedTheme={resolvedTheme}
-      onToggleAllDirectories={() =>
-        setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
-      }
-      onOpenTurnDiff={onOpenTurnDiff}
-      onFileContextMenu={(filePath, event) =>
-        onFileContextMenu(
-          {
-            environmentId: ctx.activeThreadEnvironmentId,
-            filePath,
-            workspaceRoot: ctx.workspaceRoot,
-            repositoryRoot:
-              repositoryRoot ??
-              (thread?.worktreePath == null
-                ? activeProject?.repositoryIdentity?.rootPath
-                : undefined),
-          },
-          event,
-        )
-      }
-    />
   );
 }
