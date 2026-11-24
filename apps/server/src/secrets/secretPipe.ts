@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off
-// One-read named pipes for secrets the agent's shell commands read. The value stays in this
-// process's memory and streams to the first reader; it is never written to disk.
+// Owner-only named pipes between the server and the agent's shell commands. A one-read pipe hands
+// a command a secret; a show pipe takes values a command writes for the user. Values stay in this
+// process's memory and are never written to disk.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
@@ -70,4 +71,81 @@ export async function servePipeOnce(
     value.fill(0);
     NodeFS.rmSync(path, { force: true });
   }
+}
+
+/** Longest line a show pipe accepts; a longer one is dropped, since a value that long is not one to read. */
+export const SHOW_PIPE_MAX_LINE = 200;
+
+export interface LineReader {
+  /** The complete lines written since the last read, and whether the writer has closed the pipe. */
+  readonly read: () => { readonly lines: ReadonlyArray<string>; readonly closed: boolean };
+  /** Stops reading and removes the pipe. */
+  readonly close: () => void;
+}
+
+/**
+ * Opens the pipe at `path` to take the lines a command writes for the user, without ever
+ * blocking: before any writer opens it, a read returns nothing and the pipe stays open.
+ * Fails, removing whatever is at `path`, when it is not a pipe.
+ */
+export function openLineReader(path: string): LineReader {
+  const { O_RDONLY, O_NONBLOCK, O_NOFOLLOW } = NodeFS.constants;
+  let fd: number;
+  try {
+    fd = NodeFS.openSync(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    if (!NodeFS.fstatSync(fd).isFIFO()) {
+      NodeFS.closeSync(fd);
+      throw new Error(`${path} is not a named pipe`);
+    }
+  } catch (error) {
+    NodeFS.rmSync(path, { force: true });
+    throw error;
+  }
+  const decoder = new TextDecoder();
+  const buffer = new Uint8Array(1024);
+  let pending = "";
+  let wroteOnce = false;
+  let open = true;
+  const linesIn = (text: string) => {
+    const parts = `${pending}${text}`.split("\n");
+    pending = parts.pop() ?? "";
+    if (pending.length > SHOW_PIPE_MAX_LINE) pending = "";
+    return parts
+      .map((part) => part.trim())
+      .filter((line) => line !== "" && line.length <= SHOW_PIPE_MAX_LINE);
+  };
+  const close = () => {
+    if (!open) return;
+    open = false;
+    pending = "";
+    NodeFS.closeSync(fd);
+    NodeFS.rmSync(path, { force: true });
+  };
+  return {
+    read: () => {
+      if (!open) return { lines: [], closed: true };
+      const lines: Array<string> = [];
+      while (true) {
+        let read: number;
+        try {
+          read = NodeFS.readSync(fd, buffer, 0, buffer.length, null);
+        } catch (error) {
+          // EAGAIN: a writer holds the pipe open but has written nothing new.
+          if (errorCode(error) !== "EAGAIN") throw error;
+          wroteOnce = true;
+          return { lines, closed: false };
+        }
+        if (read > 0) {
+          wroteOnce = true;
+          lines.push(...linesIn(decoder.decode(buffer.subarray(0, read), { stream: true })));
+          continue;
+        }
+        // Zero bytes means no writer: none yet, or the one that wrote has closed it.
+        if (!wroteOnce) return { lines, closed: false };
+        lines.push(...linesIn(`${decoder.decode()}\n`));
+        return { lines, closed: true };
+      }
+    },
+    close,
+  };
 }

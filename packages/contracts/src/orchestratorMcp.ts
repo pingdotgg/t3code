@@ -893,6 +893,31 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
 
+export const OrchestratorMcpShowSecretInput = Schema.Struct({
+  label: TrimmedNonEmptyString.annotate({
+    description: "Card title before each value, such as 'AWS Duo code'.",
+  }),
+  reason: TrimmedNonEmptyString.annotate({
+    description: "What the user does with the value, shown under it.",
+  }),
+  /** Default 60 seconds. */
+  showMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 5_000, maximum: 10 * 60 * 1_000 })),
+  ).annotate({ description: "How long each card shows its value. Default 60000." }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description: "Retry key.",
+  }),
+});
+export type OrchestratorMcpShowSecretInput = typeof OrchestratorMcpShowSecretInput.Type;
+
+export const OrchestratorMcpShowSecretResult = Schema.Struct({
+  file: Schema.String.annotate({
+    description:
+      "Owner-only pipe for one command to write to. Each line it writes opens a card showing that line to the user; you never see it. Closes when the writer closes it, the run ends, or after 30 minutes.",
+  }),
+});
+export type OrchestratorMcpShowSecretResult = typeof OrchestratorMcpShowSecretResult.Type;
+
 export const OrchestratorMcpEnvironmentLinkInput = Schema.Struct({
   environmentId: Schema.optional(EnvironmentId).annotate({
     description:

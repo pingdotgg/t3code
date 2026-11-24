@@ -16,6 +16,8 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
+  OrchestratorMcpShowSecretInput,
+  OrchestratorMcpShowSecretResult,
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
@@ -219,6 +221,19 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
+const ShowSecretTool = Tool.make("show_secret", {
+  description:
+    "Show the user values your command produces, such as a Duo code, without you seeing them: the counterpart of request_secret. Returns a pipe; pass it to the command, which writes one value per line. Each line opens its own card and alerts the user's devices. Call in the turn that runs the command.",
+  parameters: OrchestratorMcpShowSecretInput,
+  success: OrchestratorMcpShowSecretResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Show the user a secret")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Create new top-level threads in this checkout, only when the user asks for new threads. Not delegation. One thread or its own worktree: `t3_thread_launch`. Project, branch, and worktree inherit.",
@@ -371,6 +386,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
   RequestSecretTool,
+  ShowSecretTool,
   CreateThreadsTool,
   ThreadListTool,
   ThreadReadTool,

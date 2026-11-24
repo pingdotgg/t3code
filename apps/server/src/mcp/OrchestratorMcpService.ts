@@ -26,6 +26,8 @@ import {
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
+  type OrchestratorMcpShowSecretInput,
+  type OrchestratorMcpShowSecretResult,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpScheduledTask,
@@ -89,6 +91,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -158,6 +161,9 @@ const TASK_WAKE_EVENTS = [
 ] as const;
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
 const MAX_LISTED_TASKS = 10;
+/** A Duo push, the value this was made for, expires after 60 seconds. */
+const DEFAULT_SHOW_SECRET_MS = 60 * 1_000;
+const SHOW_SECRET_CARD_NOTE = "Nothing to enter here: Decline closes this card.";
 const DEFAULT_THREAD_LIST_LIMIT = 10;
 const DEFAULT_THREAD_READ_LIMIT = 10;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -220,6 +226,14 @@ export interface OrchestratorMcpServiceShape {
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
 
+  /**
+   * Opens a pipe the agent's command writes values into; each line shows the user a card the
+   * agent never sees. Only the pipe's path reaches the agent.
+   */
+  readonly showSecret: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpShowSecretInput,
+  ) => Effect.Effect<OrchestratorMcpShowSecretResult, OrchestratorMcpFailure>;
   /**
    * Shows a secret card whose value only a preview fill may use. The value is returned
    * redacted for the caller to type into the page; it never reaches the agent.
@@ -1378,6 +1392,7 @@ function timelineItemsWithinBudget(
 }
 
 const make = Effect.gen(function* () {
+  const layerScope = yield* Scope.Scope;
   const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -2863,6 +2878,99 @@ const make = Effect.gen(function* () {
         );
       }
       return { status, secretRef: secretRef.value };
+    }),
+
+    showSecret: Effect.fn("OrchestratorMcpService.showSecret")(function* (scope, input) {
+      const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "show_secret");
+      const threadId = threadScope.thread.threadId;
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Showing a secret requires an active run owned by this MCP provider session.",
+        );
+      }
+      const runId = run.id;
+      const nodeId = run.rootNodeId;
+      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
+      const showMs = input.showMs ?? DEFAULT_SHOW_SECRET_MS;
+      const runIsLive = threadManagement
+        .getThreadRecords(threadId, ["runs"], { turnItemTypes: [], messageRoles: [] })
+        .pipe(
+          Effect.map((records) => {
+            const current = records.runs.find((candidate) => candidate.id === runId);
+            return (
+              current !== undefined &&
+              !ThreadManagementService.isTerminalRunStatus(current.status) &&
+              current.rootNodeId === nodeId
+            );
+          }),
+          Effect.orElseSucceed(() => false),
+        );
+      let shown = 0;
+      const showCard = Effect.fn("OrchestratorMcpService.showSecretCard")(function* (
+        value: Redacted.Redacted<string>,
+        cardKey: string,
+      ) {
+        const turnItemId = TurnItemId.make(
+          `turn-item:secret-show:${stablePart(threadId)}:${stablePart(cardKey)}`,
+        );
+        const record = (secretStatus: "pending" | "cancelled") =>
+          threadManagement.dispatch({
+            type: "secret_request.record",
+            commandId: stableCommandId({
+              scope,
+              requestKey: cardKey,
+              operation: `secret-show-${secretStatus}`,
+            }),
+            threadId,
+            runId,
+            nodeId,
+            turnItemId,
+            label: `${input.label}: ${Redacted.value(value)}`,
+            reason: `${input.reason} ${SHOW_SECRET_CARD_NOTE}`,
+            secretStatus,
+          });
+        yield* record("pending");
+        const until = (yield* Clock.currentTimeMillis) + showMs;
+        while ((yield* Clock.currentTimeMillis) < until && (yield* runIsLive)) {
+          const records = yield* threadManagement.getThreadRecords(threadId, ["turnItems"], {
+            turnItemTypes: ["secret_request"],
+            messageRoles: [],
+          });
+          const item = records.turnItems.find((candidate) => candidate.id === turnItemId);
+          if (item?.type === "secret_request" && item.secretStatus !== "pending") {
+            // The card asks for nothing, so a value typed into it is dropped.
+            yield* secretRequests.discard({ threadId, turnItemId });
+            return;
+          }
+          yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
+        }
+        yield* record("cancelled");
+      });
+      const file = yield* secretRequests
+        .openShowPipe({
+          threadId,
+          requestNamespace: scope.requestNamespace,
+          requestKey: key,
+          isOpen: runIsLive,
+          onValue: (value) => {
+            shown += 1;
+            return showCard(value, `${key}:${shown}`).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not show a secret card", { cause }),
+              ),
+              Effect.forkIn(layerScope),
+              Effect.asVoid,
+            );
+          },
+        })
+        .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+      return { file };
     }),
 
     requestBrowserValue: Effect.fn("OrchestratorMcpService.requestBrowserValue")(

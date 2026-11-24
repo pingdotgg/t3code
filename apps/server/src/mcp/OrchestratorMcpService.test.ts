@@ -41,6 +41,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -2142,6 +2143,87 @@ describe("OrchestratorMcpService provider resolution", () => {
         const later = yield* ask;
         assert.notEqual(later.commandId, first.commandId);
         assert.notEqual(later.turnItemId, first.turnItemId);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
+  it.effect("shows each value a command writes in its own card, which closes after showMs", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<{
+        readonly turnItemId: string;
+        readonly label: string;
+        readonly reason: string;
+        readonly secretStatus: string;
+      }>();
+      const answered = new Set<string>();
+      const discarded: Array<string> = [];
+      let onValue: ((value: Redacted.Redacted<string>) => Effect.Effect<void>) | undefined;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              ...parentProjection([]),
+              turnItems: [...answered].map(
+                (id) => ({ id, type: "secret_request", secretStatus: "declined" }) as never,
+              ),
+            }),
+          dispatch: (command) => {
+            if (command.type !== "secret_request.record") return Effect.die("Unexpected command");
+            return Queue.offer(dispatched, {
+              turnItemId: command.turnItemId,
+              label: command.label,
+              reason: command.reason,
+              secretStatus: command.secretStatus,
+            }).pipe(Effect.as({} as never));
+          },
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({
+          openShowPipe: (input) => {
+            onValue = input.onValue;
+            return Effect.succeed("/tmp/show-pipe");
+          },
+          discard: (input) => Effect.sync(() => void discarded.push(input.turnItemId)),
+        }),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service.showSecret(scope, {
+          label: "AWS Duo code",
+          reason: "Approve the push only if it matches.",
+          showMs: 60_000,
+        });
+        assert.deepEqual(result, { file: "/tmp/show-pipe" });
+        const show = onValue;
+        if (show === undefined) return assert.fail("show_secret opened no pipe");
+
+        yield* show(Redacted.make("608"));
+        const first = yield* Queue.take(dispatched);
+        assert.include(first, { label: "AWS Duo code: 608", secretStatus: "pending" });
+        assert.include(first.reason, "Approve the push only if it matches.");
+        yield* TestClock.adjust(Duration.seconds(30));
+        yield* show(Redacted.make("111"));
+        const second = yield* Queue.take(dispatched);
+        assert.include(second, { label: "AWS Duo code: 111", secretStatus: "pending" });
+        assert.notEqual(second.turnItemId, first.turnItemId);
+
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.include(yield* Queue.take(dispatched), {
+          turnItemId: first.turnItemId,
+          secretStatus: "cancelled",
+        });
+        answered.add(second.turnItemId);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.deepEqual(discarded, [second.turnItemId]);
+        yield* TestClock.adjust(Duration.seconds(60));
+        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );

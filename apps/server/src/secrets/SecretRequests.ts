@@ -1,6 +1,7 @@
 // Answers live only in server memory, behind one-use refs; nothing a user typed is written to disk.
 // A `file` request (or a value pasted in chat) streams once through an owner-only named pipe.
 // A `browser` value waits at most a minute for its one fill. A restart forgets unused values.
+// A show pipe runs the other way: a command writes values into it for the user to read.
 import {
   CommandId,
   SECRET_REF_PATTERN,
@@ -39,8 +40,9 @@ const keyOf = (ref: SecretRef) => ref.slice(SECRET_REF_PREFIX.length);
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 /** The waiting fill polls every half second, so a value left this long has no taker. */
 export const BROWSER_VALUE_TTL_MS = 60 * 1000;
-/** How long a pipe waits for the one command that reads it. */
+/** How long a pipe waits for the one command that reads it, or a show pipe takes lines. */
 const PIPE_READ_WINDOW_MS = 30 * 60 * 1000;
+const SHOW_PIPE_POLL_MS = 100;
 /** Plaintext values that versions before memory-only answers left on disk. */
 const LEGACY_STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 
@@ -116,6 +118,24 @@ export class SecretRequests extends Context.Service<
       readonly threadId: ThreadId;
       readonly turnItemId: string;
     }) => Effect.Effect<Option.Option<Redacted.Redacted<string>>>;
+    /** Drops any value the user typed into a card, unused. */
+    readonly discard: (input: {
+      readonly threadId: ThreadId;
+      readonly turnItemId: string;
+    }) => Effect.Effect<void>;
+    /**
+     * Makes a pipe a command writes values into for the user and returns its path. Each line
+     * goes to `onValue` until the writer closes the pipe, `isOpen` turns false, or 30 minutes
+     * pass; then the pipe is removed. A retry while it is open gets the same path.
+     */
+    readonly openShowPipe: (input: {
+      readonly threadId: ThreadId;
+      /** The provider session's namespace, so two sessions' keys never share a pipe. */
+      readonly requestNamespace: string;
+      readonly requestKey: string;
+      readonly isOpen: Effect.Effect<boolean>;
+      readonly onValue: (value: Redacted.Redacted<string>) => Effect.Effect<void>;
+    }) => Effect.Effect<string, SecretRequestError>;
   }
 >()("t3/secrets/SecretRequests") {}
 
@@ -322,18 +342,22 @@ const make = Effect.gen(function* () {
    * Makes the pipe for `key` and serves `value` through it in the background. A retry while
    * the pipe still waits gets the same path, and the first value keeps being served.
    */
-  const servePipe = Effect.fn("SecretRequests.servePipe")(function* (
-    key: string,
-    value: Redacted.Redacted<string>,
-  ) {
+  /** The path of `key`'s pipe, and whether it is still open from an earlier call. */
+  const pipeFor = Effect.fn("SecretRequests.pipeFor")(function* (key: string) {
     if (!pipesSupported) {
       return yield* new SecretRequestError({ reason: "file_unsupported" });
     }
     if (pipesDir === undefined) return yield* new SecretRequestError({ reason: "store_failed" });
     const pipe = path.join(pipesDir, key);
-    if (servingPipes.has(pipe)) return pipe;
-    yield* fileSystem.makeDirectory(pipesDir, { recursive: true, mode: 0o700 }).pipe(
-      Effect.andThen(fileSystem.chmod(pipesDir, 0o700)),
+    return { pipe, open: servingPipes.has(pipe), directory: pipesDir };
+  });
+
+  const makePipe = Effect.fn("SecretRequests.makePipe")(function* (
+    pipe: string,
+    directory: string,
+  ) {
+    yield* fileSystem.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(
+      Effect.andThen(fileSystem.chmod(directory, 0o700)),
       Effect.andThen(fileSystem.remove(pipe, { force: true })),
       Effect.andThen(
         Effect.tryPromise({
@@ -344,6 +368,15 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new SecretRequestError({ reason: "store_failed", cause })),
     );
     servingPipes.add(pipe);
+  });
+
+  const servePipe = Effect.fn("SecretRequests.servePipe")(function* (
+    key: string,
+    value: Redacted.Redacted<string>,
+  ) {
+    const { pipe, open, directory } = yield* pipeFor(key);
+    if (open) return pipe;
+    yield* makePipe(pipe, directory);
     yield* Effect.promise((signal) =>
       // Cleared in the same tick the pipe is removed, before the reader's read can finish.
       SecretPipe.servePipeOnce(pipe, new TextEncoder().encode(Redacted.value(value)), {
@@ -409,6 +442,47 @@ const make = Effect.gen(function* () {
     return yield* take({ key, kind: "browser" }).pipe(Effect.option);
   });
 
+  const discard: SecretRequests["Service"]["discard"] = Effect.fn("SecretRequests.discard")(
+    function* (input) {
+      yield* forgetAnswer(input.threadId, input.turnItemId);
+    },
+  );
+
+  const openShowPipe: SecretRequests["Service"]["openShowPipe"] = Effect.fn(
+    "SecretRequests.openShowPipe",
+  )(function* (input) {
+    const ref = yield* refFor(
+      input.threadId,
+      `show\u0000${input.requestNamespace}\u0000${input.requestKey}`,
+    );
+    const { pipe, open, directory } = yield* pipeFor(keyOf(ref));
+    if (open) return pipe;
+    yield* makePipe(pipe, directory);
+    const reader = yield* Effect.try({
+      try: () => SecretPipe.openLineReader(pipe),
+      catch: (cause) => new SecretRequestError({ reason: "store_failed", cause }),
+    }).pipe(Effect.tapError(() => Effect.sync(() => servingPipes.delete(pipe))));
+    const until = (yield* Clock.currentTimeMillis) + PIPE_READ_WINDOW_MS;
+    yield* Effect.gen(function* () {
+      while ((yield* Clock.currentTimeMillis) < until) {
+        const { lines, closed } = reader.read();
+        for (const line of lines) yield* input.onValue(Redacted.make(line));
+        if (closed || !(yield* input.isOpen)) return;
+        yield* Effect.sleep(`${SHOW_PIPE_POLL_MS} millis`);
+      }
+    }).pipe(
+      Effect.catchCause((cause) => Effect.logWarning("A show pipe stopped reading", { cause })),
+      Effect.ensuring(
+        Effect.sync(() => {
+          reader.close();
+          servingPipes.delete(pipe);
+        }),
+      ),
+      Effect.forkIn(layerScope),
+    );
+    return pipe;
+  });
+
   // Earlier versions kept answers and file deliveries as plaintext on disk; remove them.
   const removeLegacyPlaintext = Effect.gen(function* () {
     if (store.directory === undefined) return;
@@ -447,6 +521,8 @@ const make = Effect.gen(function* () {
     saveToFile,
     savePasted,
     takeBrowserValue,
+    discard,
+    openShowPipe,
   });
 });
 
