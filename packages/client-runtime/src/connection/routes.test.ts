@@ -295,6 +295,8 @@ describe("learned routes", () => {
       activeRoute: PUBLIC,
       reported: [
         { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+        { kind: "tailnet", httpBaseUrl: "http://evil.example.com:3773/" },
+        { kind: "tailnet", httpBaseUrl: "http://192.168.1.11:3773/" },
         { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
         { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" },
       ],
@@ -306,6 +308,20 @@ describe("learned routes", () => {
       "public",
       "relay",
     ]);
+  });
+
+  it("refuses a persisted plain HTTP non-tailnet route marked network=tailscale", () => {
+    const spoofedOrigin = "http://evil.example.com:3773";
+    const base = learned(`learned:${ENVIRONMENT_ID}:${spoofedOrigin}@public`, `${spoofedOrigin}/`);
+    const baseProfile = Option.getOrThrow(base.profile) as BearerConnectionProfile;
+    const spoofed: ConnectionRoute = {
+      target: base.target,
+      profile: Option.some(new BearerConnectionProfile({ ...baseProfile, network: "tailscale" })),
+    };
+    const entry = entryWithRoutes(relayOnly, [spoofed, PUBLIC, RELAY]);
+    expect(connectionRouteKind(spoofed)).toBe("public");
+    expect(sendsTokenInClear([spoofed, PUBLIC, RELAY], spoofed)).toBe(true);
+    expect(ids(usableRoutes(entry))).toEqual(["public", "relay"]);
   });
 
   it("drops a stale plain HTTP route borrowing an HTTPS-paired token while another route is active", () => {
