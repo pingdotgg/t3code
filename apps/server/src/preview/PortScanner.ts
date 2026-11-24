@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { isLoopbackHost, LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -372,6 +373,9 @@ const lsofProcessIds = (raw: string): ReadonlyArray<number> => {
 
 const AGENT_THREAD_ASSIGNMENT = new RegExp(`(?:^|\\s)${AGENT_THREAD_ENV}=(\\S+)`);
 
+/** A browser an agent's tool drives listens only for DevTools, which is not a page to preview. */
+const DEVTOOLS_PORT_ARGUMENT = /(?:^|[\s\0])--remote-debugging-port=/;
+
 /** Reads `/proc/<pid>/environ`, whose entries are NUL-separated. */
 const parseProcEnvironThread = (raw: string): ThreadId | null => {
   const prefix = `${AGENT_THREAD_ENV}=`;
@@ -418,10 +422,21 @@ const parsePsEnvironmentThreads = (
     const value = AGENT_THREAD_ASSIGNMENT.exec(match[3]!)?.[1];
     threads.set(
       Number(match[1]),
-      value ? { threadId: ThreadId.make(value), isAgentCli: Number(match[2]) === serverPid } : null,
+      value && !DEVTOOLS_PORT_ARGUMENT.test(match[3]!)
+        ? { threadId: ThreadId.make(value), isAgentCli: Number(match[2]) === serverPid }
+        : null,
     );
   }
   return threads;
+};
+
+const parsePsCommandLines = (raw: string): ReadonlyMap<number, string> => {
+  const lines = new Map<number, string>();
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    if (match) lines.set(Number(match[1]), match[2]!);
+  }
+  return lines;
 };
 
 /** Splits `/proc/<pid>/environ` on NUL, or the environment macOS `ps -E` appends on spaces. */
@@ -572,6 +587,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         Effect.orElseSucceed(() => null),
       );
       if (threadId === null) return [pid, null] as const;
+      const isDevTools = yield* fileSystem.readFileString(`/proc/${pid}/cmdline`).pipe(
+        Effect.map((cmdline) => DEVTOOLS_PORT_ARGUMENT.test(cmdline)),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isDevTools) return [pid, null] as const;
       const parent = yield* fileSystem.readFileString(`/proc/${pid}/stat`).pipe(
         Effect.map(parseProcStatParent),
         Effect.orElseSucceed(() => null),
@@ -835,12 +855,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     );
     const cachedPids = new Set(cached.map(([pid]) => pid));
     const expiresAtMillis = nowMillis + WINDOWS_PROCESS_NAME_TTL_MS;
+    const tasklist = windowsSystem32Path(yield* HostProcess.Environment, "tasklist.exe");
     const fetched = yield* Effect.forEach(
       [...pids].filter((pid) => !cachedPids.has(pid)),
       (pid) =>
         processRunner
           .run({
-            command: "tasklist.exe",
+            command: tasklist,
             args: ["/FO", "CSV", "/NH", "/FI", `PID eq ${pid}`],
             timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
             maxOutputBytes: 64 * 1024,
@@ -1124,19 +1145,36 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return new Map(read.flatMap(Option.toArray));
     }
-    const result = yield* processRunner
-      .run({
-        command: "ps",
-        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
-        timeout: Duration.millis(PS_TIMEOUT_MS),
-        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-      })
-      .pipe(Effect.option);
+    const readCommandLines = (withEnvironment: boolean) =>
+      processRunner
+        .run({
+          command: "ps",
+          args: [
+            ...(withEnvironment ? ["-E"] : []),
+            "-ww",
+            "-o",
+            "pid=,command=",
+            "-p",
+            pids.join(","),
+          ],
+          timeout: Duration.millis(PS_TIMEOUT_MS),
+          maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+        })
+        .pipe(
+          Effect.map((result) => parsePsCommandLines(result.stdout)),
+          Effect.orElseSucceed(() => new Map<number, string>()),
+        );
+    // `ps -E` prints the environment after the arguments, so the arguments alone are read
+    // separately and only what follows them counts as environment.
+    const [withEnvironment, argumentsOnly] = yield* Effect.all(
+      [readCommandLines(true), readCommandLines(false)],
+      { concurrency: 2 },
+    );
     const variables = new Map<number, ReadonlyMap<string, string>>();
-    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
-      const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
+    for (const [pid, line] of withEnvironment) {
+      const commandLine = argumentsOnly.get(pid);
+      if (commandLine !== undefined && line.startsWith(commandLine)) {
+        variables.set(pid, parseEnvironmentVariables(line.slice(commandLine.length), /\s+/, names));
       }
     }
     return variables;

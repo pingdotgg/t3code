@@ -10,6 +10,20 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+In a [project with several repositories](multi-repo-projects.md),
+the Diff pane shows every repository the turn changed. Use the repository picker next to the source picker to narrow the diff to one of
+them. Paths in the diff start at the thread's folder, so the same file name in two repositories
+stays apart. This works when the project folder itself is not a Git repository; the branch
+comparison and uncommitted changes read one repository at a time, chosen from the same picker.
+
+The thread details panel lists each repository the thread has changed, most recent first, with its
+branch and uncommitted changes. Expand one to commit, push, or open a pull request in that
+repository; a pull request opened there, or already open for its branch when a turn ends, is linked
+to the thread. **Other repositories...** adds any other repository of the project to the list until you
+reload. In a worktree thread of a project with several repositories it adds a worktree of that
+repository to the thread instead; see [Worktree threads](multi-repo-projects.md#worktree-threads). A
+worktree thread of a single repository does not offer it.
+
 On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
 commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
 shows its changes against its first parent.
@@ -129,6 +143,28 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
+### TanStack Source
+
+TanStack Source is in private beta, so the server shows it only when its environment turns the flag
+on: `export T3CODE_FEATURE_FLAGS=tanstack_source` in your shell profile, then restart T3 Code. Separate
+several flags with commas. A value already set in the server's own environment, such as a service
+definition, is used instead of the profile. Install its CLI and sign in:
+
+```sh
+curl -fsSL https://source.tanstack.com/install | sh
+src auth login --web
+```
+
+Alternatively, open **Settings → Source control & issues**, expand **TanStack Source**, and enter a token
+from `https://source.tanstack.com/settings/tokens`. A saved token is used before `SRC_TOKEN`, which is
+used before the `src` login. With several `src` logins, pick the account there too.
+
+Pull requests show the runs of TanStack Source CI with their logs, and update live while open. An
+agent can open a private pull request on a public repository when you ask for one: its branch goes
+to the repository's private companion and never to the repository itself. Issues
+can be listed, filed, edited, commented on and closed. Reactions and picking reviewers or assignees
+from a list are not available yet.
+
 ### Cursor Origin
 
 Install the [Origin CLI](https://cursor.com/docs/origin/cli) and sign in. Signing in also sets up Git
@@ -197,6 +233,11 @@ or merge. You can edit review titles and descriptions and your own comments wher
 Where you can edit a description, you can also tick its checkboxes from the Summary tab
 (the Overview tab on mobile).
 GitLab calls these merge requests.
+
+A merge or review applies to the commits you opened the pull request on. When someone pushes
+meanwhile, the web and desktop apps offer **Load new commits**; until you do, a merge or review is refused and your
+review draft is kept. Merging from a thread's pull request row, or from the list, lands the head that
+row had when you confirmed.
 
 Save a filter setup with **Views → Save current view** on the Pull Requests page. For example, choose
 **Reviewing** (**Your review** on mobile) and save it as "PRs Requesting My Review". Choose a saved view to restore its search,
@@ -268,7 +309,9 @@ Choose **Write guide** to have the review guide model from Settings → Source c
 change in a temporary checkout; without one set, the source control writer model is used. Nothing
 in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
 the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
-its progress. Claude and Codex can write guides. The guide is
+its progress. Claude and Codex can write guides. Claude writes them with your user settings, but
+tool approvals in those settings do not apply: it reads files and runs `git diff`, `git log` and
+`git show`, nothing else. The guide is
 kept for everyone using this server. To write it again, for example after a push or after changing
 the model or instructions, choose **Rewrite guide** from the pull request's **⋯** menu.
 
@@ -338,7 +381,7 @@ review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
+check fails or waits for a maintainer's approval, the required checks pass, the other checks finish after a failure, someone else comments or reviews, or the branch starts to
 conflict. On github.com it also wakes the agent, with GitHub's reason, when the merge queue drops
 the pull request without merging it. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
@@ -369,19 +412,27 @@ out from the matching organization and repository.
 The Issues page lists the issues of every project whose remote is on GitHub, GitLab, Azure
 DevOps or Forgejo, grouped per tracker account. Open it from the sidebar's utility row or with
 **Open issues** in the command palette. Filter by open or closed, by your involvement
-(assigned, opened by you, mentioning you), by project, and by tracker; the search box asks the tracker
-itself where it can search. Press **Load more** at the end of a group to read further back.
+(assigned, opened by you, mentioning you), and by tracker. Under **Projects**, uncheck the
+projects you do not want to see; the list remembers them, and a project you add later shows.
+The search box asks the tracker itself where it can search. Press **Load more** at the end of a group to read further back.
 The **Views** menu saves and restores a search, filter, and sort setup, as it does for pull
 requests.
 
-To list a Linear team's issues beside a project's, connect Linear with an API key under
-Settings → Source control & issues, then choose the team for that project there.
+To list Linear issues beside a project's, connect Linear with an API key under
+Settings → Source control & issues, then pick one or more teams for that project there. Pick
+another team at any time to add it; uncheck every team to unbind the project. Each team's
+issues appear in the Linear group of the issue list, sorted with the rest by last update, and
+each can be loaded further on its own. Agents file new issues in the first team picked unless you name another bound team. To
+connect another Linear workspace or user, add another account in the same place; each project
+reads its teams through the account you picked them under.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
-comment, edit the title and description, change labels and assignees, react, and close or
-reopen (with a close reason where the tracker records one) when the tracker and your account
-allow it. An issue read through a project that does not own its repository is shown read-only.
+comment, edit the title and description, change labels and assignees, react, and move it to
+another state when the tracker and your account allow it. Where a GitHub repository has issue
+statuses (Backlog, Todo, In progress, and so on), those are the states you move between, as a
+Linear team's workflow states are; elsewhere you close or reopen, with a close reason where the
+tracker records one. An issue read through a project that does not own its repository is shown read-only.
 
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**
