@@ -332,9 +332,14 @@ describe("FileBrowserPanel", () => {
 
     await userEvent.keyboard("{Escape}");
     await expect.element(search).toHaveValue("");
+    await expect.element(search).toHaveFocus();
+    await act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }),
+      );
+    });
     expect(onCloseSheet).not.toHaveBeenCalled();
 
-    (search.element() as HTMLElement).focus();
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
   });
