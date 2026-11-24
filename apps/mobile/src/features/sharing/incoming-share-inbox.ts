@@ -26,7 +26,8 @@ export interface IncomingShareInboxDependencies {
     readonly rollback?: () => Promise<void>;
   }>;
   readonly cleanupReplayedPayloads?: (payloads: ReadonlyArray<SharePayload>) => Promise<void>;
-  readonly idForPayloads: (payloads: ReadonlyArray<SharePayload>) => Promise<string>;
+  readonly fingerprintForPayloads: (payloads: ReadonlyArray<SharePayload>) => Promise<string>;
+  readonly createId: () => string;
   readonly now: () => string;
   readonly onClearError?: (error: unknown) => void;
   readonly onCleanupError?: (error: unknown) => void;
@@ -86,9 +87,10 @@ export class IncomingShareInbox {
         return persisted;
       }
 
-      // Payload-derived ids reuse the inbox item after a crash between durable write and native acknowledgement.
-      const shareId = await this.dependencies.idForPayloads(payloads);
-      if (loaded.some((draft) => draft.id === shareId)) {
+      // The fingerprint finds a replay after a crash between durable write and native
+      // acknowledgement; entry ids stay unique so a later identical share is its own entry.
+      const payloadFingerprint = await this.dependencies.fingerprintForPayloads(payloads);
+      if (loaded.some((draft) => (draft.payloadFingerprint ?? draft.id) === payloadFingerprint)) {
         if (this.dependencies.cleanupReplayedPayloads) {
           await this.cleanup(() => this.dependencies.cleanupReplayedPayloads!(payloads));
         }
@@ -98,10 +100,10 @@ export class IncomingShareInbox {
 
       const built = await this.dependencies.buildDraft({
         payloads,
-        id: shareId,
+        id: this.dependencies.createId(),
         createdAt: this.dependencies.now(),
       });
-      const { draft } = built;
+      const draft = { ...built.draft, payloadFingerprint };
       if (!hasIncomingShareContent(draft)) {
         await this.cleanup(built.cleanup);
         this.clearNativePayloads();
@@ -127,7 +129,6 @@ export class IncomingShareInbox {
 
   consume(shareId: string): Promise<ReadonlyArray<IncomingShareDraft>> {
     return this.runExclusive(async () => {
-      // Identical content can be shared intentionally; only stable payload-derived ids identify retries.
       await this.dependencies.removeDraft(shareId);
       return sortAndDedupeIncomingShares(await this.dependencies.loadDrafts());
     });
