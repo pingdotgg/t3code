@@ -156,6 +156,21 @@ function selectProviderContext(
   );
 }
 
+function selectRecognizedProviderContext(
+  remotes: ReadonlyArray<{
+    readonly name: string;
+    readonly url: string;
+  }>,
+): SourceControlProvider.SourceControlProviderContext | null {
+  for (const remote of remotes) {
+    const provider = sourceControlDefinitions.recognizeRemote(remote.url);
+    if (provider && provider.kind !== "unknown") {
+      return { provider, remoteName: remote.name, remoteUrl: remote.url };
+    }
+  }
+  return null;
+}
+
 // Failed probes are not cached, so cwd is irrelevant; equality ignores lookup, unlike Data.Class.
 class UnknownRemoteLookup {
   readonly key: string;
@@ -326,7 +341,11 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        return yield* refineContext(cwd, selectProviderContext(remotes.remotes));
+        const refined = yield* refineContext(cwd, selectProviderContext(remotes.remotes));
+        if (refined === null || refined.provider.kind !== "unknown") return refined;
+        // origin names a server no CLI claims, but another remote's host is recognized.
+        const recognized = selectRecognizedProviderContext(remotes.remotes);
+        return recognized === null ? refined : yield* refineContext(cwd, recognized);
       },
     );
 

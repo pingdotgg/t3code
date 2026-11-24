@@ -254,6 +254,39 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
   }),
 );
 
+it.effect("prefers a recognized remote over an unrecognized origin", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "origin", url: "ssh://user@self-hosted.example.test/group/project.git" },
+        { name: "github", url: "git@github.com:team/project.git" },
+      ],
+      run: signedIn("none.example.test"),
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.provider.kind, kind("github"));
+    assert.strictEqual(handle.context?.remoteName, "github");
+  }),
+);
+
+it.effect("keeps a recognized origin over a recognized remote further down", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "origin", url: "git@gitlab.com:team/project.git" },
+        { name: "github", url: "git@github.com:team/project.git" },
+      ],
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.provider.kind, kind("gitlab"));
+    assert.strictEqual(handle.context?.remoteName, "origin");
+  }),
+);
+
 it.effect(
   "routes linked subjects to the host that serves them, independently of the checkout",
   () =>
