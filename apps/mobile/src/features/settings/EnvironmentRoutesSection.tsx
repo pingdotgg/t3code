@@ -162,8 +162,8 @@ export function EnvironmentRoutesSection({
             <>
               <Text className="text-sm text-foreground-muted">
                 <T>
-                  Applies to the route marked In use. Other routes may have different permissions
-                  and have not been checked.
+                  These permissions only apply to the current connection. Other ways of connecting
+                  may have different permissions.
                 </T>
               </Text>
               {AUTH_SCOPE_OPTIONS.map(({ scope, title }) => (

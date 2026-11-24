@@ -23,11 +23,11 @@ export function SessionPermissions({
       <p className="text-muted-foreground">
         {routeContext ? (
           <T>
-            These permissions apply to your active route. Other routes may have different
-            permissions.
+            These permissions only apply to the current connection. Other ways of connecting may
+            have different permissions.
           </T>
         ) : (
-          <T>These permissions apply to this client’s current connection.</T>
+          <T>These permissions only apply to the current connection.</T>
         )}
       </p>
       <ul className="grid gap-x-6 gap-y-2 sm:grid-cols-2">

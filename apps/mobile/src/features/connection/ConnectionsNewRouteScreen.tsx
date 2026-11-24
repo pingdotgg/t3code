@@ -402,7 +402,7 @@ function T3ConnectSection() {
   return (
     <View collapsable={false} className="gap-2">
       <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
-        <T>Or use the managed relay</T>
+        <T>Or use T3 Connect</T>
       </Text>
       {isSignedIn ? (
         <CloudEnvironmentRows

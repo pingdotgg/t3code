@@ -303,8 +303,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           ) : shareablePairingUrl === null ? (
             <p className="text-2xs text-muted-foreground/70">
               <T>
-                Copy the token and pair from another client using this backend&apos;s reachable
-                host.
+                Copy the pairing code. On your other device, enter it alongside this server&apos;s
+                address.
               </T>
             </p>
           ) : null}
@@ -490,8 +490,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border/50 p-4 sm:self-start">
               <p className="text-center text-2xs text-muted-foreground/70">
                 <T>
-                  No QR for this endpoint. Another device scanning a loopback link would dial
-                  itself; copy the URL for use on this machine instead.
+                  Not showing a QR code because this address only works on this device. Use a
+                  network address instead, or copy the link to use it here.
                 </T>
               </p>
             </div>
@@ -717,10 +717,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               <T>Create pairing link</T>
             </DialogTitle>
             <DialogDescription>
-              <T>
-                Generate a one-time link that another device can use to pair with this backend as an
-                authorized client.
-              </T>
+              <T>Generate a single-use link to connect another device to this T3 Code server.</T>
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>

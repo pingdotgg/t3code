@@ -9,7 +9,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -72,7 +72,6 @@ function ConfiguredConnectOnboardingDialog() {
   // Pending Clerk sessions must not look signed out or activation would look like a new sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const gt = useGT();
-  const m = useMessages();
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -104,6 +103,15 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController(primaryEnvironmentId);
+  const linkTargetId = controller.linkState.target?.environmentId;
+  const hostLabel = environments.find(
+    (environment) => environment.environmentId === linkTargetId,
+  )?.label;
+  const stepLabels: Record<OnboardingStep, string> = {
+    publish:
+      hostLabel === undefined ? gt("Share this host") : gt("Share {host}", { host: hostLabel }),
+    devices: gt("Connect devices"),
+  };
   const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
@@ -228,7 +236,7 @@ function ConfiguredConnectOnboardingDialog() {
       title: gt("T3 Connect enabled"),
       description: exposeEnvironment
         ? gt("This environment is available to your other devices through T3 Connect.")
-        : gt("This environment publishes agent activity to your mobile clients."),
+        : gt("This environment sends agent activity to your mobile devices."),
     });
     setStep("devices");
   };
@@ -254,14 +262,13 @@ function ConfiguredConnectOnboardingDialog() {
           title={gt("Set up T3 Connect")}
           description={
             <T>
-              Mesh your devices together. Publish this environment and connect the rest, all in one
-              place.
+              Use T3 Code on your other devices. Choose what to share and which hosts to connect.
             </T>
           }
         >
           {steps.length > 1 ? (
             <WizardSteps
-              steps={steps.map((id) => m(STEP_LABELS[id]))}
+              steps={steps.map((id) => stepLabels[id])}
               currentStep={steps.indexOf(step)}
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
@@ -275,6 +282,7 @@ function ConfiguredConnectOnboardingDialog() {
         <WizardPanel>
           {step === "publish" ? (
             <PublishStep
+              hostLabel={hostLabel}
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
               requireDeviceApproval={
@@ -333,12 +341,8 @@ function ConfiguredConnectOnboardingDialog() {
   );
 }
 
-const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: msg("Publish"),
-  devices: msg("Connect devices"),
-};
-
 function PublishStep({
+  hostLabel,
   exposeEnvironment,
   publishAgentActivity,
   requireDeviceApproval,
@@ -351,6 +355,7 @@ function PublishStep({
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
+  readonly hostLabel: string | undefined;
   readonly exposeEnvironment: boolean;
   readonly publishAgentActivity: boolean;
   /** Null when this session cannot change who may connect. */
@@ -369,18 +374,22 @@ function PublishStep({
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title={gt("Publish this environment")}
-          description={gt(
-            "Make this environment available to your other devices through T3 Connect.",
-          )}
+          title={gt("Allow access to this environment through T3 Connect")}
+          description={
+            hostLabel === undefined
+              ? gt("Connect to this host from other devices signed in to your account.")
+              : gt("Connect to {host} from other devices signed in to your account.", {
+                  host: hostLabel,
+                })
+          }
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title={gt("Publish agent activity")}
+          title={gt("Send agent activity to mobile devices")}
           description={gt(
-            "Send activity from this environment to your mobile clients for push notifications and Live Activities.",
+            "Use agent activity in push notifications or Live Activities on your phone.",
           )}
           checked={publishAgentActivity}
           disabled={disabled}
