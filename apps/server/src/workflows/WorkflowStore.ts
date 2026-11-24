@@ -455,14 +455,19 @@ export const make = Effect.gen(function* () {
       SELECT request_json, opened_at FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}
     `.pipe(Effect.orDie);
     if (wait === undefined || wait.request_json === null) return;
-    const expired =
-      woke !== null &&
-      typeof woke === "object" &&
-      (woke as { readonly expired?: unknown }).expired === true;
+    const claim =
+      woke !== null && typeof woke === "object"
+        ? (woke as { readonly expired?: unknown; readonly withdrawn?: unknown })
+        : {};
     yield* tell(runId, `${runId}:${name}:${wait.opened_at}`, at, {
       type: "workflow.input_resolved",
       step: name,
-      resolution: expired ? "expired" : "answered",
+      resolution:
+        claim.withdrawn !== undefined
+          ? "withdrawn"
+          : claim.expired === true
+            ? "expired"
+            : "answered",
     });
   });
 
