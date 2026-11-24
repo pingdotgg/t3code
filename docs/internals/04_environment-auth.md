@@ -55,7 +55,10 @@ model.
   `mcp-client` sessions (except the read-only thread relay and client-pairing routes restricted to
   [peer links](./05_remote.md#peer-links)). Every MCP tool must statically declare its access level in
   [`McpToolAccess.ts`](../../apps/server/src/mcp/McpToolAccess.ts), and thread-only tools must still
-  refuse outside callers in handlers—hiding from tool listings is only discovery.
+  refuse outside callers in handlers—hiding from tool listings is only discovery. A workflow run
+  picks its own modes, so only a caller at the broadest mode a thread may run in here (full access,
+  or an administrator's ceiling below it) can start or change runs, change what workflows store, or
+  read webhook paths. Narrower callers can still read runs.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather
