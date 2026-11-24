@@ -220,11 +220,15 @@ pub(crate) fn thread_merge_back(tx: &mut Tx<'_>, command: Value) -> Outcome {
         old["error"] = json!(format!("Superseded by merge-back transfer {transfer_id}."));
         old["updatedAt"] = json!(now);
         tx.append(
-            Draft::new(&target_id, "context-transfer.updated", old).command(Some(&command_id)),
+            Draft::new(&target_id, "context-transfer.updated", old)
+                .command(Some(&command_id))
+                .instance_of(&run),
         )?;
     }
     tx.append(
-        Draft::new(&target_id, "context-transfer.created", transfer).command(Some(&command_id)),
+        Draft::new(&target_id, "context-transfer.created", transfer)
+            .command(Some(&command_id))
+            .instance_of(&run),
     )?;
     Ok(vec![])
 }
@@ -436,7 +440,10 @@ pub(crate) fn append_records(
     run_id: &str,
     command_id: Option<&str>,
     thread_id: &str,
+    instance: Option<&str>,
 ) -> StoreResult<()> {
+    // Written before the run they belong to, so their envelopes take the destination
+    // instance from the caller, as T3's do (`modelSelection.instanceId`).
     tx.append(
         Draft::new(
             thread_id,
@@ -444,13 +451,15 @@ pub(crate) fn append_records(
             consumption.handoff.clone(),
         )
         .run(Some(run_id))
-        .command(command_id),
+        .command(command_id)
+        .provider_instance(instance),
     )?;
     for transfer in &consumption.transfers {
         tx.append(
             Draft::new(thread_id, "context-transfer.updated", transfer.clone())
                 .run(Some(run_id))
-                .command(command_id),
+                .command(command_id)
+                .provider_instance(instance),
         )?;
     }
     Ok(())

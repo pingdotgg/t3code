@@ -1200,6 +1200,9 @@ impl SettingsModal {
 
         // Orbit Nodes section (`Settings › Connections › Orbit Nodes`).
         let mut node_rows: Vec<AnyElement> = Vec::new();
+        let primary_agent_id =
+            conn_desktop::orbit::select_primary_agent_node(&self.orbit.fleet.nodes, None)
+                .map(|node| node.server_id.clone());
         for node in &self.orbit.fleet.nodes {
             let sid = node.server_id.clone();
             let is_active = self.orbit.active_server_id.as_deref() == Some(sid.as_str());
@@ -1255,7 +1258,7 @@ impl SettingsModal {
             }
             node_rows.push(orbit_node_row(
                 &title,
-                orbit_node_role_badge(node),
+                orbit_node_role_badge(node, primary_agent_id.as_deref()),
                 &subtitle,
                 btn.into_any_element(),
                 &self.tokens,
@@ -2194,26 +2197,36 @@ fn over(top: conn_theme::Rgba, below: conn_theme::Rgba) -> conn_theme::Rgba {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OrbitNodeRoleBadge {
+    PrimaryAgent,
     Agent,
 }
 
 impl OrbitNodeRoleBadge {
     const fn label(self) -> &'static str {
         match self {
+            Self::PrimaryAgent => "Primary agent",
             Self::Agent => "Agent",
         }
     }
 }
 
+/// `Primary agent` on the fleet's agent entry (`select_primary_agent_node` without the local
+/// fallback), `Agent` on the other Nodes with the `agent` role.
 fn orbit_node_role_badge(
     node: &conn_desktop::orbit::OrbitServerTarget,
+    primary_agent_id: Option<&str>,
 ) -> Option<OrbitNodeRoleBadge> {
-    node.has_agent_role().then_some(OrbitNodeRoleBadge::Agent)
+    if primary_agent_id == Some(node.server_id.as_str()) {
+        Some(OrbitNodeRoleBadge::PrimaryAgent)
+    } else if node.has_agent_role() {
+        Some(OrbitNodeRoleBadge::Agent)
+    } else {
+        None
+    }
 }
 
 /// Renders an Orbit Node row inside `Settings › Connections`, placing a subtle Conn-styled
-/// `Agent` pill badge next to the node label when the Node carries the Orbit `agent` role (the
-/// Conn entry point).
+/// `Agent` / `Primary agent` pill badge next to the node label.
 fn orbit_node_row(
     title: &str,
     role_badge: Option<OrbitNodeRoleBadge>,
@@ -2242,6 +2255,11 @@ fn orbit_node_row(
 
     if let Some(badge) = role_badge {
         let (badge_bg, badge_border, badge_fg) = match badge {
+            OrbitNodeRoleBadge::PrimaryAgent => (
+                hsla_alpha(tokens.info, 0.14),
+                hsla_alpha(tokens.info, 0.30),
+                hsla(tokens.info_foreground),
+            ),
             OrbitNodeRoleBadge::Agent => (
                 hsla(tokens.shell_control_raised),
                 hsla(tokens.shell_control_raised_border),
@@ -2302,36 +2320,61 @@ fn orbit_node_row(
 
 #[cfg(test)]
 mod tests {
-    use conn_desktop::orbit::{OrbitServerTarget, OrbitTargetKind, OrbitTargetStatus};
+    use conn_desktop::orbit::{
+        OrbitServerTarget, OrbitTargetKind, OrbitTargetStatus, select_primary_agent_node,
+    };
 
     use super::{OrbitNodeRoleBadge, orbit_node_role_badge};
 
-    fn node_target(roles: &[&str]) -> OrbitServerTarget {
+    fn node_target(name: &str, roles: &[&str], is_primary_agent: bool) -> OrbitServerTarget {
         OrbitServerTarget {
-            server_id: "node-mini".to_owned(),
-            label: "mini".to_owned(),
+            server_id: format!("node-{name}"),
+            label: name.to_owned(),
             url: "http://10.44.0.8:3773".to_owned(),
             server_version: Some("0.1.7".to_owned()),
-            registered_by: Some("mini".to_owned()),
+            registered_by: Some(name.to_owned()),
             status: OrbitTargetStatus::Registered,
             cleanup_pending: false,
             kind: OrbitTargetKind::Node {
-                node_name: "mini".to_owned(),
+                node_name: name.to_owned(),
                 roles: roles.iter().map(|r| (*r).to_owned()).collect(),
+                is_primary_agent,
             },
         }
     }
 
-    #[test]
-    fn resolves_orbit_node_role_badges() {
-        let agent = node_target(&["router", "agent"]);
-        assert_eq!(
-            orbit_node_role_badge(&agent),
-            Some(OrbitNodeRoleBadge::Agent)
-        );
-        assert_eq!(OrbitNodeRoleBadge::Agent.label(), "Agent");
+    fn badges(nodes: &[OrbitServerTarget]) -> Vec<Option<OrbitNodeRoleBadge>> {
+        let primary = select_primary_agent_node(nodes, None).map(|n| n.server_id.as_str());
+        nodes
+            .iter()
+            .map(|node| orbit_node_role_badge(node, primary))
+            .collect()
+    }
 
-        let plain = node_target(&["router"]);
-        assert_eq!(orbit_node_role_badge(&plain), None);
+    #[test]
+    fn badges_follow_the_primary_agent_selection() {
+        use OrbitNodeRoleBadge::{Agent, PrimaryAgent};
+
+        let fleet = [
+            node_target("beast", &["router", "agent"], false),
+            node_target("mini", &["agent"], true),
+            node_target("nick", &["router"], false),
+        ];
+        assert_eq!(badges(&fleet), [Some(Agent), Some(PrimaryAgent), None]);
+
+        let one_agent = [
+            node_target("beast", &["agent"], false),
+            node_target("nick", &[], false),
+        ];
+        assert_eq!(badges(&one_agent), [Some(PrimaryAgent), None]);
+
+        let two_agents = [
+            node_target("beast", &["agent"], false),
+            node_target("mini", &["agent"], false),
+        ];
+        assert_eq!(badges(&two_agents), [Some(Agent), Some(Agent)]);
+
+        assert_eq!(PrimaryAgent.label(), "Primary agent");
+        assert_eq!(Agent.label(), "Agent");
     }
 }

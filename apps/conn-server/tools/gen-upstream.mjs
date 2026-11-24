@@ -403,6 +403,27 @@ const chatAttachment = await importSource("packages/contracts/src/chatAttachment
 const maxFileBytes = chatAttachment.PROVIDER_SEND_TURN_MAX_FILE_BYTES;
 if (!Number.isSafeInteger(maxFileBytes)) throw new Error("PROVIDER_SEND_TURN_MAX_FILE_BYTES moved");
 
+// Every domain event type (`OrchestrationV2DomainEvent`), and the ones whose payload sets the
+// thread row's `updated_at` in T3's `ProjectionStore.ts`: the types its apply step leaves out of
+// the touch that writes `occurredAt` for every other event.
+const DOMAIN_EVENT_TYPES = contracts.OrchestrationV2DomainEvent.members.flatMap((member) => {
+  const type = member.fields.type;
+  return type.literals ?? [type.ast.literal];
+});
+const PROJECTION_FILE = "apps/server/src/orchestration-v2/ProjectionStore.ts";
+const projectionSource = NodeFS.readFileSync(inMonorepo(PROJECTION_FILE), "utf8");
+const touchStart = projectionSource.indexOf('event.type !== "thread.created" &&');
+if (touchStart === -1) throw new Error(`${PROJECTION_FILE}: the updated_at touch moved`);
+const touchBlock = projectionSource.slice(touchStart, projectionSource.indexOf(") {", touchStart));
+const touchBody = projectionSource.slice(touchStart + touchBlock.length, touchStart + touchBlock.length + 400);
+if (!touchBody.includes("encodeThreadUpdatedAt(event.occurredAt)")) {
+  throw new Error(`${PROJECTION_FILE}: the updated_at touch no longer writes occurredAt`);
+}
+const PAYLOAD_UPDATED_AT_EVENTS = [...touchBlock.matchAll(/event\.type !== "([^"]+)"/g)].map((m) => m[1]);
+for (const type of PAYLOAD_UPDATED_AT_EVENTS) {
+  if (!DOMAIN_EVENT_TYPES.includes(type)) throw new Error(`${PROJECTION_FILE}: unknown event ${type}`);
+}
+
 const upstreamRs = rustfmt(
   [
     ...HEADER,
@@ -418,6 +439,13 @@ const upstreamRs = rustfmt(
     "/// `threadTranscriptHeader` (packages/shared/src/threadTranscript.ts): the fixed text around",
     "/// its four JSON-encoded values, in order: title, environment id, thread id, `updatedAt`.",
     `pub const THREAD_TRANSCRIPT_HEADER_PARTS: [&str; 5] = [${transcriptHeaderParts.map(str).join(", ")}];`,
+    "",
+    "/// Every domain event type of `OrchestrationV2DomainEvent` (packages/contracts).",
+    `pub const DOMAIN_EVENT_TYPES: [&str; ${DOMAIN_EVENT_TYPES.length}] = [${DOMAIN_EVENT_TYPES.map(str).join(", ")}];`,
+    "",
+    "/// The events whose payload's `updatedAt` becomes the thread's (`ProjectionStore.ts`). Every",
+    "/// other event sets the thread's `updatedAt` to its `occurredAt`.",
+    `pub const PAYLOAD_UPDATED_AT_EVENTS: [&str; ${PAYLOAD_UPDATED_AT_EVENTS.length}] = [${PAYLOAD_UPDATED_AT_EVENTS.map(str).join(", ")}];`,
     "",
   ].join("\n"),
 );
