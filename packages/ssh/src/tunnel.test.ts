@@ -978,6 +978,8 @@ describe("ssh tunnel scripts", () => {
       const layer = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
+        // Windows OpenSSH has no ControlMaster, so the tunnel keeps its -L there.
+        Layer.succeed(HostProcess.Platform, "linux"),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Layer.succeed(HttpClient.HttpClient, testHttpClient),
         Layer.succeed(NetService.NetService, testNetService),
