@@ -1,0 +1,29 @@
+name: Retry patched nightly
+
+on:
+  workflow_run:
+    workflows: ["Patched nightly desktop builds"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    name: Re-run failed patched nightly jobs
+    # Scheduled and manual builds on main only; PR runs report a check and build nothing.
+    # The attempt cap keeps a real failure from re-running macOS builds forever.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.run_attempt < 5
+    runs-on: ubuntu-latest
+    steps:
+      # Gives GitHub's hosted macOS runner shortage time to clear before asking again.
+      - name: Wait before retrying
+        run: sleep 600
+      - name: Re-run failed jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run rerun "${{ github.event.workflow_run.id }}" --failed --repo "$GITHUB_REPOSITORY"
