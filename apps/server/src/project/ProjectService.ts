@@ -424,14 +424,13 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
-        const { receipt } = yield* eventSink.commitProjectCommand({
+        return yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
         });
-        return { receipt };
       }
       const receipt = yield* eventSink.commitRejectedProjectCommand({
         commandId: command.commandId,
@@ -440,7 +439,7 @@ export const make = Effect.gen(function* () {
         rejectedAt: now,
         error: encodeProjectCommandRejection(planned.failure),
       });
-      return { receipt };
+      return { receipt, committed: false };
     });
     const outcome = yield* projectLocks
       .withLock(
@@ -450,16 +449,17 @@ export const make = Effect.gen(function* () {
           : workspaceLocks.withLock(workspaceRoot, planAndCommit),
       )
       .pipe(Effect.mapError(dispatchError));
-    if (outcome === null) return;
+    if (outcome === null) return false;
     if ("refused" in outcome) return yield* Effect.failCause(outcome.refused);
-    const { receipt } = outcome;
+    const { receipt, committed } = outcome;
     if (receipt.projectId !== projectId || receipt.commandType !== initial.type) {
       return yield* dispatchError(
         `Command ${initial.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
       );
     }
     // Retries re-plan against their own effects; the first receipt determines the outcome.
-    if (receipt.status === "accepted") return;
+    // True only when this call committed it, so a retry does not redo its side effects.
+    if (receipt.status === "accepted") return committed;
     const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
     switch (rejection?._tag) {
       case "ProjectWorkspaceConflictError":
@@ -575,7 +575,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         input.trackedFolders ?? [],
       );
-      yield* commit({
+      const committed = yield* commit({
         type: "project.create",
         commandId: input.commandId,
         projectId: input.projectId,
@@ -584,7 +584,7 @@ export const make = Effect.gen(function* () {
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         trackedFolders,
       });
-      yield* saveScripts(input.projectId, input.scripts);
+      if (committed) yield* saveScripts(input.projectId, input.scripts);
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -631,7 +631,7 @@ export const make = Effect.gen(function* () {
       } as const;
       // Checked against the row under the lock: an update that ran meanwhile may have moved the
       // project's folder or changed what it tracks.
-      yield* commit(
+      const committed = yield* commit(
         command,
         Effect.fnUntraced(function* (current) {
           if (current === undefined || current.deletedAt !== null) return command;
@@ -668,7 +668,7 @@ export const make = Effect.gen(function* () {
           return { ...command, trackedFolders };
         }),
       );
-      yield* saveScripts(input.projectId, input.scripts);
+      if (committed) yield* saveScripts(input.projectId, input.scripts);
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }

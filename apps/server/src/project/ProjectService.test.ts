@@ -618,6 +618,19 @@ it.layer(layerTest)("ProjectService", (it) => {
         defaultProjectScripts: [],
         defaultThreadEnvMode: "worktree",
       });
+      // A retried command must not put its old actions back over a later edit.
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultProjectScripts: [script] } },
+      });
+      yield* service.update({
+        commandId: CommandId.make("command:actions:update"),
+        projectId,
+        scripts: [],
+      });
+      assert.deepEqual(
+        (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
+        [script],
+      );
     }),
   );
 
