@@ -85,6 +85,37 @@ impl MessageCache {
         Ok(rows)
     }
 
+    /// Atomically replaces an authoritative conversation, including a rollback to empty.
+    /// A failed write leaves the previous committed conversation readable offline.
+    ///
+    /// # Errors
+    /// Returns the underlying SQLite error.
+    pub async fn replace(
+        &self,
+        env: &str,
+        thread: &str,
+        prefix: &[Message],
+        tail: &[Message],
+    ) -> Result<(), sqlx::Error> {
+        let rows: Vec<_> = prefix.iter().chain(tail).map(|m| (m.id(), m)).collect();
+        let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("DELETE FROM messages WHERE environment=? AND thread=?")
+            .bind(env)
+            .bind(thread)
+            .execute(&mut *tx)
+            .await?;
+        if rows.is_empty() {
+            sqlx::query("DELETE FROM thread_outlines WHERE environment=? AND thread=?")
+                .bind(env)
+                .bind(thread)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            Self::write_tail(&mut tx, env, thread, &rows).await?;
+        }
+        tx.commit().await
+    }
+
     /// Reconciles the historical prefix preceding a live snapshot. Returned server pages
     /// own the prefix. Live rows at and after the anchor win any overlap. A removed anchor
     /// means a concurrent eviction or settlement already invalidated this read.
@@ -97,8 +128,13 @@ impl MessageCache {
         thread: &str,
         anchor: &str,
         prefix: &[Message],
+        tail: &[Message],
     ) -> Result<bool, sqlx::Error> {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
+        if !tail.is_empty() {
+            let rows: Vec<_> = tail.iter().map(|m| (m.id(), m)).collect();
+            Self::write_tail(&mut tx, env, thread, &rows).await?;
+        }
         let position: Option<i64> = sqlx::query_scalar(
             "SELECT position FROM messages WHERE environment=? AND thread=? AND id=?",
         )
@@ -108,6 +144,8 @@ impl MessageCache {
         .fetch_optional(&mut *tx)
         .await?;
         let Some(position) = position else {
+            // A newer live tail may already have pushed the anchor past the cap.
+            tx.commit().await?;
             return Ok(false);
         };
         sqlx::query("DELETE FROM messages WHERE environment=? AND thread=? AND position < ?")
@@ -195,6 +233,16 @@ impl MessageCache {
             return Ok(());
         }
         let mut tx = self.0.begin().await?;
+        Self::write_tail(&mut tx, env, thread, messages).await?;
+        tx.commit().await
+    }
+
+    async fn write_tail<T: serde::Serialize + Sync>(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        env: &str,
+        thread: &str,
+        messages: &[(&str, &T)],
+    ) -> Result<(), sqlx::Error> {
         // Assign the incoming tail consecutive rowids. IDs absent from a bounded snapshot
         // can still be valid older history, so only the cap evicts them.
         sqlx::query(
@@ -204,10 +252,9 @@ impl MessageCache {
         .bind(env)
         .bind(thread)
         .bind(sqlx::types::Json(messages))
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        Self::trim(&mut tx, env, thread).await?;
-        tx.commit().await
+        Self::trim(tx, env, thread).await
     }
 
     async fn trim(
@@ -310,8 +357,11 @@ mod tests {
         )
         .await?;
         let prefix: Vec<_> = (0..=1000).map(|i| message(i, "history")).collect();
-        assert!(!db.merge_prefix("e", "other", first.id(), &prefix).await?);
-        assert!(db.merge_prefix("e", "t", first.id(), &prefix).await?);
+        assert!(
+            !db.merge_prefix("e", "other", first.id(), &prefix, &[])
+                .await?
+        );
+        assert!(db.merge_prefix("e", "t", first.id(), &prefix, &[]).await?);
         let page = db.before("e", "t", first.id()).await?;
         let ids: Vec<_> = page
             .iter()
@@ -328,10 +378,26 @@ mod tests {
                 serde_json::to_string(&newest)?
             ]
         );
-        assert!(db.merge_prefix("e", "t", first.id(), &[]).await?);
+        // Abort after the delete or tail update, before the new prefix can commit.
+        db.0.execute("CREATE TRIGGER fail_history_write BEFORE INSERT ON messages WHEN NEW.id='999' BEGIN SELECT RAISE(ABORT, 'test interruption'); END").await?;
+        assert!(
+            db.replace("e", "t", &prefix, std::slice::from_ref(&newest))
+                .await
+                .is_err()
+        );
+        let edited = message(1001, "uncommitted");
+        assert!(
+            db.merge_prefix("e", "t", first.id(), &prefix, &[edited])
+                .await
+                .is_err()
+        );
+        assert_eq!(tail, db.recent("e", "t").await?);
+        assert_eq!(page, db.before("e", "t", first.id()).await?);
+        db.0.execute("DROP TRIGGER fail_history_write").await?;
+        assert!(db.merge_prefix("e", "t", first.id(), &[], &[]).await?);
         assert!(db.before("e", "t", first.id()).await?.is_empty());
         db.remove("e", "t").await?;
-        assert!(!db.merge_prefix("e", "t", first.id(), &prefix).await?);
+        assert!(!db.merge_prefix("e", "t", first.id(), &prefix, &[]).await?);
         assert!(db.recent("e", "t").await?.is_empty());
         Ok(())
     }
