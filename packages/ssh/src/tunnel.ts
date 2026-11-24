@@ -13,6 +13,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
@@ -21,6 +22,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -1544,6 +1546,48 @@ const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(functi
   );
 });
 
+const SSH_FORWARD_DIRECTIVE = /^\s*(?:localforward|remoteforward|dynamicforward)(?:[\s=]|$)/iu;
+
+// Windows OpenSSH has no ControlMaster to add a forward through, so the tunnel reads a copy of the
+// user's config without its forward lines. Forwards set in Included files still apply.
+const writeSshConfigWithoutForwards = Effect.fn("ssh/tunnel.writeSshConfigWithoutForwards")(
+  function* (scope: Scope.Scope) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const env = yield* Config.all({
+      userProfile: Config.String("USERPROFILE").pipe(Config.option),
+      programData: Config.String("PROGRAMDATA").pipe(Config.option),
+    }).pipe(
+      Effect.orElseSucceed(() => ({ userProfile: Option.none(), programData: Option.none() })),
+    );
+    if (Option.isNone(env.userProfile)) return null;
+    const lines = yield* fileSystem
+      .readFileString(pathService.join(env.userProfile.value, ".ssh", "config"))
+      .pipe(
+        Effect.map((contents) => contents.split(/\r?\n/u)),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      );
+    const kept = lines.filter((line) => !SSH_FORWARD_DIRECTIVE.test(line));
+    if (kept.length === lines.length) return null;
+    // -F skips the system config, which ssh would otherwise read after the user's.
+    const systemConfig = pathService
+      .join(
+        Option.getOrElse(env.programData, () => "C:\\ProgramData"),
+        "ssh",
+        "ssh_config",
+      )
+      .replaceAll("\\", "/");
+    const configPath = yield* fileSystem
+      .makeTempFileScoped({ prefix: "t3-ssh-config-" })
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    yield* fileSystem.writeFileString(
+      configPath,
+      [...kept, "Match all", `Include "${systemConfig}"`, ""].join("\n"),
+    );
+    return configPath;
+  },
+);
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -1591,8 +1635,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
   // The host's configured LocalForward/RemoteForward lines would take the user's own ports, and
   // a held one stops the tunnel. ClearAllForwardings also drops -L, so the tunnel is a private
-  // ControlMaster with no forwards and T3's one forward is added through it. Windows OpenSSH has
-  // no mux, but it binds a held local port alongside its holder instead of failing.
+  // ControlMaster with no forwards and T3's one forward is added through it.
   const ownControlPath =
     controlPath === null && (yield* HostProcess.Platform) !== "win32"
       ? yield* Effect.gen(function* () {
@@ -1614,7 +1657,23 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           ),
         )
       : null;
+  const forwardFreeConfigPath =
+    controlPath === null && ownControlPath === null
+      ? yield* writeSshConfigWithoutForwards(scope).pipe(
+          Effect.mapError(
+            (cause) =>
+              new SshCommandError({
+                command: ["ssh"],
+                exitCode: null,
+                stderr: "",
+                message: "Failed to prepare the SSH tunnel configuration.",
+                cause,
+              }),
+          ),
+        )
+      : null;
   const directArgs = [
+    ...(forwardFreeConfigPath === null ? [] : ["-F", forwardFreeConfigPath]),
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
