@@ -98,6 +98,10 @@ const SETTINGS_SEARCH_TERMS = {
     msg("working section", { $context: "settings search keyword" }),
     msg("new threads", { $context: "settings search keyword" }),
     msg("last project", { $context: "settings search keyword" }),
+    "siri",
+    "spotlight",
+    "app intents",
+    "shortcuts",
   ],
   SettingsThreads: [
     msg("new threads", { $context: "settings search keyword" }),

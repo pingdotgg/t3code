@@ -5,9 +5,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
+import { newThreadProjectTarget, promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
@@ -211,6 +211,18 @@ export function DesktopWebLinkCoordinator() {
       await pairFromLink(pairingUrl);
       return;
     }
+    // Siri and Spotlight open a project by starting a new thread in it.
+    const projectTarget = newThreadProjectTarget(url);
+    if (projectTarget !== null) {
+      const projectRef = scopeProjectRef(
+        projectTarget.environmentId as EnvironmentId,
+        projectTarget.projectId as ProjectId,
+      );
+      // A stale index entry can name a project that no longer exists; never draft into it.
+      const opened = readProject(projectRef) === null ? null : await openThread(projectRef);
+      if (!opened) reportFailure(url);
+      return;
+    }
     const appPath = promptLinkAppPath(url);
     if (appPath !== null) {
       await router.navigate({ href: appPath });
@@ -240,12 +252,13 @@ export function DesktopWebLinkCoordinator() {
 
   const receiveLink = useEffectEvent((url: string) => {
     // A connected server publishes its config before its project snapshot, so a source control
-    // link delivered at launch would miss its project and fall through to the browser. Hold
-    // those links until discovery settles; an ordinary link never waits for it.
+    // or new-thread project link delivered at launch would miss its project. Hold those links
+    // until discovery settles; an ordinary link never waits for it.
     const hold =
-      openPullRequestsInApp &&
-      (sourceControlClients.parseChangeRequestUrl(url) !== null ||
-        sourceControlClients.parseCommitUrl(url) !== null)
+      newThreadProjectTarget(url) !== null ||
+      (openPullRequestsInApp &&
+        (sourceControlClients.parseChangeRequestUrl(url) !== null ||
+          sourceControlClients.parseCommitUrl(url) !== null))
         ? projectsSettled()
         : Promise.resolve();
     void hold.then(() => {

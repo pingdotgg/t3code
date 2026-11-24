@@ -270,6 +270,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     transcribe: (input: { locale: string; pcm: Uint8Array }) =>
       ipcRenderer.invoke(IpcChannels.APPLE_SPEECH_TRANSCRIBE_CHANNEL, input),
   },
+  appleIntents: {
+    getStatus: () => ipcRenderer.invoke(IpcChannels.APPLE_INTENTS_GET_STATUS_CHANNEL, undefined),
+    syncIndex: (delta) => ipcRenderer.invoke(IpcChannels.APPLE_INTENTS_SYNC_INDEX_CHANNEL, delta),
+    removeEnvironment: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_INTENTS_REMOVE_ENVIRONMENT_CHANNEL, environmentId),
+    clearIndex: () => ipcRenderer.invoke(IpcChannels.APPLE_INTENTS_CLEAR_INDEX_CHANNEL, undefined),
+    setOnscreenContext: (context) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_INTENTS_SET_ONSCREEN_CONTEXT_CHANNEL, context),
+    syncAuthCredentials: (credentials) =>
+      ipcRenderer.invoke(IpcChannels.APPLE_INTENTS_SYNC_AUTH_CREDENTIALS_CHANNEL, credentials),
+  },
   openSystemSettings: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),

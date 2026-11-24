@@ -238,3 +238,16 @@ export function promptLinkDeepLink(appPath: string, scheme = "t3code"): string {
   const host = url.pathname === "/new" ? "new" : `threads${url.pathname}`;
   return `${scheme}://${host}${url.search}`;
 }
+
+/** `t3code://new?environmentId=…&projectId=…` without a prompt: start a thread in that project. */
+export function newThreadProjectTarget(
+  value: string,
+): { readonly environmentId: string; readonly projectId: string } | null {
+  const url = parseUrl(value);
+  if (!url || !APP_SCHEME.test(url.protocol) || url.host !== "new") return null;
+  if (url.pathname !== "" && url.pathname !== "/") return null;
+  if (url.searchParams.has("prompt") || url.searchParams.has("pr")) return null;
+  const environmentId = url.searchParams.get("environmentId")?.trim();
+  const projectId = url.searchParams.get("projectId")?.trim();
+  return environmentId && projectId ? { environmentId, projectId } : null;
+}

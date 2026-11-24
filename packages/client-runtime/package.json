@@ -666,6 +666,10 @@
     "./pull-request-references": {
       "types": "./src/pullRequestReferences.ts",
       "default": "./src/pullRequestReferences.ts"
+    },
+    "./apple-intents-projection": {
+      "types": "./src/appleIntentsProjection.ts",
+      "default": "./src/appleIntentsProjection.ts"
     }
   },
   "scripts": {

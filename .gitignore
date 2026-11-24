@@ -41,6 +41,8 @@ artifacts/mobile-behavior/
 scripts/.e2e/
 .github/pr-assets/
 native/**/target/
+native/apple-intents/.build/
+native/apple-intents/macos/build/
 node_modules/
 .alchemy/
 *.log

@@ -38,6 +38,7 @@ import {
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
+  renderAppIntentsExtensionEntitlements,
   renderMacPasskeyEntitlements,
   resolveMacFileExclusions,
   resolveMacWebAuthnEntitlements,
@@ -1589,6 +1590,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "example.clerk.accounts.dev",
     ]);
     assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
+    assert.match(
+      entitlements,
+      /<key>com\.apple\.security\.application-groups<\/key>\s*<array>\s*<string>ABC1234567\.com\.t3tools\.t3code<\/string>\s*<\/array>/u,
+    );
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
@@ -1600,6 +1605,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
+  });
+
+  it("signs the Apple Intents extension into the configured team's app group", () => {
+    const entitlements = renderAppIntentsExtensionEntitlements({
+      appId: "com.t3tools.t3code",
+      teamId: "XYZ9876543",
+    });
+    for (const key of ["com.apple.security.application-groups", "keychain-access-groups"]) {
+      assert.match(
+        entitlements,
+        new RegExp(
+          `<key>${key.replaceAll(".", "\\.")}</key>\\s*<array>\\s*<string>XYZ9876543\\.com\\.t3tools\\.t3code</string>`,
+          "u",
+        ),
+      );
+    }
+    assert.notInclude(entitlements, "ARK85ZXQ4Z");
   });
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {

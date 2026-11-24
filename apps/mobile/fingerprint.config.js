@@ -22,5 +22,15 @@ module.exports = {
       filePath: "../../native/apple-speech/AppleSpeechEngine.swift",
       reasons: ["appleSpeech"],
     },
+    {
+      type: "dir",
+      filePath: "../../native/apple-intents/Sources/T3IntentsCore",
+      reasons: ["appleIntents"],
+    },
+    {
+      type: "dir",
+      filePath: "../../native/apple-intents/Skills.skillsbundle",
+      reasons: ["appleIntents"],
+    },
   ],
 };

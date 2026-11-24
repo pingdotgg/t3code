@@ -117,6 +117,51 @@ it.each([
   }
 });
 
+it("embeds staged Apple Intents bundles into the macOS app before signing", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-hook-intents-")),
+  );
+  try {
+    const staged = NodePath.join(root, "stage/apps/desktop/prod-resources/apple-intents/bundles");
+    for (const bundle of ["T3IntentsCore.framework", "T3AppIntentsExtension.appex"]) {
+      NodeFS.mkdirSync(NodePath.join(staged, bundle), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(staged, bundle, "marker"), bundle);
+    }
+    const appOutDir = NodePath.join(root, "out");
+    const hook = NodeURL.fileURLToPath(
+      new URL("../prepare-server-compile-cache.cjs", import.meta.url),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `require(${JSON.stringify(hook)})({
+          appOutDir: ${JSON.stringify(appOutDir)}, electronPlatformName: "darwin", arch: 3,
+          packager: { appInfo: { productFilename: "Fixture" }, projectDir: ${JSON.stringify(NodePath.join(root, "stage"))} }
+        }).catch(error => { console.error(error); process.exitCode = 1; });`,
+      ],
+      { encoding: "utf8", env: { ...process.env, T3CODE_DESKTOP_UNTRUSTED_BUNDLE: "true" } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const contents = NodePath.join(appOutDir, "Fixture.app/Contents");
+    expect(
+      NodeFS.readFileSync(
+        NodePath.join(contents, "Frameworks/T3IntentsCore.framework/marker"),
+        "utf8",
+      ),
+    ).toBe("T3IntentsCore.framework");
+    expect(
+      NodeFS.readFileSync(
+        NodePath.join(contents, "Extensions/T3AppIntentsExtension.appex/marker"),
+        "utf8",
+      ),
+    ).toBe("T3AppIntentsExtension.appex");
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("rejects ambiguous bundled server entries before importing them", async () => {
   const { spawnSync } = await import("node:child_process");
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cache-ambiguous-"));

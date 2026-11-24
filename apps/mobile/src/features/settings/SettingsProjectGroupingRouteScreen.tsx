@@ -16,6 +16,7 @@ import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoi
 import { SettingsSection } from "./components/SettingsSection";
 import { LanguageSettingsSection } from "./SettingsLanguageRouteScreen";
 import { NewThreadSettingsSection, WorkingSectionSettings } from "./ThreadSettingsSections";
+import { AppleIntentsSettingsSection } from "../apple-intents/AppleIntentsSettingsSection";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
   readonly mode: SidebarProjectGroupingMode;
@@ -77,6 +78,7 @@ export function SettingsProjectGroupingRouteScreen() {
         </SettingsSection>
         <WorkingSectionSettings />
         <NewThreadSettingsSection />
+        <AppleIntentsSettingsSection />
       </ScrollView>
     </SettingsScreen>
   );
