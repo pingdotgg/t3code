@@ -197,7 +197,8 @@ it.effect("runs background Git in its own lane so user commands never queue behi
     }).pipe(Effect.forkChild);
 
     yield* TestClock.adjust("2 seconds");
-    const started = yield* Queue.takeAll(starts);
+    // Each start can first wait on a real executable lookup (macOS), so wait for all six.
+    const started = yield* Queue.takeN(starts, 6);
     assert.deepStrictEqual([...started].toSorted(), [
       "background",
       "background",
@@ -206,6 +207,7 @@ it.effect("runs background Git in its own lane so user commands never queue behi
       "foreground",
       "foreground",
     ]);
+    assert.equal(yield* Queue.size(starts), 0);
     yield* Deferred.succeed(gate, undefined);
     assert.equal((yield* Fiber.join(background)).length, 12);
     assert.equal((yield* Fiber.join(foreground)).length, 4);
