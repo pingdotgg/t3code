@@ -952,3 +952,22 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
   expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
   expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
 });
+
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)("closes bold after CJK punctuation followed by CJK text (%s)", (_, plugins) => {
+  const processor = unified().use(remarkParse).use(plugins);
+  for (const [markdown, bold] of [
+    ["**已返回总部工作。**据美联社报道", "已返回总部工作。"],
+    ["**小标题！**正文内容", "小标题！"],
+  ] as const) {
+    const tree = processor.runSync(processor.parse(markdown), markdown) as Root;
+    const paragraph = tree.children[0];
+    const strong =
+      paragraph?.type === "paragraph"
+        ? paragraph.children.find((node) => node.type === "strong")
+        : undefined;
+    expect(strong?.children[0], markdown).toMatchObject({ type: "text", value: bold });
+  }
+});
