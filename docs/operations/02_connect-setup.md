@@ -48,6 +48,10 @@ In Clerk **Native applications > Allowlist for mobile SSO redirect**, allow each
 
 Use Clerk's allowlist or Restricted mode for new sign-ups (an enabled empty allowlist blocks all sign-ups). Ban the account in Clerk to revoke existing sessions.
 
+### Account deletion webhook
+
+Under Clerk **Webhooks**, add an endpoint at `https://<relay domain>/v1/webhooks/clerk` subscribed to `user.deleted`, and set its signing secret as `CLERK_WEBHOOK_SIGNING_SECRET` on the relay. Deleting a user in Clerk then tears down their managed tunnels and deletes their relay rows; failures return 500 so Clerk retries. Without the secret the route answers 404.
+
 ## Android FCM push setup
 
 The relay sends Android push notifications directly via FCM HTTP v1 (no Expo Push account required):
