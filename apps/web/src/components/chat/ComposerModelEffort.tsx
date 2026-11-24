@@ -574,8 +574,11 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
   );
 }
 
+const FOOTER_SEGMENT_GROUP =
+  "flex gap-0.5 rounded-lg border border-border/70 bg-input/40 p-0.5 dark:border-border dark:bg-background/60";
+
 const FOOTER_SEGMENT =
-  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
+  "flex h-6 cursor-pointer items-center justify-center gap-1 rounded-md border border-transparent px-2 text-muted-foreground text-xs outline-none transition-colors hover:text-foreground data-checked:border-border data-checked:bg-background data-checked:font-medium data-checked:text-foreground data-checked:shadow-xs dark:data-checked:border-foreground/28 dark:data-checked:bg-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
 
 function SpeedSegment(props: {
   checked: boolean;
@@ -623,7 +626,7 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
     <div
       role="radiogroup"
       aria-label={speedSelect?.label ?? fastToggle?.label}
-      className="flex rounded-lg bg-input/40 p-0.5"
+      className={FOOTER_SEGMENT_GROUP}
     >
       {speedSelect
         ? selectableProviderOptionChoices(speedSelect).map((option) => (
@@ -660,7 +663,7 @@ function UltracodeControl(props: { traits: TraitsSelectionInput }) {
   if (traits.modelIsUnavailable || !ultracodeToggle) return null;
   const on = ultracodeToggle.currentValue === true;
   return (
-    <div className="flex rounded-lg bg-input/40 p-0.5">
+    <div className={FOOTER_SEGMENT_GROUP}>
       <button
         type="button"
         aria-pressed={on}
