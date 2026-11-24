@@ -206,6 +206,7 @@ computer.
 | Antigravity         | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
 | Pi                  | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
 | Muse Code           | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
+| DeepSeek Harness    | Install the [DeepSeek Harness CLI](https://github.com/deepseek-ai/deepseek-harness) (`npm install -g @deepseek-ai/dsh`), then enable it in Settings → Providers. |
 | fx                  | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
 | ACP Registry agents | Add GitHub Copilot and other [ACP agents](./providers-acp.md#add-an-agent) from **Settings → Providers → Add provider → Show more**.                      |
 
@@ -247,7 +248,8 @@ their original values.
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),
-[Pi](./providers-pi.md), [Muse Code](./providers-muse.md), [fx](./providers-fx.md), and
+[Pi](./providers-pi.md), [Muse Code](./providers-muse.md),
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness#readme), [fx](./providers-fx.md), and
 [ACP Registry agents](./providers-acp.md).
 
 ### Provider check timeouts
