@@ -1,3 +1,4 @@
+import { DEFAULT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -42,7 +43,10 @@ vi.mock("../../../state/use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({ selectedThreadCwd: "/repo" }),
 }));
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
-  useSelectedThreadGitState: () => ({ selectedThreadBranches: [] }),
+  useSelectedThreadGitState: () => ({
+    selectedThreadBranches: [],
+    vcsTerminology: DEFAULT_VCS_TERMINOLOGY,
+  }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
