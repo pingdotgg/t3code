@@ -359,7 +359,7 @@ const hoursLabel = (count: number, resolve: MessageResolver) =>
 const daysLabel = (count: number, resolve: MessageResolver) =>
   resolve(msg("{count}d", { count, $context: "days, abbreviated" }));
 
-function relativeElapsedLabel(elapsedMs: number, resolve: MessageResolver): string {
+export function relativeElapsedLabel(elapsedMs: number, resolve: MessageResolver): string {
   const seconds = Math.floor(elapsedMs / 1000);
   if (seconds < 60) return resolve(msg("just now"));
   const minutes = Math.floor(seconds / 60);
