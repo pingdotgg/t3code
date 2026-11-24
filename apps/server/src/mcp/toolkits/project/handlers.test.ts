@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - a directory junction needs no privilege on Windows.
+import * as NodeFSP from "node:fs/promises";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -620,7 +622,7 @@ it.effect("a launch binds only an existing checkout that is one of the project's
       });
     }
     // The thread keeps the registered worktree path when launched through a link to it.
-    yield* fileSystem.symlink(worktree, alias);
+    yield* Effect.promise(() => NodeFSP.symlink(worktree, alias, "junction"));
     expect((yield* launchInto(alias)).at(-1)?.result).toMatchObject({ projectId });
     expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([
       { type: "existing_worktree", worktreePath: worktree },
