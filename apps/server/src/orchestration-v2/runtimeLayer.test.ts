@@ -12238,7 +12238,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           threadId,
           commandId: CommandId.make(`runtime-layer-owed-output-submit-${key}`),
           json,
-          ...(callerRunId === undefined ? {} : { callerRunId }),
+          ...(callerRunId === undefined ? {} : { callerRunId, requestedRunId: callerRunId }),
         });
       const refused = Effect.fn(function* (key: string) {
         const rejected = yield* submit(key).pipe(Effect.flip);
@@ -12439,6 +12439,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           commandId: CommandId.make("runtime-layer-stopped-output-submit"),
           json: "{}",
           callerRunId: run.id,
+          requestedRunId: run.id,
         })
         .pipe(Effect.flip);
       assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
@@ -12572,10 +12573,13 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           threadId,
           commandId: CommandId.make(`runtime-layer-${command}`),
           json,
+          // Unless a case says otherwise, the call names the run its caller is.
+          ...(caller?.callerRunId === undefined ? {} : { requestedRunId: caller.callerRunId }),
           ...caller,
         });
       return {
         orchestrator,
+        threadManagement,
         threadId,
         send,
         latestRun,
@@ -12605,8 +12609,16 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
   ])("$description", ({ scenario }) =>
     Effect.gen(function* () {
       if (scenario === "stopped-run-or-stale-attempt") {
-        const { orchestrator, threadId, send, latestRun, updateRun, finishRun, submit } =
-          yield* setupOutputThread("late-stopped-run");
+        const {
+          orchestrator,
+          threadManagement,
+          threadId,
+          send,
+          latestRun,
+          updateRun,
+          finishRun,
+          submit,
+        } = yield* setupOutputThread("late-stopped-run");
 
         // Run A starts with a schema, then is stopped while its submission is in flight.
         yield* send("run-a", { type: "object" });
@@ -12649,6 +12661,20 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         }).pipe(Effect.flip);
         assert.equal(lateFromAOnB._tag, "ThreadManagementRunOutputRejectedError");
         assert.include(lateFromAOnB.message, "no longer active");
+
+        // A runtime that updates its credential live sends A's late call on B's credential, so a
+        // call that names no run is not taken for B.
+        const unnamedOnB = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-late-unnamed-run-output-on-b"),
+            json: '{"from":"run-a"}',
+            callerRunId: runB.id,
+            callerAttemptId: attempt2,
+          })
+          .pipe(Effect.flip);
+        assert.equal(unnamedOnB._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(unnamedOnB.message, "runId");
 
         assert.isUndefined((yield* latestRun()).output);
 
@@ -12753,6 +12779,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         const runF = yield* latestRun();
         const acceptedFromF = yield* submit("late-run-output-from-f", '{"from":"run-f"}', {
           callerRunId: runF.id,
+          requestedRunId: runE.id,
         });
         assert.equal(acceptedFromF.runId, runE.id);
         assert.deepEqual(

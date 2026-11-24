@@ -1077,14 +1077,16 @@ const make = Effect.gen(function* () {
         problem: "This turn was not asked for a result. Reply in your message instead.",
       });
     }
-    // Without it a stopped run's late call cannot be told from the active run's.
-    if (input.callerRunId === undefined) {
+    // Without it a stopped run's late call cannot be told from the active run's, even on a bound
+    // credential: a runtime that updates its credential live sends a late call on the newer one.
+    const requestedRunId = input.requestedRunId;
+    if (requestedRunId === undefined) {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
         problem: "Pass `runId` as this turn's instructions gave it.",
       });
     }
-    const callerRunId = input.callerRunId;
+    const callerRunId = input.callerRunId ?? requestedRunId;
     const matchesRun = (candidate: OrchestrationV2Run) =>
       candidate.id === callerRunId &&
       (input.callerAttemptId === undefined || candidate.activeAttemptId === input.callerAttemptId);
@@ -1104,7 +1106,7 @@ const make = Effect.gen(function* () {
     };
     // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
     if (
-      (input.requestedRunId !== undefined && !continuesNamedRun(input.requestedRunId)) ||
+      !continuesNamedRun(requestedRunId) ||
       (!matchesRun(active) && !(run.id !== active.id && matchesRun(run)))
     ) {
       return yield* new ThreadManagementRunOutputRejectedError({

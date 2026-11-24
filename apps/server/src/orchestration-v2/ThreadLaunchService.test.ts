@@ -677,6 +677,7 @@ it.effect("a run asked for a result stores what its agent submits once it fits t
         commandId: CommandId.make(command),
         json,
         callerRunId: askedRunId,
+        requestedRunId: askedRunId,
       });
 
     const rejected = yield* submit("command:output:bad", '{"verdict":"maybe"}').pipe(Effect.flip);

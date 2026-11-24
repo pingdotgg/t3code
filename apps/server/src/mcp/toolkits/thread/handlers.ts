@@ -288,7 +288,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const { scope, threads } = yield* readCaller();
       if (scope.thread === undefined) return yield* unavailable();
-      // A credential bound to its run outranks the argument; an unbound one has only the argument.
+      // A bound credential names the caller; the argument names the run the result is for.
       const callerRunId = scope.thread.runId ?? input.runId;
       return yield* threads
         .submitRunOutput({
