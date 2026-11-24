@@ -2,7 +2,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, formatTokens, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  formatDateTimeShort,
+  formatHourShort,
+  formatTokens,
+  makeWindow,
+  usageSourceMessages,
+} from "./usageFormat.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -150,6 +156,37 @@ describe("hourly usage formatting", () => {
     expect(formatHourShort("2026-11-01T06:37:00.000Z", "America/New_York", false)).toBe(
       "01:00 EST",
     );
+  });
+
+  it("uses a 12-hour clock in locales that default to 24-hour", () => {
+    const instant = "2026-11-24T18:03:00.000Z";
+    const date = new Date(instant);
+
+    for (const locale of ["fr", "de", "es"]) {
+      const formatted = formatHourShort(instant, "UTC", true, locale);
+      expect(formatted).toBe(
+        new Intl.DateTimeFormat(locale, {
+          timeZone: "UTC",
+          hour: "numeric",
+          hour12: true,
+        }).format(date),
+      );
+      expect(formatted).not.toContain("18");
+    }
+
+    const formattedDateTime = formatDateTimeShort(instant, "UTC", true, "fr");
+    expect(formattedDateTime).toBe(
+      new Intl.DateTimeFormat("fr", {
+        timeZone: "UTC",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        hour12: true,
+      }).format(date),
+    );
+    expect(formattedDateTime).not.toContain("18");
+
+    expect(formatHourShort(instant, "UTC", false, "es")).toBe("18:00");
   });
 
   it("builds an exact minute-aligned 24-hour request", () => {
