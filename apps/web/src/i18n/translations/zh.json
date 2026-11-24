@@ -13016,5 +13016,10 @@
   "27d76249d09eb69f": "审查导览已就绪",
   "faa3bb26abb39c93": "审查导览生成失败",
   "b7df38b7d8792d78": "打开导览",
-  "9e91e9a77b664e4e": "无法开始生成审查导览"
+  "9e91e9a77b664e4e": "无法开始生成审查导览",
+  "5e85e163a59abec5": "模型 api api 密钥 openai openrouter llm gateway anthropic ollama lm studio 自定义 端点 base url 会话标题 提交信息",
+  "3cbf54eac1c41c6f": "在整个界面中使用等宽字体。",
+  "a075a2fea254fb7f": "将等宽字体设置重置为默认",
+  "843d809009912d89": "使用等宽字体",
+  "3266678e9b239923": "排版 等宽 固定宽度 界面 ui 字体 monospace"
 }

@@ -13002,5 +13002,10 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "5e85e163a59abec5": "modell api api-schlüssel openai openrouter llm gateway anthropic ollama lm studio eigener endpunkt basis-url thread-titel commit-nachrichten",
+  "3cbf54eac1c41c6f": "Die Monospace-Schriftart für die gesamte Oberfläche verwenden.",
+  "a075a2fea254fb7f": "Monospace-Schriftart auf Standard zurücksetzen",
+  "843d809009912d89": "Monospace-Schriftart verwenden",
+  "3266678e9b239923": "typografie monospace festbreite oberfläche ui schriftart"
 }

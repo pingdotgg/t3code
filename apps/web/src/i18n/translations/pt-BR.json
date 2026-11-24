@@ -13002,5 +13002,10 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "5e85e163a59abec5": "modelo api chave de api openai openrouter llm gateway anthropic ollama lm studio endpoint personalizado url base títulos de threads mensagens de commit",
+  "3cbf54eac1c41c6f": "Usar a fonte monoespaçada em toda a interface.",
+  "a075a2fea254fb7f": "Redefinir a fonte monoespaçada para o padrão",
+  "843d809009912d89": "Usar fonte monoespaçada",
+  "3266678e9b239923": "tipografia monoespaçada largura fixa interface ui fonte"
 }

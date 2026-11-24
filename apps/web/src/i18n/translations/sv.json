@@ -13009,5 +13009,10 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "5e85e163a59abec5": "modell api api-nyckel openai openrouter llm gateway anthropic ollama lm studio anpassad slutpunkt bas-url trådtitlar commit-meddelanden",
+  "3cbf54eac1c41c6f": "Använd monospace-teckensnittet i hela gränssnittet.",
+  "a075a2fea254fb7f": "Återställ monospace-teckensnitt till standard",
+  "843d809009912d89": "Använd monospace-teckensnitt",
+  "3266678e9b239923": "typografi monospace fast bredd gränssnitt ui teckensnitt"
 }

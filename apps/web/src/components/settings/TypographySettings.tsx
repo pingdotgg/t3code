@@ -226,6 +226,36 @@ function TerminalFontRow() {
   );
 }
 
+function UseMonospaceFontRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("use-monospace-font")}
+      description={gt("Use the monospace font for the entire interface.")}
+      resetAction={
+        settings.fontMonospace !== DEFAULT_UNIFIED_SETTINGS.fontMonospace ? (
+          <SettingResetButton
+            ariaLabel={gt("Reset monospace font setting to default")}
+            onClick={() =>
+              updateSettings({ fontMonospace: DEFAULT_UNIFIED_SETTINGS.fontMonospace })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.fontMonospace}
+          onCheckedChange={(checked) => updateSettings({ fontMonospace: Boolean(checked) })}
+          aria-label={gt("Use monospace font")}
+        />
+      }
+    />
+  );
+}
+
 function FontSmoothingRow() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
@@ -374,6 +404,7 @@ export function TypographySection() {
     advanced || (searchTargetId !== null && isAdvancedTypographyTarget(searchTargetId));
   return (
     <SettingsSection id="typography" title={gt("Typography")}>
+      <UseMonospaceFontRow />
       {showAdvanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
       <AdvancedSettings

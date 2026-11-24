@@ -65,6 +65,7 @@ export interface AppearanceFontPreferences {
   readonly sizeInterface: number;
   readonly sizePrompt: number;
   readonly sizeCode: number;
+  readonly monospace: boolean;
   readonly smoothing: boolean;
   readonly separate: boolean;
 }
@@ -75,7 +76,6 @@ export function applyAppearanceFontVariables(
   preferences: AppearanceFontPreferences,
 ): void {
   const families: ReadonlyArray<readonly [variable: string, custom: string, fallback: string]> = [
-    ["--font-sans", preferences.sans, DEFAULT_SANS_FONT_STACK],
     ["--font-mono", preferences.code, DEFAULT_CODE_FONT_STACK],
     ["--font-composer", preferences.separate ? preferences.composer : "", "var(--font-sans)"],
   ];
@@ -88,8 +88,21 @@ export function applyAppearanceFontVariables(
     }
   }
 
+  if (preferences.monospace) {
+    root.style.setProperty("--font-sans", "var(--font-mono)");
+  } else {
+    const sansList = cssFontFamilies(preferences.sans);
+    if (sansList === null) {
+      root.style.removeProperty("--font-sans");
+    } else {
+      root.style.setProperty("--font-sans", `${sansList}, ${DEFAULT_SANS_FONT_STACK}`);
+    }
+  }
+
   const markerWidth = probeWidth(
-    appearanceFontStack(preferences.sans, DEFAULT_SANS_FONT_STACK),
+    preferences.monospace
+      ? appearanceFontStack(preferences.code, DEFAULT_CODE_FONT_STACK)
+      : appearanceFontStack(preferences.sans, DEFAULT_SANS_FONT_STACK),
     LIST_MARKER_PROBE_TEXT,
   );
   if (markerWidth === null) {

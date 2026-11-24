@@ -22,6 +22,7 @@ export interface AppearancePreferences {
   readonly terminalFontSize: number | null;
   readonly codeFontSize: number | null;
   readonly codeWordBreak: boolean;
+  readonly useMonospaceFont: boolean;
 }
 
 export interface ResolvedAppearance {
@@ -29,6 +30,7 @@ export interface ResolvedAppearance {
   readonly terminalFontSize: number;
   readonly codeFontSize: number;
   readonly codeWordBreak: boolean;
+  readonly useMonospaceFont: boolean;
   readonly isTerminalFontSizeCustom: boolean;
   readonly isCodeFontSizeCustom: boolean;
 }
@@ -98,6 +100,7 @@ interface StoredAppearancePreferences {
   readonly terminalFontSize?: number | null | undefined;
   readonly codeFontSize?: number | null | undefined;
   readonly codeWordBreak?: boolean | null | undefined;
+  readonly useMonospaceFont?: boolean | null | undefined;
 }
 
 export function resolveAppearancePreferences(
@@ -114,6 +117,7 @@ export function resolveAppearancePreferences(
         ? normalizeCodeFontSize(stored.codeFontSize)
         : null,
     codeWordBreak: normalizeCodeWordBreak(stored?.codeWordBreak),
+    useMonospaceFont: stored?.useMonospaceFont === true,
   };
 }
 
@@ -124,6 +128,7 @@ export function resolveAppearance(preferences: AppearancePreferences): ResolvedA
       preferences.terminalFontSize ?? deriveTerminalFontSize(preferences.baseFontSize),
     codeFontSize: preferences.codeFontSize ?? deriveCodeFontSize(preferences.baseFontSize),
     codeWordBreak: preferences.codeWordBreak,
+    useMonospaceFont: preferences.useMonospaceFont,
     isTerminalFontSizeCustom: preferences.terminalFontSize !== null,
     isCodeFontSizeCustom: preferences.codeFontSize !== null,
   };

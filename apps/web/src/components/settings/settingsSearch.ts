@@ -427,6 +427,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("typography family size system sans")],
   },
   {
+    id: "use-monospace-font",
+    title: msg("Use monospace font"),
+    to: "/settings/appearance",
+    searchTerms: [msg("typography monospace fixed width interface ui font")],
+  },
+  {
     id: "prompt-font",
     title: msg("Prompt font"),
     to: "/settings/appearance",

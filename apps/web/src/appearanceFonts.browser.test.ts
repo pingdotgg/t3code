@@ -36,6 +36,7 @@ describe("applyAppearanceFontVariables", () => {
       sizeInterface: 20,
       sizePrompt: 14,
       sizeCode: 13,
+      monospace: false,
       smoothing: true,
     };
     try {
@@ -56,7 +57,7 @@ describe("applyAppearanceFontVariables", () => {
   it("widens the numbered-list gutter only when the interface font's marker would clip", () => {
     const root = document.documentElement;
     const style = root.getAttribute("style");
-    const gutter = (sans: string) => {
+    const gutter = (sans: string, monospace = false) => {
       applyAppearanceFontVariables(root, {
         sans,
         code: "",
@@ -64,6 +65,7 @@ describe("applyAppearanceFontVariables", () => {
         sizeInterface: 16,
         sizePrompt: 14,
         sizeCode: 13,
+        monospace,
         smoothing: true,
         separate: false,
       });
@@ -82,7 +84,10 @@ describe("applyAppearanceFontVariables", () => {
     try {
       // `0. ` in a 14px monospace font is about 25px, past the 20px default.
       expect(gutter("monospace")).toBeGreaterThan(24);
+      expect(gutter("sans-serif", true)).toBeGreaterThan(24);
+      expect(root.style.getPropertyValue("--font-sans")).toBe("var(--font-mono)");
       expect(gutter("sans-serif")).toBe(20);
+      expect(root.style.getPropertyValue("--font-sans")).toContain("sans-serif");
     } finally {
       if (style === null) root.removeAttribute("style");
       else root.setAttribute("style", style);

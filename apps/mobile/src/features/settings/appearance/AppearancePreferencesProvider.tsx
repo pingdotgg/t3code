@@ -71,6 +71,7 @@ interface AppearancePreferencesContextValue {
   readonly setTerminalFontSize: (value: number | null) => void;
   readonly setCodeFontSize: (value: number | null) => void;
   readonly setCodeWordBreak: (value: boolean) => void;
+  readonly setUseMonospaceFont: (value: boolean) => void;
   readonly mathRenderingEnabled: boolean;
   readonly setMathRenderingEnabled: (value: boolean) => void;
 }
@@ -127,8 +128,11 @@ export function resolveThemeAppearance(stored: Preferences | null): MobileThemeA
 }
 
 function runtimeStateFor(stored: Preferences | null): MobileThemeRuntimeState {
+  const appearance = resolveAppearancePreferences(stored);
   return {
-    baseFontSize: resolveAppearancePreferences(stored).baseFontSize,
+    baseFontSize: appearance.baseFontSize,
+    useMonospaceFont: appearance.useMonospaceFont,
+    platformOS: Platform.OS,
     themeMode: normalizeMobileThemeMode(stored?.themeMode),
     themeAppearance: resolveThemeAppearance(stored),
   };
@@ -140,6 +144,7 @@ const themeRuntimeStateAtom = Atom.make((get) =>
   Atom.withEquality(
     (left: MobileThemeRuntimeState, right: MobileThemeRuntimeState) =>
       left.baseFontSize === right.baseFontSize &&
+      left.useMonospaceFont === right.useMonospaceFont &&
       left.themeMode === right.themeMode &&
       left.themeAppearance === right.themeAppearance,
   ),
@@ -218,10 +223,18 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const themeVariables = themeVariablesByAppearance[themeAppearance];
   const activeThemeName = getMobileUniwindThemeName(themeId, themeAppearance);
-  const { baseFontSize, codeFontSize, codeWordBreak, terminalFontSize } = preferences;
+  const { baseFontSize, codeFontSize, codeWordBreak, terminalFontSize, useMonospaceFont } =
+    preferences;
   const appearance = useMemo(
-    () => resolveAppearance({ baseFontSize, codeFontSize, codeWordBreak, terminalFontSize }),
-    [baseFontSize, codeFontSize, codeWordBreak, terminalFontSize],
+    () =>
+      resolveAppearance({
+        baseFontSize,
+        codeFontSize,
+        codeWordBreak,
+        terminalFontSize,
+        useMonospaceFont,
+      }),
+    [baseFontSize, codeFontSize, codeWordBreak, terminalFontSize, useMonospaceFont],
   );
   const isReady = AsyncResult.isSuccess(preferencesResult);
   const updatePreferences = (patch: Partial<Preferences>) => {
@@ -292,6 +305,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     updatePreferences({ codeWordBreak: value });
   };
 
+  const setUseMonospaceFont = (value: boolean) => {
+    applyThemeRuntime({ ...currentRuntimeState(), useMonospaceFont: value });
+    updatePreferences({ useMonospaceFont: value });
+  };
+
   const mathRenderingEnabled = storedPreferences?.mathRenderingEnabled === true;
   const setMathRenderingEnabled = (value: boolean) =>
     updatePreferences({ mathRenderingEnabled: value });
@@ -318,6 +336,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      setUseMonospaceFont,
       mathRenderingEnabled,
       setMathRenderingEnabled,
     }),
@@ -341,6 +360,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      setUseMonospaceFont,
       mathRenderingEnabled,
       setMathRenderingEnabled,
     ],

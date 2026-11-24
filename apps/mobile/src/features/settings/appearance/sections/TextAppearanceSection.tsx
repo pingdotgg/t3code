@@ -15,12 +15,21 @@ import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
 export function TextAppearanceSection() {
   const gt = useGT();
-  const { isReady, appearance, setBaseFontSize, mathRenderingEnabled, setMathRenderingEnabled } =
-    useAppearancePreferences();
+  const {
+    isReady,
+    appearance,
+    setBaseFontSize,
+    setUseMonospaceFont,
+    mathRenderingEnabled,
+    setMathRenderingEnabled,
+  } = useAppearancePreferences();
 
   return (
     <SettingsSection title={gt("Text", { $context: "settings section for text size" })}>
-      <TextAppearancePreview fontSize={appearance.baseFontSize} />
+      <TextAppearancePreview
+        fontSize={appearance.baseFontSize}
+        useMonospaceFont={appearance.useMonospaceFont}
+      />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
         disabled={!isReady}
@@ -32,6 +41,13 @@ export function TextAppearanceSection() {
         step={BASE_FONT_SIZE_STEP}
         value={appearance.baseFontSize}
         valueLabel={gt("{size} pt", { size: appearance.baseFontSize })}
+      />
+      <SettingsSwitchRow
+        disabled={!isReady}
+        icon="chevron.left.forwardslash.chevron.right"
+        label={gt("Use monospace font")}
+        value={appearance.useMonospaceFont}
+        onValueChange={setUseMonospaceFont}
       />
       <SettingsSwitchRow
         disabled={!isReady}

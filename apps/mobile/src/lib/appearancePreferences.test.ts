@@ -19,4 +19,9 @@ describe("appearancePreferences", () => {
     });
     expect(resolveComposerTextRole(body, 2.643, "android")).toEqual(body);
   });
+
+  it("defaults useMonospaceFont to false and preserves enabled state", () => {
+    expect(resolveAppearancePreferences(null).useMonospaceFont).toBe(false);
+    expect(resolveAppearancePreferences({ useMonospaceFont: true }).useMonospaceFont).toBe(true);
+  });
 });

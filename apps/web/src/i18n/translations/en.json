@@ -13011,5 +13011,10 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "5e85e163a59abec5": "model api api key openai openrouter llm gateway anthropic ollama lm studio custom endpoint base url thread titles commit messages",
+  "3cbf54eac1c41c6f": "Use the monospace font for the entire interface.",
+  "a075a2fea254fb7f": "Reset monospace font setting to default",
+  "843d809009912d89": "Use monospace font",
+  "3266678e9b239923": "typography monospace fixed width interface ui font"
 }

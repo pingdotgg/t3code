@@ -35,6 +35,7 @@ const SETTINGS_SEARCH_TERMS = {
     msg("colors", { $context: "settings search keyword" }),
     msg("font size", { $context: "settings search keyword" }),
     msg("text size", { $context: "settings search keyword" }),
+    msg("monospace font", { $context: "settings search keyword" }),
     msg("code", { $context: "settings search keyword" }),
     msg("diffs", { $context: "settings search keyword" }),
     msg("terminal", { $context: "settings search keyword" }),

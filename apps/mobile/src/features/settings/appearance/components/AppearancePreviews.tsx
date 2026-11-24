@@ -19,20 +19,24 @@ export function AppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
 }
 
-export function TextAppearancePreview(props: { readonly fontSize: number }) {
+export function TextAppearancePreview(props: {
+  readonly fontSize: number;
+  readonly useMonospaceFont?: boolean;
+}) {
   const sizes = resolveMarkdownFontSizes(props.fontSize);
+  const fontFamily = props.useMonospaceFont ? CODE_FONT_FAMILY : undefined;
 
   return (
     <View className="gap-1 p-4">
       <Text
         className="text-foreground"
-        style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
+        style={{ fontFamily, fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
       >
         <T>The quick brown fox jumps over the lazy dog.</T>
       </Text>
       <Text
         className="text-foreground-muted"
-        style={{ fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
+        style={{ fontFamily, fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
       >
         <T>Messages, labels, and headings scale with this size.</T>
       </Text>
