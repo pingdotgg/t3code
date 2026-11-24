@@ -1,0 +1,61 @@
+{
+  "case": "The channel-message dispatch with channel_type removed. Discord documents the field as optional, but no recorded delivery lacked it",
+  "provenance": {
+    "kind": "derived",
+    "from": "events/channel-message.json",
+    "change": "deleted d.channel_type"
+  },
+  "dispatches": [
+    {
+      "receivedAt": "2026-11-13T01:16:13.140Z",
+      "t": "MESSAGE_CREATE",
+      "d": {
+        "type": 0,
+        "tts": false,
+        "timestamp": "2026-11-13T01:16:13+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "member": {
+          "roles": [
+            "1570605977017778196"
+          ],
+          "premium_since": null,
+          "pending": false,
+          "nick": null,
+          "mute": false,
+          "joined_at": "2026-11-13T01:07:25.410129+00:00",
+          "flags": 0,
+          "deaf": false,
+          "communication_disabled_until": null,
+          "banner": null,
+          "avatar": null
+        },
+        "id": "1570608190062723103",
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Fixture: a plain message in a guild text channel",
+        "components": [],
+        "channel_id": "1570607253965246584",
+        "author": {
+          "username": "Janitor",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "1564742987727118426",
+          "global_name": null,
+          "display_name_styles": null,
+          "discriminator": "5426",
+          "collectibles": null,
+          "clan": null,
+          "bot": true,
+          "avatar_decoration_data": null,
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+        },
+        "attachments": [],
+        "guild_id": "840178841540362250"
+      }
+    }
+  ]
+}

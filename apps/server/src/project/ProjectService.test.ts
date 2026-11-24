@@ -5,7 +5,14 @@ import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type Project,
+  ProjectId,
+  type ProjectTrackedFolder,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -340,6 +348,98 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("keeps a valid tracked folder list and refuses the others", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:tracked-folders");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const work = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-" }),
+      );
+      yield* fileSystem.makeDirectory(`${work}/app/packages/web`, { recursive: true });
+      yield* fileSystem.makeDirectory(`${work}/api`);
+      yield* fileSystem.writeFileString(`${work}/notes.txt`, "not a folder\n");
+      const folder = (folderPath: string) => ({ path: folderPath, name: "Folder" });
+      const invalid = [
+        ["relative", [folder("sibling")]],
+        ["own-folder", [folder(`${work}/app/`)]],
+        ["parent", [folder(work)]],
+        ["duplicate", [folder(`${work}/api`), folder(`${work}/api/`)]],
+        ["too-many", Array.from({ length: 129 }, (_, index) => folder(`/work/other/${index}`))],
+        ["missing", [folder(`${work}/gone`)]],
+        ["file", [folder(`${work}/notes.txt`)]],
+      ] as const;
+      const create = (key: string, trackedFolders: ReadonlyArray<ProjectTrackedFolder>) =>
+        service.create({
+          commandId: CommandId.make(`command:tracked:create:${key}`),
+          projectId,
+          title: "Tracked",
+          workspaceRoot: `${work}/app`,
+          trackedFolders,
+        });
+      const update = (key: string, change: Partial<ProjectService.ProjectUpdateInput>) =>
+        service.update({
+          commandId: CommandId.make(`command:tracked:update:${key}`),
+          projectId,
+          ...change,
+        });
+
+      for (const [key, trackedFolders] of invalid) {
+        assert.equal(
+          (yield* create(key, trackedFolders).pipe(Effect.flip))._tag,
+          "ProjectInvalidError",
+        );
+      }
+      const tracked = [folder(path.join(work, "api")), folder(path.join(work, "app/packages/web"))];
+      const created = yield* create("valid", [folder(`${work}/api/`), tracked[1]!]);
+      assert.deepEqual(created.trackedFolders, tracked);
+
+      for (const [key, trackedFolders] of invalid) {
+        assert.equal(
+          (yield* update(key, { trackedFolders }).pipe(Effect.flip))._tag,
+          "ProjectInvalidError",
+        );
+      }
+      // The kept list is checked against the new folder, and stays as it was when refused.
+      assert.equal(
+        (yield* update("move-onto", { workspaceRoot: `${work}/api` }).pipe(Effect.flip))._tag,
+        "ProjectInvalidError",
+      );
+      assert.deepEqual((yield* update("rename", { title: "Renamed" })).trackedFolders, tracked);
+      assert.deepEqual(
+        Option.getOrThrow(yield* service.getById(projectId)).trackedFolders,
+        tracked,
+      );
+      // One folder out or in applies to the list the project has, not to one a client read.
+      assert.deepEqual(
+        (yield* update("untrack", { untrackFolders: [`${work}/api/`] })).trackedFolders,
+        tracked.slice(1),
+      );
+      assert.deepEqual(
+        (yield* update("track", { trackFolders: tracked })).trackedFolders,
+        tracked.toReversed(),
+      );
+      yield* update("reorder", { trackedFolders: tracked });
+      // A folder already tracked may go missing; only one being added has to be there.
+      yield* fileSystem.remove(`${work}/api`, { recursive: true });
+      assert.deepEqual(
+        (yield* update("gone", { trackedFolders: tracked })).trackedFolders,
+        tracked,
+      );
+      assert.deepEqual((yield* update("clear", { trackedFolders: [] })).trackedFolders, []);
+
+      // A moved project lists the repositories of the folder it moved to, without being told.
+      const moved = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-moved-" }),
+      );
+      yield* fileSystem.makeDirectory(`${moved}/web/.git`, { recursive: true });
+      assert.deepEqual((yield* update("move", { workspaceRoot: moved })).trackedFolders, [
+        { path: path.join(moved, "web"), name: "web", discovered: true },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("records the outcome and duration of a committed project command", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
@@ -509,6 +609,53 @@ it.layer(layerTest)("ProjectService", (it) => {
         Option.getOrThrow(yield* service.getById(other)).workspaceRoot,
         "/work/conflict-mover",
       );
+    }),
+  );
+
+  it.effect("refuses a WSL share path on Windows and allows it elsewhere", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      const projectId = ProjectId.make("project:wsl-share");
+      const refused = yield* onWindows(
+        service.create({
+          commandId: CommandId.make("command:wsl-share"),
+          projectId,
+          title: "WSL",
+          workspaceRoot: "\\\\wsl$\\Ubuntu\\home\\ubuntu\\repo",
+        }),
+      ).pipe(Effect.flip);
+      assert.equal(refused._tag, "ProjectInvalidError");
+      assert.isTrue(Option.isNone(yield* service.getById(projectId)));
+
+      const mover = ProjectId.make("project:wsl-share:mover");
+      yield* onWindows(
+        service.create({
+          commandId: CommandId.make("command:wsl-share:mover"),
+          projectId: mover,
+          title: "Mover",
+          workspaceRoot: "C:\\work\\wsl-share-mover",
+        }),
+      );
+      const move = yield* onWindows(
+        service.update({
+          commandId: CommandId.make("command:wsl-share:move"),
+          projectId: mover,
+          workspaceRoot: "\\\\wsl.localhost\\Ubuntu\\home\\ubuntu\\repo",
+        }),
+      ).pipe(Effect.flip);
+      assert.equal(move._tag, "ProjectInvalidError");
+
+      const linux = yield* service
+        .create({
+          commandId: CommandId.make("command:wsl-share:linux"),
+          projectId: ProjectId.make("project:wsl-share:linux"),
+          title: "Linux",
+          workspaceRoot: "\\\\wsl.localhost\\Ubuntu\\home\\ubuntu\\repo",
+        })
+        .pipe(Effect.provideService(HostProcess.Platform, "linux"));
+      assert.equal(linux.title, "Linux");
     }),
   );
 
@@ -883,6 +1030,66 @@ it.effect("serializes two projects claiming the same workspace root", () =>
     yield* Deferred.succeed(releaseFirst, undefined);
     assert.equal((yield* Fiber.join(first)).id, "project:race:first");
     assert.equal((yield* Fiber.join(second))._tag, "ProjectConflictError");
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("keeps a folder added while a scan of the project folder waited to commit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-folder-sync-" }),
+    );
+    const eventSink = yield* EventSink.EventSinkV2;
+    const updateReachedCommit = yield* Deferred.make<void>();
+    const releaseUpdate = yield* Deferred.make<void>();
+    const synced = yield* Deferred.make<void>();
+    const trackCommandId = CommandId.make("command:folder-sync:track");
+    const gatedSink = EventSink.EventSinkV2.of({
+      ...eventSink,
+      commitProjectCommand: (input) =>
+        input.commandId === trackCommandId
+          ? Deferred.succeed(updateReachedCommit, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseUpdate)),
+              Effect.andThen(eventSink.commitProjectCommand(input)),
+            )
+          : input.commandId.startsWith("project-folders:")
+            ? eventSink
+                .commitProjectCommand(input)
+                .pipe(Effect.ensuring(Deferred.succeed(synced, undefined)))
+            : eventSink.commitProjectCommand(input),
+    });
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
+    const projectId = ProjectId.make("project:folder-sync");
+    yield* service.create({
+      commandId: CommandId.make("command:folder-sync:create"),
+      projectId,
+      title: "Folder sync",
+      workspaceRoot: root,
+    });
+    const added = {
+      path: yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-elsewhere-" }),
+      ),
+      name: "Elsewhere",
+    };
+    const update = yield* service
+      .update({ commandId: trackCommandId, projectId, trackedFolders: [added] })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(updateReachedCommit);
+    // The scan starts from a row that does not hold the added folder yet.
+    yield* fileSystem.makeDirectory(`${root}/api/.git`, { recursive: true });
+    yield* TestClock.adjust("31 seconds");
+    yield* service.getById(projectId);
+    yield* Deferred.succeed(releaseUpdate, undefined);
+    yield* Fiber.join(update);
+    yield* Deferred.await(synced);
+    assert.deepEqual(Option.getOrThrow(yield* service.getById(projectId)).trackedFolders, [
+      { path: path.join(root, "api"), name: "api", discovered: true },
+      added,
+    ]);
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
 

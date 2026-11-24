@@ -34,11 +34,13 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
+  foldedMessageSearchText,
   indexedMessageCondition,
   messageSearchText,
   nonPlaceholderMessageCondition,
 } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
+import { withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
@@ -279,9 +281,35 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      -- Nor can they reach a rolled-back turn, or a message of a stopped turn
+      -- that no shown item carries, such as a queued prompt that never ran.
+      AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs AS runs
+        WHERE runs.run_id = messages.run_id
+          AND (
+            runs.status = 'rolled_back'
+            OR (
+              runs.status = 'cancelled'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items AS items
+                -- Seeks migration 94's message index rather than reading every item of
+                -- the run; + drops the column's affinity, which would stop the seek.
+                WHERE items.thread_id = messages.thread_id
+                  AND items.type IN ('user_message', 'assistant_message')
+                  AND json_valid(items.payload_json)
+                  AND json_extract(items.payload_json, '$.messageId') = +messages.message_id
+                  AND items.run_id = runs.run_id
+                  AND (
+                    json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+                    OR json_extract(runs.payload_json, '$.startedAt') IS NOT NULL
+                  )
+              )
+            )
+          )
+      )
       AND NOT EXISTS (
         -- The text read once, not once per check.
-        SELECT 1 FROM (SELECT ${messageSearchText(sql)} AS text) AS message,
+        SELECT 1 FROM (SELECT ${foldedMessageSearchText(sql)} AS text) AS message,
           json_each(${substrings}) AS substring
         WHERE instr(lower(message.text), json_extract(substring.value, '$.token')) = 0
           AND NOT (
@@ -293,7 +321,7 @@ export const messageHitsQuery = (
         SELECT 1 FROM json_each(${shortSpellings}) AS token
         WHERE NOT EXISTS (
           SELECT 1 FROM json_each(token.value) AS spelling
-          WHERE instr(${messageSearchText(sql)}, spelling.value) > 0
+          WHERE instr(${foldedMessageSearchText(sql)}, spelling.value) > 0
         )
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
@@ -431,7 +459,7 @@ export const make = Effect.gen(function* () {
       INNER JOIN projection_projects AS projects
         ON projects.project_id = threads.project_id
       WHERE threads.deleted_at IS NULL
-        AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
+        AND threads.archived_at IS NULL
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
@@ -455,7 +483,7 @@ export const make = Effect.gen(function* () {
       FROM orchestration_v2_projection_threads AS threads
       WHERE threads.thread_id IN (SELECT value FROM json_each(${threadIds}))
         AND threads.deleted_at IS NULL
-        AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
+        AND threads.archived_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
         AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
@@ -529,7 +557,8 @@ export const make = Effect.gen(function* () {
     const hitCount = (threadId: ThreadId) => hitCounts.get(threadId) ?? 1;
     const matchMessage = messageMatcher(input.query);
     for (const row of rows) {
-      const text = row.text.replace(MARKDOWN_LINK, "$1");
+      // Webhook URL tokens are withheld before matching, so a snippet cut inside the URL has none.
+      const text = withoutWebhookUrlToken(row.text.replace(MARKDOWN_LINK, "$1"));
       const match = matchMessage(text);
       if (match === null) continue;
       const hit = { row, text, ...match };

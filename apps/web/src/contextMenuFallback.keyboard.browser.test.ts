@@ -1,9 +1,11 @@
 import { expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import {
   dismissContextMenu,
   isContextMenuOpen,
   showContextMenuFallback,
 } from "./contextMenuFallback";
+import { createLocalApi } from "./localApi";
 
 const items = [
   { id: "heading", label: "Thread actions", header: true },
@@ -115,4 +117,15 @@ it("takes thumb Back and Forward presses so the app router stays put", () => {
     expect(event.defaultPrevented).toBe(true);
   }
   expect(isContextMenuOpen()).toBe(true);
+});
+
+// NVDA browse mode sends Shift+F10 without keyboard focus on the opener, so the opener does
+// not match :focus-visible; the caller's keyboard source must still start on the first action.
+it("starts a keyboard-sourced menu on its first action when the opener was focused by pointer", async () => {
+  using fixture = setup();
+  fixture.origin.blur();
+  await userEvent.click(fixture.origin);
+  expect(fixture.origin.matches(":focus-visible")).toBe(false);
+  void createLocalApi().contextMenu.show(items, { x: 0, y: 0 }, "keyboard");
+  expect(label()).toBe("Rename");
 });
