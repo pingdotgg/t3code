@@ -1,5 +1,5 @@
 // Serves T3's real MCP transport with a hidden tool, to see whether a harness lists tools again
-// after `tool_search`, before T3 defers tools for it (docs/internals/03_providers.md).
+// after `tool_search`, before T3 defers tools for it (docs/operations/06_mcp-tool-deferral.md).
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- NodeHttpServer.layer takes Node's createServer.
 import * as NodeHttp from "node:http";
 

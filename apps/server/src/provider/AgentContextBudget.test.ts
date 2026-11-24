@@ -152,7 +152,7 @@ it.effect("only request_secret and send_to_user ask Claude Code to load them up 
 // CI rejects a PR that raises a gated value above main's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.
 // mcpPackToolListJsonBytes is recorded but not gated: harnesses that defer tools never list
-// a pack up front, and the eager ones are the fallback (docs/internals/03_providers.md).
+// a pack up front, and the eager ones are the fallback (docs/operations/06_mcp-tool-deferral.md).
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
