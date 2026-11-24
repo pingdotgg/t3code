@@ -7,7 +7,6 @@ import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
 import { compactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
@@ -154,7 +153,6 @@ function setKeepFullHistory(threadKey: string, keep: boolean) {
   appAtomRegistry.set(fullHistoryThreadKeysAtom, keep ? { ...rest, [threadKey]: true } : rest);
 }
 
-const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
 const EMPTY_THREAD_SEQUENCE_ATOM = Atom.make(0);
 
 export function appendReviewCommentToDraft(input: {
@@ -294,11 +292,6 @@ export function useThreadComposerState(input: {
       messages: selectedThreadMessages,
     });
   }, [acknowledgedMessages, selectedThreadKey, selectedThreadSequence, selectedThreadMessages]);
-  const checkpointSummaries = useAtomValue(
-    selectedThreadDetailRef === null
-      ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
-      : environmentThreadDetails.checkpointSummariesAtom(selectedThreadDetailRef),
-  );
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
   // detail is usually present but empty during a worktree checkout, so this
@@ -315,7 +308,6 @@ export function useThreadComposerState(input: {
       anchoredMessages: pendingCreation,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
-      checkpointSummaries,
       cache: feedCache,
       resolve,
       locale,

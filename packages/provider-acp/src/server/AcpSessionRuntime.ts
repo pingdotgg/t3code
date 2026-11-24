@@ -31,6 +31,7 @@ import * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
@@ -1044,7 +1045,12 @@ const terminateWindowsProcessTreeWithTaskkill = (
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const taskkill = yield* spawner.spawn(
-        ChildProcess.make("taskkill", ["/PID", String(pid), "/T", "/F"]),
+        ChildProcess.make(windowsSystem32Path(yield* HostProcess.Environment, "taskkill.exe"), [
+          "/PID",
+          String(pid),
+          "/T",
+          "/F",
+        ]),
       );
       const outputFiber = yield* Stream.decodeText(taskkill.all).pipe(
         Stream.mkString,

@@ -897,6 +897,10 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   ]),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** The thread's modes when this attempt's turn started. A later change reaches only the next turn. */
+  startedModes: Schema.optional(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
 });
 export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
 
@@ -1939,6 +1943,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
     phase: Schema.optional(AssistantMessagePhase),
+    /** The provider sent this mid-turn, apart from the turn's answer. */
+    delivery: Schema.optional(Schema.Literal("async")),
     messageId: MessageId,
     text: Schema.String,
     textOmitted: DedupedBodyMarker,
@@ -2839,6 +2845,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
     phase: Schema.optional(AssistantMessagePhase),
+    /** The provider sent this mid-turn, apart from the turn's answer. */
+    delivery: Schema.optional(Schema.Literal("async")),
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),

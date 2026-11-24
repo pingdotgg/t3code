@@ -811,12 +811,14 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly replyToReviewThread: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -825,6 +827,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly resolved: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -1324,6 +1327,24 @@ export const make = Effect.gen(function* () {
       .PullRequestSubject({ owner, name, number: input.number, subjectId: input.subjectId })
       .pipe(graphql({ ...input, allowReserve: true }), Effect.map(isSubjectOfPullRequest));
   };
+
+  const requireThreadOfPullRequest = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+    readonly threadId: string;
+    readonly operation: string;
+  }) =>
+    subjectBelongsToPullRequest({ ...input, subjectId: input.threadId }).pipe(
+      Effect.flatMap((belongs) =>
+        belongs
+          ? Effect.void
+          : Effect.fail(
+              new GitHubSubjectScopeError({ cwd: input.cwd, operation: input.operation }),
+            ),
+      ),
+    );
 
   const decodeWith = <A>(
     cwd: string,
@@ -3119,15 +3140,21 @@ export const make = Effect.gen(function* () {
             verdict: input.verdict,
             body: input.body,
             comments: input.comments,
+            expectedHeadSha: input.expectedHeadSha,
           }),
         })
         .pipe(Effect.asVoid);
     }),
 
     replyToReviewThread: Effect.fn("GitHubPullRequestApi.replyToReviewThread")(function (input) {
-      return client
-        .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
-        .pipe(graphql({ ...input, operation: "replyToReviewThread" }), Effect.asVoid);
+      const target = { ...input, operation: "replyToReviewThread" };
+      return requireThreadOfPullRequest(target).pipe(
+        Effect.andThen(
+          client
+            .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
+            .pipe(graphql(target), Effect.asVoid),
+        ),
+      );
     }),
 
     getPullRequestFilesViewed: Effect.fn("GitHubPullRequestApi.getPullRequestFilesViewed")(
@@ -3214,11 +3241,15 @@ export const make = Effect.gen(function* () {
 
     setReviewThreadResolution: Effect.fn("GitHubPullRequestApi.setReviewThreadResolution")(
       function (input) {
-        return (
-          input.resolved
-            ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-            : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-        ).pipe(graphql({ ...input, operation: "setReviewThreadResolution" }));
+        const target = { ...input, operation: "setReviewThreadResolution" };
+        return requireThreadOfPullRequest(target).pipe(
+          Effect.andThen(
+            (input.resolved
+              ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+              : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+            ).pipe(graphql(target)),
+          ),
+        );
       },
     ),
 
