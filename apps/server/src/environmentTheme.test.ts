@@ -656,6 +656,58 @@ describe("environment theme", () => {
     );
   });
 
+  it.effect("saves an edit to a published theme without making it the default", () => {
+    const selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [];
+    return withEnvironmentThemes(
+      { "look.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const edited: EnvironmentThemeFile = {
+          name: "Look",
+          appearance: "dark",
+          colors: { canvas: "#101010", accent: "#ff8800" },
+        };
+        yield* themes.save({ themeId: "look", theme: edited });
+        assert.deepEqual(yield* themes.current, [{ id: "look", ...edited }]);
+
+        const refused = yield* themes
+          .save({ themeId: "dark", theme: NIGHTFALL_THEME })
+          .pipe(Effect.flip);
+        assert.match(refused.message, /not a valid theme id/);
+        assert.deepEqual(selected, []);
+      }),
+      { selected },
+    );
+  });
+
+  it.effect("removes a published theme and every background image beside it", () =>
+    withEnvironmentThemes(
+      {
+        "look.json": encodeThemeFile(NIGHTFALL_THEME),
+        "look.png": "png",
+        "look.webp": "webp",
+        "shared-light.json": encodeThemeFile(SHARED_THEME),
+      },
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+
+        yield* themes.remove("look");
+        assert.deepEqual(
+          (yield* themes.current).map((theme) => theme.id),
+          ["shared-light"],
+        );
+        assert.deepEqual((yield* fs.readDirectory(environmentThemesDir)).toSorted(), [
+          "shared-light.json",
+        ]);
+
+        const missing = yield* themes.remove("look").pipe(Effect.flip);
+        assert.match(missing.message, /not a published theme/);
+      }),
+    ),
+  );
+
   it.effect(
     "reports the image beside a theme as its background, with a new revision per file",
     () =>

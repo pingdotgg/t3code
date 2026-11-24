@@ -4,8 +4,22 @@ import { page, userEvent } from "vite-plus/test/browser";
 import type { ReactNode } from "react";
 
 import { act, render } from "../../../test/render";
+import {
+  CUSTOM_THEMES_STORAGE_KEY,
+  installCustomTheme,
+  publishedThemeDefinitions,
+  type ThemeDefinition,
+} from "../../themePalette";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
+
+const LOOK = {
+  id: "look",
+  name: "Look",
+  appearance: "dark",
+  canvas: "#1a1b26",
+  accent: "#7aa2f7",
+} as const;
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
   const header = panel.querySelector<HTMLElement>("h2")!.closest<HTMLElement>(".cursor-grab")!;
@@ -123,6 +137,48 @@ async function editorElement(selector: string) {
 }
 
 describe("ThemeEditorPanel", () => {
+  it("saves an edit to a published theme to its environment, not to this browser", async () => {
+    window.localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
+    // A saved theme with the edited name would otherwise turn Save into a merge into it.
+    installCustomTheme(publishedThemeDefinitions([{ ...LOOK, id: "dusk", name: "Dusk" }])[0]!);
+    const saves: ThemeDefinition[] = [];
+    let accept = false;
+    const onOpenChange = vi.fn();
+    await using screen = await render(
+      <ThemeEditorPanel
+        open
+        onOpenChange={onOpenChange}
+        onSaved={() => true}
+        onSaveToEnvironment={async (theme) => {
+          saves.push(theme);
+          return accept;
+        }}
+        editingTheme={publishedThemeDefinitions([LOOK])[0]!}
+        initialAppearance="dark"
+        restoreTheme={() => {}}
+      />,
+    );
+    await userEvent.fill(screen.getByRole("textbox", { name: "Theme name" }), "Dusk");
+    const save = screen.getByRole("button", { name: "Save changes" });
+
+    await userEvent.click(save);
+    await expect.element(screen.getByText("Could not save the theme.")).toBeVisible();
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    accept = true;
+    await userEvent.click(save);
+    await expect.poll(() => onOpenChange.mock.calls).toEqual([[false]]);
+    expect(saves.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: "look", label: "Dusk" },
+      { id: "look", label: "Dusk" },
+    ]);
+    expect(
+      JSON.parse(window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY)!).map(
+        (theme: ThemeDefinition) => theme.id,
+      ),
+    ).toEqual(["dusk"]);
+  });
+
   it("keeps its left edge when resized after the window shrank", async () => {
     await using view = await renderPanel();
     dragHeader(view.panel, 700, 40);
