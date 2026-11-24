@@ -227,7 +227,7 @@ describe("watchAntigravityPromptOutcome", () => {
         ]))?.failure.retryable,
         false,
       );
-      // the native log records a failed image read, then just user input and the same error on retry.
+      // The native log records a failed image read, then just user input and the same error on retry.
       const mediaError =
         "INVALID_ARGUMENT (code 400): Unable to process input: the file or media data is empty, corrupted, or malformed.";
       const mediaTurn = (
@@ -261,7 +261,7 @@ describe("watchAntigravityPromptOutcome", () => {
         ),
       );
       assert.equal((yield* mediaTurn(true))?.threadDisposition, "reusable");
-      // a new attachment or tool read can introduce a different bad image.
+      // A new attachment or tool read can introduce a different bad image.
       assert.equal((yield* mediaTurn(false))?.threadDisposition, "reusable");
       assert.equal(
         (yield* mediaTurn(true, [[FILE_READ, Buffer.from("Read another.jpg")]]))?.threadDisposition,

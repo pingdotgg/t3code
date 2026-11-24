@@ -116,16 +116,21 @@ const lastStepAfter =
       database
         .prepare("SELECT 1 FROM steps WHERE idx > ? AND step_type = ? LIMIT 1")
         .get(index, PLANNER_RESPONSE_STEP_TYPE) !== undefined;
-    // only a clean retry that fails before any tool or model step implicates saved history.
+    // Only a text-only retry that fails before any tool or model step implicates saved history.
     let repeatedMediaError = false;
-    if (textOnly && row.type === ERROR_STEP_TYPE && isMalformedMediaError(row.payload)) {
+    if (
+      textOnly &&
+      typeof row.idx === "number" &&
+      row.type === ERROR_STEP_TYPE &&
+      isMalformedMediaError(row.payload)
+    ) {
       const [input, previous] = database
         .prepare(
           `SELECT idx, step_type AS type,
                 CASE WHEN step_type = ? THEN substr(step_payload, 1, ?) END AS payload
          FROM steps WHERE idx < ? ORDER BY idx DESC LIMIT 2`,
         )
-        .all(ERROR_STEP_TYPE, MAX_ERROR_PAYLOAD_BYTES, row.idx!);
+        .all(ERROR_STEP_TYPE, MAX_ERROR_PAYLOAD_BYTES, row.idx);
       repeatedMediaError =
         input?.type === USER_INPUT_STEP_TYPE &&
         previous?.idx === index &&

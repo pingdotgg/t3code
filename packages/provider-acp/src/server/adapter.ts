@@ -435,6 +435,7 @@ export interface AcpAdapterV2Flavor {
    * Runs before `session/prompt`. The check reports a failure hidden by a clean stop, or
    * by silence when the inactivity watchdog retires the prompt (`retired`). A failure
    * restarts the runtime; a `broken` thread's next turn starts a fresh session.
+   * `textOnly` is true when the prompt carries no attachments and only text blocks.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
