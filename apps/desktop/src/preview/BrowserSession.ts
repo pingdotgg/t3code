@@ -64,7 +64,46 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
 };
 
 // Teams sends Electron User-Agents to an error page before sign-in. Electron allows one listener per session.
-const TEAMS_URL_PATTERNS = ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"];
+const isTeamsUrl = (url: string): boolean =>
+  url.startsWith("https://teams.cloud.microsoft/") ||
+  url.startsWith("https://teams.microsoft.com/");
+
+const GREASE_CHARS = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+const GREASE_VERSIONS = ["8", "99", "24"];
+
+/**
+ * The low-entropy User-Agent client hints the renderer sends on fetches. Mirrors Chromium's
+ * GenerateBrandVersionList with no embedder brand, as Electron builds it.
+ */
+export const lowEntropyClientHints = (
+  chromeVersion: string,
+  platform: NodeJS.Platform,
+): Record<string, string> => {
+  const major = Number.parseInt(chromeVersion, 10);
+  const grease = `"Not${GREASE_CHARS[major % 11]}A${GREASE_CHARS[(major + 1) % 11]}Brand";v="${GREASE_VERSIONS[major % 3]}"`;
+  const chromium = `"Chromium";v="${major}"`;
+  return {
+    "sec-ch-ua": major % 2 === 0 ? `${grease}, ${chromium}` : `${chromium}, ${grease}`,
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": `"${platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : "Linux"}"`,
+  };
+};
+
+const isPotentiallyTrustworthy = (rawUrl: string): boolean => {
+  try {
+    const { protocol, hostname } = new URL(rawUrl);
+    if (protocol === "https:") return true;
+    return (
+      protocol === "http:" &&
+      (hostname === "localhost" ||
+        hostname.endsWith(".localhost") ||
+        hostname === "[::1]" ||
+        /^127\.\d+\.\d+\.\d+$/.test(hostname))
+    );
+  } catch {
+    return false;
+  }
+};
 
 const MAX_PROMPT_URL_LENGTH = 300;
 
@@ -680,20 +719,29 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 true
               : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
+          const clientHints = lowEntropyClientHints(process.versions.chrome, platform);
+          // Electron adds client hints to subresources only; sites that compare them across a session reject navigations without them.
           browserSession.webRequest.onBeforeSendHeaders(
-            { urls: TEAMS_URL_PATTERNS },
-            ({ requestHeaders }, callback) => {
-              const userAgent = Object.entries(requestHeaders).find(
-                ([name]) => name.toLowerCase() === "user-agent",
-              );
-              if (userAgent === undefined) {
-                callback({});
-                return;
+            { urls: ["http://*/*", "https://*/*"] },
+            ({ url, resourceType, requestHeaders }, callback) => {
+              let next = requestHeaders;
+              if (
+                (resourceType === "mainFrame" || resourceType === "subFrame") &&
+                !Object.keys(requestHeaders).some((name) => name.toLowerCase() === "sec-ch-ua") &&
+                isPotentiallyTrustworthy(url)
+              ) {
+                next = { ...next, ...clientHints };
               }
-              const [name, value] = userAgent;
-              callback({
-                requestHeaders: { ...requestHeaders, [name]: value.replace(/ Electron\/\S+/, "") },
-              });
+              if (isTeamsUrl(url)) {
+                const userAgent = Object.entries(next).find(
+                  ([name]) => name.toLowerCase() === "user-agent",
+                );
+                if (userAgent !== undefined) {
+                  const [name, value] = userAgent;
+                  next = { ...next, [name]: value.replace(/ Electron\/\S+/, "") };
+                }
+              }
+              callback(next === requestHeaders ? {} : { requestHeaders: next });
             },
           );
           return browserSession;

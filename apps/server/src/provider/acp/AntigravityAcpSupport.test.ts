@@ -169,6 +169,14 @@ describe("Antigravity Auto", () => {
         request("Run mcp_t3-code_preview_status", {
           CommandLine: "Run mcp_t3-code_preview_status",
         }),
+        // A directly called tool's rawInput is its own arguments, whatever their names.
+        request("Run mcp_github_create_issue", {
+          ServerName: "t3-code",
+          ToolName: "delegate_task",
+        }),
+        request("Running create_issue", { ServerName: "t3-code", ToolName: "delegate_task" }),
+        // call_mcp_tool is titled for the tool it calls.
+        request("MCP Tool create_issue", { ServerName: "t3-code", ToolName: "delegate_task" }),
       ]) {
         expect(antigravityPermissionDisposition(policy, otherCall)).toBe("ask");
       }
@@ -508,29 +516,31 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       }),
   );
 
-  it.effect("sends supported audio files as native audio content", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeAttachmentFixture();
-      const audioAttachment = {
-        ...textAttachment,
-        id: "recording-1",
-        name: "recording.wav",
-        mimeType: "audio/wav",
-      } satisfies ChatAttachment;
-      const bytes = Buffer.from("RIFF....WAVEfmt ", "latin1");
-      yield* fixture.write(audioAttachment, bytes);
-      const prompt = yield* buildAntigravityPrompt({
-        input: "Transcribe this.",
-        attachments: [audioAttachment],
-        resolveAttachmentPath: fixture.resolve,
-        promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      });
+  it.effect.each(["audio/wav", "audio/wav;codecs=1", "Audio/WAV \t; codecs=1"])(
+    "sends supported audio files as native audio content (%s)",
+    (mimeType) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeAttachmentFixture();
+        const audioAttachment = {
+          ...textAttachment,
+          id: "recording-1",
+          name: "recording.wav",
+          mimeType,
+        } satisfies ChatAttachment;
+        const bytes = Buffer.from("RIFF....WAVEfmt ", "latin1");
+        yield* fixture.write(audioAttachment, bytes);
+        const prompt = yield* buildAntigravityPrompt({
+          input: "Transcribe this.",
+          attachments: [audioAttachment],
+          resolveAttachmentPath: fixture.resolve,
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+        });
 
-      expect(prompt).toEqual([
-        { type: "text", text: "Transcribe this." },
-        { type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" },
-      ]);
-    }),
+        expect(prompt).toEqual([
+          { type: "text", text: "Transcribe this." },
+          { type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" },
+        ]);
+      }),
   );
 
   it.effect.each([{ image: true }])(

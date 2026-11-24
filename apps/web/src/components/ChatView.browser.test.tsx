@@ -152,7 +152,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     url: "https://linear.app/example/issue/WEB-123/add-keyboard-support",
     source: "manual",
     linkedAt: "2026-01-01T00:00:00.000Z",
-    displayKey: issueRef.key,
+    displayKey: "#123",
     title: "Add keyboard support",
   };
   const completed = {
@@ -165,7 +165,22 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   const grouped = threadWithHistory("issue-grouped", 1);
   using _environment = installFakeEnvironment([
     first,
-    { ...linked, issues: [issue] },
+    {
+      ...linked,
+      issues: [issue],
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 124,
+          url: "https://github.com/pingdotgg/t3code/pull/124",
+          source: "manual",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    },
     { ...grouped, issues: [completed, issue] },
   ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
@@ -232,10 +247,21 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
   });
   await expect.element(badge).toBeVisible();
-  expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  expect(badge.element().querySelector("span")).toHaveClass(/text-emerald-600/);
+  expect(badge.element()).toHaveTextContent("123");
+  expect(badge.element()).not.toHaveTextContent("#");
+  const prBadge = page.getByRole("link", { name: "PR #124, status pending" });
+  await expect.element(prBadge).toHaveTextContent("124");
+  for (const control of [badge, prBadge]) {
+    expect(control.element().querySelector("span")).toHaveClass(
+      "contents",
+      "text-xs",
+      "tabular-nums",
+    );
+  }
   const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
   await vi.waitFor(() =>
-    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-emerald-600/),
+    expect(groupedBadge.element().querySelector("span")).toHaveClass(/text-emerald-600/),
   );
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
@@ -546,6 +572,43 @@ it.each(["new", "existing"] as const)(
     launch.release();
   },
 );
+
+it("a file picked after the phone composer collapses still attaches", async () => {
+  const thread = threadWithHistory("thread-40993", 1);
+  using _environment = installFakeEnvironment([thread]);
+  await page.viewport(390, 844);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  await userEvent.click(editor);
+  await expect.element(page.getByRole("button", { name: "Attach files" })).toBeVisible();
+  const input = document.querySelector<HTMLInputElement>(
+    'form[data-chat-composer-form] input[type="file"]',
+  );
+  expect(input).not.toBeNull();
+
+  // Opening the native picker blurs the editor, which collapses the phone composer.
+  (editor.element() as HTMLElement).blur();
+  await expect.element(page.getByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
+  const files = new DataTransfer();
+  files.items.add(new File([PNG], "picked.png", { type: "image/png" }));
+  input!.files = files.files;
+  input!.dispatchEvent(new Event("change", { bubbles: true }));
+
+  await expect.element(page.getByRole("img", { name: "picked.png" })).toBeVisible();
+});
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
@@ -1044,4 +1107,45 @@ it("/side sends the draft's attachments and context, and keeps them when it does
       "/side what is this?",
     ]),
   );
+});
+
+it("opening Settings without a page event closes the composer model picker and permissions menu", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-29219");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-29219"),
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  const trigger = document.querySelector<HTMLElement>("[data-chat-provider-model-picker]");
+  if (!trigger) throw new Error("composer model picker trigger missing");
+  await userEvent.click(trigger);
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toBeVisible();
+
+  // The desktop menu's open-settings accelerator navigates with no key or pointer event in the page.
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(search).not.toBeInTheDocument();
+
+  await act(() => router.navigate({ to: "/draft/$draftId", params: { draftId } }));
+  await page.getByRole("button", { name: /^Permissions: / }).click();
+  // The modal Settings dialog aria-hides everything outside it, so match text, not role.
+  const permissions = page.getByText("Allow commands and edits without prompts.").last();
+  await expect.element(permissions).toBeVisible();
+  await act(() => router.navigate({ to: "/settings" }));
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await expect.element(permissions).not.toBeInTheDocument();
 });
