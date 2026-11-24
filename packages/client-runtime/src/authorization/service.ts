@@ -259,8 +259,6 @@ export const make = Effect.gen(function* () {
         wsBaseUrl: input.wsBaseUrl,
         httpBaseUrl: input.httpBaseUrl,
         bearerToken: input.bearerToken,
-        clientMetadata: presentation.metadata,
-        connectionMethod: input.connectionMethod,
       }).pipe(
         Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -299,8 +297,6 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           ),
-        clientMetadata: presentation.metadata,
-        connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       });
     },
@@ -639,8 +635,6 @@ export const make = Effect.gen(function* () {
                   proofError(msg("Could not create the websocket authorization proof.")),
                 ),
               ),
-          clientMetadata: presentation.metadata,
-          connectionMethod: "direct",
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.result);
       let credential = yield* directDpopToken(connection);
       let socket = yield* openSocket(credential);

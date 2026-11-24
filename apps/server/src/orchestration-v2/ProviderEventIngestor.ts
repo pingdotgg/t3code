@@ -30,10 +30,6 @@ import * as SqlError from "effect/sql/SqlError";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import {
-  ProviderTurnAnalytics,
-  type ProviderTurnAnalyticsContext,
-} from "../telemetry/ProviderUsageAnalytics.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
@@ -225,7 +221,7 @@ export interface ProviderEventIngestInput {
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
   readonly event: ProviderAdapter.ProviderAdapterV2Event;
-  readonly analyticsContext?: ProviderTurnAnalyticsContext;
+  readonly modelSelection?: ModelSelection;
 }
 
 export interface ProviderEventIngestorV2Shape {
@@ -277,12 +273,10 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-    const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const usageLimitResets = yield* UsageLimitResetFallback;
     const scope = yield* Effect.scope;
-    const completedTurnAnalytics = new Set<string>();
     const priceTokens = yield* ProviderUsagePricing;
     const usageLock = yield* Semaphore.make(1);
 
@@ -480,7 +474,7 @@ export const layer: Layer.Layer<
         );
         const model =
           threadId === input.threadId
-            ? input.analyticsContext?.modelSelection.model
+            ? input.modelSelection?.model
             : (yield* projections.getThread(threadId)).modelSelection.model;
         if (model !== undefined && delta.some((value) => value > 0)) {
           const prior = pending.get(model);
@@ -1033,34 +1027,6 @@ export const layer: Layer.Layer<
                           }),
                       ),
                     ),
-              ),
-              Effect.tap((storedEvents) =>
-                Effect.gen(function* () {
-                  if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")
-                    return;
-                  const providerTurn = input.event.providerTurn;
-                  if (
-                    providerTurn.status !== "completed" &&
-                    providerTurn.status !== "failed" &&
-                    providerTurn.status !== "interrupted" &&
-                    providerTurn.status !== "cancelled"
-                  )
-                    return;
-                  const key = `${input.providerInstanceId}:${providerTurn.id}`;
-                  if (completedTurnAnalytics.has(key)) return;
-                  completedTurnAnalytics.add(key);
-                  if (completedTurnAnalytics.size > 4096) {
-                    const oldest = completedTurnAnalytics.values().next().value;
-                    if (oldest !== undefined) completedTurnAnalytics.delete(oldest);
-                  }
-                  yield* analytics.turnCompleted({
-                    driver: input.event.driver,
-                    providerTurn,
-                    ...(input.analyticsContext === undefined
-                      ? {}
-                      : { context: input.analyticsContext }),
-                  });
-                }),
               ),
               (effect) =>
                 input.event.type === "app_thread.created"

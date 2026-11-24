@@ -23,7 +23,6 @@ import {
   OrchestratorMcpFailure,
   PreviewAutomationError,
   ProviderInteractionMode,
-  type RunId,
   RuntimeMode,
   OrchestrationV2LinkedSender,
   ThreadId,
@@ -42,15 +41,6 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as PullRequestWatchService from "../pullRequest/PullRequestWatchService.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
-import {
-  type AgentThread,
-  agentToolProperties,
-  handoffSettings,
-  MAX_REPORTED_DEPTH,
-  toolOutcome,
-} from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -1021,207 +1011,6 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 });
 
 /**
- * Tools that hand work to another thread's agent: they create it, message it,
- * steer it, or move context into it. Their events name the receiving agent too.
- */
-const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
-  "delegate_task",
-  "create_threads",
-  "t3_thread_launch",
-  "t3_thread_send",
-  "t3_thread_send_attachments",
-  "schedule_task",
-  "run_scheduled_task_now",
-]);
-
-/** Tool actions that hand work over with only a `{ sequence }` result; the input names the thread. */
-const INPUT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
-  t3_queue: new Set(["edit", "promote_to_steer"]),
-  t3_pending_request: new Set(["respond"]),
-};
-
-/** Tool actions that hand work over and name the receiving thread in their result. */
-const RESULT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
-  t3_thread_transfer: new Set(["fork", "merge_back"]),
-};
-
-const hasAction = (
-  actions: Readonly<Record<string, ReadonlySet<string>>>,
-  tool: string,
-  args: unknown,
-) =>
-  actions[tool]?.has(String((args as { readonly action?: unknown } | null | undefined)?.action)) ===
-  true;
-
-const isInputTargetHandoff = (tool: string, args: unknown) =>
-  hasAction(INPUT_TARGET_ACTIONS, tool, args);
-
-const resultThreadKeys = ["childThreadId", "targetThreadId", "boundThreadId", "threadId"] as const;
-
-/** Thread ids a handoff tool result names: the thread that received the work. */
-const resultThreadIds = (content: unknown): ReadonlyArray<string> => {
-  if (typeof content !== "object" || content === null) return [];
-  const record = content as Readonly<Record<string, unknown>>;
-  if (Array.isArray(record.threads)) return record.threads.flatMap(resultThreadIds);
-  const key = resultThreadKeys.find((candidate) => typeof record[candidate] === "string");
-  return key === undefined ? [] : [record[key] as string];
-};
-
-/**
- * Thread ids that received a handoff. The input's `threadId` is used only after
- * the call succeeded, so it is one the handler already resolved and authorized.
- */
-const handoffTargetIds = (
-  tool: string,
-  args: unknown,
-  result: McpSchema.CallToolResult | undefined,
-): ReadonlyArray<string> => {
-  if (!isInputTargetHandoff(tool, args)) return resultThreadIds(result?.structuredContent);
-  if (result === undefined || toolOutcome(result).outcome !== "ok") return [];
-  const threadId = (args as { readonly threadId?: unknown } | null | undefined)?.threadId;
-  return typeof threadId === "string" ? [threadId] : [];
-};
-
-/** Tool analytics must never include IDs, prompts or free text. */
-const withToolAnalytics =
-  /* Request instrumentation already owns the span; keep this helper in that context. */
-  Effect.fnUntraced(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
-    const server = yield* McpServer.McpServer;
-    const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
-    if (Option.isNone(analytics)) return yield* registration;
-    const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
-    const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
-    const shellOf = (threadId: string) =>
-      Option.isNone(threads)
-        ? Effect.succeed(null)
-        : threads.value
-            .getThreadShell(ThreadId.make(threadId))
-            .pipe(Effect.orElseSucceed(() => null));
-    // Delegation depth: parents walked from the caller, capped.
-    const depthOf =
-      /* Request instrumentation already owns the span; keep this helper in that context. */
-      Effect.fnUntraced(function* (thread: AgentThread) {
-        let depth = 0;
-        let parentId =
-          thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
-        while (parentId !== null && depth < MAX_REPORTED_DEPTH) {
-          depth += 1;
-          const parent = yield* shellOf(parentId);
-          parentId =
-            parent?.lineage.relationshipToParent === "subagent"
-              ? parent.lineage.parentThreadId
-              : null;
-        }
-        return depth;
-      });
-    // Whether the caller's active run was started by a scheduled task.
-    const scheduledRunOf = (threadId: string, runId: RunId | null) =>
-      Option.isNone(threads) || runId === null
-        ? Effect.succeed(false)
-        : Effect.gen(function* () {
-            const id = ThreadId.make(threadId);
-            const { runs } = yield* threads.value.getThreadRecords(id, ["runs"], {
-              runIds: [runId],
-            });
-            const run = runs.find((candidate) => candidate.id === runId);
-            if (run === undefined) return false;
-            const messages = yield* threads.value.getMessagesById(id, [run.userMessageId]);
-            return messages.get(run.userMessageId)?.scheduledTaskId !== undefined;
-          }).pipe(Effect.orElseSucceed(() => false));
-    const record =
-      /* Request instrumentation already owns the span; keep this helper in that context. */
-      Effect.fnUntraced(
-        function* (
-          tool: string,
-          args: unknown,
-          result: McpSchema.CallToolResult | undefined,
-          durationMs: number,
-        ) {
-          const handoff =
-            HANDOFF_TOOLS.has(tool) ||
-            isInputTargetHandoff(tool, args) ||
-            hasAction(RESULT_TARGET_ACTIONS, tool, args);
-          const outcome = toolOutcome(result);
-          // Agents call status, read, and preview tools in tight loops, so an
-          // event per successful call floods analytics. Only failures count there.
-          if (!handoff && outcome.outcome === "ok") return;
-          // Client credentials (no calling thread) report an unknown caller.
-          const invocation = Option.getOrUndefined(
-            yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
-          )?.thread;
-          const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
-          // Only handoff tools pay for thread lookups; the rest report the
-          // caller's provider from the credential.
-          const caller =
-            handoff && invocation !== undefined
-              ? ((yield* shellOf(invocation.threadId)) ?? undefined)
-              : undefined;
-          const targetIds = handoff
-            ? [...new Set(handoffTargetIds(tool, args, result))].filter(
-                (threadId) => threadId !== invocation?.threadId,
-              )
-            : [];
-          const targets = yield* Effect.forEach(targetIds, shellOf);
-          for (const properties of agentToolProperties({
-            tool,
-            providers,
-            caller,
-            ...(invocation === undefined
-              ? {}
-              : { callerProviderInstanceId: invocation.providerInstanceId }),
-            ...(caller === undefined || invocation === undefined
-              ? {}
-              : {
-                  callerDepth: yield* depthOf(caller),
-                  callerScheduledRun: yield* scheduledRunOf(
-                    invocation.threadId,
-                    caller.activeRunId,
-                  ),
-                }),
-            targets: targets.filter((thread) => thread !== null),
-            outcome,
-            ...(handoff
-              ? { settings: handoffSettings(tool, args, result?.structuredContent) }
-              : {}),
-            durationMs,
-          })) {
-            yield* analytics.value.record("mcp.tool.invoked", properties);
-          }
-        },
-        (effect, _tool, _args, _result, _durationMs) => effect.pipe(Effect.ignoreCause),
-      );
-    const recordingServer = McpServer.McpServer.of({
-      ...server,
-      addTool: Effect.fn("McpServer.addTool")(function (options) {
-        return server.addTool({
-          ...options,
-          handle:
-            /* Request instrumentation already owns the span; keep this helper in that context. */
-            Effect.fnUntraced(function* (payload) {
-              const startedAt = yield* Clock.currentTimeMillis;
-              return yield* options.handle(payload).pipe(
-                Effect.onExit((exit) => {
-                  const result = exit._tag === "Success" ? exit.value : undefined;
-                  // A call that asks for input is retried with it, and that call is the one counted.
-                  if (result instanceof McpSchema.InputRequired) return Effect.void;
-                  // Handoff tools look up threads to record; the response must not wait on them.
-                  return Clock.currentTimeMillis.pipe(
-                    Effect.flatMap((endedAt) =>
-                      record(options.tool.name, payload, result, endedAt - startedAt),
-                    ),
-                    Effect.forkDetach,
-                    Effect.asVoid,
-                  );
-                }),
-              );
-            }),
-        });
-      }),
-    });
-    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
-  });
-
-/**
  * ACP runtimes and Code Mode wrappers can drop or replace structured MCP tool results on
  * completion. Recording each thread-scoped call's compact result before returning lets adapters
  * recover sent messages, IDs, counts, and error flags without depending on output passthrough.
@@ -1363,11 +1152,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withToolAnalytics(
-      withToolResultCapture(
-        withToolSpans(
-          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
-        ),
+    withToolResultCapture(
+      withToolSpans(
+        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
       ),
     ),
   ).pipe(
@@ -1384,7 +1171,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolResultCapture(withToolSpans(register)))).pipe(
+  Layer.effectDiscard(withToolResultCapture(withToolSpans(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 

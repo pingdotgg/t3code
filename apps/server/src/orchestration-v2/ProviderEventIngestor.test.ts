@@ -48,7 +48,6 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
-import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
@@ -350,104 +349,6 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
     );
   }),
 );
-
-it.effect("records accepted billed turn usage once without billing the context window", () => {
-  const recorded: Array<ProviderUsageAnalytics.ProviderTurnReport> = [];
-  const layerAnalytics = Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
-    runStarted: () => Effect.void,
-    turnCompleted: (report) =>
-      Effect.sync(() => {
-        recorded.push(report);
-      }),
-    runSettled: () => Effect.void,
-  });
-  return Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const eventSink = yield* EventSink.EventSinkV2;
-    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const threadEvent = yield* threadCreatedEvent(now);
-    yield* eventSink.write({ events: [threadEvent] });
-    const providerSessionId = yield* idAllocator.allocate.providerSession({
-      providerInstanceId: modelSelection.instanceId,
-      threadId: threadEvent.threadId,
-    });
-    const providerThreadId = idAllocator.derive.providerThread({
-      driver: CODEX_DRIVER,
-      nativeThreadId: "billing-thread",
-    });
-    const providerTurn = {
-      id: idAllocator.derive.providerTurn({ driver: CODEX_DRIVER, nativeTurnId: "billing-turn" }),
-      providerThreadId,
-      nodeId: NodeId.make("node:billing-turn"),
-      runAttemptId: null,
-      nativeTurnRef: null,
-      ordinal: 1,
-      status: "completed" as const,
-      startedAt: now,
-      completedAt: DateTime.makeUnsafe(DateTime.toEpochMillis(now) + 120),
-      tokenUsage: {
-        inputTokens: 4000,
-        cachedInputTokens: 3000,
-        outputTokens: 100,
-        usedTokens: 4100,
-        updatedAt: DateTime.formatIso(now),
-      },
-      turnTokenUsage: {
-        usageStatus: "complete" as const,
-        usageScope: "main_agent" as const,
-        hasSubagents: false,
-        inputTokens: 40,
-        cachedInputTokens: 30,
-        outputTokens: 10,
-      },
-    };
-    const input = {
-      providerSessionId,
-      providerInstanceId: modelSelection.instanceId,
-      threadId: threadEvent.threadId,
-      analyticsContext: {
-        modelSelection,
-        runtimeMode: "full-access" as const,
-        interactionMode: "default" as const,
-        origin: {
-          createdBy: "agent" as const,
-          creationSource: "provider" as const,
-          scheduled: false,
-          subagent: true,
-        },
-      },
-      event: { type: "provider_turn.updated" as const, driver: CODEX_DRIVER, providerTurn },
-    };
-    yield* ingestor.ingestNormalized(input);
-    yield* ingestor.ingestNormalized(input);
-    const ignored = yield* ingestor.ingestNormalized({
-      ...input,
-      event: {
-        ...input.event,
-        providerTurn: {
-          ...providerTurn,
-          id: idAllocator.derive.providerTurn({
-            driver: CODEX_DRIVER,
-            nativeTurnId: "stale-billing-turn",
-          }),
-        },
-      },
-      writeIfRunCurrent: {
-        runId: RunId.make("missing-run"),
-        activeAttemptId: RunAttemptId.make("stale-attempt"),
-        expectedStatus: "running",
-      },
-    });
-    assert.isEmpty(ignored);
-    assert.lengthOf(recorded, 1);
-    assert.deepEqual(recorded[0], {
-      driver: CODEX_DRIVER,
-      providerTurn,
-      context: input.analyticsContext,
-    });
-  }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
-});
 
 it.effect(
   "reports invalid provider questions as typed errors and still ingests valid questions",
@@ -2587,7 +2488,7 @@ it.effect(
       ) =>
         service.ingestNormalized({
           ...identity,
-          analyticsContext: { modelSelection: { ...modelSelection, model } },
+          modelSelection: { ...modelSelection, model },
           event: {
             type: "provider_turn.updated",
             driver: CODEX_DRIVER,

@@ -6,8 +6,10 @@ import { enableCliCompileCache } from "./cliCompileCache.ts";
 export async function runCliCommand() {
   const command = process.argv[2];
   // Install the socket guard before importing code that can open outbound connections.
-  const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
+  const { ignoreMacosTypeOfServiceEinval, refuseTelemetryHosts } =
+    await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
+  refuseTelemetryHosts();
   if (command === "__document-text") {
     const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
     try {

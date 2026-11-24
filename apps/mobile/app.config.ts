@@ -33,10 +33,6 @@ const iosTeamIdOverride = (
 )?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
-// PseudoCode sends no crash reports. Compiled into the native project so Observe can never reach
-// Expo's ingest or the relay; `.invalid` never resolves (RFC 6761).
-const observeEndpointUrl = "https://observe.invalid";
-
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 
@@ -561,7 +557,6 @@ const config: ExpoConfig = {
     },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-      observe: { endpointUrl: observeEndpointUrl },
     },
   },
   owner: "pingdotgg",

@@ -22,10 +22,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Threads from "../orchestration-v2/ThreadManagementService.ts";
-import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
-import * as Analytics from "../telemetry/AnalyticsService.ts";
-import { type ProviderDimensions, providerDimensions } from "../telemetry/ProviderDimensions.ts";
 import {
   FeedbackLimitError,
   FeedbackNotRequestedError,
@@ -56,24 +53,23 @@ export interface UnpromptedReport {
   readonly source: FeedbackSource;
   readonly threadId: ThreadId | null;
   readonly runId: RunId | null;
-  readonly dimensions: Partial<ProviderDimensions>;
 }
 
 export class FeedbackStore extends Context.Service<
   FeedbackStore,
   {
-    /** Stores and sends a report nobody has to approve. */
+    /** Stores a report nobody has to approve. */
     readonly store: (
       report: UnpromptedReport,
     ) => Effect.Effect<
       FeedbackReport,
       FeedbackLimitError | FeedbackOffError | FeedbackNotRequestedError | FeedbackStorageError
     >;
-    /** Shows a requested report's card. Nothing is stored or sent until the user answers it. */
+    /** Shows a requested report's card. Nothing is stored until the user answers it. */
     readonly showCard: (
       card: FeedbackCard,
     ) => Effect.Effect<void, FeedbackLimitError | FeedbackStorageError>;
-    /** Send stores and sends what the card shows; either answer closes it, once. */
+    /** Send stores what the card shows; either answer closes it, once. */
     readonly answer: (
       input: AgentFeedbackAnswerInput,
     ) => Effect.Effect<void, AgentFeedbackRequestError>;
@@ -83,7 +79,6 @@ export class FeedbackStore extends Context.Service<
 const storageError = (cause: unknown) => new FeedbackStorageError({ cause });
 const TraceJson = Schema.NullOr(Schema.fromJsonString(FeedbackTrace));
 const encodeTrace = Schema.encodeEffect(TraceJson);
-const decodeTrace = Schema.decodeUnknownEffect(TraceJson);
 
 /** The mode rule: nothing while Off, and only approved reports while When I ask. */
 export const allowedBy = (
@@ -101,8 +96,6 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const threads = yield* Threads.ThreadManagementService;
   const settings = yield* Settings.ServerSettingsService;
-  const analytics = yield* Analytics.AnalyticsService;
-  const providers = yield* Providers.ProviderRegistry;
   // Serializes the limit checks with their writes. Held only after any settings wait, so an answer
   // stalled on the settings lock never holds up a card or an unprompted report.
   const lock = yield* Semaphore.make(1);
@@ -176,9 +169,7 @@ const make = Effect.gen(function* () {
             user_requested: report.userRequested ? 1 : 0,
             trace: traceJson,
             source: report.source,
-            // Marked sent before the hand-off and cleared only on a refusal, so a delivery cut
-            // short reads as sent.
-            sent: 1,
+            sent: 0,
           })}`;
         }),
       );
@@ -197,39 +188,12 @@ const make = Effect.gen(function* () {
       );
   });
 
-  /** Sends a stored report as the `agent.feedback` event; false when telemetry refuses it. */
-  const deliver = Effect.fn("FeedbackStore.deliver")(function* (
-    report: Omit<FeedbackReport, "sent">,
-    dimensions: Partial<ProviderDimensions>,
-  ) {
-    const { kind, subject, expected, actual, workaround, trace, userRequested, source } = report;
-    const sent = yield* analytics.record("agent.feedback", {
-      kind,
-      subject,
-      expected,
-      actual,
-      workaround,
-      trace,
-      userRequested,
-      source,
-      ...dimensions,
-    });
-    if (!sent) {
-      // A failed clear leaves the report reading as sent, on purpose: uncertain reads as sent.
-      yield* sql`UPDATE agent_feedback SET sent = 0 WHERE id = ${report.id}`.pipe(
-        Effect.mapError(storageError),
-      );
-    }
-    return sent;
-  });
-
   const store = Effect.fn("FeedbackStore.store")(function* ({
     preview,
     id,
     source,
     threadId,
     runId,
-    dimensions,
   }: UnpromptedReport) {
     const report = {
       ...preview,
@@ -240,7 +204,7 @@ const make = Effect.gen(function* () {
       createdAt: DateTime.formatIso(yield* DateTime.now),
     };
     yield* insert(report, runId);
-    return { ...report, sent: yield* deliver(report, dimensions) };
+    return { ...report, sent: false };
   });
 
   const showCard = Effect.fn("FeedbackStore.showCard")(function* (card: FeedbackCard) {
@@ -296,13 +260,6 @@ const make = Effect.gen(function* () {
     // Settles the card with the trace it sent. Without one, it keeps only the outline.
     const settle = (status: AgentFeedbackRequestStatus, trace = item.preview.trace) =>
       record({ ...card, preview: { ...item.preview, trace } }, status);
-    const { runs } = yield* threads
-      .getThreadRecords(input.threadId, ["runs"], { runIds: [card.runId] })
-      .pipe(
-        Effect.mapError((cause) => new AgentFeedbackRequestError({ reason: "load_failed", cause })),
-      );
-    const run = runs.find((candidate) => candidate.id === card.runId);
-    const providerList = yield* providers.getProviders;
 
     // One answer at a time, from the claim through settling the card, so no other answer can
     // settle it differently in between.
@@ -313,14 +270,10 @@ const make = Effect.gen(function* () {
             SELECT 1 AS waiting FROM orchestration_v2_projection_turn_items
             WHERE turn_item_id = ${item.id} AND status = 'waiting'`;
           if (waiting === undefined) return yield* fail("already_answered");
-          // Stored before its card was settled, by a crash or a failed record: settle it now. A
-          // report not known to be refused reads as sent.
-          const [stored] = yield* sql<{ readonly sent: number; readonly trace: string | null }>`
-            SELECT sent, trace FROM agent_feedback WHERE id = ${card.reportId}`;
-          if (stored !== undefined) {
-            if (stored.sent !== 1) return yield* settle("cancelled");
-            return yield* settle("sent", yield* decodeTrace(stored.trace));
-          }
+          // Stored before its card was settled, by a crash or a failed record: settle it now.
+          const [stored] = yield* sql<{ readonly id: string }>`
+            SELECT id FROM agent_feedback WHERE id = ${card.reportId}`;
+          if (stored !== undefined) return yield* settle("cancelled");
           if (input.answer === "decline") return yield* settle("declined");
 
           const trace =
@@ -344,12 +297,8 @@ const make = Effect.gen(function* () {
             yield* settle("cancelled");
             return yield* fail("feedback_off");
           }
-          const sent = yield* deliver(
-            report,
-            run === undefined ? {} : providerDimensions(providerList, run.modelSelection),
-          );
-          // Telemetry off keeps the report on this machine, so the card says not sent.
-          yield* sent ? settle("sent", trace) : settle("cancelled");
+          // Reports stay on this machine, so the card says not sent.
+          yield* settle("cancelled");
         }),
       )
       .pipe(
@@ -357,7 +306,6 @@ const make = Effect.gen(function* () {
           // A failed record leaves the card open; the next answer settles it from the report.
           FeedbackStorageError: (error) => Effect.fail(recordFailed(error)),
           SqlError: (error) => Effect.fail(recordFailed(error)),
-          SchemaError: (error) => Effect.fail(recordFailed(error)),
           // A requested report is never over a limit or refused by When I ask.
           FeedbackLimitError: Effect.die,
           FeedbackNotRequestedError: Effect.die,

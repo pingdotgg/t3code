@@ -227,9 +227,9 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
-    "./telemetryId": {
-      "types": "./src/telemetryId.ts",
-      "import": "./src/telemetryId.ts"
+    "./telemetryBlocklist": {
+      "types": "./src/telemetryBlocklist.ts",
+      "import": "./src/telemetryBlocklist.ts"
     },
     "./relayAuth": {
       "types": "./src/relayAuth.ts",

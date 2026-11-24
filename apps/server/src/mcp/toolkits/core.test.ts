@@ -26,7 +26,6 @@ import {
 import { pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
@@ -60,7 +59,6 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
-import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
@@ -457,60 +455,6 @@ it.effect("captures send_to_user results for providers that drop MCP outputs", (
   ),
 );
 
-it.effect("records only failed calls of tools that hand off no work", () => {
-  // Recording runs detached from the tool response, so the first event is awaited.
-  const recorded = Deferred.makeUnsafe<{ event: string; properties: object }>();
-  return Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const organize = (capabilities: McpInvocationContext.McpInvocationScope["capabilities"]) =>
-      server.callTool({ name: "t3_thread_organize", arguments: { action: "pin" } }).pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, {
-          ...scope,
-          capabilities,
-        }),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect((yield* organize(scope.capabilities)).isError).not.toBe(true);
-    expect(declaredFailure(yield* organize(new Set<never>()))).toMatchObject({
-      code: "capability_denied",
-    });
-    // The successful call ran first, so it would be the first event if it were recorded.
-    expect(yield* Deferred.await(recorded)).toMatchObject({
-      event: "mcp.tool.invoked",
-      properties: { tool: "t3_thread_organize", outcome: "error" },
-    });
-  }).pipe(
-    Effect.provide(
-      layerThreadToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
-            getProjectThreadRecords: ({ threadId: id }) =>
-              Effect.succeed(
-                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
-              ),
-            listActiveShellIndex: () => Effect.succeed([]),
-            dispatch: () => Effect.succeed({ sequence: 1 } as never),
-          }),
-        ),
-        Layer.provide(
-          Layer.succeed(
-            AnalyticsService.AnalyticsService,
-            AnalyticsService.AnalyticsService.of({
-              record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }),
-              flush: Effect.void,
-              recordOwners: () => Effect.void,
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
-});
-
 // A thread read whose runs or messages are bounded by nothing but the thread.
 const historyReads = (
   reads: Array<string>,
@@ -583,11 +527,10 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
   );
 });
 
-it.effect("handoff analytics read only the caller's active run and its message", () => {
+it.effect("t3_queue edit reads only the queued run and keeps its attachments", () => {
   const reads: Array<string> = [];
   const attachments = [{ type: "image", id: "shot", name: "shot.png" }];
   const dispatched: Array<unknown> = [];
-  const recorded = Deferred.makeUnsafe<void>();
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     yield* server
@@ -599,7 +542,6 @@ it.effect("handoff analytics read only the caller's active run and its message",
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    yield* Deferred.await(recorded);
     expect(reads).toEqual([]);
     // The edit keeps the queued image, so `/logout` stays an ordinary prompt and is not refused.
     const attached = yield* server
@@ -620,16 +562,6 @@ it.effect("handoff analytics read only the caller's active run and its message",
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(historyReads(reads, { attachments, dispatched })),
-        Layer.provide(
-          Layer.succeed(
-            AnalyticsService.AnalyticsService,
-            AnalyticsService.AnalyticsService.of({
-              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.as(true)),
-              flush: Effect.void,
-              recordOwners: () => Effect.void,
-            }),
-          ),
-        ),
       ),
     ),
   );
