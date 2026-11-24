@@ -1,3 +1,5 @@
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -7,6 +9,7 @@ import {
   activityRenewalMissed,
   describeFailure,
   heapGrowth,
+  heapRetainers,
   loadWarnings,
   nextActivityReport,
   noiseReport,
@@ -14,11 +17,13 @@ import {
   parsePsCpuTime,
   profileMismatch,
   parseRunSelection,
+  retainerGrowth,
   pathRewrites,
   pathSpellings,
   ServerMetrics,
   slope,
 } from "./server-metrics-report.ts";
+import { runAbRounds } from "./server-metrics.ts";
 
 const decodeMetrics = Schema.decodeSync(ServerMetrics);
 
@@ -101,6 +106,17 @@ describe("compareMetrics", () => {
     expect(compareMetrics(fixed, steady, 10, gatedRules).regressed).toContain("quiet.cpuPct");
     // The medians differ by 2.8 points, past the floor, but a resampled median can match.
     expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9), 10, gatedRules).regressed).toEqual([]);
+  });
+
+  it("compares the unequal run counts an ab that stopped early leaves", () => {
+    const steady = cpuRuns(26.1, 27.4, 25.8);
+    const partial = compareMetrics(steady, cpuRuns(2.2, 2.5), 10, gatedRules);
+    expect(partial.improved).toContain("quiet.cpuPct");
+    expect(partial.table).toContain("(3 runs), after `abc` (2 runs)");
+    const single = compareMetrics(steady, cpuRuns(2.2), 10, gatedRules);
+    expect(single.improved).toContain("quiet.cpuPct");
+    expect(single.table).toContain("| quiet.cpuPct | 26.1 | 2.2 | -92% |  | better |");
+    expect(compareMetrics(steady, cpuRuns(), 10, gatedRules).compared).toBe(0);
   });
 
   it("reads a file written before loop delay and GC were recorded", () => {
@@ -453,6 +469,87 @@ describe("heapGrowth", () => {
   });
 });
 
+describe("heapRetainers", () => {
+  it("sums what each object alone keeps alive and names only code on the way to it", () => {
+    // root → Holder.cache → Map → [0] array → [0] string; Holder also points at the string weakly.
+    const node = (type: number, name: number, id: number, size: number, edges: number) => [
+      type,
+      name,
+      id,
+      size,
+      edges,
+    ];
+    const retainers = heapRetainers(
+      {
+        snapshot: {
+          meta: {
+            node_fields: ["type", "name", "id", "self_size", "edge_count"],
+            node_types: [["synthetic", "object", "array", "string"]],
+            edge_fields: ["type", "name_or_index", "to_node"],
+            edge_types: [["property", "element", "weak", "hidden"]],
+          },
+        },
+        nodes: [
+          ...node(0, 4, 1, 0, 1),
+          ...node(1, 1, 3, 100, 2),
+          ...node(1, 2, 5, 50, 1),
+          ...node(2, 0, 7, 1_000, 1),
+          ...node(3, 5, 9, 500, 0),
+        ],
+        edges: [0, 6, 5, 0, 3, 10, 2, 0, 20, 3, 0, 15, 1, 0, 20],
+        strings: ["", "Holder", "Map", "cache", "(GC roots)", "a secret", "holder"],
+      },
+      0,
+      0,
+    );
+    expect(retainers.get(5)).toEqual({
+      retained: 1_550,
+      dominator: 3,
+      path: "holder → Holder.cache → Map",
+    });
+    expect(retainers.get(3)?.retained).toBe(1_650);
+    expect(retainers.get(9)?.path).toBe("holder → Holder.cache → Map.[0] → (array).[0] → (string)");
+  });
+});
+
+describe("retainerGrowth", () => {
+  const at = (sizes: Record<number, number>) =>
+    new Map(
+      Object.entries(sizes).map(([id, retained]) => [
+        Number(id),
+        { retained, dominator: Number(id) === 3 ? undefined : 3, path: `node ${id}` },
+      ]),
+    );
+  it("reports the deepest object holding the growth, and only growth at every snapshot", () => {
+    const growth = retainerGrowth([
+      at({ 3: 1_000_000, 5: 900_000, 7: 2_000_000 }),
+      at({ 3: 3_000_000, 5: 2_900_000, 7: 4_000_000 }),
+      at({ 3: 5_000_000, 5: 4_900_000, 7: 3_500_000 }),
+    ]);
+    expect(growth).toEqual([{ path: "node 5", MB: 4, retainedMB: 4.9 }]);
+  });
+  it("keeps an ancestor its reported descendant does not account for", () => {
+    // A chain 1 → 2 → 3 growing by 7, 6 and 5 MB, and 4 under 1 growing by 2 MB.
+    const chain = (scale: number) =>
+      new Map(
+        [
+          [1, 7, undefined],
+          [2, 6, 1],
+          [3, 5, 2],
+          [4, 2, 1],
+        ].map(([id, mb, dominator]) => [
+          id!,
+          { retained: (10 + mb! * scale) * 1e6, dominator, path: `node ${id}` },
+        ]),
+      );
+    expect(retainerGrowth([chain(0), chain(0.5), chain(1)]).map(({ path }) => path)).toEqual([
+      "node 1",
+      "node 3",
+      "node 4",
+    ]);
+  });
+});
+
 describe("slope", () => {
   it("fits the cost per thread", () => {
     const points: Array<readonly [number, number]> = [
@@ -600,4 +697,22 @@ describe("activityRenewalMissed", () => {
   ])("%s", (_name, sentAt, repliedAt, missed) => {
     expect(activityRenewalMissed(0, sentAt, repliedAt)).toBe(missed);
   });
+});
+
+describe("runAbRounds", () => {
+  effectIt.effect("keeps the runs that finished when a later run fails", () =>
+    Effect.gen(function* () {
+      const files: Record<0 | 1, ReadonlyArray<string>> = { 0: [], 1: [] };
+      const failure = yield* Effect.flip(
+        runAbRounds({
+          rounds: 3,
+          outDir: "out",
+          runSide: (side) => (side === 0 ? Effect.succeed("a1") : Effect.fail("b crashed")),
+          save: (side, runs) => Effect.sync(() => (files[side] = [...runs])),
+        }),
+      );
+      expect(failure).toBe("b crashed");
+      expect(files).toEqual({ 0: ["a1"], 1: [] });
+    }),
+  );
 });
