@@ -16,7 +16,6 @@
 # Usage:
 #   scripts/dev-hot.sh                                  # live mode: connects to saved Orbit/nick server
 #   scripts/dev-hot.sh --sandbox                        # isolated disposable :3891 dev server + automation
-#   CONN_GPUI_EXTRA_FEATURES=cef scripts/dev-hot.sh     # live mode with embedded CEF browser
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

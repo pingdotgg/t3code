@@ -18,7 +18,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
-use crate::store::{Store, StoreResult, Tx};
+use crate::store::{Receipt, ReceiptKey, ReceiptOwner, Store, StoreResult, StoredOwner, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
 
 /// A folder the engine offers as a project at start. Clients add more at runtime.
@@ -66,10 +66,14 @@ pub struct EngineConfig {
     /// Every stored timestamp and the idle release read it. Default: the system clock. A
     /// replay sets a [`crate::ManualClock`], as T3's tests run on Effect's `TestClock`.
     pub clock: Arc<dyn crate::Clock>,
-    /// Recover the runs and rollbacks a previous process left active (`restart.rs`), as the
-    /// T3 server does at start. Default on. Off for an inert rehearsal copy
-    /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
-    /// workspace the original still owns.
+    /// The zone a command time without one is read in, as V8 reads the host's zone once at
+    /// start. Default: the system's.
+    pub zone: jiff::tz::TimeZone,
+    /// Recover the runs and rollbacks a previous process left active at open
+    /// ([`SqliteEngine::recover_runs`]), as the T3 server does at start. Default on. The server
+    /// turns it off and recovers once `/mcp` listens. An inert rehearsal copy
+    /// (`CONN_SERVER_INERT`) never recovers: its runs stay as imported, so nothing continues or
+    /// touches a workspace the original still owns.
     pub recover_runs: bool,
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
@@ -132,6 +136,7 @@ impl EngineConfig {
             runtime_policy_override: None,
             command_output_tap: None,
             clock: Arc::new(crate::SystemClock),
+            zone: jiff::tz::TimeZone::system(),
             recover_runs: true,
             attention: false,
         }
@@ -157,6 +162,9 @@ pub(crate) struct Inner {
     pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
+    /// Sessions a fresh run moved aside while they still ran background work; the idle
+    /// reaper closes each once its work ends or its hold runs out.
+    pub(crate) detached: Mutex<Vec<(String, Arc<LiveThread>)>>,
     /// Agent tools of closed sessions whose shared process still runs, by thread, for the
     /// thread's next session on that instance (T3 reuses the credential). Bounded by
     /// [`crate::runner::MAX_KEPT_TOOLS`].
@@ -261,9 +269,9 @@ pub(crate) fn project_id(workspace_root: &str) -> String {
 }
 
 impl SqliteEngine {
-    /// Opens the store, adds the configured projects, and recovers every run a previous process
-    /// left active (see `restart.rs`): a turn the provider had continues in a new run.
-    pub fn open(config: EngineConfig) -> Result<Self, String> {
+    /// Opens the store, adds the configured projects, and, with [`EngineConfig::recover_runs`],
+    /// recovers the runs a previous process left active ([`Self::recover_runs`]).
+    pub fn open(mut config: EngineConfig) -> Result<Self, String> {
         let home = config.home.clone().unwrap_or_else(|| {
             config
                 .database
@@ -273,16 +281,18 @@ impl SqliteEngine {
         });
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
+        store.zone = config.zone.clone();
+        store.host = config.host.clone();
         store.generates_titles = config.title_generator.is_some();
+        let providers = config
+            .provider_set
+            .take()
+            .unwrap_or_else(|| std::mem::take(&mut config.providers).into());
+        store.providers = providers.clone();
         let attention = config
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
-        let (unfinished, pending_rollbacks) = if config.recover_runs {
-            (store.unfinished_runs()?, store.pending_rollbacks()?)
-        } else {
-            Default::default()
-        };
         let mut tx = store.tx()?;
         for project in &config.projects {
             tx.ensure_project(
@@ -291,18 +301,6 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
-        // A rollback a previous process left pending goes first: it was admitted before the
-        // restart, and its lane holds the thread's next turn until it ends.
-        let mut effects = vec![];
-        for pending in pending_rollbacks {
-            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
-        }
-        for (thread_id, run) in unfinished
-            .iter()
-            .filter(|(_, run)| commands::is_active(run))
-        {
-            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
-        }
         tx.commit(None)?;
         let high = store.high_water();
         let engine = Self {
@@ -310,10 +308,9 @@ impl SqliteEngine {
                 store: Arc::new(Mutex::new(store)),
                 attention,
                 notify: watch::Sender::new(high),
-                providers: config
-                    .provider_set
-                    .unwrap_or_else(|| config.providers.into()),
+                providers,
                 live: Mutex::new(HashMap::new()),
+                detached: Mutex::new(Vec::new()),
                 kept_tools: Mutex::new(HashMap::new()),
                 thread_gates: Default::default(),
                 command_output: crate::output::CommandOutputHub::default(),
@@ -334,27 +331,57 @@ impl SqliteEngine {
                 effect_seq: std::sync::atomic::AtomicU64::new(0),
             }),
         };
-        // Continuations and the reaper start on the caller's runtime; `open` never blocks.
+        // The reaper starts on the caller's runtime; `open` never blocks.
+        if tokio::runtime::Handle::try_current().is_ok()
+            && let Some(idle) = config.idle_session
+        {
+            let inner = Arc::downgrade(&engine.inner);
+            tokio::spawn(async move {
+                let every = (idle / 2).max(Duration::from_millis(10));
+                loop {
+                    tokio::time::sleep(every).await;
+                    // The engine is gone: stop.
+                    let Some(inner) = inner.upgrade() else { return };
+                    inner.reap_idle(idle).await;
+                }
+            });
+        }
+        if config.recover_runs {
+            engine.recover_runs()?;
+        }
+        Ok(engine)
+    }
+
+    /// Recovers every run and rollback a previous process left active (see `restart.rs`): a
+    /// turn the provider had continues in a new run. Call it once, before clients reach the
+    /// engine, and once agents can reach `/mcp`: a resumed session keeps the tools it opens with.
+    pub fn recover_runs(&self) -> Result<(), String> {
+        let mut store = crate::lock(&self.inner.store);
+        let unfinished = store.unfinished_runs()?;
+        let pending_rollbacks = store.pending_rollbacks()?;
+        let mut tx = store.tx()?;
+        // A rollback a previous process left pending goes first: it was admitted before the
+        // restart, and its lane holds the thread's next turn until it ends.
+        let mut effects = vec![];
+        for pending in pending_rollbacks {
+            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
+        }
+        for (thread_id, run) in unfinished
+            .iter()
+            .filter(|(_, run)| commands::is_active(run))
+        {
+            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
+        }
+        let high = tx.commit(None)?;
+        drop(store);
+        self.inner.notify.send_replace(high);
+        // Continuations start on the caller's runtime.
         if tokio::runtime::Handle::try_current().is_ok() {
-            effects
-                .into_iter()
-                .for_each(|e| engine.inner.spawn_effect(e));
-            if let Some(idle) = config.idle_session {
-                let inner = Arc::downgrade(&engine.inner);
-                tokio::spawn(async move {
-                    let every = (idle / 2).max(Duration::from_millis(10));
-                    loop {
-                        tokio::time::sleep(every).await;
-                        // The engine is gone: stop.
-                        let Some(inner) = inner.upgrade() else { return };
-                        inner.reap_idle(idle).await;
-                    }
-                });
-            }
+            effects.into_iter().for_each(|e| self.inner.spawn_effect(e));
         } else if !effects.is_empty() {
             eprintln!("conn-engine: no runtime, so restarted turns do not continue");
         }
-        Ok(engine)
+        Ok(())
     }
 
     /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
@@ -569,6 +596,9 @@ impl Inner {
         guard: Option<crate::guard::DispatchGuard>,
         commit_gate: Option<Arc<dyn crate::guard::CommitGate>>,
     ) -> Result<(u64, bool), DispatchError> {
+        if let Some(host) = &self.host {
+            host.refresh_settings().await;
+        }
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
@@ -908,16 +938,33 @@ impl Inner {
         };
         let host = self.host.clone();
         let inner = self.clone();
+        let receipt_thread = receipt_thread_id(&command);
         let outcome = self
             .db(move |store| {
-                if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
-                    if guard.is_some() {
-                        // A guarded caller never gets a second accept for one command.
-                        return Err(CommandError::Rejected(
-                            "The command was already accepted.".into(),
-                        ));
-                    }
-                    return Ok((vec![], seq, true));
+                let key = ReceiptKey {
+                    command_id: &command_id,
+                    command_type: &command_type,
+                    owner: ReceiptOwner::Thread(&receipt_thread),
+                };
+                if let Some(receipt) = store.outcome(&command_id).map_err(CommandError::Store)? {
+                    let seq = replay(&key, receipt, guard.is_some())?;
+                    // T3's `replayCommandReceipt` checks the queue again for these two.
+                    let only = command["runId"].as_str();
+                    let effects = match command_type.as_str() {
+                        "queue.resume" | "queued-run.start" => {
+                            let mut tx = store.tx().map_err(CommandError::Store)?;
+                            let started =
+                                commands::start_next_queued(&mut tx, &receipt_thread, only)
+                                    .map_err(CommandError::Store)?;
+                            tx.commit(None).map_err(CommandError::Store)?;
+                            started
+                                .into_iter()
+                                .map(|effect| inner.reserve_effect(effect))
+                                .collect()
+                        }
+                        _ => vec![],
+                    };
+                    return Ok((effects, seq, true, store.high_water()));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
                 if let Some(guard) = &guard
@@ -940,17 +987,14 @@ impl Inner {
                 match handler(&mut tx, command) {
                     Ok(effects) => {
                         let seq = match &commit_gate {
-                            None => tx
-                                .commit(Some((&command_id, &command_type)))
-                                .map_err(CommandError::Store)?,
+                            None => tx.commit(Some(&key)).map_err(CommandError::Store)?,
                             Some(commit_gate) => {
                                 // The access decision and the commit are one step.
                                 let mut pending = Some(tx);
                                 let mut committed = None;
                                 let decision = commit_gate.commit_if_open(&mut || {
                                     if let Some(tx) = pending.take() {
-                                        committed =
-                                            Some(tx.commit(Some((&command_id, &command_type))));
+                                        committed = Some(tx.commit(Some(&key)));
                                     }
                                 });
                                 if let Some(tx) = pending.take() {
@@ -979,22 +1023,36 @@ impl Inner {
                             .into_iter()
                             .map(|effect| inner.reserve_effect(effect))
                             .collect::<Vec<_>>();
-                        Ok((reserved, seq, false))
+                        Ok((reserved, seq, false, store.high_water()))
                     }
                     Err(e) => {
                         tx.rollback();
+                        // T3 records the refusal, so a retry gets it again instead of a second
+                        // try. Refusals made before the decision (access, a disabled provider)
+                        // stay open, as T3's mode-limit refusals do.
+                        if let CommandError::Rejected(refusal) = &e {
+                            store
+                                .record_refusal(&key, refusal)
+                                .map_err(CommandError::Store)?;
+                        }
                         Err(e)
                     }
                 }
             })
             .await;
-        let (effects, seq, replayed) = outcome.map_err(|e| match e {
+        let (effects, seq, replayed, high) = outcome.map_err(|e| match e {
             CommandError::Rejected(message) => DispatchError::Rejected(message),
             CommandError::Store(message) => DispatchError::Internal(message),
         })?;
-        if !replayed {
-            self.notify.send_replace(seq);
-        }
+        // Subscribers follow the store's high-water mark; a quiet command's answer may be
+        // older (its thread's latest sequence).
+        self.notify.send_if_modified(|current| {
+            let moved = high > *current;
+            if moved {
+                *current = high;
+            }
+            moved
+        });
         for effect in effects {
             effect.start();
         }
@@ -1053,6 +1111,9 @@ impl Inner {
             }
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
+            Effect::CloseThreadSessions { thread_id } => {
+                self.close_thread_sessions(&thread_id).await;
+            }
             Effect::ApplyModelSelection {
                 thread_id,
                 selection,
@@ -1292,6 +1353,65 @@ const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
 
 /// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
 /// is both the `message` and the `detail`; without one, the generic message and no `detail`.
+/// The thread a command's receipt is kept for: T3's `commandThreadId`.
+fn receipt_thread_id(command: &Value) -> String {
+    let field = match command["type"].as_str().unwrap_or_default() {
+        "thread.fork" | "thread.merge_back" => "targetThreadId",
+        "delegated_task.request"
+        | "delegated_task.remote.request"
+        | "delegated_task.remote.complete"
+        | "delegated_task.remote.stop"
+        | "delegated_task.wake-policy"
+        | "delegated_task.completion-delivery.acknowledge"
+        | "delegated_task.completion-delivery.dispose"
+        | "thread.created.record" => "parentThreadId",
+        _ => "threadId",
+    };
+    command[field].as_str().unwrap_or_default().to_owned()
+}
+
+/// A retried command's answer from its receipt (`replayCommandReceipt`): the refusal again,
+/// or a conflict when the id was handled for something else, else the sequence it answered.
+/// A receipt from before owners (schema 4) is refused, never run again.
+fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, CommandError> {
+    if let Some(refusal) = receipt.refusal {
+        return Err(CommandError::Rejected(format!(
+            "Command {} was previously rejected: {refusal}",
+            key.command_id
+        )));
+    }
+    let ReceiptOwner::Thread(thread) = key.owner else {
+        return Ok(receipt.sequence);
+    };
+    match receipt.owner {
+        Some(StoredOwner::Thread(handled)) if handled == thread => {}
+        Some(StoredOwner::Thread(handled)) => {
+            return Err(CommandError::Rejected(format!(
+                "Command {} was already handled for thread {handled} and cannot be replayed for {thread}.",
+                key.command_id
+            )));
+        }
+        Some(StoredOwner::Project(_)) => {
+            return Err(CommandError::Rejected(
+                "Conflicting receipt is not a thread command receipt.".into(),
+            ));
+        }
+        None => {
+            return Err(CommandError::Rejected(format!(
+                "Command {} was handled before receipts named their owner; it cannot be replayed for {thread}.",
+                key.command_id
+            )));
+        }
+    }
+    if guarded {
+        // A guarded caller never gets a second accept for one command.
+        return Err(CommandError::Rejected(
+            "The command was already accepted.".into(),
+        ));
+    }
+    Ok(receipt.sequence)
+}
+
 fn dispatch_error_body(command_id: &str, command_type: &str, reason: &str) -> Value {
     let reason = reason.trim();
     let user_facing = (!reason.is_empty()
@@ -1401,6 +1521,20 @@ impl Engine for SqliteEngine {
                 .map_err(|e| match e {
                     DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
                 })
+        })
+    }
+
+    fn subagent_rows(&self, thread_id: &str) -> BoxFuture<'_, Result<Vec<Value>, String>> {
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Vec<Value>, String> {
+                    let tx = store.tx()?;
+                    let rows = tx.entities(&thread_id, "subagents");
+                    tx.rollback();
+                    rows
+                })
+                .await
         })
     }
 
@@ -1558,6 +1692,9 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
             // thread, so a refused launch leaves no thread behind.
+            if let Some(host) = &self.inner.host {
+                host.refresh_settings().await;
+            }
             if let Some(host) = &self.inner.host
                 && let (Some(project), Some(instance)) = (
                     input["projectId"].as_str(),
@@ -1663,6 +1800,30 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             self.inner
                 .db(|store| store.shell_snapshot())
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
+    fn http_shell_snapshot(
+        &self,
+        options: crate::HttpShellQuery,
+    ) -> BoxFuture<'_, Result<Option<Value>, EngineError<GetShellSnapshotError>>> {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Option<Value>, String> {
+                    if let Some(after) = options.resume_from
+                        && store.shell_resumable(after)?
+                    {
+                        return Ok(None);
+                    }
+                    store
+                        .shell_snapshot_trimmed(
+                            options.omit_idle_subagents,
+                            options.omit_older_settled,
+                        )
+                        .map(Some)
+                })
                 .await
                 .map_err(EngineError::Internal)
         })

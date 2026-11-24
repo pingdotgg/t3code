@@ -54,41 +54,56 @@ fn chosen_bool(selection: &Value, id: &str) -> Option<bool> {
         .as_bool()
 }
 
-/// Whether the catalog model offers a boolean option `id`.
-fn has_boolean(model: &str, id: &str) -> bool {
-    let slug = catalog::resolve_slug(model);
-    catalog::provider_models().iter().any(|m| {
-        m["slug"] == slug.as_str()
-            && m.pointer("/capabilities/optionDescriptors")
-                .and_then(Value::as_array)
-                .is_some_and(|d| d.iter().any(|d| d["id"] == id && d["type"] == "boolean"))
+/// The model, by slug or alias, in `models` (the picker's).
+fn model_entry<'a>(models: &'a [Value], model: &str) -> Option<&'a Value> {
+    let model = model.trim();
+    models.iter().find(|m| m["slug"] == model).or_else(|| {
+        models.iter().find(|m| {
+            m["aliases"].as_array().is_some_and(|aliases| {
+                aliases
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|a| a.eq_ignore_ascii_case(model))
+            })
+        })
     })
 }
 
-/// The CLI's arguments for one request (`runClaudeJson`).
+/// The CLI's arguments for one request (`runClaudeJson`), compiled against the instance's
+/// current catalog (`manifest`, else the bundled one), as T3 resolves its `modelCatalog`.
 pub fn cli_args(
     selection: &Value,
+    manifest: &conn_provider::LiveManifest,
     output_schema: &str,
     no_session_persistence: bool,
     managed_mcp_config: bool,
     investigate: bool,
 ) -> Vec<String> {
     let model = selection["model"].as_str().unwrap_or_default();
-    let compiled = catalog::compile(selection);
+    let compiled = catalog::compile(selection, manifest);
+    let now = i64::try_from(conn_support::time::now_ms()).unwrap_or(i64::MAX);
+    let models = catalog::current_provider_models(manifest, now);
+    let capabilities = model_entry(&models, model).map(|m| &m["capabilities"]);
+    let has_boolean = |id: &str| {
+        capabilities
+            .and_then(|c| c["optionDescriptors"].as_array())
+            .is_some_and(|d| d.iter().any(|d| d["id"] == id && d["type"] == "boolean"))
+    };
+    // T3 reads Ultracode and Fast Mode from the resolved descriptors, thinking from the choice.
+    let resolved =
+        |id: &str| capabilities.and_then(|c| catalog::resolved_boolean(c, selection, id));
     // Only chosen values; Claude Code's own defaults apply otherwise, as in chat turns.
     let mut settings = Map::new();
     settings.insert("disableAllHooks".into(), json!(true));
-    if has_boolean(model, "thinking")
+    if has_boolean("thinking")
         && let Some(thinking) = chosen_bool(selection, "thinking")
     {
         settings.insert("alwaysThinkingEnabled".into(), json!(thinking));
     }
-    if has_boolean(model, "fastMode") && chosen_bool(selection, "fastMode") == Some(true) {
+    if resolved("fastMode") == Some(true) {
         settings.insert("fastMode".into(), json!(true));
     }
-    if has_boolean(model, "ultracode")
-        && let Some(ultracode) = chosen_bool(selection, "ultracode")
-    {
+    if let Some(ultracode) = resolved("ultracode") {
         settings.insert("ultracode".into(), json!(ultracode));
     }
     let mut args: Vec<String> = [
@@ -187,10 +202,12 @@ fn structured_output(stdout: &str) -> Result<Value, ProviderError> {
         .unwrap_or(Value::Null))
 }
 
-/// One request. `env` is the Claude process environment; `program` the CLI.
+/// One request. `env` is the Claude process environment; `program` the CLI; `manifest` the
+/// instance's live model manifest.
 pub async fn generate(
     program: &str,
     env: &[(String, String)],
+    manifest: &conn_provider::LiveManifest,
     managed_mcp_config: bool,
     request: TextGenerationRequest,
 ) -> Result<Value, ProviderError> {
@@ -222,6 +239,7 @@ pub async fn generate(
     let run = |persistence: bool| {
         let args = cli_args(
             &selection,
+            manifest,
             &request.output_schema,
             persistence,
             managed_mcp_config,
@@ -311,6 +329,7 @@ mod tests {
     fn arguments_follow_run_claude_json() {
         let args = cli_args(
             &json!({"instanceId": "claudeAgent", "model": "claude-haiku-4-5"}),
+            &conn_provider::LiveManifest::default(),
             "{}",
             true,
             false,
@@ -321,5 +340,86 @@ mod tests {
         assert_eq!(args[tools + 1], "");
         assert!(args.ends_with(&["--permission-mode".into(), "dontAsk".into()]));
         assert!(args.contains(&"--strict-mcp-config".to_owned()));
+    }
+
+    /// T3's `runClaudeJson` compiles against the instance's `modelCatalog`: a model only the
+    /// accepted manifest lists gets its effort map, its model suffix and its boolean options.
+    #[test]
+    fn arguments_follow_the_live_catalog() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../server/src/provider/model-manifest.json"
+        );
+        let mut manifest: Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let catalog = &mut manifest["providers"]["claudeAgent"];
+        catalog["profiles"]["next"] = json!({
+            "capabilities": {"optionDescriptors": [
+                {"id": "effort", "label": "Effort", "type": "select", "options": [
+                    {"id": "low", "label": "Low"},
+                    {"id": "high", "label": "High", "isDefault": true},
+                    {"id": "ultracode", "label": "Ultracode"}]},
+                {"id": "thinking", "label": "Thinking", "type": "boolean"},
+                {"id": "contextWindow", "label": "Context", "type": "select", "options": [
+                    {"id": "200k", "label": "200k", "isDefault": true},
+                    {"id": "1m", "label": "1M"}]}]},
+            "adapter": {"claudeCode": {"effortMap": {"high": "max"},
+                "modelSuffixes": {"contextWindow": {"1m": "[1m]"}}}}
+        });
+        catalog["profiles"]["fast"] = json!({
+            "capabilities": {"optionDescriptors": [
+                {"id": "effort", "label": "Effort", "type": "select", "options": [
+                    {"id": "high", "label": "High"},
+                    {"id": "ultracode", "label": "Ultracode", "isDefault": true}]},
+                {"id": "fastMode", "label": "Fast", "type": "boolean", "currentValue": true}]}
+        });
+        let models = catalog["models"].as_array_mut().unwrap();
+        models.push(
+            json!({"slug": "claude-next", "name": "Claude Next", "status": "current",
+                "profile": "next"}),
+        );
+        models.push(
+            json!({"slug": "claude-fast", "name": "Claude Fast", "status": "current",
+                "profile": "fast"}),
+        );
+        let live = conn_provider::LiveManifest::default();
+        live.set(manifest);
+        let selection = json!({"instanceId": "claudeAgent", "model": "claude-next", "options": [
+            {"id": "effort", "value": "high"}, {"id": "contextWindow", "value": "1m"},
+            {"id": "thinking", "value": false}]});
+        let args = cli_args(&selection, &live, "{}", true, false, false);
+        let after = |flag: &str| {
+            let at = args.iter().position(|a| a == flag).unwrap();
+            args[at + 1].clone()
+        };
+        assert_eq!(after("--model"), "claude-next[1m]");
+        assert_eq!(after("--effort"), "max");
+        let settings: Value = serde_json::from_str(&after("--settings")).unwrap();
+        assert_eq!(settings["alwaysThinkingEnabled"], false);
+        let settings_for = |model: &str, options: Value| {
+            let selection =
+                json!({"instanceId": "claudeAgent", "model": model, "options": options});
+            let args = cli_args(&selection, &live, "{}", true, false, false);
+            let at = args.iter().position(|a| a == "--settings").unwrap();
+            let effort = args
+                .iter()
+                .position(|a| a == "--effort")
+                .map(|at| args[at + 1].clone());
+            (
+                serde_json::from_str::<Value>(&args[at + 1]).unwrap(),
+                effort,
+            )
+        };
+        // A saved legacy Ultracode effort: the resolved toggle is on, at xhigh.
+        let (settings, effort) = settings_for(
+            "claude-next",
+            json!([{"id": "effort", "value": "ultracode"}]),
+        );
+        assert_eq!(settings["ultracode"], true, "{settings}");
+        assert_eq!(effort.as_deref(), Some("xhigh"));
+        // The manifest's defaults, with nothing chosen: Ultracode and Fast Mode on.
+        let (settings, _) = settings_for("claude-fast", json!([]));
+        assert_eq!(settings["ultracode"], true, "{settings}");
+        assert_eq!(settings["fastMode"], true, "{settings}");
     }
 }

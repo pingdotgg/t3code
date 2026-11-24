@@ -7,6 +7,7 @@ mod logic;
 mod pickers;
 mod tabs;
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
@@ -2608,6 +2609,7 @@ impl Render for PullRequestPanel {
                     .child(
                         div()
                             .id("pr-detail-scroll")
+                            .a11y_group("panel.pull-request.detail", "Pull request detail")
                             .track_scroll(&self.scroll_handle)
                             .flex_1()
                             .min_h_0()
@@ -2631,6 +2633,7 @@ impl Render for PullRequestPanel {
 
         v_flex()
             .id("pull-request-panel")
+            .a11y_group("panel.pull-request", "Pull request")
             .size_full()
             .on_mouse_down(
                 MouseButton::Left,

@@ -1,10 +1,9 @@
-//! Compiles the macOS AppKit shim for CEF when the `cef` feature is enabled.
+//! Compiles the macOS AppKit shim the embedded CEF browser needs.
 
 fn main() {
     println!("cargo:rerun-if-changed=native/appkit_hooks.m");
-    let cef_enabled = std::env::var_os("CARGO_FEATURE_CEF").is_some();
     let is_macos = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
-    if cef_enabled && is_macos {
+    if is_macos {
         cc::Build::new()
             .file("native/appkit_hooks.m")
             .flag("-fobjc-arc")

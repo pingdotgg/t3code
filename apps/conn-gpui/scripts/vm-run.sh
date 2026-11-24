@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs inside nick-vm (from a private nckrtl/conn checkout, in apps/conn-gpui): builds
-# conn-app with automation + CEF, bundles it, and opens it against the VM's disposable
+# conn-app with automation, bundles it, and opens it against the VM's disposable
 # conn-server at a fixed window frame for side-by-side captures with real Conn.
 #
 #   scripts/vm-run.sh [theme]      # default theme t3-code-light
@@ -26,7 +26,7 @@ fi
 
 THEME="${1:-t3-code-light}"
 stop
-(cd "$ROOT" && cargo build -p conn-app --features automation,cef 2>&1 | tail -1)
+(cd "$ROOT" && cargo build -p conn-app --features automation 2>&1 | tail -1)
 "$ROOT/scripts/bundle-app.sh" debug >/dev/null
 rm -f "$DEV/automation-port"
 EXTRA=()

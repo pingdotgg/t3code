@@ -364,6 +364,8 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
     capabilities.pull_request_checks = Some(true);
     capabilities.linked_thread_refreshes = Some(true);
     capabilities.thread_force_stop = Some(true);
+    // `server.refreshProviders` honours `modelCatalogOnly` (`crate::model_manifest`).
+    capabilities.model_catalog_refresh = Some(true);
     capabilities.shell_thread_families = Some(true);
     capabilities.shell_older_settled = Some(true);
     // projects.listIgnoredFiles, with `query` (conn-files entries::list_ignored).
@@ -375,6 +377,15 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
     capabilities.mcp_mode_limit_header = Some(true);
     capabilities.link_fence = Some(true);
     capabilities.peer_link_pairing_codes = Some(true);
+    // Served features mobile gates on: `/clear` dispatch (`freshContext` in conn-engine),
+    // one-time and fresh-session schedules (conn-features), PR watches, issue links and the
+    // per-command output stream.
+    capabilities.fresh_context = Some(true);
+    capabilities.one_time_schedules = Some(true);
+    capabilities.scheduled_task_thread_modes = Some(true);
+    capabilities.thread_pull_request_watch = Some(true);
+    capabilities.issue_linked_threads = Some(true);
+    capabilities.command_output_streaming = Some(true);
     // `preview.stopLocalServer` (`crate::local_servers`), off on Windows as in T3.
     if !cfg!(windows) {
         capabilities.local_server_stop = Some(true);
@@ -452,22 +463,29 @@ mod tests {
             advertised,
             [
                 "attachmentUploads",
+                "commandOutputStreaming",
                 "environmentThemes",
                 "fileAttachments",
+                "freshContext",
                 "ignoredFileListing",
                 "ignoredFileSearch",
+                "issueLinkedThreads",
                 "linkFence",
                 "linkedThreadRefreshes",
                 "localServerStop",
                 "mcpModeLimitHeader",
+                "modelCatalogRefresh",
+                "oneTimeSchedules",
                 "peerLinkPairingCodes",
                 "peerLinks",
                 "pullRequestChecks",
                 "pullRequests",
+                "scheduledTaskThreadModes",
                 "serverBrowser",
                 "shellOlderSettled",
                 "shellThreadFamilies",
-                "threadForceStop"
+                "threadForceStop",
+                "threadPullRequestWatch"
             ]
         );
     }
