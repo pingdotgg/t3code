@@ -139,3 +139,10 @@ describe("GitLab remotes", () => {
     expect(recognize("https://notgitlab.example.com/group/repo.git")).toBeNull();
   });
 });
+
+describe("GitLab publishing", () => {
+  // glab creates the project on its signed-in host, so the publish dialog must name that host.
+  it("names glab's signed-in self-managed host as the publish target", () => {
+    expect(definition.publishHost("git.example.com")).toBe("git.example.com");
+  });
+});
