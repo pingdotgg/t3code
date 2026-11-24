@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { HttpServerResponse } from "effect/http";
+import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
@@ -54,17 +55,22 @@ export const sourceControlMediaResponse = Effect.fn(
   }
   // Clients that predate `repository` fall back to the repository checked out at `cwd`.
   let repository = asset.repository;
-  if (repository === undefined) {
-    const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-    const identity = yield* identities.resolve(asset.cwd);
-    if (identity?.provider === media.definition.kind && identity.owner && identity.name) {
-      repository = `${identity.owner}/${identity.name}`;
-    }
+  const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const identity = yield* identities.resolve(asset.cwd);
+  if (
+    repository === undefined &&
+    identity?.provider === media.definition.kind &&
+    identity.owner &&
+    identity.name
+  ) {
+    repository = `${identity.owner}/${identity.name}`;
   }
+  const host = identity ? parseGitRemoteHost(identity.locator.remoteUrl)?.host : undefined;
   const response = yield* fetchMedia({
     url: asset.url,
     headers: forwarded,
     ...(repository === undefined ? {} : { repository }),
+    ...(host === undefined ? {} : { host }),
   });
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
