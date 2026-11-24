@@ -56,7 +56,7 @@ import { titleRegenerationToast } from "../threadTitleRegenerationToast";
 import { newMessageId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
-import { useEnvironmentScope, useThreadTriageScope } from "~/state/session";
+import { useEnvironmentScope, useEnvironmentScopeDenied } from "~/state/session";
 import { threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
 import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
@@ -65,9 +65,12 @@ import { environmentShell } from "../../state/shell";
 import { ThreadStatusLine } from "./ThreadStatusLine";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { readEnvironmentScope, readThreadTriageScope } from "../../state/session";
+import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import {
+  threadTriagePermitted,
+  useOrchestrationCommand,
+} from "../../state/use-orchestration-command";
 import {
   backgroundWorkNowItem,
   childInputNowItem,
@@ -193,7 +196,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const router = useRouter();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
-  const canTriageThread = useThreadTriageScope(environmentId);
+  const canTriageThread = !useEnvironmentScopeDenied(environmentId, AuthOrchestrationOperateScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -247,12 +250,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const unsettleThreadMutation = useOrchestrationCommand(
     threadEnvironment.unsettle,
     { reportFailure: false },
-    readThreadTriageScope,
+    threadTriagePermitted,
   );
   const [unsettlingThreadKey, setUnsettlingThreadKey] = useState<string | null>(null);
   const isUnsettling = unsettlingThreadKey !== null && unsettlingThreadKey === activeThreadKey;
   const handleUnsettleActiveThread = async () => {
-    if (!activeThreadRef || !readThreadTriageScope(activeThreadRef.environmentId)) return;
+    if (!activeThreadRef || !threadTriagePermitted(activeThreadRef.environmentId)) return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsettlingThreadKey(threadKey);
     // Commands settle into a result, so this always runs.
@@ -276,12 +279,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const unsnoozeThreadMutation = useOrchestrationCommand(
     threadEnvironment.unsnooze,
     { reportFailure: false },
-    readThreadTriageScope,
+    threadTriagePermitted,
   );
   const [unsnoozingThreadKey, setUnsnoozingThreadKey] = useState<string | null>(null);
   const isUnsnoozing = unsnoozingThreadKey !== null && unsnoozingThreadKey === activeThreadKey;
   const handleUnsnoozeActiveThread = async () => {
-    if (!activeThreadRef || !readThreadTriageScope(activeThreadRef.environmentId)) return;
+    if (!activeThreadRef || !threadTriagePermitted(activeThreadRef.environmentId)) return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsnoozingThreadKey(threadKey);
     // Commands settle into a result, so this always runs.
@@ -705,7 +708,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     };
   const shortcuts = {
     "thread.settle": () => {
-      if (!readThreadTriageScope(environmentId)) return false;
+      if (!threadTriagePermitted(environmentId)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadSettled) {
         void handleUnsettleActiveThread();

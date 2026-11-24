@@ -14,7 +14,7 @@ import { msg } from "gt-react";
 
 import { m } from "../i18n/messages";
 
-import { readEnvironmentScope } from "./session";
+import { readEnvironmentScope, readEnvironmentScopeDenied } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 
 const ORCHESTRATION_OPERATE_DENIED_MESSAGE = msg(
@@ -27,9 +27,14 @@ function hasLiveOperateGrant(environmentId: EnvironmentId): boolean {
 }
 
 /**
- * `permitted` replaces the operate check, so settle, snooze and their undo can queue before the
- * environment's session loads. It runs on every call, like the default.
+ * The check for settle, snooze and their undo, which queue while the environment is offline:
+ * allowed until the host has answered without the scope. The server checks again when it syncs.
  */
+export function threadTriagePermitted(environmentId: EnvironmentId): boolean {
+  return !readEnvironmentScopeDenied(environmentId, AuthOrchestrationOperateScope);
+}
+
+/** `permitted` runs on every call, like the default operate check it replaces. */
 export function useOrchestrationCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
   command: AtomCommand<W, A, E>,
   options?: string | AtomCommandOptions,

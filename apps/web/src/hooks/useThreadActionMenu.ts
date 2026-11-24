@@ -31,8 +31,8 @@ import { copyThreadReference } from "../lib/copyThreadReference";
 import { m } from "../i18n/messages";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { threadEnvironment } from "../state/threads";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, readThreadTriageScope } from "../state/session";
+import { threadTriagePermitted, useOrchestrationCommand } from "../state/use-orchestration-command";
+import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
@@ -142,7 +142,7 @@ export function useThreadActionMenu(input: {
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
-        canTriage: readThreadTriageScope(threadRef.environmentId),
+        canTriage: threadTriagePermitted(threadRef.environmentId),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         projectFilter: null,
@@ -165,7 +165,7 @@ export function useThreadActionMenu(input: {
       if (
         threadActionRequiresOperate(action) &&
         !(isThreadTriageAction(action)
-          ? readThreadTriageScope(threadRef.environmentId)
+          ? threadTriagePermitted(threadRef.environmentId)
           : readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope))
       ) {
         failureToast(

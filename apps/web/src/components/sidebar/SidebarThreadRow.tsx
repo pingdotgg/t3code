@@ -86,7 +86,7 @@ import { threadEnvironment } from "../../state/threads";
 import {
   readEnvironmentScope,
   useEnvironmentScope,
-  useThreadTriageScope,
+  useEnvironmentScopeDenied,
 } from "../../state/session";
 import { formatRelativeTime, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
@@ -729,9 +729,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  const canTriageThread = useThreadTriageScope(thread.environmentId);
-  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(thread.environmentId)).has(
-    thread.id,
+  const canTriageThread = !useEnvironmentScopeDenied(
+    thread.environmentId,
+    AuthOrchestrationOperateScope,
+  );
+  const pendingSync = useAtomValue(
+    threadEnvironment.pendingSyncAtom(thread.environmentId),
+    (threads) => threads.has(thread.id),
   );
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;

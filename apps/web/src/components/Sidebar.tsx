@@ -161,8 +161,8 @@ import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, readThreadTriageScope, useEnvironmentScope } from "../state/session";
+import { threadTriagePermitted, useOrchestrationCommand } from "../state/use-orchestration-command";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -882,14 +882,13 @@ function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }
   );
 }
 
-/** Settle, snooze and their undo can queue before the environment's session loads. */
 function canOperateThreads(
   threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
   triage = false,
 ): boolean {
   return threads.every((thread) =>
     triage
-      ? readThreadTriageScope(thread.environmentId)
+      ? threadTriagePermitted(thread.environmentId)
       : readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
   );
 }
@@ -2724,7 +2723,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
-              canTriage: readThreadTriageScope(threadRef.environmentId),
+              canTriage: threadTriagePermitted(threadRef.environmentId),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

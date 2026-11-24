@@ -618,7 +618,6 @@ export function createThreadEnvironmentAtoms<R, E>(
                 : DateTime.makeUnsafe(input.restoreUnsettledAt),
       })),
       "settle",
-      { sequence: 0, cancelledPendingSync: true as const },
     ),
     snooze: triage.queueWhenOffline(snooze, (input) => ({
       type: "snooze" as const,
@@ -631,7 +630,6 @@ export function createThreadEnvironmentAtoms<R, E>(
         snoozedAt: null,
       })),
       "snooze",
-      { sequence: 0, cancelledPendingSync: true as const },
     ),
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,

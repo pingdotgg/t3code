@@ -76,7 +76,7 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -172,7 +172,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { threadStreamHaptics } from "./threadStreamHaptics";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { orchestrationEnvironment } from "../../state/orchestration";
-import { useThreadTriageScope } from "../../state/session";
+import { useEnvironmentScopeDenied } from "../../state/session";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
 import type {
@@ -562,7 +562,10 @@ function ThreadDetailBody(
   });
   const unsnoozeThread = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
-  const canTriageThread = useThreadTriageScope(props.environmentId);
+  const canTriageThread = !useEnvironmentScopeDenied(
+    props.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const anyRunStop = useAtomValue(

@@ -95,7 +95,7 @@ export function buildDraftActionMenuItems(
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
-  /** Settle, snooze and their undo can queue before the environment's session loads. */
+  /** Settle, snooze and their undo stay available until the host denies the operate scope. */
   readonly canTriage?: boolean;
   readonly canFind?: boolean;
   /** False where no inline title editor is rendered, such as sidebar search results. */

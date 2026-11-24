@@ -16,8 +16,6 @@ export const PendingThreadTriage = Schema.Struct({
   queuedAt: Schema.DateTimeUtcFromString,
   /** The thread as the user saw it; if it shows otherwise on reconnect, the change is dropped. */
   seen: Schema.String,
-  /** Set before the first send and never cleared: the server may have it, so only it can undo. */
-  attempted: Schema.optionalKey(Schema.Literal(true)),
 });
 export type PendingThreadTriage = typeof PendingThreadTriage.Type;
 export type PendingThreadTriages = ReadonlyArray<PendingThreadTriage>;
