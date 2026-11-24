@@ -53,6 +53,9 @@ not a rejection.
 
 ## UX draft (to iterate on, nothing here is final)
 
+The clickable prototype lives at [prototype/index.html](prototype/index.html) (open it in a
+browser; fake data, no build). Its "Prototype" panel toggles the variants still open below.
+
 - **Entry point:** a board button at the bottom left of the sidebar. It opens the board,
   either as an overlay or as a full page (open question).
 - **Lanes:** *Needs you* (approval or question waiting) → *Working* → *Ready for review*
@@ -87,10 +90,38 @@ not a rejection.
 | # | Phase | Output | Status |
 |---|-------|--------|--------|
 | 0 | Vision and setup | This doc, the fork, the T3 project | done |
-| 1 | UX prototype | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow | next |
+| 1 | UX prototype | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow | in progress |
 | 2 | Data spike | Map lanes to real thread state in client-runtime; decide on the summary source | - |
 | 3 | Build | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | - |
 | 4 | Upstream (optional) | Ideas discussion upstream with a demo | - |
+
+## Data the board needs (learned from the prototype, feeds phase 2)
+
+Short list; rewrite entries as phase 2 answers them.
+
+- **Lane = turn state + work state.** The sidebar's `resolveSidebarRowStatus`
+  (`apps/web/src/components/Sidebar.logic.ts`) covers the turn: approval, input, request,
+  preparing, working, waiting (on subagents), failed, limited, ready. *Done* needs work state
+  on top: PR merged, or the thread settled (`settledOverride`). A finished turn is not done work.
+- **Pending request content, not just a flag.** The "Asked:" line and the peek need the
+  approval's command and reason, the question and its options, the failure message, and the
+  usage limit's reset time plus a model to switch to.
+- **PR and checks per thread.** Number, state (open, merged), checks running (x of n),
+  passed, or failing with the failing check names. Upstream already links PRs to threads; check
+  whether check status is available without one subscription per card.
+- **A "now" line.** From state it is the running command or tool call, else an excerpt of the
+  last assistant message. State text often repeats the status ("Waiting for approval",
+  "PR #873 · checks running"), so it needs a rule to pick the most specific fact. LLM text
+  reads better for settled threads but goes stale between turns.
+- **Diff stats of the settled turn** (+/−, file list for the peek).
+- **Timestamps:** last activity (sorting, "11m"), turn start (working duration), and when the
+  thread entered its lane (Needs you is a queue, oldest first).
+- **Origin and relations:** started by a scheduled task, waiting on N subagents, queued
+  follow-ups, provider and model label.
+- **One vocabulary.** The sidebar calls an unseen finished turn "Done"; the board calls it
+  "Ready for review" and keeps "Done" for merged or settled work. Pick one before building.
+- **Summary-level data for every thread, all projects.** The sidebar leases row subscriptions
+  (`useSidebarRowSubscriptionLease`); the board must not pull full thread detail per card.
 
 ## Decision log
 

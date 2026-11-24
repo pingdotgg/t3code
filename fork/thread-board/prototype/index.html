@@ -1,0 +1,1490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Thread Board prototype</title>
+<!--
+  Thread Board, phase 1 UX prototype. Fake data, no build step, no app code.
+  Open this file in a browser. Tokens mirror apps/web/src/index.css.
+-->
+<style>
+:root {
+  color-scheme: light;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Set from JS to the window height; fixed when embedded in a preview frame. */
+  --app-h: 860px;
+
+  --zinc-25: oklch(99.2% 0 0);
+  --zinc-50: oklch(98.5% 0 0);
+  --zinc-100: oklch(96.7% 0.001 286.375);
+  --zinc-200: oklch(92% 0.004 286.32);
+  --zinc-300: oklch(87.1% 0.006 286.286);
+  --zinc-500: oklch(55.2% 0.016 285.938);
+  --zinc-900: oklch(21% 0.006 285.885);
+
+  --background: var(--zinc-25);
+  --foreground: var(--zinc-900);
+  --card: #fff;
+  --popover: #fff;
+  --primary: oklch(0.488 0.217 264);
+  --primary-foreground: #fff;
+  --muted: var(--zinc-50);
+  --muted-foreground: var(--zinc-500);
+  --accent: var(--zinc-100);
+  --border: var(--zinc-200);
+  --input: var(--zinc-300);
+  --ring: var(--primary);
+  --message-surface: color-mix(in srgb, var(--zinc-200) 55%, var(--zinc-100));
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --info: oklch(62.3% 0.214 259.815);
+  --info-foreground: oklch(48.8% 0.243 264.376);
+  --success: oklch(69.6% 0.17 162.48);
+  --success-foreground: oklch(50.8% 0.118 165.612);
+  --warning: oklch(76.9% 0.188 70.08);
+  --warning-foreground: oklch(55.5% 0.163 48.998);
+  --error: oklch(63.7% 0.237 25.331);
+  --error-foreground: oklch(50.5% 0.213 27.518);
+  --input-tone: oklch(51.1% 0.262 276.966);
+  --input-foreground: oklch(51.1% 0.262 276.966);
+  --merged: oklch(54.1% 0.281 293.009);
+  --merged-foreground: oklch(54.1% 0.281 293.009);
+  --sidebar: var(--zinc-50);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-row-hover: var(--zinc-100);
+  --sidebar-row-active: #fff;
+  --sidebar-border: var(--border);
+  --sidebar-icon-color: color-mix(in srgb, var(--muted-foreground) 85%, var(--sidebar));
+  --lane-bg: var(--zinc-50);
+  --backdrop: rgb(0 0 0 / 28%);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-float: 0 18px 48px rgb(0 0 0 / 16%), 0 2px 6px rgb(0 0 0 / 6%);
+  --seg-on: #fff;
+}
+
+/* Dark tokens, twice: once for the OS preference, once for the explicit toggle. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #000;
+    --foreground: oklch(97% 0 0);
+    --card: color-mix(in srgb, oklch(14.5% 0 0) 97%, #fff);
+    --popover: color-mix(in srgb, oklch(14.5% 0 0) 97%, #fff);
+    --primary: oklch(0.571 0.21 264);
+    --muted: rgb(255 255 255 / 3%);
+    --muted-foreground: oklch(70.8% 0 0);
+    --accent: rgb(255 255 255 / 5%);
+    --border: rgb(255 255 255 / 8%);
+    --input: rgb(255 255 255 / 11%);
+    --message-surface: color-mix(in srgb, oklch(14.5% 0 0) 92%, #fff);
+    --info-foreground: oklch(70.7% 0.165 254.624);
+    --success-foreground: oklch(76.5% 0.177 163.223);
+    --warning-foreground: oklch(82.8% 0.189 84.429);
+    --error: color-mix(in srgb, oklch(63.7% 0.237 25.331) 90%, #fff);
+    --error-foreground: oklch(70.4% 0.191 22.216);
+    --input-tone: oklch(67.3% 0.182 276.935);
+    --input-foreground: oklch(78.5% 0.115 274.713);
+    --merged: oklch(70.2% 0.183 293.541);
+    --merged-foreground: oklch(70.2% 0.183 293.541);
+    --sidebar: var(--card);
+    --sidebar-row-hover: rgb(255 255 255 / 5%);
+    --sidebar-row-active: rgb(255 255 255 / 8%);
+    --lane-bg: rgb(255 255 255 / 2.5%);
+    --backdrop: rgb(0 0 0 / 60%);
+    --shadow-card: none;
+    --shadow-float: 0 18px 48px rgb(0 0 0 / 60%);
+    --seg-on: rgb(255 255 255 / 12%);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #000;
+  --foreground: oklch(97% 0 0);
+  --card: color-mix(in srgb, oklch(14.5% 0 0) 97%, #fff);
+  --popover: color-mix(in srgb, oklch(14.5% 0 0) 97%, #fff);
+  --primary: oklch(0.571 0.21 264);
+  --muted: rgb(255 255 255 / 3%);
+  --muted-foreground: oklch(70.8% 0 0);
+  --accent: rgb(255 255 255 / 5%);
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 11%);
+  --message-surface: color-mix(in srgb, oklch(14.5% 0 0) 92%, #fff);
+  --info-foreground: oklch(70.7% 0.165 254.624);
+  --success-foreground: oklch(76.5% 0.177 163.223);
+  --warning-foreground: oklch(82.8% 0.189 84.429);
+  --error: color-mix(in srgb, oklch(63.7% 0.237 25.331) 90%, #fff);
+  --error-foreground: oklch(70.4% 0.191 22.216);
+  --input-tone: oklch(67.3% 0.182 276.935);
+  --input-foreground: oklch(78.5% 0.115 274.713);
+  --merged: oklch(70.2% 0.183 293.541);
+  --merged-foreground: oklch(70.2% 0.183 293.541);
+  --sidebar: var(--card);
+  --sidebar-row-hover: rgb(255 255 255 / 5%);
+  --sidebar-row-active: rgb(255 255 255 / 8%);
+  --lane-bg: rgb(255 255 255 / 2.5%);
+  --backdrop: rgb(0 0 0 / 60%);
+  --shadow-card: none;
+  --shadow-float: 0 18px 48px rgb(0 0 0 / 60%);
+  --seg-on: rgb(255 255 255 / 12%);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--accent); border-radius: 4px; padding: 0.05em 0.3em; }
+.i { width: 16px; height: 16px; flex: none; }
+.i-sm { width: 13px; height: 13px; }
+.i-xs { width: 12px; height: 12px; }
+.spacer { flex: 1; }
+.mono { font-family: var(--font-mono); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+.tone-info { color: var(--info-foreground); --tone: var(--info); }
+.tone-warning { color: var(--warning-foreground); --tone: var(--warning); }
+.tone-error { color: var(--error-foreground); --tone: var(--error); }
+.tone-success { color: var(--success-foreground); --tone: var(--success); }
+.tone-input { color: var(--input-foreground); --tone: var(--input-tone); }
+.tone-muted { color: var(--muted-foreground); --tone: var(--muted-foreground); }
+.tone-merged { color: var(--merged-foreground); --tone: var(--merged); }
+
+/* ---------- controls ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid var(--input); background: var(--popover); color: var(--foreground);
+  font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  box-shadow: var(--shadow-card);
+}
+.btn:hover { background: color-mix(in srgb, var(--accent) 100%, var(--popover)); }
+.btn:focus-visible, .seg button:focus-visible, .sb-row:focus-visible, .sb-util:focus-visible, .chip-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.btn-primary:hover { background: color-mix(in srgb, var(--primary) 88%, var(--background)); }
+.btn-ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted-foreground); }
+.btn-ghost:hover { background: var(--accent); color: var(--foreground); }
+.btn-sm { height: 26px; padding: 0 8px; font-size: 12px; border-radius: 7px; }
+.btn-icon { width: 30px; padding: 0; }
+.btn-icon.btn-sm { width: 26px; }
+.btn-danger { color: var(--error-foreground); }
+.kbd {
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 16px;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+  color: var(--muted-foreground); background: var(--muted);
+}
+.seg { display: flex; background: var(--accent); border-radius: 8px; padding: 2px; gap: 2px; }
+.seg button {
+  flex: 1; height: 24px; border: 0; background: transparent; border-radius: 6px;
+  font-size: 11.5px; color: var(--muted-foreground); cursor: pointer; white-space: nowrap; padding: 0 6px;
+}
+.seg button.on { background: var(--seg-on); color: var(--foreground); box-shadow: 0 1px 2px rgb(0 0 0 / 10%); }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--muted);
+  font-size: 11px; color: var(--muted-foreground); white-space: nowrap;
+}
+.chip .add { color: var(--success-foreground); }
+.chip .del { color: var(--error-foreground); }
+.fav {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none;
+  border-radius: 4px; background: var(--fav); color: #fff; font-size: 9.5px; font-weight: 700;
+}
+
+/* ---------- app shell ---------- */
+/* The stage is the containing block for every fixed layer. Embedded in a narrow
+   preview frame it lays out at 1280x800 and scales down (see fitStage). */
+#frame { overflow: hidden; }
+#stage { position: relative; width: 100%; height: var(--app-h); overflow: hidden; transform: scale(var(--s, 1)); transform-origin: 0 0; }
+html.embed #stage { width: 1280px; }
+.app { display: flex; height: 100%; min-height: 0; }
+.sidebar {
+  width: 264px; flex: none; background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.sb-header { height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; flex: none; }
+.sb-brand { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+.sb-brand small { font-weight: 500; color: var(--muted-foreground); font-size: 11px; margin-left: 4px; }
+.sb-scroll { flex: 1; overflow-y: auto; padding: 2px 8px 8px; min-height: 0; }
+.sb-folder-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 4px; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.sb-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 10px;
+  border-radius: 8px; border: 0; background: transparent; color: var(--sidebar-foreground);
+  font-size: 13px; cursor: pointer; text-align: left;
+}
+.sb-row:hover { background: var(--sidebar-row-hover); }
+.sb-row.active { background: var(--sidebar-row-active); box-shadow: 0 0 0 1px var(--border); }
+.sb-row .sb-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-row.recede .sb-title { color: var(--muted-foreground); }
+.sb-status { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; flex: none; }
+.sb-time { font-size: 11px; color: var(--muted-foreground); flex: none; }
+.sb-board-row {
+  margin: 0 8px 4px; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--card); cursor: pointer; font-size: 13px; font-weight: 500;
+}
+.sb-board-row:hover { background: var(--sidebar-row-hover); }
+.sb-board-row.on { border-color: var(--primary); }
+.sb-footer { display: flex; align-items: center; gap: 2px; padding: 6px 8px 10px; flex: none; }
+.sb-util {
+  position: relative; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+  color: var(--sidebar-icon-color); background: transparent; border: 0; cursor: pointer;
+}
+.sb-util:hover { background: var(--sidebar-row-hover); color: var(--foreground); }
+.sb-util.on { background: var(--sidebar-row-active); color: var(--foreground); box-shadow: 0 0 0 1px var(--border); }
+.sb-util.is-new::after {
+  content: ""; position: absolute; inset: -1px; border-radius: 9px; border: 1px dashed color-mix(in srgb, var(--primary) 55%, transparent); pointer-events: none;
+}
+.badge-count {
+  position: absolute; top: 1px; right: 0; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+  background: var(--warning); color: oklch(27% 0.07 50); font-size: 9.5px; font-weight: 700;
+  display: grid; place-items: center; border: 2px solid var(--sidebar); box-sizing: content-box;
+}
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background); min-height: 0; }
+
+/* ---------- thread view (stub) ---------- */
+.thread-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.topbar {
+  height: 52px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 16px;
+  border-bottom: 1px solid var(--border); font-size: 13px; min-width: 0;
+}
+.topbar .crumb { color: var(--muted-foreground); display: inline-flex; align-items: center; gap: 6px; }
+.topbar .title { font-weight: 600; }
+.stub-tag { font-size: 10.5px; color: var(--muted-foreground); border: 1px dashed var(--border); border-radius: 6px; padding: 1px 6px; }
+.thread-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.thread-col { max-width: 46rem; margin: 0 auto; padding: 0 20px; }
+.msgs { display: flex; flex-direction: column; gap: 14px; padding: 24px 0 32px; }
+.msg-user { align-self: flex-end; background: var(--message-surface); border-radius: 16px; padding: 9px 14px; max-width: 80%; line-height: 1.5; }
+.msg-assistant { line-height: 1.6; }
+.tool-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted-foreground); }
+.thread-bottom { flex: none; padding-bottom: 16px; }
+.thread-bottom .pending-box { margin-bottom: 8px; }
+
+/* ---------- board ---------- */
+.board { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--background); }
+.board-header {
+  height: 52px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px;
+  border-bottom: 1px solid var(--border); min-width: 0;
+}
+.board-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; flex: none; }
+.board-counts { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
+.board-counts b { font-weight: 600; }
+.filters { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.chip-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border-radius: 8px;
+  border: 1px solid transparent; background: transparent; cursor: pointer; font-size: 12.5px; color: var(--muted-foreground); white-space: nowrap;
+}
+.chip-btn:hover { background: var(--accent); color: var(--foreground); }
+.chip-btn.on { background: var(--card); border-color: var(--border); color: var(--foreground); box-shadow: var(--shadow-card); }
+.chip-btn .n { font-size: 11px; color: var(--muted-foreground); }
+.search {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; width: 200px; flex: none;
+  border: 1px solid var(--input); border-radius: 8px; background: var(--card); color: var(--muted-foreground);
+}
+.search input { border: 0; outline: 0; background: transparent; color: var(--foreground); font: inherit; font-size: 13px; width: 100%; }
+.search:focus-within { border-color: var(--ring); }
+.board-body { flex: 1; display: flex; min-height: 0; }
+.lanes { flex: 1; min-width: 0; display: flex; gap: 10px; padding: 12px 16px 16px; overflow-x: auto; }
+.lane {
+  display: flex; flex-direction: column; flex: 1 1 0; min-width: 284px; max-width: 440px; min-height: 0;
+  background: var(--lane-bg); border: 1px solid var(--border); border-radius: 14px;
+}
+.lane-head { display: flex; align-items: center; gap: 8px; padding: 11px 12px 7px; font-size: 12.5px; font-weight: 600; flex: none; }
+.lane-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); }
+.lane-head .count { font-weight: 500; color: var(--muted-foreground); font-size: 12px; }
+.lane-head .hint { font-weight: 400; color: var(--muted-foreground); font-size: 11px; margin-left: auto; }
+.lane-list { flex: 1; overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.lane-empty {
+  border: 1px dashed var(--border); border-radius: 10px; padding: 16px 12px; text-align: center;
+  font-size: 12px; color: var(--muted-foreground);
+}
+.lane-foot { font-size: 11px; color: var(--muted-foreground); text-align: center; padding: 2px 0 4px; }
+
+.card {
+  position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 11px 12px 10px; display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  box-shadow: var(--shadow-card); transition: border-color 120ms, box-shadow 120ms; flex: none;
+}
+.card:hover { border-color: color-mix(in srgb, var(--foreground) 20%, transparent); }
+.card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.card.is-active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.card.is-changed { animation: card-flash 1400ms ease-out 1; }
+@keyframes card-flash {
+  0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 45%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.card-top { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); min-width: 0; }
+.card-top .project { color: var(--foreground); font-weight: 500; flex: none; }
+.card-top .branch { font-family: var(--font-mono); font-size: 10.5px; }
+.card-top .time { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+.card-title { font-size: 14px; line-height: 1.35; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; }
+.status .dur { font-weight: 400; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.card-now { font-size: 12.5px; line-height: 1.45; color: var(--muted-foreground); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lane[data-lane="done"] .card-now { -webkit-line-clamp: 1; }
+.lane[data-lane="done"] .card { background: color-mix(in srgb, var(--card) 70%, transparent); }
+.asked {
+  font-size: 12.5px; line-height: 1.45; border-radius: 8px; padding: 7px 9px;
+  background: color-mix(in srgb, var(--tone) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 26%, transparent);
+  color: var(--foreground);
+}
+.asked .lbl { font-weight: 600; color: var(--tone-fg); margin-right: 4px; }
+.asked.tone-warning { --tone-fg: var(--warning-foreground); }
+.asked.tone-input { --tone-fg: var(--input-foreground); }
+.asked.tone-error { --tone-fg: var(--error-foreground); }
+.asked .q { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.asked .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+.card-foot { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--muted-foreground); margin-top: 1px; }
+.card-foot .model { margin-left: auto; white-space: nowrap; }
+.card-ghost { pointer-events: none; z-index: 85; box-shadow: var(--shadow-float); }
+
+/* ---------- overlay ---------- */
+.overlay { position: fixed; inset: 0; z-index: 60; background: var(--backdrop); display: flex; padding: 20px; }
+.overlay.animate { animation: fade-in 140ms ease-out 1; }
+.overlay-sheet {
+  flex: 1; min-width: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--border);
+  box-shadow: var(--shadow-float); background: var(--background);
+}
+.overlay.animate .overlay-sheet { animation: sheet-in 200ms var(--ease-drawer) 1; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } }
+
+/* ---------- peek ---------- */
+.peek-panel { width: 420px; flex: none; border-left: 1px solid var(--border); background: var(--card); min-height: 0; display: flex; }
+.peek-panel[hidden] { display: none; }
+.popover-peek {
+  position: fixed; z-index: 70; width: 400px; max-height: min(680px, calc(var(--app-h) - 24px)); display: flex;
+  background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); overflow: hidden;
+  animation: pop-in 140ms var(--ease-drawer) 1;
+}
+@keyframes pop-in { from { opacity: 0; transform: scale(0.98); } }
+.peek { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.peek-scroll { flex: 1; overflow-y: auto; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.peek-top { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); min-width: 0; }
+.peek-top .project { color: var(--foreground); font-weight: 500; }
+.peek-title { font-size: 16px; font-weight: 600; line-height: 1.35; margin: 6px 0 6px; }
+.peek-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted-foreground); }
+.sec-title { font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+.sec-title .tag { font-weight: 500; font-size: 10.5px; border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; }
+.summary-text { font-size: 13px; line-height: 1.55; margin: 0; }
+.summary-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+.summary-list li + li { margin-top: 3px; }
+.activity { display: flex; flex-direction: column; gap: 5px; }
+.activity .tool-row { font-size: 12px; }
+.pending-box {
+  border: 1px solid color-mix(in srgb, var(--tone) 32%, transparent); background: color-mix(in srgb, var(--tone) 8%, transparent);
+  border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; color: var(--foreground);
+}
+.pending-box .head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.pending-box .body { font-size: 13px; line-height: 1.5; }
+.pending-box .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.cmd {
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5; background: var(--code-background);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all;
+}
+.option-btn {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left;
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--input); background: var(--popover); cursor: pointer;
+}
+.option-btn:hover { border-color: var(--input-tone); }
+.option-btn .l { font-size: 13px; font-weight: 500; }
+.option-btn .d { font-size: 12px; color: var(--muted-foreground); }
+.rows { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.rows .r { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; min-width: 0; }
+.rows .r + .r { border-top: 1px solid var(--border); }
+.rows .path { font-family: var(--font-mono); font-size: 11.5px; flex: 1; direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.add { color: var(--success-foreground); font-variant-numeric: tabular-nums; }
+.del { color: var(--error-foreground); font-variant-numeric: tabular-nums; }
+.peek-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.peek-composer { border-top: 1px solid var(--border); padding: 10px 12px 12px; flex: none; }
+.queued { font-size: 12px; color: var(--muted-foreground); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+
+.composer {
+  border: 1px solid var(--border); border-radius: 14px; background: var(--card); padding: 8px 8px 6px 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+}
+.composer:focus-within { border-color: color-mix(in srgb, var(--foreground) 25%, transparent); }
+.composer textarea {
+  display: block; width: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--foreground);
+  font: inherit; font-size: 14px; line-height: 1.45; min-height: 42px; padding: 2px 0;
+}
+.composer textarea::placeholder { color: var(--muted-foreground); }
+.composer-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.model-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted-foreground); }
+.send {
+  width: 28px; height: 28px; border-radius: 50%; border: 0; background: var(--primary); color: var(--primary-foreground);
+  display: grid; place-items: center; cursor: pointer;
+}
+.send:hover { background: color-mix(in srgb, var(--primary) 88%, var(--background)); }
+
+/* ---------- toasts + prototype controls ---------- */
+.toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 95; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+.toast { background: var(--popover); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; box-shadow: var(--shadow-float); animation: pop-in 140ms ease-out 1; }
+.proto {
+  position: fixed; right: 16px; bottom: 16px; z-index: 90; width: 292px; max-height: calc(var(--app-h) - 32px); overflow-y: auto;
+  background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); font-size: 12px;
+}
+.proto-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--popover); }
+.proto-head b { font-size: 12.5px; }
+.proto-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 9px; }
+.proto-row label { display: block; font-size: 11px; color: var(--muted-foreground); margin-bottom: 4px; }
+.proto-sim { display: flex; gap: 6px; }
+.proto-sim .btn { flex: 1; }
+.proto-note { font-size: 11px; color: var(--muted-foreground); line-height: 1.45; }
+.proto.collapsed { width: auto; }
+.proto.collapsed .proto-head { border-bottom: 0; padding: 6px 6px 6px 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }
+}
+@media (max-width: 900px) {
+  html:not(.embed) .sidebar { display: none; }
+  html:not(.embed) .search { display: none; }
+  html:not(.embed) .peek-panel { width: 340px; }
+}
+</style>
+</head>
+<body>
+<div id="frame"><div id="stage">
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main" id="main"></main>
+</div>
+<div id="overlay-root"></div>
+<div id="popover-root"></div>
+<div class="toasts" id="toasts"></div>
+<div id="proto-root"></div>
+</div></div>
+
+<script>
+"use strict";
+
+/* ================= icons (lucide paths) ================= */
+const ICONS = {
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  pr: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/>',
+  merge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+  branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  issue: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/>',
+  usage: '<line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/>',
+  board: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
+  approval: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  question: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  checkCircle: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  checkCheck: '<path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/>',
+  xCircle: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  working: '<path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/><circle cx="12" cy="12" r="1"/>',
+  dashed: '<path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  arrowUpRight: '<path d="M7 7h10v10"/><path d="M7 17 17 7"/>',
+  arrowLeft: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+  step: '<line x1="6" x2="6" y1="4" y2="20"/><polygon points="10 4 20 12 10 20 10 4"/>',
+  reset: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  stop: '<rect width="14" height="14" x="5" y="5" rx="1"/>',
+  pen: '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
+  chevronUp: '<path d="m18 15-6-6-6 6"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  user: '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/>',
+  sliders: '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+  sparkle: '<path d="M9.94 14.06 2 22"/><path d="m15 4 1.5 3.5L20 9l-3.5 1.5L15 14l-1.5-3.5L10 9l3.5-1.5Z"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+};
+const icon = (name, cls = "") =>
+  `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ""}</svg>`;
+
+/* ================= helpers ================= */
+const MIN = 60_000;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const fmt = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+const MOD = isMac ? "⌘" : "Ctrl";
+function rel(ts) {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 45) return "now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
+}
+function dur(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+}
+const diffOf = (files) => ({ files, add: files.reduce((a, f) => a + f[1], 0), del: files.reduce((a, f) => a + f[2], 0) });
+
+/* ================= fake data ================= */
+const PROJECTS = {
+  t3code: { name: "t3code", letter: "T", color: "oklch(0.55 0.2 290)" },
+  ledger: { name: "ledger-api", letter: "L", color: "oklch(0.58 0.12 185)" },
+  docs: { name: "docs-site", letter: "D", color: "oklch(0.64 0.17 50)" },
+  pocket: { name: "pocket", letter: "P", color: "oklch(0.6 0.2 350)" },
+};
+const PROJECT_ORDER = ["t3code", "ledger", "docs", "pocket"];
+
+function seed() {
+  const ago = (m) => Date.now() - m * MIN;
+  const T = (o) => ({ pending: null, diff: null, pr: null, script: [], onResume: null, queued: [], followups: [], doneKind: null, source: null, ...o });
+  return [
+    T({
+      id: "t1", project: "t3code", title: "Fix reconnect loop when the relay drops", branch: "fix/relay-reconnect-loop",
+      model: "Claude · Opus 5.5", status: "working", startedAt: ago(6.2), lastAt: ago(0.3),
+      prompt: "Clients get stuck reconnecting in a loop after the relay drops. Find out why and fix it.",
+      now: { state: "Running `vp test run packages/client-runtime/src/state/connections.test.ts`", llm: "Reproduced the loop in a test. Trying a backoff in the relay reconnect path." },
+      summary: {
+        state: "I can reproduce it: when the relay closes with 1006, `reconnect()` fires before the old socket's close handler clears `pending`, so every drop schedules two retries. I'm adding a guard and a backoff, then running the connection tests.",
+        llm: ["Found the cause: every relay drop schedules two retries.", "Adding a guard plus exponential backoff in connections.ts.", "Next: run the connection tests and the relay scenario."],
+      },
+      activity: ["Read packages/client-runtime/src/state/connections.ts", "Edited connections.ts (+31 −6)", "Ran vp test run …/connections.test.ts"],
+      script: [
+        { status: "ready", now: { state: "Turn finished · 3 files changed", llm: "Fix is in: one retry per drop, backing off up to 30s. Tests pass." },
+          diff: diffOf([["packages/client-runtime/src/state/connections.ts", 52, 14], ["packages/client-runtime/src/state/connections.test.ts", 29, 0], ["apps/server/src/relay/RelaySocket.ts", 3, 7]]),
+          summary: { state: "Fixed. A drop now schedules exactly one retry, with backoff capped at 30s. Added a regression test; all 14 connection tests pass.", llm: ["One retry per relay drop, backoff capped at 30s.", "Regression test added; 14/14 connection tests pass.", "No PR yet."] },
+          activity: "Tests passed (14)" },
+        { pr: { number: 42411, title: "fix(client-runtime): one reconnect per relay drop", state: "open", checks: { status: "running", done: 2, total: 7, failed: [] } },
+          now: { state: "PR #42411 opened · checks running", llm: "Opened PR #42411; CI is running." }, activity: "Opened PR #42411" },
+        { pr: { checks: { status: "passed", done: 7, total: 7, failed: [] } }, now: { state: "PR #42411 · all 7 checks passed", llm: "CI is green on #42411. Ready to merge." }, activity: "Checks passed on #42411" },
+      ],
+    }),
+    T({
+      id: "t2", project: "t3code", title: "Add usage limits for the Kiro provider", branch: "feat/kiro-usage-limits",
+      model: "Codex · GPT-5.5", status: "approval", startedAt: ago(14), lastAt: ago(3),
+      prompt: "Show Kiro's usage limits in the usage banner like we do for Claude and Codex.",
+      pending: { kind: "approval", title: "Run a command", command: "vp run migrate-dev-db", reason: "Seeds a dev database so I can test the limit banner end to end." },
+      now: { state: "Waiting for approval to run a command", llm: "Usage parsing is done. Wants to seed the dev database to test the limit banner." },
+      summary: {
+        state: "The Kiro CLI reports limits in `x-kiro-quota-*` headers. I parse them in `KiroAdapter.ts` and map them to the shared `ProviderUsageLimit` shape. To check the banner end to end I need a seeded dev database.",
+        llm: ["Kiro limits are parsed and mapped to the shared usage shape.", "Needs a seeded dev database to test the banner end to end."],
+      },
+      diff: diffOf([["apps/server/src/provider/kiro/KiroAdapter.ts", 64, 3], ["packages/contracts/src/providerUsage.ts", 12, 0]]),
+      activity: ["Edited apps/server/src/provider/kiro/KiroAdapter.ts (+64 −3)", "Edited packages/contracts/src/providerUsage.ts (+12)", "Asked to run vp run migrate-dev-db"],
+      onResume: [
+        { status: "ready", now: { state: "Turn finished · 3 files changed", llm: "Limit banner works with seeded data. Ready to review." },
+          diff: diffOf([["apps/server/src/provider/kiro/KiroAdapter.ts", 71, 3], ["packages/contracts/src/providerUsage.ts", 12, 0], ["apps/server/src/provider/kiro/KiroAdapter.test.ts", 35, 6]]),
+          summary: { state: "Done. The banner shows Kiro's remaining quota and reset time. I added adapter tests for the header parsing.", llm: ["Banner shows Kiro quota and reset time.", "Adapter tests cover header parsing."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t3", project: "t3code", title: "Snooze presets per project", branch: "feat/project-snooze-presets",
+      model: "Claude · Sonnet 5.5", status: "input", startedAt: ago(30), lastAt: ago(11),
+      prompt: "Let me define custom snooze presets per project (e.g. 'until standup').",
+      pending: { kind: "input", question: "Should custom snooze presets sync across devices, or stay on this device?",
+        options: [{ label: "Sync across devices", detail: "Store them in server settings" }, { label: "This device only", detail: "Keep them in local UI state" }] },
+      now: { state: "Waiting for your answer", llm: "Preset editor is built. Needs a call on where presets live before wiring storage." },
+      summary: {
+        state: "The preset editor is in place in the project menu. Before I wire up persistence: should custom presets sync across devices, or stay on this device?",
+        llm: ["Preset editor added to the project menu.", "Blocked on a storage decision: synced or per device."],
+      },
+      diff: diffOf([["apps/web/src/components/Sidebar.snooze.ts", 48, 9], ["apps/web/src/components/sidebar/SnoozePresetEditor.tsx", 132, 0]]),
+      activity: ["Created SnoozePresetEditor.tsx", "Edited Sidebar.snooze.ts (+48 −9)", "Asked a question"],
+      onResume: [
+        { status: "ready", now: { state: "Turn finished · 4 files changed", llm: "Presets are stored the way you picked. Ready to review." },
+          diff: diffOf([["apps/web/src/components/Sidebar.snooze.ts", 61, 9], ["apps/web/src/components/sidebar/SnoozePresetEditor.tsx", 140, 0], ["packages/contracts/src/settings.ts", 14, 0], ["apps/web/src/components/Sidebar.snooze.test.ts", 44, 0]]),
+          summary: { state: "Presets are wired up and persisted. Tests cover adding, renaming and deleting a preset.", llm: ["Presets persist the way you chose.", "Tests cover add, rename and delete."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t4", project: "ledger", title: "Migrate invoices table to UUID keys", branch: "chore/invoice-uuid",
+      model: "Codex · GPT-5.5", status: "ready", startedAt: ago(70), lastAt: ago(26),
+      prompt: "Move invoices from serial ids to UUIDs without downtime.",
+      pr: { number: 1187, title: "chore(db): invoices use UUID primary keys", state: "open", checks: { status: "failing", done: 9, total: 9, failed: ["test-integration", "lint"] } },
+      diff: diffOf([["migrations/0042_invoice_uuid.sql", 96, 0], ["src/db/invoices.ts", 188, 61], ["src/db/payments.ts", 34, 22], ["test/integration/invoices.test.ts", 94, 5]]),
+      now: { state: "PR #1187 · 2 of 9 checks failing", llm: "Migration and backfill are done. CI fails on integration tests (an old FK in payments) and lint." },
+      summary: {
+        state: "Opened #1187. The migration adds `invoices.id_uuid`, backfills in batches of 5k, then swaps the primary key. Integration tests run against a snapshot that still has the old FK on `payments.invoice_id`.",
+        llm: ["Migration plus batched backfill written; PR #1187 is open.", "CI: test-integration trips on an old FK in payments; lint flags 3 unused imports."],
+      },
+      activity: ["Wrote migrations/0042_invoice_uuid.sql", "Opened PR #1187", "Checks failed: test-integration, lint"],
+      onResume: [
+        { pr: { checks: { status: "running", done: 3, total: 9, failed: [] } }, status: "ready", now: { state: "Pushed a fix · checks running", llm: "Dropped the old FK in the test snapshot and fixed lint. CI is rerunning." }, activity: "Pushed 1 commit to #1187" },
+        { pr: { checks: { status: "passed", done: 9, total: 9, failed: [] } }, now: { state: "PR #1187 · all 9 checks passed", llm: "CI is green on #1187." }, activity: "Checks passed on #1187" },
+      ],
+    }),
+    T({
+      id: "t5", project: "ledger", title: "Rate limiter returns 500 on burst traffic", branch: "fix/ratelimit-burst",
+      model: "Claude · Opus 5.5", status: "failed", startedAt: ago(55), lastAt: ago(41),
+      prompt: "Under burst load the rate limiter answers 500 instead of 429. Find and fix it.",
+      pending: { kind: "failed", message: "Claude Code exited unexpectedly (code 1): context window exceeded while reading `logs/k6-burst.txt` (40 MB)." },
+      now: { state: "Turn failed: provider exited (code 1)", llm: "Crashed while reading a 40 MB load-test log. A retry with a smaller slice should work." },
+      summary: {
+        state: "Let me look at the k6 output to see exactly when the 500s start.",
+        llm: ["Narrowed the 500s to the token bucket refill under concurrency.", "The turn crashed while reading a 40 MB k6 log."],
+      },
+      activity: ["Read src/middleware/rateLimit.ts", "Ran k6 run scripts/burst.js", "Read logs/k6-burst.txt — failed"],
+      onResume: [
+        { status: "working", now: { state: "Reading the last 2,000 lines of `logs/k6-burst.txt`", llm: "Retrying with a slice of the load-test log." }, activity: "Read logs/k6-burst.txt (tail)" },
+        { status: "ready", now: { state: "Turn finished · 2 files changed", llm: "Refill race fixed; burst test now returns 429s, no 500s." },
+          diff: diffOf([["src/middleware/rateLimit.ts", 27, 11], ["test/rateLimit.burst.test.ts", 58, 0]]),
+          summary: { state: "Fixed: the refill and the take raced on the same key. It's one atomic Lua script now. The burst test returns only 429s.", llm: ["Refill/take race fixed with one atomic script.", "Burst test: only 429s, no 500s."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t6", project: "ledger", title: "Idempotency keys for POST /payments", branch: "feat/payments-idempotency",
+      model: "Codex · GPT-5.5", status: "working", startedAt: ago(2.4), lastAt: ago(0.2),
+      prompt: "Support Idempotency-Key on POST /payments so client retries don't double charge.",
+      now: { state: "Editing `src/middleware/idempotency.ts`", llm: "Adding Redis-backed idempotency middleware for POST /payments." },
+      summary: { state: "I'll store the first response per key in Redis for 24h and replay it for repeats with the same body.", llm: ["Plan: cache the first response per key in Redis for 24h.", "Repeats with the same body get the cached response."] },
+      activity: ["Read src/routes/payments.ts", "Created src/middleware/idempotency.ts"],
+      script: [
+        { status: "approval", pending: { kind: "approval", title: "Allow network access", command: 'curl -X POST localhost:8080/payments \\\n  -H "Idempotency-Key: test-1" -d @fixtures/payment.json', reason: "Sends the same request twice to check the second one is replayed." },
+          now: { state: "Waiting for approval to run a command", llm: "Middleware is written; wants to hit the local server twice to verify." },
+          diff: diffOf([["src/middleware/idempotency.ts", 88, 0], ["src/routes/payments.ts", 6, 2]]), activity: "Asked to run curl" },
+      ],
+      onResume: [
+        { status: "ready", now: { state: "Turn finished · 3 files changed", llm: "Repeat requests replay the cached response. Ready to review." },
+          diff: diffOf([["src/middleware/idempotency.ts", 92, 0], ["src/routes/payments.ts", 6, 2], ["test/idempotency.test.ts", 71, 0]]),
+          summary: { state: "Works: a repeated key with the same body replays the stored response, a different body gets 422.", llm: ["Repeated key + same body → cached response.", "Same key + different body → 422."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t7", project: "docs", title: "Rewrite the quickstart for remote servers", branch: "docs/remote-quickstart",
+      model: "Claude · Sonnet 5.5", status: "ready", startedAt: ago(40), lastAt: ago(18),
+      prompt: "The quickstart assumes a local server. Rewrite it so remote setups are first-class.",
+      diff: diffOf([["src/content/docs/quickstart.mdx", 142, 77], ["src/content/docs/remote/tailscale.mdx", 38, 12], ["src/content/docs/remote/connect.mdx", 24, 9], ["astro.config.mjs", 8, 0]]),
+      now: { state: "Turn finished · 4 files changed", llm: "Quickstart rewritten around Tailscale and the tunnel. No PR yet." },
+      summary: { state: "The quickstart now starts with 'Where does your server run?' and branches into local, Tailscale and tunnel paths. I moved the old local steps into a collapsible section.", llm: ["Quickstart branches into local, Tailscale and tunnel setups.", "Old local steps kept in a collapsible section.", "No PR yet."] },
+      activity: ["Edited quickstart.mdx (+142 −77)", "Edited remote/tailscale.mdx", "Turn finished"],
+    }),
+    T({
+      id: "t8", project: "docs", title: "Fix broken anchors on the providers page", branch: "fix/provider-anchors",
+      model: "Cursor · Composer 2", status: "done", doneKind: "merged", startedAt: ago(160), lastAt: ago(120),
+      prompt: "Several #anchors on the providers page 404. Fix them.",
+      pr: { number: 318, title: "fix: provider page anchors", state: "merged", checks: { status: "passed", done: 4, total: 4, failed: [] } },
+      diff: diffOf([["src/content/docs/providers.mdx", 12, 12]]),
+      now: { state: "PR #318 merged", llm: "Anchors fixed and merged." },
+      summary: { state: "Merged #318. All 12 anchors resolve now.", llm: ["Fixed 12 anchors; #318 merged."] },
+      activity: ["Opened PR #318", "PR #318 merged"],
+    }),
+    T({
+      id: "t9", project: "pocket", title: "Android: composer jumps when the keyboard opens", branch: "fix/android-keyboard-jump",
+      model: "Claude · Opus 5.5", status: "waiting", startedAt: ago(9), lastAt: ago(1.5),
+      prompt: "On Android the composer jumps ~40px when the keyboard opens. Fix it.",
+      now: { state: "Waiting on 2 subagents", llm: "Two subagents are bisecting the jump between RN 0.81 and 0.82." },
+      summary: { state: "I started two subagents: one bisects React Native versions, one checks our inset handling on Android 15.", llm: ["Two subagents: one bisects RN versions, one checks Android 15 insets."] },
+      activity: ["Started subagent: bisect RN versions", "Started subagent: inspect insets on Android 15"],
+      script: [
+        { status: "working", now: { state: "Editing `src/components/Composer/KeyboardAwareComposer.tsx`", llm: "Subagents found it: insets are applied twice on Android 15. Applying the fix." }, activity: "Subagents finished" },
+        { status: "ready", now: { state: "Turn finished · 2 files changed", llm: "No more jump on Android 15; checked on a Pixel 9 emulator." },
+          diff: diffOf([["src/components/Composer/KeyboardAwareComposer.tsx", 14, 19], ["src/hooks/useKeyboardInset.ts", 9, 3]]),
+          summary: { state: "Fixed: we added the IME inset on top of `adjustResize`. The composer now stays put on Android 15 (tested on a Pixel 9 emulator).", llm: ["Inset was applied twice on Android 15.", "Verified on a Pixel 9 emulator."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t10", project: "pocket", title: "Deep links from push notifications", branch: "feat/push-deeplinks",
+      model: "Cursor · Composer 2", status: "ready", startedAt: ago(60), lastAt: ago(7),
+      prompt: "Tapping a push notification should open the thread it's about.",
+      pr: { number: 873, title: "feat: open threads from push notifications", state: "open", checks: { status: "running", done: 3, total: 7, failed: [] } },
+      diff: diffOf([["src/notifications/handlers.ts", 64, 8], ["src/navigation/linking.ts", 22, 3], ["app.config.ts", 6, 0]]),
+      now: { state: "PR #873 · checks running (3/7)", llm: "Deep links work on iOS and Android. Waiting on CI for #873." },
+      summary: { state: "Opened #873. Tapping a notification routes through `linking.ts` to the thread screen, cold start included.", llm: ["Deep links work on cold and warm start.", "PR #873 open; CI running."] },
+      activity: ["Edited src/notifications/handlers.ts", "Opened PR #873"],
+      script: [
+        { pr: { checks: { status: "passed", done: 7, total: 7, failed: [] } }, now: { state: "PR #873 · all 7 checks passed", llm: "CI is green on #873." }, activity: "Checks passed on #873" },
+        { status: "done", doneKind: "merged", pr: { state: "merged" }, now: { state: "PR #873 merged", llm: "Merged #873." }, activity: "PR #873 merged" },
+      ],
+    }),
+    T({
+      id: "t11", project: "t3code", title: "Command palette: fuzzy match on thread titles", branch: "feat/palette-fuzzy",
+      model: "OpenCode · Kimi K2", status: "preparing", startedAt: ago(0.4), lastAt: ago(0.4),
+      prompt: "Make the command palette match thread titles fuzzily, like file search.",
+      now: { state: "Creating worktree `feat/palette-fuzzy`", llm: "Setting up a worktree." },
+      summary: { state: "", llm: ["Just started."] }, activity: ["Created worktree"],
+      script: [
+        { status: "working", now: { state: "Reading `apps/web/src/components/CommandPalette.logic.ts`", llm: "Reading how the palette ranks results today." }, activity: "Read CommandPalette.logic.ts" },
+        { status: "input", pending: { kind: "input", question: "Should fuzzy matching also look at project names, or only thread titles?", options: [{ label: "Titles and project names", detail: "Typing 'ledger' finds every ledger-api thread" }, { label: "Titles only", detail: "Fewer, sharper matches" }] },
+          now: { state: "Waiting for your answer", llm: "Ranking is sketched. Needs to know whether project names count as matches." },
+          summary: { state: "I can reuse the file search scorer. One question first: should project names match too?", llm: ["Plan: reuse the file search scorer.", "Asks whether project names should match."] }, activity: "Asked a question" },
+      ],
+      onResume: [
+        { status: "ready", now: { state: "Turn finished · 2 files changed", llm: "Fuzzy matching is in, with highlights. Ready to review." },
+          diff: diffOf([["apps/web/src/components/CommandPalette.logic.ts", 46, 18], ["apps/web/src/components/CommandPalette.logic.test.ts", 52, 0]]),
+          summary: { state: "Thread results are fuzzy matched with the file search scorer, and the matched letters are highlighted.", llm: ["Fuzzy thread matching with highlights.", "Tests added."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t12", project: "pocket", title: "Upgrade to Expo SDK 56", branch: "chore/expo-56",
+      model: "Claude · Sonnet 5.5", status: "limited", startedAt: ago(35), lastAt: ago(16),
+      prompt: "Upgrade the app to Expo SDK 56 and fix whatever breaks.",
+      pending: { kind: "limited", message: "Claude usage limit reached.", resets: "3:40 PM", alt: "Codex · GPT-5.5" },
+      now: { state: "Usage limit · resets at 3:40 PM", llm: "About halfway through the SDK upgrade; paused by the usage limit." },
+      summary: { state: "Bumped `expo` and the config plugins. Next up: the `expo-router` v6 migration.", llm: ["Dependencies bumped; config plugins updated.", "Paused before the expo-router v6 migration."] },
+      diff: diffOf([["package.json", 18, 18], ["app.config.ts", 9, 4]]),
+      activity: ["Ran npx expo install --fix", "Edited app.config.ts", "Usage limit reached"],
+      onResume: [
+        { status: "ready", now: { state: "Turn finished · 9 files changed", llm: "On SDK 56 with the expo-router v6 migration done. iOS and Android builds pass." },
+          diff: diffOf([["package.json", 18, 18], ["app.config.ts", 9, 4], ["src/app/_layout.tsx", 31, 27], ["src/app/(tabs)/_layout.tsx", 12, 15], ["src/navigation/linking.ts", 6, 9]]),
+          summary: { state: "Upgraded to SDK 56. The router migration touched 5 layouts. Both platform builds pass.", llm: ["SDK 56 + expo-router v6 done.", "iOS and Android builds pass."] }, activity: "Turn finished" },
+      ],
+    }),
+    T({
+      id: "t13", project: "docs", title: "Translate the pricing page (de, nl)", branch: "i18n/pricing-de-nl",
+      model: "Claude · Sonnet 5.5", status: "done", doneKind: "settled", startedAt: ago(200), lastAt: ago(180),
+      prompt: "Translate the pricing page into German and Dutch.",
+      diff: diffOf([["src/i18n/de/pricing.json", 41, 0], ["src/i18n/nl/pricing.json", 41, 0]]),
+      now: { state: "Settled by you", llm: "German and Dutch pricing pages done." },
+      summary: { state: "Added de and nl translations for all 41 strings.", llm: ["de and nl translations for 41 strings."] }, activity: ["Created de/pricing.json", "Created nl/pricing.json", "Settled"],
+    }),
+    T({
+      id: "t14", project: "ledger", title: "Nightly export job: retry on S3 timeouts", branch: "fix/export-retries",
+      model: "Codex · GPT-5.5", status: "done", doneKind: "merged", startedAt: ago(330), lastAt: ago(300),
+      prompt: "The nightly export fails when S3 times out. Add retries.",
+      pr: { number: 1182, title: "fix(export): retry S3 uploads", state: "merged", checks: { status: "passed", done: 9, total: 9, failed: [] } },
+      diff: diffOf([["src/jobs/export.ts", 33, 8]]),
+      now: { state: "PR #1182 merged", llm: "Retries with jitter, merged." },
+      summary: { state: "Merged #1182. Uploads retry 5 times with jittered backoff.", llm: ["5 retries with jitter; #1182 merged."] }, activity: ["Opened PR #1182", "PR #1182 merged"],
+    }),
+    T({
+      id: "t15", project: "t3code", title: "Diff panel: remember collapsed files", branch: "feat/diff-collapse-memory",
+      model: "Claude · Opus 5.5", status: "ready", startedAt: ago(90), lastAt: ago(52),
+      prompt: "When I collapse a file in the diff panel, keep it collapsed when I come back.",
+      pr: { number: 42398, title: "feat(web): diff panel remembers collapsed files", state: "open", checks: { status: "passed", done: 7, total: 7, failed: [] } },
+      diff: diffOf([["apps/web/src/components/DiffPanel.tsx", 22, 6], ["apps/web/src/uiStateStore.ts", 18, 0], ["apps/web/src/components/DiffPanel.browser.test.tsx", 40, 0]]),
+      now: { state: "PR #42398 · all 7 checks passed", llm: "Collapsed files persist per thread. CI is green; ready to merge." },
+      summary: { state: "Collapsed files are stored per thread and checkpoint in `uiStateStore`. PR #42398 is green.", llm: ["Collapsed state persists per thread and checkpoint.", "#42398 is green."] }, activity: ["Opened PR #42398", "Checks passed on #42398"],
+    }),
+  ];
+}
+// A thread a scheduled task starts mid-simulation, to show how new cards arrive.
+function spawnThread() {
+  return {
+    id: "t16", project: "pocket", title: "Crash on cold start (Sentry POCKET-4411)", branch: "fix/cold-start-crash",
+    model: "Claude · Sonnet 5.5", status: "preparing", startedAt: Date.now(), lastAt: Date.now(), source: "Scheduled task · Triage new Sentry issues",
+    prompt: "Triage new Sentry issue POCKET-4411 and fix it if the cause is clear.",
+    now: { state: "Creating worktree `fix/cold-start-crash`", llm: "Started by a scheduled task to triage a new crash." },
+    summary: { state: "", llm: ["Started by the 'Triage new Sentry issues' task."] }, activity: ["Started by scheduled task"],
+    pending: null, diff: null, pr: null, queued: [], followups: [], doneKind: null, onResume: null,
+    script: [
+      { status: "working", now: { state: "Reading the Sentry stack trace for POCKET-4411", llm: "Crash is in the MMKV init on cold start; checking recent changes." }, activity: "Read Sentry issue POCKET-4411" },
+      { status: "ready", now: { state: "Turn finished · 1 file changed", llm: "Cause: MMKV read before init on cold start. Guarded it." },
+        diff: diffOf([["src/storage/mmkv.ts", 11, 3]]),
+        summary: { state: "The crash comes from reading MMKV before it's initialised on cold start. I made the first read wait for init.", llm: ["MMKV was read before init on cold start.", "First read now waits for init."] }, activity: "Turn finished" },
+    ],
+  };
+}
+
+/* ================= settings ================= */
+const DEFAULTS = { theme: "system", boardMode: "overlay", peekMode: "panel", entry: "icon", summary: "state", failedLane: "needs", failingChecks: "ready", cardActions: "off" };
+function loadSettings() {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto") || "{}") }; } catch { return { ...DEFAULTS }; }
+}
+function saveSettings() {
+  try { localStorage.setItem("thread-board-proto", JSON.stringify(S.set)); } catch {}
+}
+
+/* ================= state ================= */
+const S = {
+  set: loadSettings(),
+  threads: seed(),
+  boardOpen: true,
+  peekId: null,
+  currentId: "t1",
+  cameFromBoard: false,
+  filter: "all",
+  query: "",
+  flash: new Set(),
+  ticks: 0,
+  playing: false,
+  timer: null,
+  drafts: {},
+  protoOpen: false,
+};
+const byId = (id) => S.threads.find((t) => t.id === id);
+const NEEDS = new Set(["approval", "input", "failed", "limited"]);
+const RUNNING = new Set(["preparing", "working", "waiting"]);
+
+const LANES = [
+  { id: "needs", name: "Needs you", tone: "tone-warning", empty: "Nothing is waiting on you." },
+  { id: "failed", name: "Failed", tone: "tone-error", empty: "No failed turns." },
+  { id: "working", name: "Working", tone: "tone-info", empty: "No agents running." },
+  { id: "ready", name: "Ready for review", tone: "tone-success", empty: "Nothing to review." },
+  { id: "done", name: "Done", tone: "tone-muted", empty: "Nothing finished yet." },
+];
+const activeLanes = () => LANES.filter((l) => l.id !== "failed" || S.set.failedLane === "own");
+
+function laneOf(t) {
+  if (t.status === "failed") return S.set.failedLane === "own" ? "failed" : "needs";
+  if (NEEDS.has(t.status)) return "needs";
+  if (RUNNING.has(t.status)) return "working";
+  if (t.status === "ready") return t.pr?.checks?.status === "failing" && S.set.failingChecks === "needs" ? "needs" : "ready";
+  return "done";
+}
+
+function statusMeta(t) {
+  switch (t.status) {
+    case "preparing": return { label: "Setting up", icon: "dashed", tone: "tone-info", since: t.startedAt };
+    case "working": return { label: "Working", icon: "working", tone: "tone-info", since: t.startedAt };
+    case "waiting": return { label: "Waiting", icon: "dashed", tone: "tone-muted", since: t.startedAt };
+    case "approval": return { label: "Approval", icon: "approval", tone: "tone-warning" };
+    case "input": return { label: "Input", icon: "question", tone: "tone-input" };
+    case "failed": return { label: "Failed", icon: "alert", tone: "tone-error" };
+    case "limited": return { label: "Limited", icon: "alert", tone: "tone-warning" };
+    case "ready": {
+      const c = t.pr?.checks?.status;
+      if (c === "failing") return { label: "Checks failing", icon: "xCircle", tone: "tone-error" };
+      if (c === "running") return { label: "Checks running", icon: "dashed", tone: "tone-info" };
+      return { label: "Ready", icon: "checkCircle", tone: "tone-success" };
+    }
+    default:
+      return t.doneKind === "merged" ? { label: "Merged", icon: "merge", tone: "tone-merged" } : { label: "Settled", icon: "checkCheck", tone: "tone-muted" };
+  }
+}
+const nowText = (t) => (S.set.summary === "llm" ? t.now.llm : t.now.state);
+
+/* ================= simulation ================= */
+function applyStep(t, step) {
+  const prev = t.status;
+  if (step.status) t.status = step.status;
+  for (const k of ["now", "diff", "summary", "doneKind", "model"]) if (k in step) t[k] = step[k];
+  t.pending = "pending" in step ? step.pending : NEEDS.has(t.status) ? t.pending : null;
+  if (step.pr) t.pr = { ...(t.pr ?? {}), ...step.pr, checks: step.pr.checks ?? t.pr?.checks };
+  if (step.activity) t.activity = [...t.activity, step.activity].slice(-6);
+  if (RUNNING.has(t.status) && !RUNNING.has(prev)) t.startedAt = Date.now();
+  t.lastAt = Date.now();
+  S.flash.add(t.id);
+  // A follow-up queued during the turn starts as soon as the turn ends.
+  if (t.status === "ready" && t.queued.length) startFollowUp(t, t.queued.shift(), true);
+}
+
+function tick() {
+  S.ticks++;
+  if (S.ticks === 3 && !byId("t16")) {
+    const t = spawnThread();
+    S.threads.push(t);
+    S.flash.add(t.id);
+    toast("A scheduled task started a new thread in pocket");
+    update();
+    return;
+  }
+  const cands = S.threads.filter((t) => t.script.length && !NEEDS.has(t.status));
+  if (!cands.length) {
+    toast("Nothing left to simulate. Act on a card, or reset.");
+    setPlaying(false);
+    return;
+  }
+  const t = cands[Math.floor(Math.random() * cands.length)];
+  applyStep(t, t.script.shift());
+  update();
+}
+function setPlaying(on) {
+  S.playing = on;
+  clearInterval(S.timer);
+  if (on) S.timer = setInterval(tick, 2600);
+  renderProto();
+}
+function resume(t, step) {
+  applyStep(t, step);
+  t.script = [...(t.onResume ?? [genericReady()])];
+  t.onResume = null;
+}
+const genericReady = () => ({ status: "ready", now: { state: "Turn finished", llm: "Finished your follow-up. Ready to review." }, activity: "Turn finished" });
+
+function startFollowUp(t, text, fromQueue = false) {
+  t.followups.push(text);
+  const short = text.length > 70 ? text.slice(0, 68) + "…" : text;
+  resume(t, { status: "working", pending: null, now: { state: `Working on: “${short}”`, llm: `Following up on your note: ${short}` }, activity: fromQueue ? "Started queued follow-up" : "You sent a follow-up" });
+}
+
+/* ================= actions ================= */
+const ACTIONS = {
+  "toggle-board": () => setBoard(!S.boardOpen),
+  "close-board": () => setBoard(false),
+  "close-peek": () => { S.peekId = null; },
+  "open-thread": (d) => openThread(d.id),
+  "back-to-board": () => { S.cameFromBoard = false; setBoard(true); },
+  "sidebar-thread": (d) => { S.currentId = d.id; S.cameFromBoard = false; S.peekId = null; S.boardOpen = false; },
+  approve: (d) => {
+    const t = byId(d.id);
+    const cmd = t.pending.command.split("\n")[0].replace(/\s*\\$/, "");
+    resume(t, { status: "working", pending: null, now: { state: `Running \`${cmd}\``, llm: d.mode === "always" ? "Approved for this session; continuing." : "Approved; continuing." }, activity: d.mode === "always" ? "You approved (this session)" : "You approved" });
+  },
+  deny: (d) => {
+    const t = byId(d.id);
+    resume(t, { status: "working", pending: null, now: { state: "Approval denied · looking for another way", llm: "You declined; the agent is trying another approach." }, activity: "You declined" });
+  },
+  answer: (d) => {
+    const t = byId(d.id);
+    const opt = t.pending.options[+d.idx];
+    t.followups.push(opt.label);
+    resume(t, { status: "working", pending: null, now: { state: `Continuing with “${opt.label}”`, llm: `Going with “${opt.label}”.` }, activity: `You answered: ${opt.label}` });
+  },
+  retry: (d) => {
+    const t = byId(d.id);
+    resume(t, { status: "preparing", pending: null, now: { state: "Retrying the turn", llm: "Retrying." }, activity: "You retried" });
+  },
+  "switch-model": (d) => {
+    const t = byId(d.id);
+    resume(t, { status: "working", pending: null, model: t.pending.alt, now: { state: `Continuing on ${t.pending.alt}`, llm: `Switched to ${t.pending.alt} and picked up where it stopped.` }, activity: `Switched to ${t.pending.alt}` });
+  },
+  "wait-limit": (d) => toast(`Resumes automatically at ${byId(d.id).pending.resets} (simulated)`),
+  stop: (d) => {
+    const t = byId(d.id);
+    t.script = [];
+    applyStep(t, { status: "ready", now: { state: "Stopped by you", llm: "You stopped this turn." }, activity: "You stopped the turn" });
+  },
+  settle: (d) => applyStep(byId(d.id), { status: "done", doneKind: "settled", now: { state: "Settled by you", llm: byId(d.id).now.llm }, activity: "You settled the thread" }),
+  reopen: (d) => applyStep(byId(d.id), { status: "ready", doneKind: null, now: { state: "Reopened by you", llm: byId(d.id).now.llm }, activity: "You reopened the thread" }),
+  "open-pr": (d) => toast(`Opens PR #${byId(d.id).pr.number} in the browser (simulated)`),
+  "create-pr": (d) => {
+    const t = byId(d.id);
+    const n = 42420 + Math.floor(Math.random() * 30);
+    applyStep(t, { pr: { number: n, title: t.title, state: "open", checks: { status: "running", done: 0, total: 7, failed: [] } }, now: { state: `PR #${n} opened · checks running`, llm: `Opened PR #${n}; CI is running.` }, activity: `Opened PR #${n}` });
+    t.script.push({ pr: { checks: { status: "passed", done: 7, total: 7, failed: [] } }, now: { state: `PR #${n} · all 7 checks passed`, llm: `CI is green on #${n}.` }, activity: `Checks passed on #${n}` });
+  },
+  send: (d) => send(d.id),
+  filter: (d) => { S.filter = d.value; },
+  set: (d) => {
+    S.set[d.key] = d.value;
+    saveSettings();
+    if (d.key === "theme") applyTheme();
+    renderProto();
+  },
+  tick: () => tick(),
+  play: () => setPlaying(!S.playing),
+  reset: () => {
+    setPlaying(false);
+    Object.assign(S, { threads: seed(), ticks: 0, peekId: null, drafts: {}, currentId: "t1", filter: "all", query: "" });
+    const q = document.querySelector("#board-search");
+    if (q) q.value = "";
+    toast("Reset to the starting data");
+  },
+  "toggle-proto": () => { S.protoOpen = !S.protoOpen; renderProto(); },
+  noop: (d) => toast(d.msg || "Not part of this prototype"),
+};
+
+function setBoard(open) {
+  S.boardOpen = open;
+  S.animateOpen = open;
+  if (!open) S.peekId = null;
+  update();
+  if (open) requestAnimationFrame(() => document.querySelector('#lanes [data-card]')?.focus({ preventScroll: true }));
+}
+function openThread(id) {
+  S.currentId = id;
+  S.cameFromBoard = true;
+  S.peekId = null;
+  S.boardOpen = false;
+}
+function send(id) {
+  const t = byId(id);
+  const text = (S.drafts[id] ?? "").trim();
+  if (!text) return;
+  S.drafts[id] = "";
+  document.querySelectorAll(`[data-composer="${id}"]`).forEach((el) => (el.value = ""));
+  if (RUNNING.has(t.status)) {
+    t.queued.push(text);
+    S.flash.add(t.id);
+    toast("Queued. It sends when this turn ends.");
+  } else {
+    startFollowUp(t, text);
+  }
+  update();
+}
+
+/* ================= rendering: shared bits ================= */
+// Screen rect → stage coordinates (the stage may be scaled in embed mode).
+function local(r) {
+  const k = S.scale || 1;
+  return { left: r.left / k, top: r.top / k, right: r.right / k, width: r.width / k, height: r.height / k };
+}
+function ensure(el, key, build) {
+  if (!el) return false;
+  if (el.dataset.key === key) return false;
+  el.dataset.key = key;
+  el.innerHTML = build();
+  return true;
+}
+const statusHtml = (t, withDur = true) => {
+  const m = statusMeta(t);
+  const d = withDur && m.since ? ` <span class="dur" data-since="${m.since}">${dur(Date.now() - m.since)}</span>` : "";
+  return `<span class="status ${m.tone}">${icon(m.icon, "i-sm")}<span>${m.label}</span>${d}</span>`;
+};
+const favHtml = (p) => `<span class="fav" style="--fav:${p.color}">${p.letter}</span>`;
+
+function prChip(t) {
+  if (!t.pr) return "";
+  const c = t.pr.checks;
+  const prIcon = t.pr.state === "merged" ? `<span class="tone-merged" style="display:inline-flex">${icon("merge", "i-xs")}</span>` : `<span class="tone-success" style="display:inline-flex">${icon("pr", "i-xs")}</span>`;
+  let checks = "";
+  if (t.pr.state !== "merged" && c) {
+    checks = c.status === "failing" ? ` <span class="tone-error">${c.failed.length} failing</span>`
+      : c.status === "running" ? ` <span class="tone-info">${c.done}/${c.total}</span>`
+      : ` <span class="tone-success">${icon("check", "i-xs")}</span>`;
+  }
+  return `<span class="chip">${prIcon}#${t.pr.number}${checks}</span>`;
+}
+const diffChip = (t) => (t.diff ? `<span class="chip"><span class="add">+${t.diff.add}</span><span class="del">−${t.diff.del}</span></span>` : "");
+
+function askedHtml(t, quick) {
+  const p = t.pending;
+  if (!p) return "";
+  let tone, label, body, btns = "";
+  if (p.kind === "approval") {
+    tone = "tone-warning"; label = "Asked:";
+    body = `${esc(p.title)}: <code>${esc(p.command.split("\n")[0].replace(/\s*\\$/, ""))}</code>`;
+    btns = `<button class="btn btn-sm btn-primary" data-action="approve" data-id="${t.id}">Approve</button><button class="btn btn-sm" data-action="deny" data-id="${t.id}">Deny</button>`;
+  } else if (p.kind === "input") {
+    tone = "tone-input"; label = "Asked:"; body = esc(p.question);
+    btns = p.options.map((o, i) => `<button class="btn btn-sm" data-action="answer" data-id="${t.id}" data-idx="${i}">${esc(o.label)}</button>`).join("");
+  } else if (p.kind === "failed") {
+    tone = "tone-error"; label = "Error:"; body = fmt(p.message);
+    btns = `<button class="btn btn-sm" data-action="retry" data-id="${t.id}">${icon("reset", "i-xs")}Retry</button>`;
+  } else {
+    tone = "tone-warning"; label = "Limit:"; body = `${esc(p.message)} Resets at ${esc(p.resets)}.`;
+    btns = `<button class="btn btn-sm" data-action="switch-model" data-id="${t.id}">Continue on ${esc(p.alt)}</button>`;
+  }
+  return `<div class="asked ${tone}"><div class="q"><span class="lbl">${label}</span>${body}</div>${quick ? `<div class="quick">${btns}</div>` : ""}</div>`;
+}
+
+/* ================= sidebar ================= */
+function renderSidebar() {
+  const el = document.getElementById("sidebar");
+  const needs = S.threads.filter((t) => laneOf(t) === "needs").length;
+  const working = S.threads.filter((t) => RUNNING.has(t.status)).length;
+  const folders = PROJECT_ORDER.map((pid) => {
+    const p = PROJECTS[pid];
+    const rows = S.threads.filter((t) => t.project === pid).sort((a, b) => b.lastAt - a.lastAt).map((t) => {
+      const active = !S.boardOpen || S.set.boardMode === "overlay" ? t.id === S.currentId : false;
+      let trail;
+      if (t.status === "ready") trail = `<span class="sb-status tone-success">${icon("checkCircle", "i-xs")}Done</span>`;
+      else if (t.status === "done") trail = `<span class="sb-time">${rel(t.lastAt)}</span>`;
+      else { const m = statusMeta(t); trail = `<span class="sb-status ${m.tone}">${icon(m.icon, "i-xs")}${m.label}</span>`; }
+      return `<button class="sb-row ${active ? "active" : ""} ${t.status === "done" ? "recede" : ""}" data-action="sidebar-thread" data-id="${t.id}"><span class="sb-title">${esc(t.title)}</span>${trail}</button>`;
+    }).join("");
+    return `<div class="sb-folder"><div class="sb-folder-head">${favHtml(p)}${p.name}</div>${rows}</div>`;
+  }).join("");
+  const boardBtn = `<button class="sb-util is-new ${S.boardOpen ? "on" : ""}" data-action="toggle-board" title="Board (${MOD}⇧B)" aria-label="Board">${icon("board")}${needs ? `<span class="badge-count">${needs}</span>` : ""}</button>`;
+  const boardRow = `<button class="sb-board-row ${S.boardOpen ? "on" : ""}" data-action="toggle-board" title="Board (${MOD}⇧B)">${icon("board")}<span>Board</span><span class="spacer"></span>${needs ? `<span class="sb-status tone-warning">${needs} need you</span>` : ""}<span class="sb-time">${working} running</span></button>`;
+  const keepScroll = el.querySelector(".sb-scroll")?.scrollTop ?? 0;
+  el.innerHTML = `
+    <div class="sb-header"><span class="sb-brand">T3 Code<small>fork</small></span><span class="spacer"></span>
+      <button class="btn btn-ghost btn-icon btn-sm" data-action="noop" data-msg="New thread isn't part of this prototype" title="New thread">${icon("pen")}</button></div>
+    <div class="sb-scroll">${folders}</div>
+    ${S.set.entry === "row" ? boardRow : ""}
+    <div class="sb-footer">
+      ${S.set.entry === "icon" ? boardBtn : ""}
+      <button class="sb-util" data-action="noop" title="Settings">${icon("settings")}</button>
+      <button class="sb-util" data-action="noop" title="Pull requests">${icon("pr")}</button>
+      <button class="sb-util" data-action="noop" title="Issues">${icon("issue")}</button>
+      <button class="sb-util" data-action="noop" title="Usage">${icon("usage")}</button>
+    </div>`;
+  el.querySelector(".sb-scroll").scrollTop = keepScroll;
+}
+
+/* ================= board ================= */
+function boardShellHtml(mode) {
+  return `<div class="board">
+    <header class="board-header">
+      <div class="board-title">${icon("board")}Board</div>
+      <div class="board-counts" id="board-counts"></div>
+      <div class="filters" id="board-filters"></div>
+      <span class="spacer"></span>
+      <label class="search">${icon("search", "i-sm")}<input id="board-search" placeholder="Filter threads" value="${esc(S.query)}" /></label>
+      ${mode === "overlay" ? `<button class="btn btn-ghost btn-sm" data-action="close-board" title="Close (Esc)">${icon("x", "i-sm")}<span class="kbd">Esc</span></button>` : ""}
+    </header>
+    <div class="board-body">
+      <div class="lanes" id="lanes"></div>
+      <aside class="peek-panel" id="peek-panel" hidden></aside>
+    </div>
+  </div>`;
+}
+function visibleThreads() {
+  const q = S.query.trim().toLowerCase();
+  return S.threads.filter((t) => (S.filter === "all" || t.project === S.filter) && (!q || `${t.title} ${PROJECTS[t.project].name} ${t.branch}`.toLowerCase().includes(q)));
+}
+function cardHtml(t) {
+  const p = PROJECTS[t.project];
+  const lane = laneOf(t);
+  const quick = S.set.cardActions === "on" && lane === "needs";
+  const queued = t.queued.length ? `<span class="chip"><span class="tone-info">${t.queued.length} queued</span></span>` : "";
+  const source = t.source ? `<span class="chip" title="${esc(t.source)}">${icon("calendar", "i-xs")}Scheduled</span>` : "";
+  return `<div class="card ${S.peekId === t.id ? "is-active" : ""} ${S.flash.has(t.id) ? "is-changed" : ""}" data-card="${t.id}" tabindex="0" role="button" aria-label="${esc(t.title)}">
+    <div class="card-top">${favHtml(p)}<span class="project">${p.name}</span><span class="branch truncate">${esc(t.branch)}</span><span class="time" data-rel="${t.lastAt}">${rel(t.lastAt)}</span></div>
+    <div class="card-title">${esc(t.title)}</div>
+    ${statusHtml(t)}
+    <div class="card-now">${fmt(nowText(t))}</div>
+    ${askedHtml(t, quick)}
+    <div class="card-foot">${prChip(t)}${diffChip(t)}${queued}${source}<span class="model">${esc(t.model)}</span></div>
+  </div>`;
+}
+function lanesHtml() {
+  const lanes = activeLanes();
+  const groups = Object.fromEntries(lanes.map((l) => [l.id, []]));
+  for (const t of visibleThreads()) groups[laneOf(t)]?.push(t);
+  // Needs you: oldest wait first (a queue). Other lanes: most recent first.
+  groups.needs.sort((a, b) => a.lastAt - b.lastAt);
+  for (const id of Object.keys(groups)) if (id !== "needs") groups[id].sort((a, b) => b.lastAt - a.lastAt);
+  return lanes.map((l) => {
+    const list = groups[l.id];
+    const body = list.length ? list.map(cardHtml).join("") : `<div class="lane-empty">${l.empty}</div>`;
+    const foot = l.id === "done" && list.length ? `<div class="lane-foot">Last 24 hours</div>` : "";
+    return `<section class="lane" data-lane="${l.id}"><div class="lane-head"><span class="lane-dot ${l.tone}"></span><span>${l.name}</span><span class="count">${list.length}</span></div><div class="lane-list" data-lane="${l.id}">${body}${foot}</div></section>`;
+  }).join("");
+}
+function updateBoardHeader() {
+  const counts = document.getElementById("board-counts");
+  if (!counts) return;
+  const all = visibleThreads();
+  const n = (lane) => all.filter((t) => laneOf(t) === lane).length;
+  counts.innerHTML = `<b class="tone-warning">${n("needs")}</b> need you · <b>${n("working")}</b> working · <b>${n("ready")}</b> to review`;
+  const live = S.threads.filter((t) => t.status !== "done");
+  const chip = (value, label, count, fav = "") => `<button class="chip-btn ${S.filter === value ? "on" : ""}" data-action="filter" data-value="${value}">${fav}${label}<span class="n">${count}</span></button>`;
+  document.getElementById("board-filters").innerHTML =
+    chip("all", "All projects", live.length) + PROJECT_ORDER.map((pid) => chip(pid, PROJECTS[pid].name, live.filter((t) => t.project === pid).length, favHtml(PROJECTS[pid]))).join("");
+}
+function updateLanes() {
+  const lanesEl = document.getElementById("lanes");
+  if (!lanesEl) return;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const before = new Map();
+  lanesEl.querySelectorAll("[data-card]").forEach((el) => before.set(el.dataset.card, { r: local(el.getBoundingClientRect()), lane: el.closest(".lane").dataset.lane }));
+  const scrolls = {};
+  lanesEl.querySelectorAll(".lane-list").forEach((l) => (scrolls[l.dataset.lane] = l.scrollTop));
+  const focused = document.activeElement?.closest?.("#lanes [data-card]")?.dataset.card;
+  lanesEl.innerHTML = lanesHtml();
+  lanesEl.querySelectorAll(".lane-list").forEach((l) => (l.scrollTop = scrolls[l.dataset.lane] ?? 0));
+  if (focused) lanesEl.querySelector(`[data-card="${focused}"]`)?.focus({ preventScroll: true });
+  positionPopover();
+  S.flash.clear();
+  if (reduce || !before.size) return;
+  // FLIP: cards that change lane fly as a fixed clone, so lane scroll areas don't clip them.
+  lanesEl.querySelectorAll("[data-card]").forEach((el) => {
+    const b = before.get(el.dataset.card);
+    const a = local(el.getBoundingClientRect());
+    if (!b) { el.animate([{ opacity: 0, transform: "scale(0.97)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: "ease-out" }); return; }
+    const dx = b.r.left - a.left, dy = b.r.top - a.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    const easing = "cubic-bezier(0.32, 0.72, 0, 1)";
+    if (b.lane !== el.closest(".lane").dataset.lane) {
+      const ghost = el.cloneNode(true);
+      ghost.classList.add("card-ghost");
+      ghost.classList.remove("is-changed");
+      Object.assign(ghost.style, { position: "fixed", left: `${b.r.left}px`, top: `${b.r.top}px`, width: `${a.width}px`, margin: "0" });
+      document.getElementById("stage").appendChild(ghost);
+      el.style.opacity = "0";
+      const anim = ghost.animate([{ transform: "translate(0, 0)" }, { transform: `translate(${a.left - b.r.left}px, ${a.top - b.r.top}px)` }], { duration: 380, easing });
+      anim.onfinish = () => { ghost.remove(); el.style.opacity = ""; };
+    } else {
+      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 260, easing });
+    }
+  });
+}
+
+/* ================= peek ================= */
+function pendingHtml(t) {
+  const p = t.pending;
+  if (!p) return "";
+  if (p.kind === "approval") {
+    return `<div class="pending-box tone-warning"><div class="head tone-warning">${icon("approval", "i-sm")}${esc(p.title)}</div>
+      <div class="cmd">${esc(p.command)}</div><div class="body" style="color:var(--muted-foreground)">${esc(p.reason)}</div>
+      <div class="actions"><button class="btn btn-sm btn-primary" data-action="approve" data-id="${t.id}">Approve</button><button class="btn btn-sm" data-action="approve" data-mode="always" data-id="${t.id}">Approve for this session</button><span class="spacer"></span><button class="btn btn-sm btn-danger" data-action="deny" data-id="${t.id}">Deny</button></div></div>`;
+  }
+  if (p.kind === "input") {
+    return `<div class="pending-box tone-input"><div class="head tone-input">${icon("question", "i-sm")}Question</div><div class="body">${esc(p.question)}</div>
+      <div style="display:flex;flex-direction:column;gap:6px">${p.options.map((o, i) => `<button class="option-btn" data-action="answer" data-id="${t.id}" data-idx="${i}"><span class="l">${esc(o.label)}</span><span class="d">${esc(o.detail)}</span></button>`).join("")}</div>
+      <div class="body" style="font-size:12px;color:var(--muted-foreground)">Or type your own answer below.</div></div>`;
+  }
+  if (p.kind === "failed") {
+    return `<div class="pending-box tone-error"><div class="head tone-error">${icon("alert", "i-sm")}Turn failed</div><div class="body">${fmt(p.message)}</div>
+      <div class="actions"><button class="btn btn-sm btn-primary" data-action="retry" data-id="${t.id}">${icon("reset", "i-xs")}Retry</button></div></div>`;
+  }
+  return `<div class="pending-box tone-warning"><div class="head tone-warning">${icon("clock", "i-sm")}Usage limit</div><div class="body">${esc(p.message)} Resets at ${esc(p.resets)}.</div>
+    <div class="actions"><button class="btn btn-sm btn-primary" data-action="switch-model" data-id="${t.id}">Continue on ${esc(p.alt)}</button><button class="btn btn-sm" data-action="wait-limit" data-id="${t.id}">Wait for reset</button></div></div>`;
+}
+function summaryHtml(t) {
+  if (S.set.summary === "llm") {
+    return `<div><div class="sec-title">Summary <span class="tag">${icon("sparkle", "i-xs")} generated</span></div><ul class="summary-list">${t.summary.llm.map((s) => `<li>${fmt(s)}</li>`).join("")}</ul></div>`;
+  }
+  const last = t.summary.state ? `<div><div class="sec-title">Last message from the agent</div><p class="summary-text">${fmt(t.summary.state)}</p></div>` : "";
+  return last;
+}
+function activityHtml(t) {
+  return `<div><div class="sec-title">Recent activity</div><div class="activity">${t.activity.slice(-4).reverse().map((a) => `<div class="tool-row">${icon(a.startsWith("You") ? "user" : a.startsWith("Ran") || a.startsWith("Asked to run") ? "terminal" : "file", "i-xs")}<span class="truncate">${esc(a)}</span></div>`).join("")}</div></div>`;
+}
+function changesHtml(t) {
+  let out = "";
+  if (t.pr) {
+    const c = t.pr.checks;
+    const checkRows = c && t.pr.state !== "merged"
+      ? (c.status === "failing" ? c.failed.map((f) => `<div class="r">${icon("xCircle", "i-xs tone-error")}<span class="mono" style="font-size:11.5px">${esc(f)}</span><span class="spacer"></span><span class="tone-error">failed</span></div>`).join("") + `<div class="r">${icon("checkCircle", "i-xs tone-success")}<span>${c.total - c.failed.length} other checks passed</span></div>`
+        : c.status === "running" ? `<div class="r">${icon("dashed", "i-xs tone-info")}<span>${c.done} of ${c.total} checks done</span></div>`
+        : `<div class="r">${icon("checkCircle", "i-xs tone-success")}<span>All ${c.total} checks passed</span></div>`)
+      : `<div class="r">${icon("merge", "i-xs tone-merged")}<span>Merged</span></div>`;
+    out += `<div><div class="sec-title">Pull request</div><div class="rows"><div class="r">${icon(t.pr.state === "merged" ? "merge" : "pr", "i-xs " + (t.pr.state === "merged" ? "tone-merged" : "tone-success"))}<span class="truncate" style="font-weight:500">#${t.pr.number} ${esc(t.pr.title)}</span></div>${checkRows}</div></div>`;
+  }
+  if (t.diff) {
+    out += `<div><div class="sec-title">Changes <span class="add">+${t.diff.add}</span><span class="del">−${t.diff.del}</span></div><div class="rows">${t.diff.files.map((f) => `<div class="r"><span class="path">&lrm;${esc(f[0])}</span><span class="add">+${f[1]}</span><span class="del">−${f[2]}</span></div>`).join("")}</div></div>`;
+  }
+  return out;
+}
+function peekActionsHtml(t) {
+  const b = [];
+  if (RUNNING.has(t.status)) b.push(`<button class="btn btn-sm" data-action="stop" data-id="${t.id}">${icon("stop", "i-xs")}Stop</button>`);
+  if (t.pr && t.pr.state !== "merged") b.push(`<button class="btn btn-sm" data-action="open-pr" data-id="${t.id}">${icon("pr", "i-xs")}Open PR</button>`);
+  if (t.status === "ready" && t.diff && !t.pr) b.push(`<button class="btn btn-sm" data-action="create-pr" data-id="${t.id}">${icon("pr", "i-xs")}Create PR</button>`);
+  if (t.status === "ready") b.push(`<button class="btn btn-sm" data-action="settle" data-id="${t.id}">${icon("checkCheck", "i-xs")}Settle</button>`);
+  if (t.status === "done") b.push(`<button class="btn btn-sm" data-action="reopen" data-id="${t.id}">${icon("undo", "i-xs")}Reopen</button>`);
+  return b.length ? `<div class="peek-actions">${b.join("")}</div>` : "";
+}
+function composerPlaceholder(t) {
+  if (RUNNING.has(t.status)) return "Queue a follow-up…";
+  if (t.status === "approval") return "Deny with instructions…";
+  if (t.status === "input") return "Type your own answer…";
+  if (t.status === "done") return "Reopen with a follow-up…";
+  return "Send a follow-up…";
+}
+const composerHtml = (t) => `<div class="composer"><textarea data-composer="${t.id}" rows="2" placeholder="${composerPlaceholder(t)}">${esc(S.drafts[t.id] ?? "")}</textarea>
+  <div class="composer-row"><span class="model-chip">${icon("sparkle", "i-xs")}<span data-model="${t.id}">${esc(t.model)}</span></span><span class="spacer"></span><button class="send" data-action="send" data-id="${t.id}" aria-label="Send">${icon("arrowUp", "i-sm")}</button></div></div>`;
+
+function peekShellHtml(t) {
+  return `<div class="peek" data-peek="${t.id}"><div class="peek-scroll" id="peek-scroll"></div><div class="peek-composer"><div id="peek-queued"></div>${composerHtml(t)}</div></div>`;
+}
+function updatePeekBody(t) {
+  const scroll = document.getElementById("peek-scroll");
+  if (!scroll) return;
+  const p = PROJECTS[t.project];
+  const keepTop = scroll.scrollTop;
+  scroll.innerHTML = `
+    <div>
+      <div class="peek-top">${favHtml(p)}<span class="project">${p.name}</span>${icon("branch", "i-xs")}<span class="mono truncate" style="font-size:11px">${esc(t.branch)}</span><span class="spacer"></span>
+        <button class="btn btn-sm" data-action="open-thread" data-id="${t.id}" title="Open the full thread (${MOD}-click a card)">Open thread${icon("arrowUpRight", "i-xs")}</button>
+        <button class="btn btn-ghost btn-icon btn-sm" data-action="close-peek" title="Close (Esc)">${icon("x", "i-sm")}</button></div>
+      <div class="peek-title">${esc(t.title)}</div>
+      <div class="peek-meta">${statusHtml(t)}<span>·</span><span>updated <span data-rel="${t.lastAt}">${rel(t.lastAt)}</span> ago</span><span>·</span><span>${esc(t.model)}</span></div>
+      ${t.source ? `<div class="peek-meta" style="margin-top:4px">${icon("calendar", "i-xs")}${esc(t.source)}</div>` : ""}
+    </div>
+    ${pendingHtml(t)}
+    ${summaryHtml(t)}
+    ${changesHtml(t)}
+    ${activityHtml(t)}
+    ${peekActionsHtml(t)}`;
+  scroll.scrollTop = keepTop;
+  const q = document.getElementById("peek-queued");
+  if (q) q.innerHTML = t.queued.length ? `<div class="queued">${icon("clock", "i-xs")}${t.queued.length} follow-up queued: “${esc(t.queued[0])}”</div>` : "";
+  document.querySelectorAll(`[data-composer="${t.id}"]`).forEach((ta) => (ta.placeholder = composerPlaceholder(t)));
+  document.querySelectorAll(`[data-model="${t.id}"]`).forEach((m) => (m.textContent = t.model));
+}
+function renderPeek() {
+  const panel = document.getElementById("peek-panel");
+  const pop = document.getElementById("popover-root");
+  const t = S.peekId && S.boardOpen ? byId(S.peekId) : null;
+  const usePanel = S.set.peekMode === "panel";
+  if (panel) {
+    panel.hidden = !(t && usePanel);
+    if (t && usePanel) ensure(panel, `peek:${t.id}`, () => peekShellHtml(t));
+    else { panel.dataset.key = ""; panel.innerHTML = ""; }
+  }
+  if (t && !usePanel) ensure(pop, `peek:${t.id}`, () => `<div class="popover-peek">${peekShellHtml(t)}</div>`);
+  else { pop.dataset.key = ""; pop.innerHTML = ""; }
+  if (t) updatePeekBody(t);
+}
+function positionPopover() {
+  const pop = document.querySelector("#popover-root .popover-peek");
+  if (!pop) return;
+  const stage = document.getElementById("stage");
+  const W = stage.offsetWidth, H = stage.offsetHeight, pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const card = document.querySelector(`#lanes [data-card="${S.peekId}"]`);
+  const r = card ? local(card.getBoundingClientRect()) : null;
+  if (!r || !r.width) { pop.style.left = `${(W - pw) / 2}px`; pop.style.top = `${Math.max(12, (H - ph) / 2)}px`; return; }
+  let left = r.right + 10;
+  if (left + pw > W - 12) left = r.left - pw - 10;
+  if (left < 12) left = Math.min(W - pw - 12, Math.max(12, r.left));
+  const top = Math.max(12, Math.min(r.top - 6, H - ph - 12));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
+/* ================= thread view (stub) ================= */
+function threadShellHtml(t) {
+  return `<div class="thread-view">
+    <header class="topbar" id="thread-top"></header>
+    <div class="thread-scroll"><div class="thread-col"><div class="msgs" id="thread-msgs"></div></div></div>
+    <div class="thread-bottom"><div class="thread-col"><div id="thread-pending"></div>${composerHtml(t)}</div></div>
+  </div>`;
+}
+function updateThreadView(t) {
+  const p = PROJECTS[t.project];
+  const top = document.getElementById("thread-top");
+  if (!top) return;
+  top.innerHTML = `${S.cameFromBoard ? `<button class="btn btn-ghost btn-sm" data-action="back-to-board">${icon("arrowLeft", "i-sm")}Board</button><span class="crumb">/</span>` : ""}
+    <span class="crumb">${favHtml(p)}${p.name}</span><span class="crumb">/</span><span class="title truncate">${esc(t.title)}</span>${statusHtml(t)}
+    <span class="spacer"></span><span class="crumb mono" style="font-size:11.5px">${icon("branch", "i-xs")}${esc(t.branch)}</span><span class="stub-tag">thread view · stub</span>`;
+  const msgs = [`<div class="msg-user">${esc(t.prompt)}</div>`];
+  t.activity.slice(0, -1).forEach((a) => msgs.push(`<div class="tool-row">${icon(a.startsWith("Ran") ? "terminal" : "file", "i-xs")}${esc(a)}</div>`));
+  if (t.summary.state) msgs.push(`<div class="msg-assistant">${fmt(t.summary.state)}</div>`);
+  if (t.diff) msgs.push(`<div class="rows"><div class="r" style="font-weight:500">${icon("file", "i-xs")}${t.diff.files.length} files changed <span class="add">+${t.diff.add}</span><span class="del">−${t.diff.del}</span></div></div>`);
+  t.followups.forEach((f) => msgs.push(`<div class="msg-user">${esc(f)}</div>`));
+  if (RUNNING.has(t.status)) msgs.push(`<div class="tool-row tone-info">${icon("working", "i-xs")}${fmt(t.now.state)}</div>`);
+  document.getElementById("thread-msgs").innerHTML = msgs.join("");
+  document.getElementById("thread-pending").innerHTML = pendingHtml(t);
+  document.querySelectorAll(`[data-composer="${t.id}"]`).forEach((ta) => (ta.placeholder = composerPlaceholder(t)));
+}
+
+/* ================= top-level render ================= */
+function renderMain() {
+  const main = document.getElementById("main");
+  const pageBoard = S.boardOpen && S.set.boardMode === "page";
+  if (pageBoard) {
+    ensure(main, "board-page", () => boardShellHtml("page"));
+  } else {
+    const t = byId(S.currentId);
+    ensure(main, `thread:${t.id}`, () => threadShellHtml(t));
+    updateThreadView(t);
+  }
+  const ov = document.getElementById("overlay-root");
+  if (S.boardOpen && S.set.boardMode === "overlay") {
+    ensure(ov, "board-overlay", () => `<div class="overlay ${S.animateOpen ? "animate" : ""}" data-overlay><div class="overlay-sheet">${boardShellHtml("overlay")}</div></div>`);
+  } else { ov.dataset.key = ""; ov.innerHTML = ""; }
+}
+function update() {
+  renderSidebar();
+  renderMain();
+  renderPeek();
+  updateBoardHeader();
+  updateLanes();
+}
+function applyTheme() {
+  const v = S.set.theme;
+  if (v === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", v);
+}
+
+/* ================= prototype controls ================= */
+function seg(key, opts) {
+  return `<div class="seg">${opts.map(([v, l]) => `<button class="${S.set[key] === v ? "on" : ""}" data-action="set" data-key="${key}" data-value="${v}">${l}</button>`).join("")}</div>`;
+}
+function renderProto() {
+  const root = document.getElementById("proto-root");
+  const sim = `<button class="btn btn-sm" data-action="tick" title="Advance one thread">${icon("step", "i-xs")}Step</button>
+    <button class="btn btn-sm ${S.playing ? "btn-primary" : ""}" data-action="play">${icon(S.playing ? "pause" : "play", "i-xs")}${S.playing ? "Pause" : "Play"}</button>`;
+  if (!S.protoOpen) {
+    root.innerHTML = `<div class="proto collapsed"><div class="proto-head">${icon("sliders", "i-sm")}<b>Prototype</b>${sim}<button class="btn btn-ghost btn-icon btn-sm" data-action="toggle-proto" title="Expand">${icon("chevronUp", "i-sm")}</button></div></div>`;
+    return;
+  }
+  root.innerHTML = `<div class="proto"><div class="proto-head">${icon("sliders", "i-sm")}<b>Prototype</b><span class="spacer"></span><button class="btn btn-ghost btn-icon btn-sm" data-action="toggle-proto" title="Collapse">${icon("chevronDown", "i-sm")}</button></div>
+    <div class="proto-body">
+      <div class="proto-row"><label>Live simulation</label><div class="proto-sim">${sim}<button class="btn btn-sm" data-action="reset" title="Reset data">${icon("reset", "i-xs")}</button></div></div>
+      <div class="proto-row"><label>Board opens as</label>${seg("boardMode", [["overlay", "Overlay"], ["page", "Full page"]])}</div>
+      <div class="proto-row"><label>Peek</label>${seg("peekMode", [["panel", "Side panel"], ["popover", "Popover"]])}</div>
+      <div class="proto-row"><label>Entry point</label>${seg("entry", [["icon", "Footer icon"], ["row", "Sidebar row"]])}</div>
+      <div class="proto-row"><label>“Now” line comes from</label>${seg("summary", [["state", "Thread state"], ["llm", "LLM summary"]])}</div>
+      <div class="proto-row"><label>Failed turns</label>${seg("failedLane", [["needs", "In Needs you"], ["own", "Own lane"]])}</div>
+      <div class="proto-row"><label>PR with failing checks</label>${seg("failingChecks", [["ready", "In Ready"], ["needs", "In Needs you"]])}</div>
+      <div class="proto-row"><label>Quick actions on cards</label>${seg("cardActions", [["off", "Off"], ["on", "On"]])}</div>
+      <div class="proto-row"><label>Theme</label>${seg("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</div>
+      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes. ${MOD}⇧B toggles the board.</div>
+    </div></div>`;
+}
+
+/* ================= toasts ================= */
+function toast(msg) {
+  const box = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+/* ================= events ================= */
+// These actions render on their own; every other action re-renders after it runs.
+const SELF_UPDATING = new Set(["toggle-board", "close-board", "back-to-board", "tick", "send", "toggle-proto", "play"]);
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-action]");
+  if (a) {
+    const fn = ACTIONS[a.dataset.action];
+    if (fn) { fn(a.dataset, e); if (!SELF_UPDATING.has(a.dataset.action)) update(); }
+    return;
+  }
+  const card = e.target.closest("[data-card]");
+  if (card) {
+    const id = card.dataset.card;
+    if (e.metaKey || e.ctrlKey) openThread(id);
+    else S.peekId = S.peekId === id ? null : id;
+    update();
+    return;
+  }
+  if (S.peekId && S.set.peekMode === "popover" && !e.target.closest(".popover-peek")) { S.peekId = null; update(); return; }
+  if (e.target.matches("[data-overlay]")) setBoard(false);
+});
+document.addEventListener("input", (e) => {
+  if (e.target.dataset.composer) S.drafts[e.target.dataset.composer] = e.target.value;
+  if (e.target.id === "board-search") { S.query = e.target.value; updateBoardHeader(); updateLanes(); }
+});
+document.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.shiftKey && e.key.toLowerCase() === "b") { e.preventDefault(); setBoard(!S.boardOpen); return; }
+  if (e.target.dataset?.composer && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.target.dataset.composer); return; }
+  if (e.key === "Escape") {
+    if (S.peekId) { const id = S.peekId; S.peekId = null; update(); document.querySelector(`#lanes [data-card="${id}"]`)?.focus({ preventScroll: true }); return; }
+    if (S.boardOpen && S.set.boardMode === "overlay") { setBoard(false); return; }
+  }
+  const card = e.target.closest?.("#lanes [data-card]");
+  if (!card || e.target !== card) return;
+  const id = card.dataset.card;
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (mod) openThread(id); else S.peekId = S.peekId === id ? null : id;
+    update();
+    return;
+  }
+  const grid = [...document.querySelectorAll("#lanes .lane")].map((l) => [...l.querySelectorAll("[data-card]")]);
+  const col = grid.findIndex((c) => c.includes(card));
+  const row = grid[col].indexOf(card);
+  let next = null;
+  if (e.key === "ArrowDown") next = grid[col][row + 1];
+  if (e.key === "ArrowUp") next = grid[col][row - 1];
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    const step = e.key === "ArrowRight" ? 1 : -1;
+    for (let c = col + step; c >= 0 && c < grid.length; c += step) if (grid[c].length) { next = grid[c][Math.min(row, grid[c].length - 1)]; break; }
+  }
+  if (next) {
+    e.preventDefault();
+    next.focus();
+    next.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (S.peekId) { S.peekId = next.dataset.card; update(); }
+  }
+});
+document.addEventListener("scroll", positionPopover, true);
+setInterval(() => {
+  const now = Date.now();
+  document.querySelectorAll("[data-since]").forEach((el) => (el.textContent = dur(now - +el.dataset.since)));
+  document.querySelectorAll("[data-rel]").forEach((el) => (el.textContent = rel(+el.dataset.rel)));
+}, 1000);
+
+const EMBED_W = 1280, EMBED_H = 800;
+function fitStage() {
+  const root = document.documentElement;
+  // Narrow frames (inline previews, small windows) get the desktop layout scaled down.
+  const embed = innerWidth < 1000;
+  root.classList.toggle("embed", embed);
+  S.scale = embed ? innerWidth / EMBED_W : 1;
+  root.style.setProperty("--s", S.scale);
+  root.style.setProperty("--app-h", `${embed ? EMBED_H : innerHeight}px`);
+  document.getElementById("frame").style.height = embed ? `${Math.ceil(EMBED_H * S.scale)}px` : "";
+}
+addEventListener("resize", () => { fitStage(); positionPopover(); });
+fitStage();
+applyTheme();
+update();
+renderProto();
+</script>
+</body>
+</html>
