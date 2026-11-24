@@ -107,6 +107,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./appImageRuntimeEnv": {
+      "types": "./src/appImageRuntimeEnv.ts",
+      "import": "./src/appImageRuntimeEnv.ts"
+    },
     "./windowsSystem": {
       "types": "./src/windowsSystem.ts",
       "import": "./src/windowsSystem.ts"
