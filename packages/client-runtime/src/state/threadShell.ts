@@ -58,10 +58,9 @@ const isChildRunLive = (
       thread.status === "waiting";
 
 /**
- * Whether a thread shows under its parent rather than in thread lists: a
- * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * Whether a thread shows under its parent rather than in thread lists: a subagent, a side
+ * chat, or a delegated task (`delegatedUnderParent`, by thread key). A live task whose
+ * parent is unlisted stays in the lists; a settled one stays hidden so old tasks never flood them.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -98,7 +97,8 @@ export function resolveListedAncestorThreadRef(
         environmentId: thread.delegatedFrom.environmentId,
         threadId: thread.delegatedFrom.threadId,
       };
-      // Mirrors delegatedUnderParent: a task whose parent is not listed keeps its own row.
+      // Mirrors delegatedUnderParent: a live task whose parent is not listed keeps its own row;
+      // a settled one has none, so it matches no row.
       if (findThread(parent)?.archivedAt !== null) return current;
     } else {
       return current;
