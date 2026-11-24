@@ -114,6 +114,7 @@ impl conn_engine::EngineHost for GitHost {
                     setup: Some(self.setup.clone()),
                     worktrees_dir: self.worktrees.clone(),
                     submodules: None,
+                    missing_base: request.missing_base,
                 },
             )
             .await

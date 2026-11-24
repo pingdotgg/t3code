@@ -177,7 +177,11 @@ pub async fn is_repository(cwd: &Path) -> VcsResult<bool> {
     .run()
     .await?;
     if out.code == 128 {
-        if out.stderr.contains("not a git repository") {
+        // Line starts only: a path inside another diagnostic can hold the same words.
+        if out.stderr.lines().any(|line| {
+            line.starts_with("fatal: not a git repository")
+                || line.starts_with("fatal: cannot use bare repository")
+        }) {
             return Ok(false);
         }
         return Err(VcsError::invalid(

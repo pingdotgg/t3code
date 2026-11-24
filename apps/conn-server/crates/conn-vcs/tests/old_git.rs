@@ -46,6 +46,7 @@ async fn a_failed_hook_unlocks_its_checkout_on_git_without_list_z() {
             base_ref: "main".into(),
             branch: Some("feature-old".into()),
             start_from_origin: false,
+            missing_base: conn_vcs::setup::MissingBase::Fail,
             submodules: None,
             setup: None,
             worktrees_dir: fx.root.path().join("worktrees"),

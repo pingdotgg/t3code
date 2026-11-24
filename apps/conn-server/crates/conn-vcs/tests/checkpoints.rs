@@ -7,8 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-use conn_vcs::checkpoint::{
-    self, Captured, DiffFormat, DiffRequest, TRUNCATED_MARKER, checkpoint_ref,
+use conn_vcs::{
+    checkpoint::{self, Captured, DiffFormat, DiffRequest, TRUNCATED_MARKER, checkpoint_ref},
+    repo,
 };
 
 /// A temp folder, removed on drop.
@@ -221,6 +222,90 @@ async fn an_unchanged_tree_gives_an_empty_diff_and_ignored_files_stay_out() {
     let tree = |r: &str| git(dir.path(), &["rev-parse", &format!("{r}^{{tree}}")]);
     assert_eq!(tree(&r0), tree(&r1), "same tree");
     assert_eq!(patch(&dir, &r0, &r1).await, "", "empty diff");
+}
+
+/// T3's "GitVcsDriver fails repository probes when git cannot read the repository config":
+/// a broken repository is an error, even when a path in Git's message holds the words
+/// "not a git repository".
+#[tokio::test]
+async fn a_repository_git_cannot_read_is_an_error_not_a_folder_without_git() {
+    let root = TempDir::new("bad-config");
+    let include_dir = root.path().join("not a git repository");
+    std::fs::create_dir_all(&include_dir).unwrap();
+    std::fs::write(include_dir.join("included"), "invalid config\n").unwrap();
+    let included = format!(
+        "[include]\n\tpath = {}\n",
+        include_dir.join("included").display()
+    );
+    for (name, config) in [
+        ("direct", "invalid config\n"),
+        ("included", included.as_str()),
+    ] {
+        let cwd = root.path().join(name);
+        std::fs::create_dir_all(&cwd).unwrap();
+        git(&cwd, &["init", "-q"]);
+        std::fs::write(cwd.join(".git/config"), config).unwrap();
+        assert!(
+            checkpoint::is_repository(&cwd).await.is_err(),
+            "a bad {name} config is a failure, not an absent repository"
+        );
+        assert!(
+            !repo::is_plain_folder(&cwd).await,
+            "{name} keeps its worktree"
+        );
+    }
+}
+
+/// `isNonGitProject` for a scheduled task: only a plain folder runs in place. Git calls an
+/// unreadable `.git` "not a git repository", but the folder still holds a repository.
+#[cfg(unix)]
+#[tokio::test]
+async fn only_a_plain_folder_counts_as_no_repository() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let plain = TempDir::new("plain");
+    assert!(repo::is_plain_folder(plain.path()).await, "a plain folder");
+    let nested = plain.path().join("a/b");
+    std::fs::create_dir_all(&nested).unwrap();
+    assert!(
+        repo::is_plain_folder(&nested).await,
+        "a folder in a plain folder"
+    );
+
+    // A dangling `.git` link: Git reads no repository, on every runner.
+    let dangling = TempDir::new("dangling-git");
+    std::os::unix::fs::symlink(
+        dangling.path().join("missing"),
+        dangling.path().join(".git"),
+    )
+    .unwrap();
+    assert!(
+        !checkpoint::is_repository(dangling.path()).await.unwrap(),
+        "Git reads a dangling .git as no repository"
+    );
+    assert!(
+        !repo::is_plain_folder(dangling.path()).await,
+        "a dangling .git keeps its worktree"
+    );
+
+    let unreadable = TempDir::new("unreadable-git");
+    git(unreadable.path(), &["init", "-q"]);
+    let metadata = unreadable.path().join(".git");
+    std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // A privileged runner (root on Linux CI) reads it anyway; only a denial tests Git's view.
+    let denied = std::fs::read_dir(&metadata).is_err();
+    let in_repository = !checkpoint::is_repository(unreadable.path())
+        .await
+        .unwrap_or(true);
+    let plain_folder = repo::is_plain_folder(unreadable.path()).await;
+    std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if denied {
+        assert!(
+            in_repository,
+            "Git reads an unreadable .git as no repository"
+        );
+    }
+    assert!(!plain_folder, "an unreadable .git keeps its worktree");
 }
 
 #[tokio::test]

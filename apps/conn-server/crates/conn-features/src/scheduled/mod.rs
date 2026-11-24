@@ -231,6 +231,9 @@ pub trait TaskRunner: Send + Sync + std::fmt::Debug {
     /// Waits for the run of `message_id` to end, at most [`RUN_OUTCOME_WAIT`]. `Some(error)`
     /// when it ended without success and still holds the message (`recordRunFailure`).
     fn run_outcome(&self, thread_id: String, message_id: String) -> BoxFuture<'_, Option<String>>;
+    /// `isScratchProject || isNonGitProject`: the project's folder is positively no Git
+    /// repository. An unknown project, or a repository Git cannot read, is `false`.
+    fn is_non_git_project(&self, project_id: String) -> BoxFuture<'_, bool>;
 }
 
 /// What runs a task: the timer, a person, or an agent.
@@ -604,6 +607,35 @@ impl ScheduledTasks {
             .ok_or_else(|| TaskError::new("Schedule task not found.", Some(id)))
     }
 
+    /// A folder that is not a Git repository, Scratch included, cannot hold a worktree: such
+    /// a project's worktree strategy runs in the folder (`upsert`). Runs apply it too, so a
+    /// task saved before the rule, or before its folder lost Git, still starts.
+    async fn workspace_strategy(
+        &self,
+        project_id: &str,
+        strategy: &OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    ) -> OrchestrationV2ThreadLaunchWorkspaceStrategy {
+        use conn_contract::OrchestrationV2RunWorkspacePreparationRoot as Root;
+        let worktree = matches!(
+            strategy,
+            OrchestrationV2ThreadLaunchWorkspaceStrategy::Worktree(_)
+        );
+        if worktree
+            && self
+                .inner
+                .runner
+                .is_non_git_project(project_id.to_owned())
+                .await
+        {
+            OrchestrationV2ThreadLaunchWorkspaceStrategy::Root(Root {
+                r#type: conn_contract::lit::Root,
+                branch: None,
+            })
+        } else {
+            strategy.clone()
+        }
+    }
+
     /// `upsert`: creates or edits a task. An edit that leaves the schedule and `enabled` as
     /// they were keeps the next run; a one-time run in the past is refused.
     pub async fn upsert(&self, input: UpsertInput) -> Result<ScheduledTask, Failure> {
@@ -622,6 +654,9 @@ impl ScheduledTasks {
             Some(schedule) => Requested::Schedule(schedule),
             None => Requested::Webhook(webhook::decode(&input)?),
         };
+        let workspace_strategy = self
+            .workspace_strategy(&input.project_id, &input.workspace_strategy)
+            .await;
         let now = self.now();
         let id = match (&input.id, &input.command_id) {
             (Some(id), _) => id.clone(),
@@ -714,7 +749,7 @@ impl ScheduledTasks {
             project_id: input.project_id.clone(),
             thread_id,
             thread_mode: Some(thread_mode),
-            workspace_strategy: input.workspace_strategy.clone(),
+            workspace_strategy,
             model_selection: input.model_selection.clone(),
             runtime_mode: input.runtime_mode,
             interaction_mode: input.interaction_mode,
@@ -1021,6 +1056,9 @@ impl ScheduledTasks {
         let thread_mode = thread_mode_of(&active);
         let dispatched = match &active.thread_id {
             None => {
+                let strategy = self
+                    .workspace_strategy(&active.project_id, &active.workspace_strategy)
+                    .await;
                 let launched = self
                     .inner
                     .runner
@@ -1031,7 +1069,7 @@ impl ScheduledTasks {
                         model_selection: to_json(&active.model_selection),
                         runtime_mode: to_json(&active.runtime_mode),
                         interaction_mode: to_json(&active.interaction_mode),
-                        workspace_strategy: to_json(&active.workspace_strategy),
+                        workspace_strategy: to_json(&strategy),
                         message_id: message_id.clone(),
                         scheduled_task_id: active.id.clone(),
                         text: prompt.clone(),

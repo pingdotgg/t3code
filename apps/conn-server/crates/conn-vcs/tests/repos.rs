@@ -166,6 +166,31 @@ async fn remote_status_reads_divergence_after_fetch() {
     assert_eq!((detached.ref_name, detached.is_repo), (None, Some(true)));
 }
 
+/// T3's `statusDetailsRemote`: with no usable remote default (here `origin/HEAD` names a
+/// deleted `origin/master`), both `main` and `master` count as the default, even when the
+/// other one exists locally.
+#[tokio::test]
+async fn either_conventional_branch_is_the_default_without_a_remote_default() {
+    let fx = Fixture::new("dangling-remote-head");
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/master",
+        ],
+    );
+    git(&fx.work, &["checkout", "-q", "-b", "master"]);
+    write(&fx.work, "m.txt", "m\n");
+    commit_all(&fx.work, "ahead of main");
+
+    let local = status::local_status(&fx.work).await.unwrap();
+    assert_eq!(local.ref_name.as_deref(), Some("master"));
+    assert!(local.is_default_ref, "master is a default branch");
+    let remote = status::remote_status(&fx.work).await.unwrap().unwrap();
+    assert_eq!(remote.ahead_of_default_count, Some(0));
+}
+
 #[tokio::test]
 async fn list_refs_orders_filters_and_pages() {
     let fx = Fixture::new("refs");
@@ -1291,6 +1316,7 @@ async fn provision_creates_a_worktree_and_waits_for_a_blocking_setup_script() {
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
         submodules: None,
+        missing_base: setup::MissingBase::Fail,
     };
     let exit = runner.script(false);
     let launch = {
@@ -1411,6 +1437,7 @@ async fn a_cancel_during_post_checkout_removes_the_checkout_and_branch() {
         base_ref: "main".into(),
         branch: Some("feature-pc".into()),
         start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
         submodules: None,
         setup: None,
         worktrees_dir: worktrees.clone(),
@@ -1554,6 +1581,7 @@ async fn a_worktree_cleanup_cannot_remove_keeps_its_branch_and_says_so() {
             base_ref: "main".into(),
             branch: Some("feature-locked".into()),
             start_from_origin: false,
+            missing_base: conn_vcs::setup::MissingBase::Fail,
             submodules: None,
             setup: Some(std::sync::Arc::new(LockingRunner)),
             worktrees_dir: fx.root.path().join("worktrees"),
@@ -1591,6 +1619,7 @@ async fn a_failed_post_checkout_hook_keeps_the_checkout_and_its_files() {
             base_ref: "main".into(),
             branch: Some("feature-hook".into()),
             start_from_origin: false,
+            missing_base: conn_vcs::setup::MissingBase::Fail,
             submodules: None,
             setup: None,
             worktrees_dir: fx.root.path().join("worktrees"),
@@ -1644,6 +1673,7 @@ async fn a_cancel_while_git_populates_the_checkout_removes_it() {
         base_ref: "main".into(),
         branch: Some("feature-slow".into()),
         start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
         submodules: None,
         setup: None,
         worktrees_dir: fx.root.path().join("worktrees"),
@@ -1735,6 +1765,7 @@ async fn an_async_setup_script_runs_on_while_the_agent_starts() {
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
         submodules: None,
+        missing_base: setup::MissingBase::Fail,
     };
     let script_stage = |thread: &str| {
         let snapshot = setups.get(thread).unwrap();
@@ -1800,6 +1831,7 @@ async fn cancelling_a_blocking_setup_closes_its_terminal() {
         base_ref: "main".into(),
         branch: None,
         start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
         submodules: None,
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
@@ -1839,6 +1871,7 @@ async fn cancelling_while_the_setup_terminal_opens_closes_it() {
         base_ref: "main".into(),
         branch: None,
         start_from_origin: false,
+        missing_base: conn_vcs::setup::MissingBase::Fail,
         submodules: None,
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
@@ -2595,6 +2628,188 @@ async fn a_missing_worktree_is_restored_from_its_surviving_tip() {
             .await
             .unwrap()
     );
+}
+
+/// T3's ThreadLaunchService cases for a recorded base (`worktreeFallbackBase`): a saved
+/// strategy whose base names no commit starts from the remote's default branch, then the
+/// checked-out branch. A base someone names now still fails.
+#[tokio::test]
+async fn a_saved_base_that_names_no_commit_falls_back_as_t3() {
+    use conn_vcs::setup::{self, MissingBase, ProvisionError, ProvisionRequest, WorktreeSetups};
+
+    let fx = Fixture::new("missing-base");
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str, base: &str, missing_base| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: base.into(),
+        branch: Some(format!("task-{thread}")),
+        start_from_origin: true,
+        setup: None,
+        worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
+        missing_base,
+    };
+    let remote_head = git(&fx.work, &["rev-parse", "origin/main"])
+        .trim()
+        .to_owned();
+    git(&fx.work, &["checkout", "-q", "--detach"]);
+    git(
+        &fx.work,
+        &["commit", "-q", "--allow-empty", "-m", "local only"],
+    );
+    let local_head = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    // "re-bases a stored base that no longer exists on the remote default branch"
+    let made = setup::provision(
+        &setups,
+        request("gone", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), remote_head);
+    assert_eq!(
+        setups.get("gone").unwrap().base_ref.as_deref(),
+        Some("refs/remotes/origin/main")
+    );
+
+    // The same base named in a new launch is refused, and nothing is left behind.
+    let refused = setup::provision(
+        &setups,
+        request("asked", "obsolete-base", MissingBase::Fail),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, ProvisionError::Failed(_)), "{refused}");
+    assert!(git(&fx.work, &["branch", "--list", "task-asked"]).is_empty());
+
+    // A base that resolves is kept, a local branch and a `:/` commit search alike.
+    git(&fx.work, &["branch", "kept"]);
+    for (thread, base) in [("kept", "kept"), ("search", ":/local only")] {
+        let made = setup::provision(&setups, request(thread, base, MissingBase::FallBack))
+            .await
+            .unwrap();
+        assert_eq!(
+            git(&made.path, &["rev-parse", "HEAD"]).trim(),
+            local_head,
+            "{base}"
+        );
+    }
+
+    // "skips a stale tracking ref when the remote reports the base branch is gone": the
+    // remote's HEAD names a deleted branch whose tracking ref stayed behind.
+    git(
+        &fx.work,
+        &["update-ref", "refs/remotes/origin/gone", &remote_head],
+    );
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/gone",
+        ],
+    );
+    git(&fx.work, &["checkout", "-q", "-b", "beta"]);
+    let made = setup::provision(
+        &setups,
+        request("stale", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), local_head);
+    assert_eq!(
+        setups.get("stale").unwrap().base_ref.as_deref(),
+        Some("beta")
+    );
+
+    // A dangling `origin/HEAD`: it names `origin/next`, which the remote has but this clone
+    // never fetched. Git's `rev-parse` refuses it (`resolveDefaultBranchName`), so the
+    // checked-out commit is used, not the remote's `next`.
+    let remote_next = git(
+        &fx.work,
+        &[
+            "commit-tree",
+            "HEAD^{tree}",
+            "-p",
+            &remote_head,
+            "-m",
+            "next",
+        ],
+    )
+    .trim()
+    .to_owned();
+    git(
+        &fx.work,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{remote_next}:refs/heads/next"),
+        ],
+    );
+    git(&fx.work, &["update-ref", "-d", "refs/remotes/origin/next"]);
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/next",
+        ],
+    );
+    let made = setup::provision(
+        &setups,
+        request("dangling", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), local_head);
+    assert_eq!(
+        setups.get("dangling").unwrap().base_ref.as_deref(),
+        Some("beta")
+    );
+}
+
+/// The checkout probes ask the filesystem off the runtime thread: with the one blocking
+/// thread held, a probe of a missing folder cannot answer at its first poll.
+#[test]
+fn checkout_probes_stat_off_the_runtime_thread() {
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let dir = TempDir::new("blocking");
+    let missing = dir.path().join("missing");
+    runtime.block_on(async {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = held.recv();
+        });
+        running.await.unwrap();
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut branch = std::pin::pin!(conn_vcs::repo::current_branch(&missing));
+        let mut commit = std::pin::pin!(conn_vcs::repo::resolve_commit(&missing, "HEAD"));
+        assert!(
+            branch.as_mut().poll(&mut cx).is_pending(),
+            "current_branch stats on the runtime thread"
+        );
+        assert!(
+            commit.as_mut().poll(&mut cx).is_pending(),
+            "resolve_commit stats on the runtime thread"
+        );
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        assert_eq!(branch.await.unwrap(), None);
+        assert_eq!(commit.await.unwrap(), None);
+    });
 }
 
 /// The Git settings a project can carry that change what a plain `git diff` reports.

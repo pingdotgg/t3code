@@ -318,6 +318,7 @@ pub struct WorktreeRequest {
     pub base_ref: String,
     pub branch: Option<String>,
     pub start_from_origin: bool,
+    pub missing_base: conn_vcs::setup::MissingBase,
 }
 
 /// A thread's worktree as a terminal needs it (`getThreadShell` in T3's
@@ -480,7 +481,19 @@ pub trait Engine: Send + Sync {
     /// `orchestration.launchThread`: creates a thread and sends its first message in one call,
     /// which is how a client starts a new thread. Input `OrchestrationV2ThreadLaunchInput`,
     /// result `OrchestrationV2ThreadLaunchResult`, error `OrchestrationV2ThreadLaunchError`.
-    fn launch_thread(&self, _input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+    fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+        self.launch_thread_with(input, conn_vcs::setup::MissingBase::Fail)
+    }
+
+    /// [`Engine::launch_thread`] for a trusted caller that says what a `worktree` strategy's
+    /// missing base does. Only the scheduler passes [`MissingBase::FallBack`](
+    /// conn_vcs::setup::MissingBase::FallBack), for a saved strategy that outlived its base;
+    /// a client's launch names its base now and fails without it.
+    fn launch_thread_with(
+        &self,
+        _input: Value,
+        _missing_base: conn_vcs::setup::MissingBase,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         unsupported("orchestration.launchThread")
     }
 

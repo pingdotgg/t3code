@@ -13,6 +13,7 @@ use conn_contract::{
     ThreadStreamItem, from_json, to_json,
 };
 use conn_provider::Provider;
+use conn_vcs::setup::MissingBase;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
@@ -930,6 +931,7 @@ impl Inner {
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
                 start_from_origin: strategy["startFromOrigin"] == true,
+                missing_base: MissingBase::Fail,
             })
             .await
             .map_err(DispatchError::Rejected)?;
@@ -1424,6 +1426,7 @@ impl Inner {
         &self,
         thread_id: &str,
         input: &Value,
+        missing_base: MissingBase,
     ) -> Result<DelegatedWorktree, (String, bool)> {
         let Some(host) = &self.host else {
             return Err(("This server cannot create worktrees.".into(), false));
@@ -1456,6 +1459,7 @@ impl Inner {
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
                 start_from_origin: strategy["startFromOrigin"] == true,
+                missing_base,
             })
             .await
         };
@@ -1494,7 +1498,11 @@ impl Inner {
         }
     }
 
-    async fn launch(self: &Arc<Self>, input: Value) -> Result<Value, (String, bool)> {
+    async fn launch(
+        self: &Arc<Self>,
+        input: Value,
+        missing_base: MissingBase,
+    ) -> Result<Value, (String, bool)> {
         let command_id = input["commandId"].as_str().unwrap_or_default().to_owned();
         let thread_id = input["threadId"]
             .as_str()
@@ -1566,7 +1574,9 @@ impl Inner {
                     // `thread.create` answers from its receipt; these values are not read.
                     (Value::Null, Value::Null)
                 } else {
-                    let made = self.provision_worktree(&thread_id, &input).await?;
+                    let made = self
+                        .provision_worktree(&thread_id, &input, missing_base)
+                        .await?;
                     let values = (json!(made.worktree.branch), json!(made.worktree.path));
                     provisioned = Some(made);
                     values
@@ -2279,7 +2289,11 @@ impl Engine for SqliteEngine {
         ))
     }
 
-    fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+    fn launch_thread_with(
+        &self,
+        input: Value,
+        missing_base: MissingBase,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         Box::pin(async move {
             // A failed settings load is retried before admission; the provider check runs in
             // the launch's own write, so a replay still succeeds after the provider is off.
@@ -2299,7 +2313,7 @@ impl Engine for SqliteEngine {
                 {
                     return Err(("The server is shutting down.".to_owned(), false));
                 }
-                inner.launch(detached).await
+                inner.launch(detached, missing_base).await
             })
             .await
             .unwrap_or_else(|e| Err((format!("launch ended: {e}"), true)))

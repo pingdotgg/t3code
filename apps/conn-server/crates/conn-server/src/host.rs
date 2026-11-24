@@ -342,6 +342,7 @@ impl EngineHost for Host {
                     setup: self.setup_runner(request.project_id, request.link_origin),
                     worktrees_dir: self.worktrees_dir(),
                     submodules,
+                    missing_base: request.missing_base,
                 },
             )
             .await

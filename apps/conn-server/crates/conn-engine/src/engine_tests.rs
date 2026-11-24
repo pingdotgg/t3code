@@ -5917,6 +5917,65 @@ async fn a_launch_cleans_up_its_worktree_and_replays_past_a_disabled_provider() 
     assert_eq!(record_count(&replay["projection"], "runs"), 1);
 }
 
+/// Records what each worktree launch asks for a missing base, and has no such base.
+#[derive(Default)]
+struct MissingBaseHost {
+    asked: Mutex<Vec<conn_vcs::setup::MissingBase>>,
+}
+
+impl crate::EngineHost for MissingBaseHost {
+    fn provision_worktree(
+        &self,
+        request: crate::WorktreeRequest,
+    ) -> crate::BoxFuture<'_, Result<crate::ProvisionedWorktree, String>> {
+        self.asked.lock().unwrap().push(request.missing_base);
+        Box::pin(std::future::ready(Err(
+            "fatal: not a valid object name: 'gone'".to_owned(),
+        )))
+    }
+}
+
+/// Only the trusted scheduler lets a saved base fall back. A client's launch names its base
+/// now, so it fails without it, even when its first message carries a `scheduledTaskId`.
+#[tokio::test(flavor = "current_thread")]
+async fn only_the_scheduler_lets_a_missing_base_fall_back() {
+    use conn_vcs::setup::MissingBase;
+
+    let db = TempDb::new("launch-missing-base");
+    let host = Arc::new(MissingBaseHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    let input = |command: &str| {
+        json!({
+            "commandId": command, "projectId": project_id(), "title": "Nightly",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            "runtimeMode": "full-access", "interactionMode": "default",
+            "workspaceStrategy": {"type": "worktree", "baseRef": "gone"},
+            "initialMessage": {"messageId": format!("m:{command}"),
+                               "scheduledTaskId": "scheduled-task:t", "text": "hi",
+                               "attachments": []},
+        })
+    };
+    let public = engine.launch_thread(input("public")).await;
+    assert!(
+        matches!(&public, Err(EngineError::Rejected(e)) if e["message"].as_str().is_some_and(|m| m.contains("gone"))),
+        "{public:?}"
+    );
+    let _ = engine
+        .launch_thread_with(input("scheduled"), MissingBase::FallBack)
+        .await;
+    assert_eq!(
+        *host.asked.lock().unwrap(),
+        [MissingBase::Fail, MissingBase::FallBack]
+    );
+}
+
 fn message_with(
     thread: &str,
     command: &str,
