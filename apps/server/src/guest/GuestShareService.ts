@@ -24,7 +24,6 @@ import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   projectTurnItemForDetail,
-  projectTurnItemForWire,
   threadStreamEventItem,
 } from "@t3tools/shared/wireProjection";
 import * as Context from "effect/Context";
