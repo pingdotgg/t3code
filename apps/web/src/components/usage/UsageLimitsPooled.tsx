@@ -123,6 +123,31 @@ function AccountName({
   );
 }
 
+function providerLabel(account: LimitAccount): string {
+  return providerClients.get(account.driver)?.label ?? String(account.driver);
+}
+
+function AccountHeading({ account }: { readonly account: LimitAccount }) {
+  const gt = useGT();
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <AccountAvatar account={account} />
+        <span className="truncate">{account.displayName ?? providerLabel(account)}</span>
+      </span>
+      {account.email ? (
+        <RedactedSensitiveText
+          value={account.email}
+          ariaLabel={gt("Toggle account email visibility")}
+          revealTooltip={gt("Click to reveal email")}
+          hideTooltip={gt("Click to hide email")}
+          className="w-fit"
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
@@ -163,23 +188,7 @@ function SegmentPopover({
       : [];
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <AccountAvatar account={account} />
-          <span className="truncate">
-            {account.displayName ?? providerClients.get(account.driver)?.label ?? account.driver}
-          </span>
-        </span>
-        {account.email ? (
-          <RedactedSensitiveText
-            value={account.email}
-            ariaLabel={gt("Toggle account email visibility")}
-            revealTooltip={gt("Click to reveal email")}
-            hideTooltip={gt("Click to hide email")}
-            className="w-fit"
-          />
-        ) : null}
-      </div>
+      <AccountHeading account={account} />
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         {account.plan ? (
           <Row label={gt("Plan", { $context: "subscription plan" })}>{account.plan}</Row>
@@ -238,9 +247,9 @@ function SegmentPopover({
 }
 
 /**
- * Every segment on the page shares one popover, so hovering or clicking another
- * segment moves it instead of opening a second one. The payload is the segment
- * it currently describes.
+ * Every segment on the page shares one popover, so another segment moves it instead of
+ * opening a second one: hovering moves a preview, and only a click moves a clicked one.
+ * The payload is the segment it currently describes.
  */
 type SegmentPayload = Omit<Parameters<typeof SegmentPopover>[0], "now" | "onRedeem">;
 const SegmentPopoverContext = createContext<ReturnType<
@@ -332,9 +341,11 @@ function RedeemableSegment({
       <ResetCreditDialog
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
+        provider={providerLabel(props.account)}
+        account={<AccountHeading account={props.account} />}
         choice={redeem.choice}
         onConfirm={() => void redeem.redeem()}
-        disabled={!redeem.canManageProviders}
+        disabled={!redeem.canConfirm}
       />
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
       {redeem.busy || redeem.status ? (
@@ -682,6 +693,7 @@ export function UsageLimitsPooled({
   const m = useMessages();
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
+  const segmentPinned = useRef(false);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
@@ -699,7 +711,20 @@ export function UsageLimitsPooled({
           </Fragment>
         ))}
       </SegmentPopoverContext>
-      <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
+      <Popover
+        handle={segmentPopover}
+        actionsRef={segmentPopoverActions}
+        onOpenChange={(open, details) => {
+          // Base UI moves an open popover to any trigger the pointer enters, even one a click opened.
+          // A clicked segment keeps it, so crossing another bar on the way to its reset button cannot
+          // swap in a different account.
+          if (segmentPinned.current && details.reason === "trigger-hover") {
+            details.cancel();
+            return;
+          }
+          segmentPinned.current = open && details.reason === "trigger-press";
+        }}
+      >
         {({ payload }) =>
           payload ? (
             <ActiveSegmentPopover

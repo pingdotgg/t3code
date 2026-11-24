@@ -19,7 +19,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { Fragment, useLayoutEffect, useState } from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { observeResize } from "../../lib/observeResize";
@@ -270,21 +270,29 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
 };
 
 export function useResetCredit(environmentId: EnvironmentId) {
+  const m = useMessages();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
-  const m = useMessages();
-  // Kept after close so the dialog's text survives its exit animation.
-  const [choice, setChoice] = useState<ResetCreditChoice | null>(null);
+  // Kept after close so the dialog's text survives its exit animation. The environment is taken with
+  // the choice: a refresh can move an account's credits to another environment while it is open.
+  const [target, setTarget] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly choice: ResetCreditChoice;
+  } | null>(null);
+  const canConfirm = useEnvironmentScope(target?.environmentId ?? null, AuthProvidersManageScope);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   const redeem = async () => {
     setConfirming(false);
-    if (!choice || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!target || !readEnvironmentScope(target.environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: choice.input });
+    const result = await consume({
+      environmentId: target.environmentId,
+      input: target.choice.input,
+    });
     setBusy(false);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? m(OUTCOME_TEXT[result.value.outcome]));
@@ -299,35 +307,53 @@ export function useResetCredit(environmentId: EnvironmentId) {
 
   const confirm = (next: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    setChoice(next);
+    setTarget({ environmentId, choice: next });
     setConfirming(true);
   };
 
-  return { canManageProviders, choice, confirming, setConfirming, confirm, busy, status, redeem };
+  return {
+    canManageProviders,
+    canConfirm,
+    choice: target?.choice ?? null,
+    confirming,
+    setConfirming,
+    confirm,
+    busy,
+    status,
+    redeem,
+  };
 }
 
-/** Require confirmation because redemption spends credits. Mount outside popovers, which stack above
- * dialogs and unmount on close. */
+/** Require confirmation because redemption spends credits, and name the account it spends from.
+ * Mount outside popovers, which stack above dialogs and unmount on close. */
 export function ResetCreditDialog({
   open,
   onOpenChange,
+  provider,
+  account,
   choice,
   onConfirm,
   disabled = false,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly provider: string;
+  readonly account: ReactNode;
   readonly choice: ResetCreditChoice | null;
   readonly onConfirm: () => void;
   readonly disabled?: boolean;
 }) {
+  const gt = useGT();
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            <T>Use a reset credit?</T>
+            {gt("Use a reset credit on {provider}?", { provider })}
           </AlertDialogTitle>
+          <div className="flex min-w-0 flex-col text-sm text-foreground max-sm:items-center">
+            {account}
+          </div>
           <AlertDialogDescription>{choice?.confirmDescription}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -348,14 +374,27 @@ export function ResetCredits({
   input,
   credits,
   now,
+  provider,
+  account,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  readonly provider: string;
+  readonly account: ReactNode;
 }) {
-  const { canManageProviders, choice, confirming, setConfirming, confirm, busy, status, redeem } =
-    useResetCredit(environmentId);
+  const {
+    canManageProviders,
+    canConfirm,
+    choice,
+    confirming,
+    setConfirming,
+    confirm,
+    busy,
+    status,
+    redeem,
+  } = useResetCredit(environmentId);
   const gt = useGT();
   const m = useMessages();
   if (credits.availableCount === 0 && status === null) return null;
@@ -380,9 +419,11 @@ export function ResetCredits({
       <ResetCreditDialog
         open={confirming}
         onOpenChange={setConfirming}
+        provider={provider}
+        account={account}
         choice={choice}
         onConfirm={() => void redeem()}
-        disabled={!canManageProviders}
+        disabled={!canConfirm}
       />
     </div>
   );

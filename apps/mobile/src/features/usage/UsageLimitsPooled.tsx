@@ -715,6 +715,10 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 </Text>
                 <ResetCredits
                   key={account.key}
+                  provider={providerClients.get(account.driver)?.label ?? account.driver}
+                  account={
+                    [account.displayName, account.email].filter(Boolean).join(" · ") || account.key
+                  }
                   environmentId={account.redeem.environmentId}
                   input={account.redeem.input}
                   credits={account.limits.resetCredits}
