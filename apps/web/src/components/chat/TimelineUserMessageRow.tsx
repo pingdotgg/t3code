@@ -104,6 +104,69 @@ import type { MessageResolver } from "~/i18n/messages";
 const MEDIA_EDGE_CLASS_NAME =
   "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
 
+interface LoneImageSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+// Keyed by attachment id, so a row the list mounts again starts at its final size.
+const LONE_IMAGE_SIZE_CACHE_LIMIT = 512;
+const loneImageSizeCache = new Map<string, LoneImageSize>();
+
+function rememberLoneImageSize(id: string, size: LoneImageSize) {
+  if (!loneImageSizeCache.has(id) && loneImageSizeCache.size >= LONE_IMAGE_SIZE_CACHE_LIMIT) {
+    const oldestId = loneImageSizeCache.keys().next().value;
+    if (oldestId !== undefined) loneImageSizeCache.delete(oldestId);
+  }
+  loneImageSizeCache.set(id, size);
+}
+
+/** A lone image is 12rem tall at most and shorter when the column caps its width. */
+function LoneUserAttachmentImage({
+  id,
+  name,
+  mimeType,
+  src,
+}: {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly src: string;
+}) {
+  const [size, setSize] = useState(() => loneImageSizeCache.get(id) ?? null);
+
+  return (
+    <AttachmentImage
+      name={name}
+      mimeType={mimeType}
+      src={src}
+      alt={name}
+      decoding="async"
+      loading="lazy"
+      onLoad={(event) => {
+        const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+        if (width <= 0 || height <= 0) return;
+        rememberLoneImageSize(id, { width, height });
+        setSize((current) =>
+          current?.width === width && current.height === height ? current : { width, height },
+        );
+      }}
+      className={cn(
+        "block min-w-24 max-w-full transform-gpu object-contain",
+        size === null ? "h-48 w-auto" : "h-auto max-h-48",
+      )}
+      style={
+        size === null
+          ? undefined
+          : {
+              aspectRatio: `${size.width} / ${size.height}`,
+              width: `calc(12rem * ${size.width} / ${size.height})`,
+            }
+      }
+    />
+  );
+}
+
 const BUBBLE_CHIP_CLASS_NAME =
   "[&_[data-slot=context-chip]]:[--context-chip-message-ink:var(--context-chip-message)]";
 
@@ -868,22 +931,29 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 }}
               >
                 {/* Isolate the thumbnail raster from nearby activity repaints in Chromium. */}
-                <AttachmentImage
-                  name={image.name}
-                  mimeType={image.mimeType}
-                  src={image.previewUrl}
-                  alt={image.name}
-                  decoding="async"
-                  loading="lazy"
-                  className={cn(
-                    "block transform-gpu",
-                    standaloneMedia && image.source?.kind === "snap-shot"
-                      ? "h-auto max-h-48 w-auto min-w-24 max-w-full object-contain"
-                      : loneImage
-                        ? "h-48 w-auto min-w-24 max-w-full object-contain"
+                {loneImage && image.source?.kind !== "snap-shot" ? (
+                  <LoneUserAttachmentImage
+                    id={image.id}
+                    name={image.name}
+                    mimeType={image.mimeType}
+                    src={image.previewUrl}
+                  />
+                ) : (
+                  <AttachmentImage
+                    name={image.name}
+                    mimeType={image.mimeType}
+                    src={image.previewUrl}
+                    alt={image.name}
+                    decoding="async"
+                    loading="lazy"
+                    className={cn(
+                      "block transform-gpu",
+                      standaloneMedia && image.source?.kind === "snap-shot"
+                        ? "h-auto max-h-48 w-auto min-w-24 max-w-full object-contain"
                         : "size-full object-cover",
-                  )}
-                />
+                    )}
+                  />
+                )}
               </button>
             ) : (
               <div
