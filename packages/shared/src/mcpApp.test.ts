@@ -2,6 +2,7 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampMcpAppHeight,
   injectMcpAppCsp,
   injectMcpAppThemeBootstrap,
   injectMcpAppCookieBootstrap,
@@ -299,5 +300,12 @@ describe("MCP App cookie bootstrap", () => {
     });
     expect(() => execute(injectMcpAppCookieBootstrap(vendor), document)).toThrow(failure);
     expect(() => Reflect.get(document, "cookie")).toThrow(failure);
+  });
+});
+
+describe("clampMcpAppHeight", () => {
+  it("follows a compact reported height and keeps it positive", () => {
+    expect(clampMcpAppHeight(48)).toBe(48);
+    expect(clampMcpAppHeight(0)).toBe(1);
   });
 });

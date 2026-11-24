@@ -528,8 +528,8 @@ export function ThreadMcpApp(props: {
   if (presentedFullscreen) {
     return (
       <View
-        style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
-        className="items-center justify-center rounded-lg border border-border"
+        style={{ minHeight: height, marginBottom: ROW_BOTTOM_MARGIN }}
+        className="items-center justify-center rounded-lg border border-border py-2"
       >
         <Text className="text-sm text-foreground-muted">
           <T>
@@ -543,8 +543,8 @@ export function ThreadMcpApp(props: {
   if (closed) {
     return (
       <View
-        style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
-        className="items-center justify-center gap-2 rounded-lg border border-border"
+        style={{ minHeight: height, marginBottom: ROW_BOTTOM_MARGIN }}
+        className="items-center justify-center gap-2 rounded-lg border border-border py-2"
       >
         <Text className="text-sm text-foreground-muted">
           <T>
@@ -565,17 +565,30 @@ export function ThreadMcpApp(props: {
     );
   }
 
-  return (
-    <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
-      {navigatedAway ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">
+  if (navigatedAway || crashed || (uri === null && asset._tag === "Failure")) {
+    return (
+      <View
+        style={fullscreen ? { flex: 1 } : { minHeight: height, marginBottom: ROW_BOTTOM_MARGIN }}
+        className="items-center justify-center py-2"
+      >
+        <Text className="text-sm text-foreground-muted">
+          {navigatedAway ? (
             <T>
               The <Var>{app.server}</Var> app left its page and was stopped
             </T>
-          </Text>
-        </View>
-      ) : uri !== null && !crashed ? (
+          ) : (
+            <T>
+              Unable to load the <Var>{app.server}</Var> app
+            </T>
+          )}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
+      {uri !== null ? (
         <WebView<object>
           key={`${documentKey}:${generation}:${uri}`}
           ref={attachWebView}
@@ -616,16 +629,8 @@ export function ThreadMcpApp(props: {
             userActive.current = false;
           }}
         />
-      ) : asset._tag === "Failure" || crashed ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-sm text-foreground-muted">
-            <T>
-              Unable to load the <Var>{app.server}</Var> app
-            </T>
-          </Text>
-        </View>
       ) : null}
-      {uri !== null && !loaded && !crashed && !navigatedAway ? (
+      {uri !== null && !loaded ? (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
           <AppActivityIndicator />
         </View>
