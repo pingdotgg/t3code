@@ -498,6 +498,7 @@ export interface ThreadManagementServiceShape {
     readonly json: string;
     readonly callerRunId?: RunId;
     readonly callerAttemptId?: RunAttemptId;
+    readonly requestedRunId?: RunId;
   }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
@@ -1087,8 +1088,25 @@ const make = Effect.gen(function* () {
     const matchesRun = (candidate: OrchestrationV2Run) =>
       candidate.id === callerRunId &&
       (input.callerAttemptId === undefined || candidate.activeAttemptId === input.callerAttemptId);
+    // A continuation that resumes natively on a bound credential still has only the earlier
+    // run's prompt, so the run named in the call may be one the target continues.
+    const continuesNamedRun = (named: RunId) => {
+      let current: OrchestrationV2Run | undefined = run;
+      for (let hops = 0; current !== undefined && hops <= records.runs.length; hops++) {
+        if (current.id === named) return true;
+        const continued: RunId | undefined =
+          current.restartContinuationOfRunId ??
+          current.usageLimitContinuationOfRunId ??
+          current.manualContinuationOfRunId;
+        current = records.runs.find((candidate) => candidate.id === continued);
+      }
+      return false;
+    };
     // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
-    if (!matchesRun(active) && !(run.id !== active.id && matchesRun(run))) {
+    if (
+      (input.requestedRunId !== undefined && !continuesNamedRun(input.requestedRunId)) ||
+      (!matchesRun(active) && !(run.id !== active.id && matchesRun(run)))
+    ) {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
         problem: "This output was submitted for a turn that is no longer active.",

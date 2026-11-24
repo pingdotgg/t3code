@@ -1706,6 +1706,7 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
       readonly json: string;
       readonly callerRunId?: RunId | undefined;
       readonly callerAttemptId?: RunAttemptId | undefined;
+      readonly requestedRunId?: RunId | undefined;
     }> = [];
     const runA = RunId.make("run-a");
     const attemptA = RunAttemptId.make("attempt-a");
@@ -1725,6 +1726,7 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
               json: input.json,
               callerRunId: input.callerRunId,
               callerAttemptId: input.callerAttemptId,
+              requestedRunId: input.requestedRunId,
             });
             if (rejectNext !== undefined) {
               const rejection = rejectNext;
@@ -1804,7 +1806,7 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         `The result does not match the schema.\n${schemaCause.message.slice(0, 2000)}`,
       );
 
-      // A bound credential outranks the argument.
+      // A bound credential is the caller; the argument still goes along as the run it names.
       const active = yield* callWith(runB, attemptB, '{"ok":true}', runA);
       expect(active.isError).toBe(false);
       expect(active.structuredContent).toEqual({ runId: runB });
@@ -1815,24 +1817,28 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         json: '{"ok":false}',
         callerRunId: runA,
         callerAttemptId: undefined,
+        requestedRunId: runA,
       },
       {
         threadId,
         json: '{"ok":false}',
         callerRunId: runA,
         callerAttemptId: attemptA,
+        requestedRunId: undefined,
       },
       {
         threadId,
         json: "{}",
         callerRunId: runB,
         callerAttemptId: attemptB,
+        requestedRunId: undefined,
       },
       {
         threadId,
         json: '{"ok":true}',
         callerRunId: runB,
         callerAttemptId: attemptB,
+        requestedRunId: runA,
       },
     ]);
   }),

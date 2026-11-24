@@ -12528,10 +12528,45 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         status: "completed" | "interrupted",
         extra?: Partial<Effect.Success<ReturnType<typeof latestRun>>>,
       ) => updateRun(run, suffix, { status, completedAt: run.requestedAt, ...extra });
+      // The stop is asked for while the provider has not settled it, so the run is still active.
+      const requestStop = (run: Effect.Success<ReturnType<typeof latestRun>>, suffix: string) =>
+        eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-${suffix}`),
+              type: "turn-item.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: run.requestedAt,
+              payload: {
+                id: TurnItemId.make(`${threadId}-${suffix}`),
+                type: "run_interrupt_request",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 90,
+                status: "completed",
+                title: "Interrupt requested",
+                startedAt: run.requestedAt,
+                completedAt: run.requestedAt,
+                updatedAt: run.requestedAt,
+                message: "Stopped by user",
+              },
+            },
+          ],
+        });
       const submit = (
         command: string,
         json: string,
-        caller?: { readonly callerRunId?: RunId; readonly callerAttemptId?: RunAttemptId },
+        caller?: {
+          readonly callerRunId?: RunId;
+          readonly callerAttemptId?: RunAttemptId;
+          readonly requestedRunId?: RunId;
+        },
       ) =>
         threadManagement.submitRunOutput({
           threadId,
@@ -12546,6 +12581,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         latestRun,
         updateRun,
         finishRun,
+        requestStop,
         submit,
       };
     });
@@ -12605,6 +12641,15 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         assert.equal(lateFromAttempt1._tag, "ThreadManagementRunOutputRejectedError");
         assert.include(lateFromAttempt1.message, "no longer active");
 
+        // A's late call that names A still fails when it arrives on B's rotated credential.
+        const lateFromAOnB = yield* submit("late-run-output-from-a-on-b", '{"from":"run-a"}', {
+          callerRunId: runB.id,
+          callerAttemptId: attempt2,
+          requestedRunId: runA.id,
+        }).pipe(Effect.flip);
+        assert.equal(lateFromAOnB._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(lateFromAOnB.message, "no longer active");
+
         assert.isUndefined((yield* latestRun()).output);
 
         const acceptedB = yield* submit("late-run-output-from-b", '{"from":"run-b"}', {
@@ -12640,6 +12685,21 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           (run) => run.id === runC.id,
         )!;
         assert.deepEqual(afterC.output?.value, { from: "continued" });
+        // Resumed natively on its own bound credential, C has only A's prompt and names A.
+        const resumedNamingSource = yield* submit(
+          "run-output-resumed-naming-a",
+          '{"from":"resumed"}',
+          {
+            callerRunId: runC.id,
+            requestedRunId: runA.id,
+          },
+        );
+        assert.equal(resumedNamingSource.runId, runC.id);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runC.id)
+            ?.output?.value,
+          { from: "resumed" },
+        );
 
         // A plain turn with no schema preserves the plain-turn guidance even for stale/unbound MCP callers.
         yield* finishRun(afterC, "run-c-completed", "completed");
@@ -12656,7 +12716,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
       }
 
       if (scenario === "owed-run-and-wake") {
-        const { orchestrator, threadId, send, latestRun, finishRun, submit } =
+        const { orchestrator, threadId, send, latestRun, finishRun, requestStop, submit } =
           yield* setupOutputThread("owed-wake-output");
 
         yield* send("run-a", { type: "object" });
@@ -12699,6 +12759,24 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runE.id)
             ?.output?.value,
           { from: "run-f" },
+        );
+
+        // A stopped wake keeps the owed run's credential, so what it submits is not kept either.
+        yield* finishRun(runF, "run-f-completed", "completed");
+        yield* send("run-g", { type: "object" });
+        const runG = yield* latestRun();
+        yield* finishRun(runG, "run-g-completed", "completed");
+        yield* send("run-h-wake");
+        yield* requestStop(yield* latestRun(), "run-h-interrupt-request");
+        const fromStoppedWake = yield* submit("run-output-from-stopped-wake", '{"from":"h"}', {
+          callerRunId: runG.id,
+          requestedRunId: runG.id,
+        }).pipe(Effect.flip);
+        assert.equal(fromStoppedWake._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(fromStoppedWake.message, "was stopped");
+        assert.isUndefined(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find((run) => run.id === runG.id)
+            ?.output,
         );
         return;
       }

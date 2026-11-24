@@ -296,6 +296,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           commandId: yield* newCommandId(),
           json: input.json,
           ...(callerRunId === undefined ? {} : { callerRunId }),
+          ...(input.runId === undefined ? {} : { requestedRunId: input.runId }),
           ...(scope.thread.attemptId === undefined
             ? {}
             : { callerAttemptId: scope.thread.attemptId }),
