@@ -24,7 +24,7 @@ public struct ThreadStatusSnippetIntent: SnippetIntent, Sendable {
     return .result(
       view: ThreadStatusInteractiveSnippetView(
         thread: fresh,
-        staleSince: T3StatusFreshness.staleSince(store)
+        freshness: T3StatusFreshness.of(environmentId: fresh.environmentId, in: store)
       )
     )
   }
@@ -33,11 +33,11 @@ public struct ThreadStatusSnippetIntent: SnippetIntent, Sendable {
 @available(iOS 27.3, macOS 27.3, *)
 private struct ThreadStatusInteractiveSnippetView: View {
   let thread: ThreadEntity
-  let staleSince: Date?
+  let freshness: T3StatusFreshness
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      ThreadStatusCardView(thread: thread, isCompact: false, staleSince: staleSince)
+      ThreadStatusCardView(thread: thread, isCompact: false, freshness: freshness)
       HStack(spacing: 8) {
         Button(intent: OpenThreadIntent(target: thread)) {
           Label("Open", systemImage: "arrow.up.forward.app")

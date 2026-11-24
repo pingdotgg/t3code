@@ -62,9 +62,15 @@ export function AppleIntentsSettingsSection() {
         value={enabled}
         disabled={!preferencesReady}
         onValueChange={(next) => {
-          void savePreferences({ appleIntentsEnabled: next });
-          // Clear now rather than after the sync debounce, which a quit could cut short.
-          if (!next) void clearAppleIntentsIndex().catch(reportClearFailure);
+          if (next) {
+            void savePreferences({ appleIntentsEnabled: true });
+            return;
+          }
+          // Save the opt-out only once the index is gone, so a cut-short clear stays visible.
+          void clearAppleIntentsIndex().then(
+            () => savePreferences({ appleIntentsEnabled: false }),
+            reportClearFailure,
+          );
         }}
       />
       <SettingsSwitchRow

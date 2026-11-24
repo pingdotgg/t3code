@@ -121,11 +121,15 @@ export function AppleIntentsSettingsSection() {
           <Switch
             checked={appleIntentsEnabled}
             onCheckedChange={(checked) => {
-              const enabled = Boolean(checked);
-              void persistClientSettingsPatch({ appleIntentsEnabled: enabled });
-              if (!enabled) {
-                void clearDesktopAppleIntentsIndex().catch(reportClearFailure);
+              if (checked) {
+                void persistClientSettingsPatch({ appleIntentsEnabled: true });
+                return;
               }
+              // Save the opt-out only once the index is gone, so a cut-short clear stays visible.
+              void clearDesktopAppleIntentsIndex().then(
+                () => persistClientSettingsPatch({ appleIntentsEnabled: false }),
+                reportClearFailure,
+              );
             }}
             aria-label={gt("Index for Siri & Spotlight")}
           />

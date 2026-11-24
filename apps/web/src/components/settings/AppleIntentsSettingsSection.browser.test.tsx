@@ -4,7 +4,9 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { render, stubGlobal } from "../../../test/render";
+import "~/index.css";
+
+import { act, render, stubGlobal } from "../../../test/render";
 import { AppleIntentsSettingsSection } from "./AppleIntentsSettingsSection";
 
 function makeBaseDesktopBridge() {
@@ -61,6 +63,43 @@ it("renders Siri & Spotlight toggles and clears index when available on macOS 27
   await expect.element(clearButton).toBeEnabled();
   await clearButton.click();
   expect(clearIndex).toHaveBeenCalledOnce();
+});
+
+it("saves the opt-out only after the native index is cleared", async () => {
+  using _mac = stubMacPlatform();
+  const firstClear = Promise.withResolvers<undefined>();
+  const clearIndex = vi.fn(async () => undefined).mockImplementationOnce(() => firstClear.promise);
+  using _bridge = stubGlobal("desktopBridge", {
+    ...makeBaseDesktopBridge(),
+    appleIntents: {
+      getStatus: vi.fn(async (): Promise<AppleIntentStatus> => ({ available: true })),
+      syncIndex: vi.fn(async () => undefined),
+      removeEnvironment: vi.fn(async () => undefined),
+      clearIndex,
+      setOnscreenContext: vi.fn(async () => undefined),
+      syncAuthCredentials: vi.fn(async () => undefined),
+    },
+  });
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <AppleIntentsSettingsSection />
+    </RegistryContext.Provider>,
+  );
+
+  const toggle = screen.getByRole("switch", { name: "Index for Siri & Spotlight" });
+  await expect.element(toggle).toBeChecked();
+
+  await toggle.click();
+  await act(() => firstClear.reject(new Error("Keychain locked")));
+  expect(clearIndex).toHaveBeenCalledOnce();
+  await expect.element(toggle).toBeChecked();
+
+  await toggle.click();
+  await expect.element(toggle).not.toBeChecked();
+  expect(clearIndex).toHaveBeenCalledTimes(2);
 });
 
 it("shows macOS 27.3 requirement notice when running on an older macOS version", async () => {

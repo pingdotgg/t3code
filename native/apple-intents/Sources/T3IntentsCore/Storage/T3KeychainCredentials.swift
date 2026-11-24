@@ -3,9 +3,13 @@ import Security
 
 public protocol T3CredentialProviding: Sendable {
   func credential(for environmentId: String) -> T3AuthCredentialRecord?
-  func saveCredentials(_ credentials: [T3AuthCredentialRecord])
-  func removeCredential(for environmentId: String)
-  func clearAllCredentials()
+  func saveCredentials(_ credentials: [T3AuthCredentialRecord]) throws
+  func removeCredential(for environmentId: String) throws
+  func clearAllCredentials() throws
+}
+
+public struct T3KeychainError: Error, Equatable {
+  public let status: OSStatus
 }
 
 /// Keychain-backed credential store so headless App Intents and the macOS ExtensionKit process
@@ -67,43 +71,53 @@ public final class T3KeychainCredentialStore: T3CredentialProviding, @unchecked 
     return try? JSONDecoder().decode(T3AuthCredentialRecord.self, from: data)
   }
 
-  public func saveCredentials(_ credentials: [T3AuthCredentialRecord]) {
+  public func saveCredentials(_ credentials: [T3AuthCredentialRecord]) throws {
     lock.lock()
     defer { lock.unlock() }
     let encoder = JSONEncoder()
     for record in credentials {
-      guard let data = try? encoder.encode(record) else { continue }
-      if !writeRecord(account: record.environmentId, data: data, includeAccessGroup: true),
-         accessGroup != nil {
-        _ = writeRecord(account: record.environmentId, data: data, includeAccessGroup: false)
-      }
+      let data = try encoder.encode(record)
+      let status = writeRecord(account: record.environmentId, data: data, includeAccessGroup: true)
+      guard status != errSecSuccess else { continue }
+      // Unsigned local dev builds lack the access group entitlement; fall back to the default group.
+      guard accessGroup != nil else { throw T3KeychainError(status: status) }
+      let fallback = writeRecord(account: record.environmentId, data: data, includeAccessGroup: false)
+      guard fallback == errSecSuccess else { throw T3KeychainError(status: fallback) }
     }
   }
 
-  private func writeRecord(account: String, data: Data, includeAccessGroup: Bool) -> Bool {
-    let deleteQuery = baseQuery(account: account, includeAccessGroup: includeAccessGroup)
-    SecItemDelete(deleteQuery as CFDictionary)
-    var addQuery = baseQuery(account: account, includeAccessGroup: includeAccessGroup)
+  private func writeRecord(account: String, data: Data, includeAccessGroup: Bool) -> OSStatus {
+    let query = baseQuery(account: account, includeAccessGroup: includeAccessGroup)
+    let update = [kSecValueData as String: data] as CFDictionary
+    let updated = SecItemUpdate(query as CFDictionary, update)
+    guard updated == errSecItemNotFound else { return updated }
+    var addQuery = query
     addQuery[kSecValueData as String] = data
     addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+    return SecItemAdd(addQuery as CFDictionary, nil)
   }
 
-  public func removeCredential(for environmentId: String) {
+  public func removeCredential(for environmentId: String) throws {
     lock.lock()
     defer { lock.unlock() }
-    SecItemDelete(baseQuery(account: environmentId, includeAccessGroup: true) as CFDictionary)
-    if accessGroup != nil {
-      SecItemDelete(baseQuery(account: environmentId, includeAccessGroup: false) as CFDictionary)
-    }
+    try deleteItems(account: environmentId)
   }
 
-  public func clearAllCredentials() {
+  public func clearAllCredentials() throws {
     lock.lock()
     defer { lock.unlock() }
-    SecItemDelete(baseQuery(account: nil, includeAccessGroup: true) as CFDictionary)
-    if accessGroup != nil {
-      SecItemDelete(baseQuery(account: nil, includeAccessGroup: false) as CFDictionary)
+    try deleteItems(account: nil)
+  }
+
+  private func deleteItems(account: String?) throws {
+    var groups = [true]
+    if accessGroup != nil { groups.append(false) }
+    for includeAccessGroup in groups {
+      let status = SecItemDelete(baseQuery(account: account, includeAccessGroup: includeAccessGroup) as CFDictionary)
+      // Without the access group entitlement the scoped query fails; the unscoped one still runs.
+      if status == errSecSuccess || status == errSecItemNotFound { continue }
+      if includeAccessGroup && status == errSecMissingEntitlement { continue }
+      throw T3KeychainError(status: status)
     }
   }
 }

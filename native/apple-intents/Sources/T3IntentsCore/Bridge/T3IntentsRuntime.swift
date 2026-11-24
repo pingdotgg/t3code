@@ -87,7 +87,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
 
   public func removeEnvironment(environmentId: String) async throws {
     try await applyDelta(T3IndexDelta(removedEnvironmentIds: [environmentId]))
-    credentials.removeCredential(for: environmentId)
+    try credentials.removeCredential(for: environmentId)
   }
 
   public func clearIndex() async throws {
@@ -95,7 +95,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
     let credentials = self.credentials
     try await T3IndexOperationQueue.run {
       try store.clearAll()
-      credentials.clearAllCredentials()
+      try credentials.clearAllCredentials()
       try await T3SpotlightIndexer.clearAll()
     }
     setOnscreenContextJSON(nil)
@@ -107,7 +107,7 @@ public final class T3IntentsRuntime: @unchecked Sendable {
   public func syncAuthCredentialsJSON(_ jsonString: String) throws {
     guard let data = jsonString.data(using: .utf8) else { return }
     let records = try JSONDecoder().decode([T3AuthCredentialRecord].self, from: data)
-    credentials.saveCredentials(records)
+    try credentials.saveCredentials(records)
   }
 
   /// Context published before its entity reached the index has no entity identifier; republish it

@@ -233,12 +233,12 @@ public struct ThreadEntityQuery: IndexedEntityQuery, EntityStringQuery, Sendable
 public struct ThreadStatusCardView: View {
   let thread: ThreadEntity
   let isCompact: Bool
-  let staleSince: Date?
+  let freshness: T3StatusFreshness
 
-  public init(thread: ThreadEntity, isCompact: Bool = false, staleSince: Date? = nil) {
+  public init(thread: ThreadEntity, isCompact: Bool = false, freshness: T3StatusFreshness = .fresh) {
     self.thread = thread
     self.isCompact = isCompact
-    self.staleSince = staleSince
+    self.freshness = freshness
   }
 
   private var statusColor: Color {
@@ -296,14 +296,10 @@ public struct ThreadStatusCardView: View {
         .font(.caption.weight(.medium))
         .foregroundStyle(statusColor)
 
-      if let staleSince {
-        Text(
-          staleSince == .distantPast
-            ? "Not synced yet"
-            : "Last synced \(staleSince.formatted(.relative(presentation: .named)))"
-        )
-        .font(.caption2)
-        .foregroundStyle(.secondary)
+      if let freshnessLabel = freshness.cardLabel {
+        Text(freshnessLabel)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
       }
 
       if !isCompact, let preview = thread.lastMessagePreview, !preview.isEmpty {

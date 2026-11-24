@@ -42,7 +42,16 @@ let nativeBindingPromise: Promise<AppleIntentsNativeBinding | null> | undefined;
 
 async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeBinding | null> {
   try {
-    const { DataType, load, open, restorePointer, wrapPointer } = await import("ffi-rs");
+    const {
+      DataType,
+      PointerType,
+      freePointer,
+      isNullPointer,
+      load,
+      open,
+      restorePointer,
+      wrapPointer,
+    } = await import("ffi-rs");
     open({ library: FFI_LIBRARY_KEY, path: dylibPath });
 
     const callVoid = (funcName: string): number =>
@@ -93,16 +102,23 @@ async function loadNativeBinding(dylibPath: string): Promise<AppleIntentsNativeB
           paramsType: [DataType.String],
           paramsValue: [identifier],
         });
-        if (!ptr) return null;
+        // A null `char *` still arrives as an External, so `!ptr` cannot detect it.
+        if (isNullPointer(ptr)) return null;
+        const wrapped = wrapPointer([ptr]);
         try {
-          // A returned `char *` must be wrapped before restoring it as a string.
           const restored = restorePointer({
             retType: [DataType.String],
-            paramsValue: wrapPointer([ptr]),
+            paramsValue: wrapped,
           }) as ReadonlyArray<unknown>;
           const value = restored[0];
           return typeof value === "string" && value.length > 0 ? value : null;
         } finally {
+          // The wrapper is ffi-rs's own allocation; the string itself was strdup'd by the dylib.
+          freePointer({
+            paramsType: [DataType.External],
+            paramsValue: wrapped,
+            pointerType: PointerType.RsPointer,
+          });
           load({
             library: FFI_LIBRARY_KEY,
             funcName: "t3_apple_intents_free_string",
