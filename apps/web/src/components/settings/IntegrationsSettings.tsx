@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
@@ -36,7 +37,7 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
-import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { useManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
@@ -49,7 +50,8 @@ import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import { useEnvironments } from "~/state/environments";
+import { localEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -1193,11 +1195,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   // The default profile is a device preference, which a project cannot override.
   const defaultProfileReadOnly = scope.kind === "project" || scope.kind === "checkout";
   const { environments, isReady: environmentsReady } = useEnvironments();
-  const primaryEnvironment = usePrimaryEnvironment();
-  // Cookie import runs on this desktop, whose policy the primary environment reports.
+  // Cookie import runs on this computer: the primary, or the service sharing the app's T3 home.
+  const localEnvironmentId = useAtomValue(localEnvironmentIdAtom);
+  const localEnvironment =
+    environments.find((environment) => environment.environmentId === localEnvironmentId) ?? null;
   const messages = useMessages();
   const cookieImportDenial = managedCapabilityDenial(
-    usePrimaryManagedPolicy(),
+    useManagedPolicy(localEnvironmentId),
     "browserCookieImport",
     messages,
   );
@@ -1432,16 +1436,16 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                   {importableSources.map((source) => (
                     <MenuItem
                       key={source.id}
-                      disabled={!settingsHydrated || primaryEnvironment == null}
+                      disabled={!settingsHydrated || localEnvironment == null}
                       onClick={() => {
-                        if (!settingsHydrated || primaryEnvironment == null) return;
+                        if (!settingsHydrated || localEnvironment == null) return;
                         setImportSession({
                           source,
-                          environmentId: primaryEnvironment.environmentId,
+                          environmentId: localEnvironment.environmentId,
                           environmentName: resolveEnvironmentOptionLabel({
                             isPrimary: true,
-                            environmentId: primaryEnvironment.environmentId,
-                            runtimeLabel: primaryEnvironment.label,
+                            environmentId: localEnvironment.environmentId,
+                            runtimeLabel: localEnvironment.label,
                           }),
                         });
                       }}
@@ -1449,7 +1453,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                       {source.name}
                     </MenuItem>
                   ))}
-                  {primaryEnvironment == null ? (
+                  {localEnvironment == null ? (
                     <MenuItem disabled>
                       <T>Connect to an environment to import cookies</T>
                     </MenuItem>
