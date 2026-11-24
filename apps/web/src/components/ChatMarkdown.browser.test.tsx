@@ -406,6 +406,21 @@ describe("ChatMarkdown external link labels", () => {
   });
 });
 
+describe("ChatMarkdown workflow run links", () => {
+  it("opens a relative workflow run link in the app's router instead of a new window", async () => {
+    setup();
+    await using screen = await renderText(
+      "[Open workflow run](/workflows?env=env-abc&run=run-123)",
+    );
+    const link = screen.getByRole("link", { name: "Open workflow run" });
+    await expect.element(link).not.toHaveAttribute("target", "_blank");
+    await link.click();
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.href).toBe("/workflows?env=env-abc&run=run-123"),
+    );
+  });
+});
+
 describe("ChatMarkdown link tooltips", () => {
   it("shows each link's address on one shared tooltip as the pointer moves between links", async () => {
     setup();
