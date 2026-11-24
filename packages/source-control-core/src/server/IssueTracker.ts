@@ -11,13 +11,24 @@ import type {
   IssueComment,
   IssueCommentsPage,
   IssueCreateResult,
+  IssueCycle,
+  IssueDueDate,
   IssueEvent,
   IssueInvolvement,
   IssueListSort,
   IssueLinkedPullRequest,
   IssueListState,
+  IssuePriority,
+  IssueProject,
+  IssueProjectMilestone,
+  IssueProjectMilestoneCreateInput,
+  IssueProjectRelationAnchor,
+  IssueProjectRelationKind,
   IssueReaction,
   IssueReactionContent,
+  IssueReference,
+  IssueRelation,
+  IssueRelationKind,
   IssueSummary,
   IssueTemplateList,
   IssueTrackerKind,
@@ -87,12 +98,21 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly viewerPermissions: IssueViewerPermissions;
   /** Every state the issue can be in, in workflow order; `setState` is asked for one by name. */
   readonly states: ReadonlyArray<IssueState>;
-  readonly reactions?: ReadonlyArray<IssueReaction>;
+  readonly reactions?: ReadonlyArray<IssueReaction> | undefined;
   readonly comments: ReadonlyArray<IssueComment>;
   /** Where older comments carry on; null once the conversation is whole. */
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
+  readonly priority?: IssuePriority | undefined;
+  readonly estimate?: number | null | undefined;
+  readonly dueDate?: IssueDueDate | null | undefined;
+  readonly project?: IssueProject | null | undefined;
+  readonly milestone?: IssueProjectMilestone | null | undefined;
+  readonly cycle?: IssueCycle | null | undefined;
+  readonly parent?: IssueReference | null | undefined;
+  readonly subIssues?: ReadonlyArray<IssueReference> | undefined;
+  readonly relations?: ReadonlyArray<IssueRelation> | undefined;
 }
 
 /**
@@ -124,6 +144,8 @@ export interface IssueTrackerApi {
         readonly labels?: ReadonlyArray<string> | undefined;
         /** The `login` of an assignee, as this tracker's own issues name them. */
         readonly assignee?: string | undefined;
+        /** Tracker project name, slug, or id; ignored by a tracker without `projects`. */
+        readonly project?: string | undefined;
         readonly sort: IssueListSort;
         /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
         readonly cursor?: string | undefined;
@@ -152,6 +174,16 @@ export interface IssueTrackerApi {
       readonly body: string;
       readonly labels: ReadonlyArray<string>;
       readonly assignees: ReadonlyArray<string>;
+      readonly state?: string | undefined;
+      readonly priority?: IssuePriority | undefined;
+      readonly estimate?: number | undefined;
+      readonly dueDate?: IssueDueDate | undefined;
+      readonly parent?: string | undefined;
+      readonly project?: string | undefined;
+      readonly milestone?: string | undefined;
+      readonly cycle?: string | undefined;
+      readonly blocks?: ReadonlyArray<string> | undefined;
+      readonly blockedBy?: ReadonlyArray<string> | undefined;
     },
   ) => Effect.Effect<IssueCreateResult, IssueTrackerError>;
 
@@ -162,7 +194,9 @@ export interface IssueTrackerApi {
 
   /**
    * Rewrites the present fields. Only called with a field the tracker declared it can write
-   * (`edit` for title and body, `labels`, `assignees`), and never with all of them absent.
+   * (`edit` for title and body, `labels`, `assignees`, `priority`, `estimate`, `dueDate`,
+   * `subIssues` for parent, `projects` for project/milestone, `cycles` for cycle), and never with
+   * all of them absent.
    */
   readonly update?: (
     input: IssueTarget & {
@@ -170,6 +204,59 @@ export interface IssueTrackerApi {
       readonly body?: string | undefined;
       readonly labels?: ReadonlyArray<string> | undefined;
       readonly assignees?: ReadonlyArray<string> | undefined;
+      readonly priority?: IssuePriority | undefined;
+      readonly estimate?: number | null | undefined;
+      readonly dueDate?: IssueDueDate | null | undefined;
+      readonly parent?: string | null | undefined;
+      readonly project?: string | null | undefined;
+      readonly milestone?: string | null | undefined;
+      readonly cycle?: string | null | undefined;
+    },
+  ) => Effect.Effect<void, IssueTrackerError>;
+
+  /**
+   * Adds or removes a native issue relation (`blocks`, `blocked-by`, `related`, `duplicate`,
+   * `duplicated-by`). Only called when `capabilities.relations` is true.
+   */
+  readonly setRelation?: (
+    input: IssueTarget & {
+      readonly action: "add" | "remove";
+      readonly kind: IssueRelationKind;
+      readonly targetKey: string;
+    },
+  ) => Effect.Effect<void, IssueTrackerError>;
+
+  /**
+   * Creates a tracker-native project (and any initial milestones). Only called when
+   * `capabilities.projects` is true.
+   */
+  readonly createProject?: (
+    input: IssueScopeTarget & {
+      readonly name: string;
+      readonly description?: string | undefined;
+      readonly content?: string | undefined;
+      readonly priority?: IssuePriority | undefined;
+      readonly lead?: string | undefined;
+      readonly startDate?: IssueDueDate | undefined;
+      readonly targetDate?: IssueDueDate | undefined;
+      readonly milestones?: ReadonlyArray<IssueProjectMilestoneCreateInput> | undefined;
+    },
+  ) => Effect.Effect<IssueProject, IssueTrackerError>;
+
+  /**
+   * Adds or removes a native dependency edge between two tracker projects (optionally anchored to
+   * milestones). Only called when `capabilities.projects` is true.
+   */
+  readonly setProjectRelation?: (
+    input: IssueScopeTarget & {
+      readonly action: "add" | "remove";
+      readonly project: string;
+      readonly kind: IssueProjectRelationKind;
+      readonly targetProject: string;
+      readonly milestone?: string | undefined;
+      readonly targetMilestone?: string | undefined;
+      readonly anchor?: IssueProjectRelationAnchor | undefined;
+      readonly targetAnchor?: IssueProjectRelationAnchor | undefined;
     },
   ) => Effect.Effect<void, IssueTrackerError>;
 

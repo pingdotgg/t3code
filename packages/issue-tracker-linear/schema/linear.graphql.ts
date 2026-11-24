@@ -37,6 +37,28 @@ export const CyclePeriod = Schema.Literals(["after", "before", "during"])
 export type CyclePeriod = typeof CyclePeriod.Type
 
 /**
+ * By which resolution is a date defined.
+ *
+ * - `halfYear`
+ * - `month`
+ * - `quarter`
+ * - `year`
+ */
+export const DateResolutionType = Schema.Literals(["halfYear", "month", "quarter", "year"])
+export type DateResolutionType = typeof DateResolutionType.Type
+
+/**
+ * The type of the issue relation.
+ *
+ * - `blocks`
+ * - `duplicate`
+ * - `related`
+ * - `similar`
+ */
+export const IssueRelationType = Schema.Literals(["blocks", "duplicate", "related", "similar"])
+export type IssueRelationType = typeof IssueRelationType.Type
+
+/**
  * By which field should the pagination order by
  *
  * - `createdAt`
@@ -5336,6 +5358,19 @@ export interface CommentFilterEncoded {
   readonly user?: UserFilterEncoded | null | undefined
 }
 
+/** Input for creating a new issue relation between two issues. Both the source issue and related issue must be specified along with the relationship type. */
+export const IssueRelationCreateInput = Schema.Struct({
+  /** The identifier in UUID v4 format. If none is provided, the backend will generate one. */
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The identifier of the issue that is related to another issue. Can be a UUID or issue identifier (e.g., 'LIN-123'). */
+  issueId: Schema.String,
+  /** The identifier of the related issue. Can be a UUID or issue identifier (e.g., 'LIN-123'). */
+  relatedIssueId: Schema.String,
+  /** The type of relation of the issue to the related issue. */
+  type: IssueRelationType
+})
+export interface IssueRelationCreateInput extends Schema.Struct.Type<typeof IssueRelationCreateInput.fields> {}
+
 /** Input for updating an existing issue. All fields are optional; only provided fields will be updated. Setting a field to null (where supported) will clear the value. */
 export const IssueUpdateInput = Schema.Struct({
   /** The identifiers of the issue labels to be added to this issue. */
@@ -5408,6 +5443,97 @@ export const IssueUpdateInput = Schema.Struct({
   trusted: Schema.optional(Schema.NullOr(Schema.Boolean))
 })
 export interface IssueUpdateInput extends Schema.Struct.Type<typeof IssueUpdateInput.fields> {}
+
+/** Input for creating a new project. A name and at least one team are required. All other fields are optional and will use defaults if not specified. */
+export const ProjectCreateInput = Schema.Struct({
+  /** The color of the project. */
+  color: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The project content as markdown. */
+  content: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The ID of the issue that was converted into this project. */
+  convertedFromIssueId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The description for the project. */
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The icon of the project. */
+  icon: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The identifier in UUID v4 format. If none is provided, the backend will generate one. */
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The identifiers of the project labels associated with this project. */
+  labelIds: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  /** The ID of the last template applied to the project. */
+  lastAppliedTemplateId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The identifier of the project lead. */
+  leadId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** [Internal] The identifier of the team that leads the project. */
+  leadTeamId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The identifiers of the members of this project. */
+  memberIds: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  /** The name of the project. */
+  name: Schema.String,
+  /** The priority of the project. 0 = No priority, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low. */
+  priority: Schema.optional(Schema.NullOr(Int)),
+  /** The sort order for the project within shared views, when ordered by priority. */
+  prioritySortOrder: Schema.optional(Schema.NullOr(Float)),
+  /** The sort order for the project within shared views. */
+  sortOrder: Schema.optional(Schema.NullOr(Float)),
+  /** The planned start date of the project. */
+  startDate: Schema.optional(Schema.NullOr(TimelessDate)),
+  /** The resolution of the project's start date. */
+  startDateResolution: Schema.optional(Schema.NullOr(DateResolutionType)),
+  /** The ID of the project status. */
+  statusId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The planned target date of the project. */
+  targetDate: Schema.optional(Schema.NullOr(TimelessDate)),
+  /** The resolution of the project's estimated completion date. */
+  targetDateResolution: Schema.optional(Schema.NullOr(DateResolutionType)),
+  /** The identifiers of the teams this project is associated with. */
+  teamIds: Schema.Array(Schema.String),
+  /** The ID of a project template to apply when creating the project. Overrides useDefaultTemplate if both are provided. */
+  templateId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** When set to true, the default project template of the first team provided will be applied. If templateId is provided, this will be ignored. */
+  useDefaultTemplate: Schema.optional(Schema.NullOr(Schema.Boolean))
+})
+export interface ProjectCreateInput extends Schema.Struct.Type<typeof ProjectCreateInput.fields> {}
+
+/** Input for creating a new project milestone. */
+export const ProjectMilestoneCreateInput = Schema.Struct({
+  /** The description of the project milestone in markdown format. */
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  /** [Internal] The description of the project milestone as a Prosemirror document. */
+  descriptionData: Schema.optional(Schema.NullOr(JSONObject)),
+  /** The identifier in UUID v4 format. If none is provided, the backend will generate one. */
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The name of the project milestone. */
+  name: Schema.String,
+  /** Related project for the project milestone. Can be a UUID or project identifier (e.g., 'P-LIN-123'). */
+  projectId: Schema.String,
+  /** The sort order for the project milestone within a project. */
+  sortOrder: Schema.optional(Schema.NullOr(Float)),
+  /** The planned target date of the project milestone. */
+  targetDate: Schema.optional(Schema.NullOr(TimelessDate))
+})
+export interface ProjectMilestoneCreateInput extends Schema.Struct.Type<typeof ProjectMilestoneCreateInput.fields> {}
+
+/** Input for creating a new project relation. */
+export const ProjectRelationCreateInput = Schema.Struct({
+  /** The type of the anchor for the project. */
+  anchorType: Schema.String,
+  /** The identifier in UUID v4 format. If none is provided, the backend will generate one. */
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The identifier of the project that is related to another project. Can be a UUID or project identifier (e.g., 'P-LIN-123'). */
+  projectId: Schema.String,
+  /** The identifier of the project milestone. */
+  projectMilestoneId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The type of the anchor for the related project. */
+  relatedAnchorType: Schema.String,
+  /** The identifier of the related project. Can be a UUID or project identifier (e.g., 'P-LIN-123'). */
+  relatedProjectId: Schema.String,
+  /** The identifier of the related project milestone. */
+  relatedProjectMilestoneId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The type of relation of the project to the related project. */
+  type: Schema.String
+})
+export interface ProjectRelationCreateInput extends Schema.Struct.Type<typeof ProjectRelationCreateInput.fields> {}
 
 /** Input for creating a new reaction. */
 export const ReactionCreateInput = Schema.Struct({

@@ -1,7 +1,9 @@
 import {
+  IssueOperationError,
   threadIssueKeysEqual,
   type IssueDetail,
   type IssueRef,
+  type IssueRelationKind,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
@@ -167,6 +169,7 @@ const make = Effect.gen(function* () {
           projectId,
           state: input.state ?? "open",
           ...(input.query === undefined ? {} : { query: input.query }),
+          ...(input.project === undefined ? {} : { project: input.project }),
           ...(input.limit === undefined ? {} : { limit: input.limit }),
           ...(input.cursors === undefined ? {} : { cursors: input.cursors }),
         });
@@ -228,6 +231,34 @@ const make = Effect.gen(function* () {
             state: pullRequest.state,
             closesIssue: pullRequest.closesIssue,
           })),
+          ...(detail.priority === undefined ? {} : { priority: detail.priority }),
+          ...(detail.estimate === undefined ? {} : { estimate: detail.estimate }),
+          ...(detail.dueDate === undefined ? {} : { dueDate: detail.dueDate }),
+          ...(detail.project === undefined ? {} : { project: detail.project }),
+          ...(detail.milestone === undefined ? {} : { milestone: detail.milestone }),
+          ...(detail.cycle === undefined ? {} : { cycle: detail.cycle }),
+          ...(detail.parent === undefined ? {} : { parent: detail.parent }),
+          ...(detail.subIssues === undefined ? {} : { subIssues: detail.subIssues }),
+          ...(detail.relations === undefined ? {} : { relations: detail.relations }),
+        };
+      }),
+    ),
+    list_issue_metadata: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
+        const candidates = yield* issues.candidates(scope);
+        return {
+          ...scope,
+          labels: candidates.labels,
+          assignees: candidates.assignees.map((assignee) => ({
+            id: assignee.id,
+            login: assignee.login,
+            name: assignee.name,
+          })),
+          ...(candidates.projects === undefined ? {} : { projects: candidates.projects }),
+          ...(candidates.cycles === undefined ? {} : { cycles: candidates.cycles }),
+          ...(candidates.states === undefined ? {} : { states: candidates.states }),
+          truncated: candidates.truncated,
         };
       }),
     ),
@@ -240,6 +271,16 @@ const make = Effect.gen(function* () {
           body: input.body ?? "",
           labels: input.labels ?? [],
           assignees: input.assignees ?? [],
+          ...(input.state === undefined ? {} : { state: input.state }),
+          ...(input.priority === undefined ? {} : { priority: input.priority }),
+          ...(input.estimate === undefined ? {} : { estimate: input.estimate }),
+          ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
+          ...(input.parent === undefined ? {} : { parent: input.parent }),
+          ...(input.project === undefined ? {} : { project: input.project }),
+          ...(input.milestone === undefined ? {} : { milestone: input.milestone }),
+          ...(input.cycle === undefined ? {} : { cycle: input.cycle }),
+          ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
+          ...(input.blockedBy === undefined ? {} : { blockedBy: input.blockedBy }),
         });
         return {
           ...scope,
@@ -247,6 +288,101 @@ const make = Effect.gen(function* () {
           url: created.url,
           displayKey: created.displayKey,
         };
+      }),
+    ),
+    update_issue: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        yield* issues.update({
+          ...refOf(target),
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.body === undefined ? {} : { body: input.body }),
+          ...(input.labels === undefined ? {} : { labels: input.labels }),
+          ...(input.assignees === undefined ? {} : { assignees: input.assignees }),
+          ...(input.priority === undefined ? {} : { priority: input.priority }),
+          ...(input.estimate === undefined ? {} : { estimate: input.estimate }),
+          ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
+          ...(input.parent === undefined ? {} : { parent: input.parent }),
+          ...(input.project === undefined ? {} : { project: input.project }),
+          ...(input.milestone === undefined ? {} : { milestone: input.milestone }),
+          ...(input.cycle === undefined ? {} : { cycle: input.cycle }),
+        });
+        return identityOf(target);
+      }),
+    ),
+    set_issue_deps: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        const action = input.action ?? "add";
+        const edges: Array<{ readonly kind: IssueRelationKind; readonly targetKey: string }> = [
+          ...(input.blocks ?? []).map((targetKey) => ({ kind: "blocks" as const, targetKey })),
+          ...(input.blockedBy ?? []).map((targetKey) => ({
+            kind: "blocked-by" as const,
+            targetKey,
+          })),
+          ...(input.related ?? []).map((targetKey) => ({ kind: "related" as const, targetKey })),
+          ...(input.duplicates ?? []).map((targetKey) => ({
+            kind: "duplicate" as const,
+            targetKey,
+          })),
+          ...(input.duplicatedBy ?? []).map((targetKey) => ({
+            kind: "duplicated-by" as const,
+            targetKey,
+          })),
+        ];
+        if (edges.length === 0) {
+          return yield* new IssueOperationError({
+            operation: "setRelation",
+            detail:
+              "Specify at least one issue key in blocks, blockedBy, related, duplicates, or duplicatedBy.",
+          });
+        }
+        const ref = refOf(target);
+        for (const edge of edges) {
+          yield* issues.setRelation({
+            ...ref,
+            action,
+            kind: edge.kind,
+            targetKey: edge.targetKey,
+          });
+        }
+        return identityOf(target);
+      }),
+    ),
+    create_issue_project: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
+        const project = yield* issues.createProject({
+          ...scope,
+          name: input.name,
+          ...(input.description === undefined ? {} : { description: input.description }),
+          ...(input.content === undefined ? {} : { content: input.content }),
+          ...(input.priority === undefined ? {} : { priority: input.priority }),
+          ...(input.lead === undefined ? {} : { lead: input.lead }),
+          ...(input.startDate === undefined ? {} : { startDate: input.startDate }),
+          ...(input.targetDate === undefined ? {} : { targetDate: input.targetDate }),
+          ...(input.milestones === undefined ? {} : { milestones: input.milestones }),
+        });
+        return { ...scope, project };
+      }),
+    ),
+    set_issue_project_deps: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
+        yield* issues.setProjectRelation({
+          ...scope,
+          action: input.action ?? "add",
+          project: input.project,
+          kind: input.kind,
+          targetProject: input.targetProject,
+          ...(input.milestone === undefined ? {} : { milestone: input.milestone }),
+          ...(input.targetMilestone === undefined
+            ? {}
+            : { targetMilestone: input.targetMilestone }),
+          ...(input.anchor === undefined ? {} : { anchor: input.anchor }),
+          ...(input.targetAnchor === undefined ? {} : { targetAnchor: input.targetAnchor }),
+        });
+        return scope;
       }),
     ),
     comment_on_issue: McpToolAccess.writesWithCapability((input) =>

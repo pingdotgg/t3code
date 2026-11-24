@@ -1,7 +1,17 @@
 import {
   IssueCapabilities,
+  IssueCycle,
+  IssueDueDate,
   IssueListState,
   IssueOperationError,
+  IssuePriority,
+  IssueProject,
+  IssueProjectMilestone,
+  IssueProjectMilestoneCreateInput,
+  IssueProjectRelationAnchor,
+  IssueProjectRelationKind,
+  IssueReference,
+  IssueRelation,
   IssueState,
   IssueTrackerKind,
   IssueUnavailableError,
@@ -197,8 +207,60 @@ export const ReadIssueResult = Schema.Struct({
       closesIssue: Schema.Boolean,
     }),
   ),
+  priority: Schema.optional(IssuePriority),
+  estimate: Schema.optional(Schema.NullOr(Schema.Number)),
+  dueDate: Schema.optional(Schema.NullOr(IssueDueDate)),
+  project: Schema.optional(Schema.NullOr(IssueProject)),
+  milestone: Schema.optional(Schema.NullOr(IssueProjectMilestone)),
+  cycle: Schema.optional(Schema.NullOr(IssueCycle)),
+  parent: Schema.optional(Schema.NullOr(IssueReference)),
+  subIssues: Schema.optional(Schema.Array(IssueReference)),
+  relations: Schema.optional(Schema.Array(IssueRelation)),
 });
 export type ReadIssueResult = typeof ReadIssueResult.Type;
+
+export const ListIssueMetadataResult = Schema.Struct({
+  projectId: ProjectId,
+  tracker: IssueTrackerKind,
+  host: Schema.String,
+  scope: Schema.String,
+  labels: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      color: Schema.NullOr(Schema.String),
+      description: Schema.NullOr(Schema.String),
+    }),
+  ),
+  assignees: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      login: Schema.String,
+      name: Schema.NullOr(Schema.String),
+    }),
+  ),
+  projects: Schema.optional(Schema.Array(IssueProject)),
+  cycles: Schema.optional(Schema.Array(IssueCycle)),
+  states: Schema.optional(Schema.Array(IssueState)),
+  truncated: Schema.Boolean,
+});
+export type ListIssueMetadataResult = typeof ListIssueMetadataResult.Type;
+
+export const CreateIssueProjectResult = Schema.Struct({
+  projectId: ProjectId,
+  tracker: IssueTrackerKind,
+  host: Schema.String,
+  scope: Schema.String,
+  project: IssueProject,
+});
+export type CreateIssueProjectResult = typeof CreateIssueProjectResult.Type;
+
+export const IssueProjectRelationWriteResult = Schema.Struct({
+  projectId: ProjectId,
+  tracker: IssueTrackerKind,
+  host: Schema.String,
+  scope: Schema.String,
+});
+export type IssueProjectRelationWriteResult = typeof IssueProjectRelationWriteResult.Type;
 
 export const CreateIssueResult = Schema.Struct({
   ...IssueIdentity,
@@ -251,6 +313,11 @@ const ListIssuesTool = Tool.make("list_issues", {
         description: "Free text the tracker matches itself.",
       }),
     ),
+    project: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(200)).annotate({
+        description: "Filter by tracker project name, slug, or id.",
+      }),
+    ),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
     cursors: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   }),
@@ -266,7 +333,7 @@ const ListIssuesTool = Tool.make("list_issues", {
 
 const ReadIssueTool = Tool.make("read_issue", {
   description:
-    "Read an issue: body, state, labels, assignees, recent comments and linked pull requests. Pass its url, or its key.",
+    "Read an issue: body, state, labels, assignees, priority, project, parent, sub-issues, blocking/related edges, comments, and linked PRs. Pass its url or key.",
   parameters: IssueTargetInput,
   success: ReadIssueResult,
   failure: IssueToolError,
@@ -278,8 +345,26 @@ const ReadIssueTool = Tool.make("read_issue", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
+const ListIssueMetadataTool = Tool.make("list_issue_metadata", {
+  description:
+    "List a tracker scope's labels, assignees, projects (with milestones and dependencies), cycles, and states.",
+  parameters: Schema.Struct({
+    projectId: Schema.optional(ProjectId),
+    scope: Schema.optional(TrimmedNonEmptyString),
+  }),
+  success: ListIssueMetadataResult,
+  failure: IssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List issue tracker metadata")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
 const CreateIssueTool = Tool.make("create_issue", {
-  description: "File an issue in a project's tracker.",
+  description:
+    "File an issue. Where supported (e.g. Linear), also sets state, priority, estimate, dueDate, parent (sub-issue), project, milestone, cycle, and blocks/blockedBy keys.",
   parameters: Schema.Struct({
     projectId: Schema.optional(
       ProjectId.annotate({ description: "Defaults to this thread's project." }),
@@ -293,6 +378,16 @@ const CreateIssueTool = Tool.make("create_issue", {
     body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
     assignees: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(25))),
+    state: Schema.optional(TrimmedNonEmptyString),
+    priority: Schema.optional(IssuePriority),
+    estimate: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    dueDate: Schema.optional(IssueDueDate),
+    parent: Schema.optional(TrimmedNonEmptyString),
+    project: Schema.optional(TrimmedNonEmptyString),
+    milestone: Schema.optional(TrimmedNonEmptyString),
+    cycle: Schema.optional(TrimmedNonEmptyString),
+    blocks: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+    blockedBy: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
   }),
   success: CreateIssueResult,
   failure: IssueToolError,
@@ -302,6 +397,108 @@ const CreateIssueTool = Tool.make("create_issue", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
+const UpdateIssueTool = Tool.make("update_issue", {
+  description:
+    "Update an issue's fields (title, body, labels, assignees, priority, estimate, dueDate, parent, project, milestone, cycle). Pass null to clear nullable fields.",
+  parameters: Schema.Struct({
+    ...IssueTargetInput.fields,
+    title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
+    body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+    labels: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+    assignees: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(25))),
+    priority: Schema.optional(IssuePriority),
+    estimate: Schema.optional(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
+    dueDate: Schema.optional(Schema.NullOr(IssueDueDate)),
+    parent: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    project: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    milestone: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    cycle: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  }),
+  success: IssueWriteResult,
+  failure: IssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update issue")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const SetIssueDepsTool = Tool.make("set_issue_deps", {
+  description:
+    "Add or remove native issue relations (blocks, blockedBy, related, duplicates, duplicatedBy). action defaults to add.",
+  parameters: Schema.Struct({
+    ...IssueTargetInput.fields,
+    action: Schema.optional(Schema.Literals(["add", "remove"])),
+    blocks: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+    blockedBy: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+    related: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+    duplicates: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+    duplicatedBy: Schema.optional(
+      Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50)),
+    ),
+  }),
+  success: IssueWriteResult,
+  failure: IssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Set issue dependencies")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const CreateIssueProjectTool = Tool.make("create_issue_project", {
+  description: "Create a native project (and optional milestones) in a tracker scope.",
+  parameters: Schema.Struct({
+    projectId: Schema.optional(ProjectId),
+    scope: Schema.optional(TrimmedNonEmptyString),
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+    description: Schema.optional(Schema.String.check(Schema.isMaxLength(255))),
+    content: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+    priority: Schema.optional(IssuePriority),
+    lead: Schema.optional(TrimmedNonEmptyString),
+    startDate: Schema.optional(IssueDueDate),
+    targetDate: Schema.optional(IssueDueDate),
+    milestones: Schema.optional(
+      Schema.Array(IssueProjectMilestoneCreateInput).check(Schema.isMaxLength(50)),
+    ),
+  }),
+  success: CreateIssueProjectResult,
+  failure: IssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Create tracker project")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
+const SetIssueProjectDepsTool = Tool.make("set_issue_project_deps", {
+  description:
+    "Add or remove a native dependency (blocks or blocked-by) between two tracker projects, optionally anchored to milestones. action defaults to add.",
+  parameters: Schema.Struct({
+    projectId: Schema.optional(ProjectId),
+    scope: Schema.optional(TrimmedNonEmptyString),
+    action: Schema.optional(Schema.Literals(["add", "remove"])),
+    project: TrimmedNonEmptyString,
+    kind: IssueProjectRelationKind,
+    targetProject: TrimmedNonEmptyString,
+    milestone: Schema.optional(TrimmedNonEmptyString),
+    targetMilestone: Schema.optional(TrimmedNonEmptyString),
+    anchor: Schema.optional(IssueProjectRelationAnchor),
+    targetAnchor: Schema.optional(IssueProjectRelationAnchor),
+  }),
+  success: IssueProjectRelationWriteResult,
+  failure: IssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Set project dependencies")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
 const CommentOnIssueTool = Tool.make("comment_on_issue", {
@@ -381,7 +578,12 @@ const ListThreadIssuesTool = Tool.make("list_thread_issues", {
 export const IssuesToolkit = Toolkit.make(
   ListIssuesTool,
   ReadIssueTool,
+  ListIssueMetadataTool,
   CreateIssueTool,
+  UpdateIssueTool,
+  SetIssueDepsTool,
+  CreateIssueProjectTool,
+  SetIssueProjectDepsTool,
   CommentOnIssueTool,
   SetIssueStateTool,
   LinkIssueTool,

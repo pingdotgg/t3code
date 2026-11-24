@@ -23,9 +23,13 @@ import {
   type IssueListInput,
   type IssueListProjectError,
   type IssueListResult,
+  type IssueProject,
+  type IssueProjectCreateInput,
+  type IssueProjectSetRelationInput,
   type IssueReactionInput,
   type IssueRef,
   type IssueScopeRef,
+  type IssueSetRelationInput,
   type IssueSetStateInput,
   type IssueTemplateList,
   type IssueTrackerSummary,
@@ -176,6 +180,13 @@ export class IssueService extends Context.Service<
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
+    readonly setRelation: (input: IssueSetRelationInput) => Effect.Effect<void, IssueError>;
+    readonly createProject: (
+      input: IssueProjectCreateInput,
+    ) => Effect.Effect<IssueProject, IssueError>;
+    readonly setProjectRelation: (
+      input: IssueProjectSetRelationInput,
+    ) => Effect.Effect<void, IssueError>;
     /**
      * The tracker and container a project's own issues live in: the bound `scope` when named, else
      * the one `key`'s prefix names, else the project's default.
@@ -454,6 +465,7 @@ const make = Effect.gen(function* () {
                 query: input.query,
                 labels: input.labels,
                 assignee: input.assignee,
+                project: input.project,
                 sort: input.sort ?? "updated",
                 cursor,
                 refresh: input.refresh,
@@ -606,7 +618,12 @@ const make = Effect.gen(function* () {
     requireProject(input).pipe(
       Effect.flatMap((project) =>
         project.api.listCandidates === undefined ||
-        !(project.api.capabilities.labels || project.api.capabilities.assignees)
+        !(
+          project.api.capabilities.labels ||
+          project.api.capabilities.assignees ||
+          project.api.capabilities.projects ||
+          project.api.capabilities.cycles
+        )
           ? Effect.fail(unsupported("candidates", "labels or assignees"))
           : project.api
               .listCandidates({
@@ -620,21 +637,52 @@ const make = Effect.gen(function* () {
 
   const create: IssueService["Service"]["create"] = (input) =>
     requireWritable(input, "create").pipe(
-      Effect.flatMap((project) =>
-        project.api.create === undefined || !project.api.capabilities.create
-          ? Effect.fail(unsupported("create", "filing issues"))
-          : project.api
-              .create({
-                cwd: project.project.workspaceRoot,
-                host: project.host,
-                scope: project.scope,
-                title: input.title,
-                body: input.body,
-                labels: input.labels,
-                assignees: input.assignees,
-              })
-              .pipe(Effect.mapError(toIssueError("create"))),
-      ),
+      Effect.flatMap((project) => {
+        const { capabilities } = project.api;
+        if (project.api.create === undefined || !capabilities.create)
+          return Effect.fail(unsupported("create", "filing issues"));
+        if (input.priority !== undefined && !capabilities.priority)
+          return Effect.fail(unsupported("create", "priority"));
+        if (input.estimate !== undefined && !capabilities.estimate)
+          return Effect.fail(unsupported("create", "estimates"));
+        if (input.dueDate !== undefined && !capabilities.dueDate)
+          return Effect.fail(unsupported("create", "due dates"));
+        if (input.parent !== undefined && !capabilities.subIssues)
+          return Effect.fail(unsupported("create", "sub-issues"));
+        if (
+          (input.project !== undefined || input.milestone !== undefined) &&
+          !capabilities.projects
+        )
+          return Effect.fail(unsupported("create", "projects"));
+        if (input.cycle !== undefined && !capabilities.cycles)
+          return Effect.fail(unsupported("create", "cycles"));
+        if (
+          ((input.blocks?.length ?? 0) > 0 || (input.blockedBy?.length ?? 0) > 0) &&
+          !capabilities.relations
+        )
+          return Effect.fail(unsupported("create", "issue relations"));
+        return project.api
+          .create({
+            cwd: project.project.workspaceRoot,
+            host: project.host,
+            scope: project.scope,
+            title: input.title,
+            body: input.body,
+            labels: input.labels,
+            assignees: input.assignees,
+            state: input.state,
+            priority: input.priority,
+            estimate: input.estimate,
+            dueDate: input.dueDate,
+            parent: input.parent,
+            project: input.project,
+            milestone: input.milestone,
+            cycle: input.cycle,
+            blocks: input.blocks,
+            blockedBy: input.blockedBy,
+          })
+          .pipe(Effect.mapError(toIssueError("create")));
+      }),
     );
 
   const comment: IssueService["Service"]["comment"] = (input) =>
@@ -664,7 +712,18 @@ const make = Effect.gen(function* () {
       Effect.flatMap((project) => {
         const { capabilities } = project.api;
         const wantsWords = input.title !== undefined || input.body !== undefined;
-        if (!wantsWords && input.labels === undefined && input.assignees === undefined) {
+        const wantsProject = input.project !== undefined || input.milestone !== undefined;
+        if (
+          !wantsWords &&
+          input.labels === undefined &&
+          input.assignees === undefined &&
+          input.priority === undefined &&
+          input.estimate === undefined &&
+          input.dueDate === undefined &&
+          input.parent === undefined &&
+          !wantsProject &&
+          input.cycle === undefined
+        ) {
           return Effect.fail(
             new IssueOperationError({ operation: "update", detail: "Nothing to change." }),
           );
@@ -676,6 +735,18 @@ const make = Effect.gen(function* () {
           return Effect.fail(unsupported("update", "labels"));
         if (input.assignees !== undefined && !capabilities.assignees)
           return Effect.fail(unsupported("update", "assignees"));
+        if (input.priority !== undefined && !capabilities.priority)
+          return Effect.fail(unsupported("update", "priority"));
+        if (input.estimate !== undefined && !capabilities.estimate)
+          return Effect.fail(unsupported("update", "estimates"));
+        if (input.dueDate !== undefined && !capabilities.dueDate)
+          return Effect.fail(unsupported("update", "due dates"));
+        if (input.parent !== undefined && !capabilities.subIssues)
+          return Effect.fail(unsupported("update", "sub-issues"));
+        if (wantsProject && !capabilities.projects)
+          return Effect.fail(unsupported("update", "projects"));
+        if (input.cycle !== undefined && !capabilities.cycles)
+          return Effect.fail(unsupported("update", "cycles"));
         return project.api
           .update({
             cwd: project.project.workspaceRoot,
@@ -686,6 +757,13 @@ const make = Effect.gen(function* () {
             body: input.body,
             labels: input.labels,
             assignees: input.assignees,
+            priority: input.priority,
+            estimate: input.estimate,
+            dueDate: input.dueDate,
+            parent: input.parent,
+            project: input.project,
+            milestone: input.milestone,
+            cycle: input.cycle,
           })
           .pipe(Effect.mapError(toIssueError("update")));
       }),
@@ -724,6 +802,71 @@ const make = Effect.gen(function* () {
                 reacted: input.reacted,
               })
               .pipe(Effect.mapError(toIssueError("react"))),
+      ),
+    );
+
+  const setRelation: IssueService["Service"]["setRelation"] = (input) =>
+    requireWritable(input, "setRelation").pipe(
+      Effect.flatMap((project) =>
+        project.api.setRelation === undefined || !project.api.capabilities.relations
+          ? Effect.fail(unsupported("setRelation", "issue relations"))
+          : project.api
+              .setRelation({
+                cwd: project.project.workspaceRoot,
+                host: project.host,
+                scope: project.scope,
+                key: input.key,
+                action: input.action,
+                kind: input.kind,
+                targetKey: input.targetKey,
+              })
+              .pipe(Effect.mapError(toIssueError("setRelation"))),
+      ),
+    );
+
+  const createProject: IssueService["Service"]["createProject"] = (input) =>
+    requireWritable(input, "createProject").pipe(
+      Effect.flatMap((project) =>
+        project.api.createProject === undefined || !project.api.capabilities.projects
+          ? Effect.fail(unsupported("createProject", "projects"))
+          : project.api
+              .createProject({
+                cwd: project.project.workspaceRoot,
+                host: project.host,
+                scope: project.scope,
+                name: input.name,
+                description: input.description,
+                content: input.content,
+                priority: input.priority,
+                lead: input.lead,
+                startDate: input.startDate,
+                targetDate: input.targetDate,
+                milestones: input.milestones,
+              })
+              .pipe(Effect.mapError(toIssueError("createProject"))),
+      ),
+    );
+
+  const setProjectRelation: IssueService["Service"]["setProjectRelation"] = (input) =>
+    requireWritable(input, "setProjectRelation").pipe(
+      Effect.flatMap((project) =>
+        project.api.setProjectRelation === undefined || !project.api.capabilities.projects
+          ? Effect.fail(unsupported("setProjectRelation", "project dependencies"))
+          : project.api
+              .setProjectRelation({
+                cwd: project.project.workspaceRoot,
+                host: project.host,
+                scope: project.scope,
+                action: input.action,
+                project: input.project,
+                kind: input.kind,
+                targetProject: input.targetProject,
+                milestone: input.milestone,
+                targetMilestone: input.targetMilestone,
+                anchor: input.anchor,
+                targetAnchor: input.targetAnchor,
+              })
+              .pipe(Effect.mapError(toIssueError("setProjectRelation"))),
       ),
     );
 
@@ -890,6 +1033,9 @@ const make = Effect.gen(function* () {
     update: interactive(traced("update", update)),
     setState: interactive(traced("setState", setState)),
     react: interactive(traced("react", react)),
+    setRelation: interactive(traced("setRelation", setRelation)),
+    createProject: interactive(traced("createProject", createProject)),
+    setProjectRelation: interactive(traced("setProjectRelation", setProjectRelation)),
     projectScope,
     resolveUrl,
   });

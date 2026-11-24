@@ -80,6 +80,90 @@ export type IssueReactionContent = typeof IssueReactionContent.Type;
 export const IssueReaction = PullRequestReaction;
 export type IssueReaction = typeof IssueReaction.Type;
 
+export const IssuePriority = Schema.Literals(["none", "urgent", "high", "medium", "low"]);
+export type IssuePriority = typeof IssuePriority.Type;
+
+/** Calendar date without a time zone (`YYYY-MM-DD`). */
+export const IssueDueDate = TrimmedNonEmptyString.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));
+export type IssueDueDate = typeof IssueDueDate.Type;
+
+/** Compact reference to a related issue (parent, sub-issue, or blocking/linked issue). */
+export const IssueReference = Schema.Struct({
+  scope: TrimmedNonEmptyString,
+  key: TrimmedNonEmptyString,
+  displayKey: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: IssueState,
+});
+export type IssueReference = typeof IssueReference.Type;
+
+export const IssueRelationKind = Schema.Literals([
+  "blocks",
+  "blocked-by",
+  "related",
+  "duplicate",
+  "duplicated-by",
+]);
+export type IssueRelationKind = typeof IssueRelationKind.Type;
+
+export const IssueRelation = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: IssueRelationKind,
+  issue: IssueReference,
+});
+export type IssueRelation = typeof IssueRelation.Type;
+
+export const IssueProjectMilestone = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  targetDate: Schema.optional(Schema.NullOr(IssueDueDate)),
+});
+export type IssueProjectMilestone = typeof IssueProjectMilestone.Type;
+
+export const IssueProjectRelationAnchor = Schema.Literals(["start", "end", "milestone"]);
+export type IssueProjectRelationAnchor = typeof IssueProjectRelationAnchor.Type;
+
+export const IssueProjectRelationKind = Schema.Literals(["blocks", "blocked-by"]);
+export type IssueProjectRelationKind = typeof IssueProjectRelationKind.Type;
+
+/** A dependency edge between two tracker projects (optionally anchored to milestones). */
+export const IssueProjectRelation = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: IssueProjectRelationKind,
+  projectId: TrimmedNonEmptyString,
+  projectName: TrimmedNonEmptyString,
+  anchor: IssueProjectRelationAnchor,
+  milestoneId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  milestoneName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  relatedAnchor: IssueProjectRelationAnchor,
+  relatedMilestoneId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  relatedMilestoneName: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type IssueProjectRelation = typeof IssueProjectRelation.Type;
+
+/** A project within the issue tracker itself (e.g. a Linear project). */
+export const IssueProject = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  url: Schema.optional(TrimmedNonEmptyString),
+  state: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  milestones: Schema.optional(Schema.Array(IssueProjectMilestone)),
+  relations: Schema.optional(Schema.Array(IssueProjectRelation)),
+});
+export type IssueProject = typeof IssueProject.Type;
+
+export const IssueCycle = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  number: PositiveInt,
+  name: Schema.NullOr(TrimmedNonEmptyString),
+  startsAt: Schema.optional(IsoDateTime),
+  endsAt: Schema.optional(IsoDateTime),
+});
+export type IssueCycle = typeof IssueCycle.Type;
+
 /**
  * Addresses one issue: `scope` is the tracker's own container (`owner/repo`, a team key) and
  * `key` the issue's native id in it. `host` is absent for the kind's public host. `projectId`
@@ -214,6 +298,20 @@ export const IssueCapabilities = Schema.Struct({
   events: Schema.Boolean,
   /** The tracker narrows a listing by free text itself. */
   search: Schema.Boolean,
+  /** Native issue-to-issue relations (blocking, blocked-by, related, duplicate). */
+  relations: Schema.optional(Schema.Boolean),
+  /** Native parent / sub-issue hierarchy. */
+  subIssues: Schema.optional(Schema.Boolean),
+  /** Tracker-native projects (and project milestones) can be read, assigned, and created. */
+  projects: Schema.optional(Schema.Boolean),
+  /** Tracker-native cycles / sprints can be read and assigned. */
+  cycles: Schema.optional(Schema.Boolean),
+  /** Native priority levels (urgent, high, medium, low, none). */
+  priority: Schema.optional(Schema.Boolean),
+  /** Complexity / story-point estimate. */
+  estimate: Schema.optional(Schema.Boolean),
+  /** Calendar due date. */
+  dueDate: Schema.optional(Schema.Boolean),
 });
 export type IssueCapabilities = typeof IssueCapabilities.Type;
 
@@ -253,6 +351,15 @@ export const IssueDetail = Schema.Struct({
   commentsCursor: Schema.NullOr(TrimmedNonEmptyString),
   events: Schema.Array(IssueEvent),
   linkedPullRequests: Schema.Array(IssueLinkedPullRequest),
+  priority: Schema.optional(IssuePriority),
+  estimate: Schema.optional(Schema.NullOr(Schema.Number)),
+  dueDate: Schema.optional(Schema.NullOr(IssueDueDate)),
+  project: Schema.optional(Schema.NullOr(IssueProject)),
+  milestone: Schema.optional(Schema.NullOr(IssueProjectMilestone)),
+  cycle: Schema.optional(Schema.NullOr(IssueCycle)),
+  parent: Schema.optional(Schema.NullOr(IssueReference)),
+  subIssues: Schema.optional(Schema.Array(IssueReference)),
+  relations: Schema.optional(Schema.Array(IssueRelation)),
 });
 export type IssueDetail = typeof IssueDetail.Type;
 
@@ -304,6 +411,8 @@ export const IssueListInput = Schema.Struct({
   ),
   /** An assignee's `login`, as an issue of that tracker names them. */
   assignee: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(320))),
+  /** Tracker project name, slug, or id to narrow the listing to. */
+  project: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   /** Absent means `updated`. */
   sort: Schema.optional(IssueListSort),
 });
@@ -358,6 +467,18 @@ export const IssueCreateInput = Schema.Struct({
   body: IssueBody,
   labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50)),
   assignees: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(25)),
+  state: Schema.optional(TrimmedNonEmptyString),
+  priority: Schema.optional(IssuePriority),
+  estimate: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  dueDate: Schema.optional(IssueDueDate),
+  parent: Schema.optional(TrimmedNonEmptyString),
+  project: Schema.optional(TrimmedNonEmptyString),
+  milestone: Schema.optional(TrimmedNonEmptyString),
+  cycle: Schema.optional(TrimmedNonEmptyString),
+  /** Issues this new issue blocks (by key, e.g. `ENG-123`). */
+  blocks: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
+  /** Issues that block this new issue (by key, e.g. `ENG-123`). */
+  blockedBy: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
 });
 export type IssueCreateInput = typeof IssueCreateInput.Type;
 
@@ -385,8 +506,65 @@ export const IssueUpdateInput = Schema.Struct({
   body: Schema.optional(IssueBody),
   labels: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),
   assignees: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(25))),
+  priority: Schema.optional(IssuePriority),
+  estimate: Schema.optional(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
+  dueDate: Schema.optional(Schema.NullOr(IssueDueDate)),
+  parent: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  project: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  milestone: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  cycle: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type IssueUpdateInput = typeof IssueUpdateInput.Type;
+
+export const IssueSetRelationInput = Schema.Struct({
+  ...IssueRef.fields,
+  action: Schema.Literals(["add", "remove"]),
+  kind: IssueRelationKind,
+  /** The other issue's key (e.g. `ENG-456`). */
+  targetKey: TrimmedNonEmptyString,
+});
+export type IssueSetRelationInput = typeof IssueSetRelationInput.Type;
+
+export const IssueProjectMilestoneCreateInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  description: Schema.optional(Schema.String.check(Schema.isMaxLength(4_096))),
+  targetDate: Schema.optional(IssueDueDate),
+});
+export type IssueProjectMilestoneCreateInput = typeof IssueProjectMilestoneCreateInput.Type;
+
+export const IssueProjectCreateInput = Schema.Struct({
+  ...IssueScopeRef.fields,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  description: Schema.optional(Schema.String.check(Schema.isMaxLength(255))),
+  content: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+  priority: Schema.optional(IssuePriority),
+  lead: Schema.optional(TrimmedNonEmptyString),
+  startDate: Schema.optional(IssueDueDate),
+  targetDate: Schema.optional(IssueDueDate),
+  milestones: Schema.optional(
+    Schema.Array(IssueProjectMilestoneCreateInput).check(Schema.isMaxLength(50)),
+  ),
+});
+export type IssueProjectCreateInput = typeof IssueProjectCreateInput.Type;
+
+export const IssueProjectSetRelationInput = Schema.Struct({
+  ...IssueScopeRef.fields,
+  action: Schema.Literals(["add", "remove"]),
+  /** Source project (id, slug, or name). */
+  project: TrimmedNonEmptyString,
+  kind: IssueProjectRelationKind,
+  /** Target project (id, slug, or name). */
+  targetProject: TrimmedNonEmptyString,
+  /** Optional milestone on `project` (id or name). */
+  milestone: Schema.optional(TrimmedNonEmptyString),
+  /** Optional milestone on `targetProject` (id or name). */
+  targetMilestone: Schema.optional(TrimmedNonEmptyString),
+  /** Optional anchor on `project` (`end`, `start`, or `milestone`). */
+  anchor: Schema.optional(IssueProjectRelationAnchor),
+  /** Optional anchor on `targetProject` (`start`, `end`, or `milestone`). */
+  targetAnchor: Schema.optional(IssueProjectRelationAnchor),
+});
+export type IssueProjectSetRelationInput = typeof IssueProjectSetRelationInput.Type;
 
 /** Moves the issue to one of the states the tracker declared in `capabilities.states`. */
 export const IssueSetStateInput = Schema.Struct({
@@ -452,10 +630,13 @@ export const IssueAssigneeCandidate = Schema.Struct({
 });
 export type IssueAssigneeCandidate = typeof IssueAssigneeCandidate.Type;
 
-/** The labels and people a scope offers, read when a picker opens rather than with every issue. */
+/** The labels, people, projects, cycles, and workflow states a scope offers. */
 export const IssueCandidates = Schema.Struct({
   labels: Schema.Array(IssueLabelCandidate),
   assignees: Schema.Array(IssueAssigneeCandidate),
+  projects: Schema.optional(Schema.Array(IssueProject)),
+  cycles: Schema.optional(Schema.Array(IssueCycle)),
+  states: Schema.optional(Schema.Array(IssueState)),
   /** The tracker has more than were read, so somebody missing is not necessarily ineligible. */
   truncated: Schema.Boolean,
 });

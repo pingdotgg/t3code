@@ -26,32 +26,54 @@ import type {
   CommentCreateInput,
   IssueCreateInput,
   IssueFilter,
+  IssueRelationCreateInput,
   IssueUpdateInput,
+  ProjectCreateInput,
+  ProjectMilestoneCreateInput,
+  ProjectRelationCreateInput,
 } from "../../schema/linear.graphql.ts";
 import {
   LinearApiGraphQLGroup,
   type Attachment,
   type IssueHistory,
   type LinearComment,
+  type LinearCycle,
   type LinearIssue,
+  type LinearProject,
+  type LinearProjectMilestone,
   type LinearReaction,
   type LinearTeamLabel,
   type LinearUser,
   type T3Issue,
   type T3Team,
+  type T3TeamProjects,
   type Template,
 } from "./LinearApi.graphql.ts";
 
-export type { IssueFilter } from "../../schema/linear.graphql.ts";
+export type {
+  IssueFilter,
+  IssueRelationCreateInput,
+  ProjectCreateInput,
+  ProjectMilestoneCreateInput,
+  ProjectRelationCreateInput,
+} from "../../schema/linear.graphql.ts";
 export type {
   LinearComment,
+  LinearCycle,
   LinearIssue,
+  LinearIssueRef,
+  LinearProject,
+  LinearProjectMilestone,
+  LinearProjectRelation,
   LinearReaction,
   LinearUser,
 } from "./LinearApi.graphql.ts";
 export type { LinearWorkflowState } from "./LinearApi.graphql.ts";
 export type LinearAttachment = Attachment;
 export type LinearHistoryEntry = IssueHistory;
+export type LinearIssueDetail = NonNullable<T3Issue.Result["issue"]>;
+export type LinearTeamProject =
+  T3TeamProjects.Result["teams"]["nodes"][number]["projects"]["nodes"][number];
 
 export const KIND = LINEAR_KIND;
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
@@ -78,7 +100,6 @@ export interface LinearTemplate extends Omit<Template, "templateData"> {
 }
 
 type LinearTeamDetail = T3Team.Result["teams"]["nodes"][number];
-type LinearIssueDetail = NonNullable<T3Issue.Result["issue"]>;
 
 /** The team with the workspace-wide labels that any of its issues may also carry. */
 export interface LinearTeamScope {
@@ -87,6 +108,12 @@ export interface LinearTeamScope {
   };
   readonly workspaceLabels: ReadonlyArray<LinearTeamLabel>;
   /** Linear had more than one page of something; a missing label or member may still exist. */
+  readonly truncated: boolean;
+}
+
+export interface LinearTeamProjectsScope {
+  readonly projects: ReadonlyArray<LinearTeamProject>;
+  readonly cycles: ReadonlyArray<LinearCycle>;
   readonly truncated: boolean;
 }
 
@@ -130,6 +157,9 @@ export class LinearApi extends Context.Service<
       IssueTrackerError
     >;
     readonly getTeam: (key: string) => Effect.Effect<LinearTeamScope | null, IssueTrackerError>;
+    readonly getTeamProjects: (
+      key: string,
+    ) => Effect.Effect<LinearTeamProjectsScope | null, IssueTrackerError>;
     readonly createIssue: (
       input: IssueCreateInput,
     ) => Effect.Effect<{ readonly identifier: string; readonly url: string }, IssueTrackerError>;
@@ -144,6 +174,20 @@ export class LinearApi extends Context.Service<
       readonly emoji: string;
     }) => Effect.Effect<void, IssueTrackerError>;
     readonly deleteReaction: (id: string) => Effect.Effect<void, IssueTrackerError>;
+    readonly createIssueRelation: (
+      input: IssueRelationCreateInput,
+    ) => Effect.Effect<{ readonly id: string }, IssueTrackerError>;
+    readonly deleteIssueRelation: (id: string) => Effect.Effect<void, IssueTrackerError>;
+    readonly createProject: (
+      input: ProjectCreateInput,
+    ) => Effect.Effect<LinearProject, IssueTrackerError>;
+    readonly createProjectMilestone: (
+      input: ProjectMilestoneCreateInput,
+    ) => Effect.Effect<LinearProjectMilestone, IssueTrackerError>;
+    readonly createProjectRelation: (
+      input: ProjectRelationCreateInput,
+    ) => Effect.Effect<{ readonly id: string }, IssueTrackerError>;
+    readonly deleteProjectRelation: (id: string) => Effect.Effect<void, IssueTrackerError>;
     /** Reactions on an issue (by identifier) or a comment (by id), to find the viewer's own. */
     readonly listReactions: (input: {
       readonly issueId?: string | undefined;
@@ -371,6 +415,19 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const getTeamProjects: LinearApi["Service"]["getTeamProjects"] = (key) =>
+    call("getTeamProjects", (linear) => linear.T3TeamProjects({ key })).pipe(
+      Effect.map((data) => {
+        const team = data.teams.nodes[0];
+        if (team === undefined) return null;
+        return {
+          projects: team.projects.nodes,
+          cycles: team.cycles.nodes,
+          truncated: team.projects.pageInfo.hasNextPage || team.cycles.pageInfo.hasNextPage,
+        };
+      }),
+    );
+
   const createIssue: LinearApi["Service"]["createIssue"] = (input) =>
     call("createIssue", (linear) => linear.T3IssueCreate({ input })).pipe(
       Effect.flatMap(({ issueCreate }) =>
@@ -405,6 +462,70 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(({ reactionDelete }) => applied("deleteReaction", reactionDelete)),
     );
 
+  const createIssueRelation: LinearApi["Service"]["createIssueRelation"] = (input) =>
+    call("createIssueRelation", (linear) => linear.T3IssueRelationCreate({ input })).pipe(
+      Effect.flatMap(({ issueRelationCreate }) =>
+        issueRelationCreate.success
+          ? Effect.succeed({ id: issueRelationCreate.issueRelation.id })
+          : Effect.fail(
+              fail("createIssueRelation", "failed", "Linear did not create the relation."),
+            ),
+      ),
+    );
+
+  const deleteIssueRelation: LinearApi["Service"]["deleteIssueRelation"] = (id) =>
+    call("deleteIssueRelation", (linear) => linear.T3IssueRelationDelete({ id })).pipe(
+      Effect.flatMap(({ issueRelationDelete }) =>
+        applied("deleteIssueRelation", issueRelationDelete),
+      ),
+    );
+
+  const createProject: LinearApi["Service"]["createProject"] = (input) =>
+    call("createProject", (linear) => linear.T3ProjectCreate({ input })).pipe(
+      Effect.flatMap(({ projectCreate }) =>
+        projectCreate.success && projectCreate.project !== null
+          ? Effect.succeed(projectCreate.project)
+          : Effect.fail(fail("createProject", "failed", "Linear did not create the project.")),
+      ),
+    );
+
+  const createProjectMilestone: LinearApi["Service"]["createProjectMilestone"] = (input) =>
+    call("createProjectMilestone", (linear) => linear.T3ProjectMilestoneCreate({ input })).pipe(
+      Effect.flatMap(({ projectMilestoneCreate }) =>
+        projectMilestoneCreate.success
+          ? Effect.succeed(projectMilestoneCreate.projectMilestone)
+          : Effect.fail(
+              fail(
+                "createProjectMilestone",
+                "failed",
+                "Linear did not create the project milestone.",
+              ),
+            ),
+      ),
+    );
+
+  const createProjectRelation: LinearApi["Service"]["createProjectRelation"] = (input) =>
+    call("createProjectRelation", (linear) => linear.T3ProjectRelationCreate({ input })).pipe(
+      Effect.flatMap(({ projectRelationCreate }) =>
+        projectRelationCreate.success
+          ? Effect.succeed({ id: projectRelationCreate.projectRelation.id })
+          : Effect.fail(
+              fail(
+                "createProjectRelation",
+                "failed",
+                "Linear did not create the project dependency.",
+              ),
+            ),
+      ),
+    );
+
+  const deleteProjectRelation: LinearApi["Service"]["deleteProjectRelation"] = (id) =>
+    call("deleteProjectRelation", (linear) => linear.T3ProjectRelationDelete({ id })).pipe(
+      Effect.flatMap(({ projectRelationDelete }) =>
+        applied("deleteProjectRelation", projectRelationDelete),
+      ),
+    );
+
   const listReactions: LinearApi["Service"]["listReactions"] = (input) =>
     input.commentId === undefined
       ? call("listReactions", (linear) =>
@@ -430,11 +551,18 @@ export const make = Effect.gen(function* () {
     getIssue,
     getComments,
     getTeam,
+    getTeamProjects,
     createIssue,
     updateIssue,
     createComment,
     createReaction,
     deleteReaction,
+    createIssueRelation,
+    deleteIssueRelation,
+    createProject,
+    createProjectMilestone,
+    createProjectRelation,
+    deleteProjectRelation,
     listReactions,
   });
 });

@@ -9,11 +9,20 @@ import {
   type IssueActor,
   type IssueCapabilities,
   type IssueComment,
+  type IssueCycle,
+  type IssueDueDate,
   type IssueEvent,
   type IssueExternalTemplate,
   type IssueLinkedPullRequest,
+  type IssuePriority,
+  type IssueProject,
+  type IssueProjectMilestone,
+  type IssueProjectRelation,
+  type IssueProjectRelationAnchor,
   type IssueReaction,
   type IssueReactionContent,
+  type IssueReference,
+  type IssueRelation,
   type IssueState,
   type IssueTemplate,
   type IssueViewerPermissions,
@@ -57,6 +66,13 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+  relations: true,
+  subIssues: true,
+  projects: true,
+  cycles: true,
+  priority: true,
+  estimate: true,
+  dueDate: true,
 };
 
 /** Everything granted: Linear's API reports no per-issue permissions and refuses with a message. */
@@ -124,6 +140,185 @@ const CONTENT_BY_EMOJI = new Map(
 /** `ENG-123`, or null for anything that is not a Linear identifier. */
 function parseIdentifier(key: string): string | null {
   return /^[A-Za-z][A-Za-z0-9]*-[1-9]\d*$/.test(key.trim()) ? key.trim().toUpperCase() : null;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROJECT_IDENTIFIER_PATTERN = /^P-[A-Za-z0-9]+-\d+$/i;
+const DUE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value.trim());
+}
+
+function toPriority(value: number): IssuePriority {
+  switch (Math.trunc(value)) {
+    case 1:
+      return "urgent";
+    case 2:
+      return "high";
+    case 3:
+      return "medium";
+    case 4:
+      return "low";
+    default:
+      return "none";
+  }
+}
+
+function fromPriority(priority: IssuePriority): number {
+  switch (priority) {
+    case "urgent":
+      return 1;
+    case "high":
+      return 2;
+    case "medium":
+      return 3;
+    case "low":
+      return 4;
+    case "none":
+      return 0;
+  }
+}
+
+function toDueDate(value: string | null | undefined): IssueDueDate | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return DUE_DATE_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+function toIssueRef(issue: LinearApi.LinearIssueRef): IssueReference {
+  return {
+    scope: issue.team.key,
+    key: issue.identifier,
+    displayKey: issue.identifier,
+    title: issue.title,
+    url: issue.url,
+    state: toState(issue.state),
+  };
+}
+
+function toRelations(issue: LinearApi.LinearIssueDetail): IssueRelation[] {
+  const seen = new Set<string>();
+  const relations: IssueRelation[] = [];
+  for (const relation of issue.relations.nodes) {
+    if (seen.has(relation.id)) continue;
+    const kind =
+      relation.type === "blocks"
+        ? "blocks"
+        : relation.type === "duplicate"
+          ? "duplicate"
+          : relation.type === "related"
+            ? "related"
+            : null;
+    if (kind === null) continue;
+    seen.add(relation.id);
+    relations.push({ id: relation.id, kind, issue: toIssueRef(relation.relatedIssue) });
+  }
+  for (const relation of issue.inverseRelations.nodes) {
+    if (seen.has(relation.id)) continue;
+    const kind =
+      relation.type === "blocks"
+        ? "blocked-by"
+        : relation.type === "duplicate"
+          ? "duplicated-by"
+          : relation.type === "related"
+            ? "related"
+            : null;
+    if (kind === null) continue;
+    seen.add(relation.id);
+    relations.push({ id: relation.id, kind, issue: toIssueRef(relation.issue) });
+  }
+  return relations;
+}
+
+function toProjectMilestone(milestone: LinearApi.LinearProjectMilestone): IssueProjectMilestone {
+  const targetDate = toDueDate(milestone.targetDate);
+  return {
+    id: milestone.id,
+    name: milestone.name,
+    ...(milestone.description != null ? { description: milestone.description } : {}),
+    ...(targetDate !== null ? { targetDate } : {}),
+  };
+}
+
+function toAnchor(value: string, fallback: IssueProjectRelationAnchor): IssueProjectRelationAnchor {
+  return value === "start" || value === "end" || value === "milestone" ? value : fallback;
+}
+
+function toProjectRelations(
+  relations: ReadonlyArray<LinearApi.LinearProjectRelation>,
+  inverseRelations: ReadonlyArray<LinearApi.LinearProjectRelation>,
+): IssueProjectRelation[] {
+  const seen = new Set<string>();
+  const mapped: IssueProjectRelation[] = [];
+  for (const relation of relations) {
+    if (seen.has(relation.id) || relation.type !== "dependency") continue;
+    seen.add(relation.id);
+    mapped.push({
+      id: relation.id,
+      kind: "blocks",
+      projectId: relation.relatedProject.id,
+      projectName: relation.relatedProject.name,
+      anchor: toAnchor(relation.anchorType, "end"),
+      milestoneId: relation.projectMilestone?.id ?? null,
+      milestoneName: relation.projectMilestone?.name ?? null,
+      relatedAnchor: toAnchor(relation.relatedAnchorType, "start"),
+      relatedMilestoneId: relation.relatedProjectMilestone?.id ?? null,
+      relatedMilestoneName: relation.relatedProjectMilestone?.name ?? null,
+    });
+  }
+  for (const relation of inverseRelations) {
+    if (seen.has(relation.id) || relation.type !== "dependency") continue;
+    seen.add(relation.id);
+    mapped.push({
+      id: relation.id,
+      kind: "blocked-by",
+      projectId: relation.project.id,
+      projectName: relation.project.name,
+      anchor: toAnchor(relation.relatedAnchorType, "start"),
+      milestoneId: relation.relatedProjectMilestone?.id ?? null,
+      milestoneName: relation.relatedProjectMilestone?.name ?? null,
+      relatedAnchor: toAnchor(relation.anchorType, "end"),
+      relatedMilestoneId: relation.projectMilestone?.id ?? null,
+      relatedMilestoneName: relation.projectMilestone?.name ?? null,
+    });
+  }
+  return mapped;
+}
+
+function toProject(
+  project: LinearApi.LinearProject,
+  extra?: {
+    readonly milestones?: ReadonlyArray<LinearApi.LinearProjectMilestone>;
+    readonly relations?: ReadonlyArray<LinearApi.LinearProjectRelation>;
+    readonly inverseRelations?: ReadonlyArray<LinearApi.LinearProjectRelation>;
+  },
+): IssueProject {
+  return {
+    id: project.id,
+    name: project.name,
+    url: project.url,
+    state: project.status.name,
+    description: project.description || null,
+    ...(extra?.milestones !== undefined
+      ? { milestones: extra.milestones.map(toProjectMilestone) }
+      : {}),
+    ...(extra?.relations !== undefined || extra?.inverseRelations !== undefined
+      ? {
+          relations: toProjectRelations(extra?.relations ?? [], extra?.inverseRelations ?? []),
+        }
+      : {}),
+  };
+}
+
+function toCycle(cycle: LinearApi.LinearCycle): IssueCycle {
+  return {
+    id: cycle.id,
+    number: Math.max(1, Math.trunc(cycle.number)),
+    name: cycle.name ?? null,
+    startsAt: cycle.startsAt,
+    endsAt: cycle.endsAt,
+  };
 }
 
 function toState(state: LinearApi.LinearWorkflowState): IssueState {
@@ -371,6 +566,14 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         ),
       );
 
+    const requireTeamProjects = (operation: string, scope: string) =>
+      linear.getTeamProjects(scope.trim().toUpperCase()).pipe(
+        Effect.filterOrFail(
+          (team): team is LinearApi.LinearTeamProjectsScope => team !== null,
+          () => failed(operation, `No Linear team has the key "${scope}".`),
+        ),
+      );
+
     /** Names to label ids, within the team's and the workspace's labels. */
     const labelIds = (
       operation: string,
@@ -386,6 +589,24 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           : Effect.succeed(match.id);
       });
 
+    const resolveMemberId = (
+      operation: string,
+      scope: LinearApi.LinearTeamScope,
+      memberRef: string,
+    ): Effect.Effect<string, IssueTrackerError> => {
+      const normalized = memberRef.trim().toLowerCase();
+      const member = scope.team.members.nodes.find(
+        (user) =>
+          user.id === memberRef ||
+          user.email?.toLowerCase() === normalized ||
+          user.displayName?.toLowerCase() === normalized ||
+          user.name?.toLowerCase() === normalized,
+      );
+      return member === undefined
+        ? Effect.fail(failed(operation, `"${memberRef}" is not a member of this Linear team.`))
+        : Effect.succeed(member.id);
+    };
+
     /** One assignee at most: Linear issues have a single assignee. */
     const assigneeId = (
       operation: string,
@@ -396,15 +617,111 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       if (first === undefined) return Effect.succeed(null);
       if (rest.length > 0)
         return Effect.fail(failed(operation, "A Linear issue has one assignee at most."));
-      const member = scope.team.members.nodes.find(
-        (user) =>
-          user.id === first ||
-          user.email?.toLowerCase() === first.toLowerCase() ||
-          user.displayName?.toLowerCase() === first.toLowerCase(),
+      return resolveMemberId(operation, scope, first);
+    };
+
+    const resolveStateId = (
+      operation: string,
+      scope: LinearApi.LinearTeamScope,
+      name: string,
+    ): Effect.Effect<string, IssueTrackerError> => {
+      const trimmed = name.trim();
+      const exact = scope.team.states.nodes.find((state) => state.name === trimmed);
+      const match =
+        exact ??
+        scope.team.states.nodes.find((state) => state.name.toLowerCase() === trimmed.toLowerCase());
+      return match === undefined
+        ? Effect.fail(failed(operation, `This team's workflow has no "${name}" state.`))
+        : Effect.succeed(match.id);
+    };
+
+    const findTeamProject = (
+      planning: LinearApi.LinearTeamProjectsScope,
+      ref: string,
+    ): LinearApi.LinearTeamProject | undefined => {
+      const trimmed = ref.trim();
+      const lower = trimmed.toLowerCase();
+      return planning.projects.find(
+        (project) =>
+          project.id === trimmed ||
+          project.slugId.toLowerCase() === lower ||
+          project.name.toLowerCase() === lower,
       );
-      return member === undefined
-        ? Effect.fail(failed(operation, `"${first}" is not a member of this Linear team.`))
-        : Effect.succeed(member.id);
+    };
+
+    const resolveProjectId = (
+      operation: string,
+      planning: LinearApi.LinearTeamProjectsScope,
+      ref: string,
+    ): Effect.Effect<
+      { readonly id: string; readonly teamProject?: LinearApi.LinearTeamProject },
+      IssueTrackerError
+    > => {
+      const trimmed = ref.trim();
+      const match = findTeamProject(planning, trimmed);
+      if (match !== undefined) return Effect.succeed({ id: match.id, teamProject: match });
+      if (isUuid(trimmed) || PROJECT_IDENTIFIER_PATTERN.test(trimmed)) {
+        return Effect.succeed({ id: trimmed });
+      }
+      return Effect.fail(failed(operation, `Linear has no project named "${ref}" for this team.`));
+    };
+
+    const resolveMilestoneId = (
+      operation: string,
+      project: LinearApi.LinearTeamProject | undefined,
+      ref: string,
+    ): Effect.Effect<string, IssueTrackerError> => {
+      const trimmed = ref.trim();
+      const match = project?.projectMilestones.nodes.find(
+        (milestone) =>
+          milestone.id === trimmed || milestone.name.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (match !== undefined) return Effect.succeed(match.id);
+      if (isUuid(trimmed)) return Effect.succeed(trimmed);
+      return Effect.fail(
+        failed(
+          operation,
+          project === undefined
+            ? `Cannot resolve milestone "${ref}" without a project.`
+            : `Project "${project.name}" has no milestone named "${ref}".`,
+        ),
+      );
+    };
+
+    const resolveCycleId = (
+      operation: string,
+      planning: LinearApi.LinearTeamProjectsScope,
+      ref: string,
+    ): Effect.Effect<string, IssueTrackerError> => {
+      const trimmed = ref.trim();
+      const lower = trimmed.toLowerCase();
+      const numMatch = /^(?:cycle\s+)?(\d+)$/i.exec(trimmed);
+      const num = numMatch === null ? null : Number(numMatch[1]);
+      const match = planning.cycles.find(
+        (cycle) =>
+          cycle.id === trimmed ||
+          (num !== null && Math.trunc(cycle.number) === num) ||
+          cycle.name?.toLowerCase() === lower,
+      );
+      if (match !== undefined) return Effect.succeed(match.id);
+      if (isUuid(trimmed)) return Effect.succeed(trimmed);
+      return Effect.fail(failed(operation, `Linear has no cycle matching "${ref}" for this team.`));
+    };
+
+    const resolveIssueKeyOrUuid = (
+      operation: string,
+      ref: string,
+      label: string,
+    ): Effect.Effect<string, IssueTrackerError> => {
+      const identifier = parseIdentifier(ref);
+      if (identifier !== null) return Effect.succeed(identifier);
+      if (isUuid(ref)) return Effect.succeed(ref.trim());
+      return Effect.fail(
+        failed(
+          operation,
+          `"${ref}" is not a valid Linear issue identifier for ${label} (expected e.g. ENG-123).`,
+        ),
+      );
     };
 
     const viewerId: Effect.Effect<string | null> = linear.viewer().pipe(
@@ -441,12 +758,27 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           reference !== null && (reference[1] === undefined || reference[1].toUpperCase() === team)
             ? Number(reference[2])
             : undefined;
+        const projectFilter =
+          input.project === undefined
+            ? []
+            : [
+                {
+                  project: {
+                    or: [
+                      { name: { eqIgnoreCase: input.project } },
+                      { slugId: { eq: input.project } },
+                      ...(isUuid(input.project) ? [{ id: { eq: input.project } }] : []),
+                    ],
+                  },
+                },
+              ];
         // Each is its own clause: an assignee filter must narrow "assigned to me", not replace it.
         const clauses: LinearApi.IssueFilter[] = [
           ...(input.assignee === undefined
             ? []
             : [{ assignee: { displayName: { eq: input.assignee } } }]),
           ...(input.labels ?? []).map((name) => ({ labels: { some: { name: { eq: name } } } })),
+          ...projectFilter,
         ];
         const filter: LinearApi.IssueFilter = {
           team: { key: { eq: team } },
@@ -520,6 +852,16 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
             : null,
           events: toEvents(issue.history.nodes),
           linkedPullRequests: toLinkedPullRequests(issue.attachments.nodes),
+          priority: toPriority(issue.priority),
+          estimate: issue.estimate ?? null,
+          dueDate: toDueDate(issue.dueDate),
+          project: issue.project === null ? null : toProject(issue.project),
+          milestone:
+            issue.projectMilestone === null ? null : toProjectMilestone(issue.projectMilestone),
+          cycle: issue.cycle === null ? null : toCycle(issue.cycle),
+          parent: issue.parent === null ? null : toIssueRef(issue.parent),
+          subIssues: issue.children.nodes.map(toIssueRef),
+          relations: toRelations(issue),
         };
       }),
 
@@ -540,16 +882,82 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       }),
 
       create: Effect.fn("LinearIssueTracker.create")(function* (input) {
-        const scope = yield* requireTeam("create", input.scope);
+        const needsPlanning =
+          input.project !== undefined || input.milestone !== undefined || input.cycle !== undefined;
+        const [scope, planning] = yield* Effect.all(
+          [
+            requireTeam("create", input.scope),
+            needsPlanning ? requireTeamProjects("create", input.scope) : Effect.succeed(null),
+          ],
+          { concurrency: 2 },
+        );
         const labels = yield* labelIds("create", scope, input.labels);
         const assignee = yield* assigneeId("create", scope, input.assignees);
+        const stateId =
+          input.state === undefined
+            ? undefined
+            : yield* resolveStateId("create", scope, input.state);
+        const parentId =
+          input.parent === undefined
+            ? undefined
+            : yield* resolveIssueKeyOrUuid("create", input.parent, "parent");
+        const resolvedProject =
+          input.project === undefined || planning === null
+            ? undefined
+            : yield* resolveProjectId("create", planning, input.project);
+        const projectMilestoneId =
+          input.milestone === undefined
+            ? undefined
+            : resolvedProject === undefined
+              ? yield* failed("create", "A milestone requires the issue to belong to a project.")
+              : yield* resolveMilestoneId("create", resolvedProject.teamProject, input.milestone);
+        const cycleId =
+          input.cycle === undefined || planning === null
+            ? undefined
+            : yield* resolveCycleId("create", planning, input.cycle);
+        const blocksTargets = [
+          ...new Set(
+            yield* Effect.forEach(input.blocks ?? [], (target) =>
+              resolveIssueKeyOrUuid("create", target, "blocks"),
+            ),
+          ),
+        ];
+        const blockedByTargets = [
+          ...new Set(
+            yield* Effect.forEach(input.blockedBy ?? [], (target) =>
+              resolveIssueKeyOrUuid("create", target, "blockedBy"),
+            ),
+          ),
+        ];
         const created = yield* linear.createIssue({
           teamId: scope.team.id,
           title: input.title,
           description: input.body,
           labelIds: labels,
           ...(assignee === null ? {} : { assigneeId: assignee }),
+          ...(stateId === undefined ? {} : { stateId }),
+          ...(input.priority === undefined ? {} : { priority: fromPriority(input.priority) }),
+          ...(input.estimate === undefined ? {} : { estimate: input.estimate }),
+          ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
+          ...(parentId === undefined ? {} : { parentId }),
+          ...(resolvedProject === undefined ? {} : { projectId: resolvedProject.id }),
+          ...(projectMilestoneId === undefined ? {} : { projectMilestoneId }),
+          ...(cycleId === undefined ? {} : { cycleId }),
         });
+        for (const target of blocksTargets) {
+          yield* linear.createIssueRelation({
+            issueId: created.identifier,
+            relatedIssueId: target,
+            type: "blocks",
+          });
+        }
+        for (const target of blockedByTargets) {
+          yield* linear.createIssueRelation({
+            issueId: target,
+            relatedIssueId: created.identifier,
+            type: "blocks",
+          });
+        }
         return { key: created.identifier, displayKey: created.identifier, url: created.url };
       }),
 
@@ -559,12 +967,62 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       }),
 
       update: Effect.fn("LinearIssueTracker.update")(function* (input) {
-        const { identifier } = yield* requireTeamIssue("update", input);
-        const scope =
-          input.labels !== undefined || input.assignees !== undefined
-            ? yield* requireTeam("update", input.scope)
-            : null;
-        yield* linear.updateIssue(identifier, {
+        const issue = yield* requireTeamIssue("update", input);
+        const needsScope = input.labels !== undefined || input.assignees !== undefined;
+        const needsPlanning =
+          (input.project !== undefined && input.project !== null) ||
+          (input.milestone !== undefined && input.milestone !== null) ||
+          (input.cycle !== undefined && input.cycle !== null);
+        const [scope, planning] = yield* Effect.all(
+          [
+            needsScope ? requireTeam("update", input.scope) : Effect.succeed(null),
+            needsPlanning ? requireTeamProjects("update", input.scope) : Effect.succeed(null),
+          ],
+          { concurrency: 2 },
+        );
+        let parentId: string | null | undefined;
+        if (input.parent === null) {
+          parentId = null;
+        } else if (input.parent !== undefined) {
+          parentId = yield* resolveIssueKeyOrUuid("update", input.parent, "parent");
+          if (parentId === issue.identifier || parentId === issue.id) {
+            return yield* failed("update", "An issue cannot be its own parent.");
+          }
+        }
+        let projectId: string | null | undefined;
+        let resolvedTeamProject: LinearApi.LinearTeamProject | undefined;
+        if (input.project === null) {
+          projectId = null;
+        } else if (input.project !== undefined && planning !== null) {
+          const resolved = yield* resolveProjectId("update", planning, input.project);
+          projectId = resolved.id;
+          resolvedTeamProject = resolved.teamProject;
+        } else if (planning !== null && issue.project !== null) {
+          resolvedTeamProject = findTeamProject(planning, issue.project.id);
+        }
+        let projectMilestoneId: string | null | undefined;
+        if (input.milestone === null) {
+          projectMilestoneId = null;
+        } else if (input.milestone !== undefined) {
+          if (projectId === null || (projectId === undefined && issue.project === null)) {
+            return yield* failed(
+              "update",
+              "A milestone requires the issue to belong to a project.",
+            );
+          }
+          projectMilestoneId = yield* resolveMilestoneId(
+            "update",
+            resolvedTeamProject,
+            input.milestone,
+          );
+        }
+        let cycleId: string | null | undefined;
+        if (input.cycle === null) {
+          cycleId = null;
+        } else if (input.cycle !== undefined && planning !== null) {
+          cycleId = yield* resolveCycleId("update", planning, input.cycle);
+        }
+        yield* linear.updateIssue(issue.identifier, {
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { description: input.body }),
           ...(scope === null || input.labels === undefined
@@ -573,6 +1031,169 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           ...(scope === null || input.assignees === undefined
             ? {}
             : { assigneeId: yield* assigneeId("update", scope, input.assignees) }),
+          ...(input.priority === undefined ? {} : { priority: fromPriority(input.priority) }),
+          ...(input.estimate === undefined ? {} : { estimate: input.estimate }),
+          ...(input.dueDate === undefined ? {} : { dueDate: input.dueDate }),
+          ...(parentId === undefined ? {} : { parentId }),
+          ...(projectId === undefined ? {} : { projectId }),
+          ...(projectMilestoneId === undefined ? {} : { projectMilestoneId }),
+          ...(cycleId === undefined ? {} : { cycleId }),
+        });
+      }),
+
+      setRelation: Effect.fn("LinearIssueTracker.setRelation")(function* (input) {
+        const issue = yield* requireTeamIssue("setRelation", input);
+        const target = yield* resolveIssueKeyOrUuid("setRelation", input.targetKey, "targetKey");
+        if (target === issue.identifier || target === issue.id) {
+          return yield* failed("setRelation", "An issue cannot be related to itself.");
+        }
+        const linearType =
+          input.kind === "blocks" || input.kind === "blocked-by"
+            ? ("blocks" as const)
+            : input.kind === "duplicate" || input.kind === "duplicated-by"
+              ? ("duplicate" as const)
+              : ("related" as const);
+        const isInverse = input.kind === "blocked-by" || input.kind === "duplicated-by";
+        const matchesRef = (ref: LinearApi.LinearIssueRef) =>
+          ref.identifier.toUpperCase() === target.toUpperCase() || ref.id === target;
+        const findExisting = () => {
+          if (linearType === "related") {
+            return (
+              issue.relations.nodes.find(
+                (rel) => rel.type === "related" && matchesRef(rel.relatedIssue),
+              ) ??
+              issue.inverseRelations.nodes.find(
+                (rel) => rel.type === "related" && matchesRef(rel.issue),
+              )
+            );
+          }
+          return isInverse
+            ? issue.inverseRelations.nodes.find(
+                (rel) => rel.type === linearType && matchesRef(rel.issue),
+              )
+            : issue.relations.nodes.find(
+                (rel) => rel.type === linearType && matchesRef(rel.relatedIssue),
+              );
+        };
+        const existing = findExisting();
+        if (input.action === "remove") {
+          if (existing !== undefined) yield* linear.deleteIssueRelation(existing.id);
+          return;
+        }
+        if (existing !== undefined) return;
+        yield* linear.createIssueRelation(
+          isInverse
+            ? { issueId: target, relatedIssueId: issue.identifier, type: linearType }
+            : { issueId: issue.identifier, relatedIssueId: target, type: linearType },
+        );
+      }),
+
+      createProject: Effect.fn("LinearIssueTracker.createProject")(function* (input) {
+        const scope = yield* requireTeam("createProject", input.scope);
+        const leadId =
+          input.lead === undefined
+            ? undefined
+            : yield* resolveMemberId("createProject", scope, input.lead);
+        const created = yield* linear.createProject({
+          teamIds: [scope.team.id],
+          name: input.name,
+          ...(input.description === undefined ? {} : { description: input.description }),
+          ...(input.content === undefined ? {} : { content: input.content }),
+          ...(input.priority === undefined ? {} : { priority: fromPriority(input.priority) }),
+          ...(leadId === undefined ? {} : { leadId }),
+          ...(input.startDate === undefined ? {} : { startDate: input.startDate }),
+          ...(input.targetDate === undefined ? {} : { targetDate: input.targetDate }),
+        });
+        const milestones: LinearApi.LinearProjectMilestone[] = [];
+        for (const milestone of input.milestones ?? []) {
+          milestones.push(
+            yield* linear.createProjectMilestone({
+              projectId: created.id,
+              name: milestone.name,
+              ...(milestone.description === undefined
+                ? {}
+                : { description: milestone.description }),
+              ...(milestone.targetDate === undefined ? {} : { targetDate: milestone.targetDate }),
+            }),
+          );
+        }
+        return toProject(created, {
+          ...(milestones.length > 0 ? { milestones } : {}),
+          relations: [],
+          inverseRelations: [],
+        });
+      }),
+
+      setProjectRelation: Effect.fn("LinearIssueTracker.setProjectRelation")(function* (input) {
+        const planning = yield* requireTeamProjects("setProjectRelation", input.scope);
+        const source = findTeamProject(planning, input.project);
+        if (source === undefined) {
+          return yield* failed(
+            "setProjectRelation",
+            `Linear has no project named "${input.project}" for this team.`,
+          );
+        }
+        const target = findTeamProject(planning, input.targetProject);
+        if (target === undefined) {
+          return yield* failed(
+            "setProjectRelation",
+            `Linear has no project named "${input.targetProject}" for this team.`,
+          );
+        }
+        if (source.id === target.id) {
+          return yield* failed("setProjectRelation", "A project cannot depend on itself.");
+        }
+        const sourceMilestoneId =
+          input.milestone === undefined
+            ? undefined
+            : yield* resolveMilestoneId("setProjectRelation", source, input.milestone);
+        const targetMilestoneId =
+          input.targetMilestone === undefined
+            ? undefined
+            : yield* resolveMilestoneId("setProjectRelation", target, input.targetMilestone);
+        const isInverse = input.kind === "blocked-by";
+        const blockingProject = isInverse ? target : source;
+        const blockedProject = isInverse ? source : target;
+        const blockingMilestoneId = isInverse ? targetMilestoneId : sourceMilestoneId;
+        const blockedMilestoneId = isInverse ? sourceMilestoneId : targetMilestoneId;
+        const blockingAnchor =
+          (isInverse ? input.targetAnchor : input.anchor) ??
+          (blockingMilestoneId !== undefined ? "milestone" : "end");
+        const blockedAnchor =
+          (isInverse ? input.anchor : input.targetAnchor) ??
+          (blockedMilestoneId !== undefined ? "milestone" : "start");
+        const existing = blockingProject.relations.nodes.find(
+          (relation) =>
+            relation.type === "dependency" &&
+            relation.relatedProject.id === blockedProject.id &&
+            (blockingMilestoneId === undefined ||
+              relation.projectMilestone?.id === blockingMilestoneId) &&
+            (blockedMilestoneId === undefined ||
+              relation.relatedProjectMilestone?.id === blockedMilestoneId),
+        );
+        if (input.action === "remove") {
+          if (existing !== undefined) yield* linear.deleteProjectRelation(existing.id);
+          return;
+        }
+        if (
+          existing !== undefined &&
+          existing.anchorType === blockingAnchor &&
+          existing.relatedAnchorType === blockedAnchor &&
+          (existing.projectMilestone?.id ?? undefined) === blockingMilestoneId &&
+          (existing.relatedProjectMilestone?.id ?? undefined) === blockedMilestoneId
+        ) {
+          return;
+        }
+        yield* linear.createProjectRelation({
+          projectId: blockingProject.id,
+          relatedProjectId: blockedProject.id,
+          type: "dependency",
+          anchorType: blockingAnchor,
+          relatedAnchorType: blockedAnchor,
+          ...(blockingMilestoneId === undefined ? {} : { projectMilestoneId: blockingMilestoneId }),
+          ...(blockedMilestoneId === undefined
+            ? {}
+            : { relatedProjectMilestoneId: blockedMilestoneId }),
         });
       }),
 
@@ -633,15 +1254,30 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         ),
 
       listCandidates: (input) =>
-        requireTeam("listCandidates", input.scope).pipe(
-          Effect.map((scope) => ({
+        Effect.all(
+          [
+            requireTeam("listCandidates", input.scope),
+            requireTeamProjects("listCandidates", input.scope),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.map(([scope, planning]) => ({
             labels: [...scope.team.labels.nodes, ...scope.workspaceLabels].map((label) => ({
               name: label.name,
               color: label.color,
               description: label.description ?? null,
             })),
             assignees: scope.team.members.nodes.map((user) => ({ ...toActor(user), id: user.id })),
-            truncated: scope.truncated,
+            projects: planning.projects.map((project) =>
+              toProject(project, {
+                milestones: project.projectMilestones.nodes,
+                relations: project.relations.nodes,
+                inverseRelations: project.inverseRelations.nodes,
+              }),
+            ),
+            cycles: planning.cycles.map(toCycle),
+            states: inWorkflowOrder(scope.team.states.nodes).map(toState),
+            truncated: scope.truncated || planning.truncated,
           })),
         ),
     };

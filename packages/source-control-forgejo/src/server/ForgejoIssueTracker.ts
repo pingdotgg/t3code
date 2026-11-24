@@ -55,6 +55,13 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+  relations: false,
+  subIssues: false,
+  projects: false,
+  cycles: false,
+  priority: false,
+  estimate: false,
+  dueDate: false,
 };
 
 /** Forgejo's own ceiling on a page, which a self-hosted server may lower. */

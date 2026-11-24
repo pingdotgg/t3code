@@ -320,6 +320,25 @@ export function createIssueEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
       onSuccess: refreshDetail,
     }),
+    setRelation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:set-relation",
+      tag: WS_METHODS.issuesSetRelation,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+      onSuccess: refreshDetail,
+    }),
+    createProject: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:create-project",
+      tag: WS_METHODS.issuesCreateProject,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+    setProjectRelation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:set-project-relation",
+      tag: WS_METHODS.issuesSetProjectRelation,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
   };
 }
 

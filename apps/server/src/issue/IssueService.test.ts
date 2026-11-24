@@ -913,4 +913,58 @@ describe("IssueService with a standalone tracker", () => {
       });
     }),
   );
+
+  it.effect(
+    "gates relations, sub-issues, projects, priority, and project dependencies by capability",
+    () =>
+      Effect.gen(function* () {
+        const ref = {
+          projectId: "web" as ProjectId,
+          tracker: LINEAR,
+          scope: "ENG",
+          key: "ENG-1",
+        };
+        const scopeRef = { projectId: "web" as ProjectId, tracker: LINEAR, scope: "ENG" };
+        const limited = yield* makeService({
+          projects: [project({ id: "web" })],
+          trackers: [fakeStandaloneTracker()],
+          bindings: { web: { tracker: LINEAR, scope: "ENG" } },
+        });
+        expect(
+          yield* Effect.flip(
+            limited.setRelation({ ...ref, action: "add", kind: "blocks", targetKey: "ENG-2" }),
+          ),
+        ).toMatchObject({ _tag: "IssueOperationError", operation: "setRelation" });
+        expect(
+          yield* Effect.flip(limited.createProject({ ...scopeRef, name: "Roadmap" })),
+        ).toMatchObject({ _tag: "IssueOperationError", operation: "createProject" });
+        expect(
+          yield* Effect.flip(
+            limited.setProjectRelation({
+              ...scopeRef,
+              action: "add",
+              project: "A",
+              kind: "blocks",
+              targetProject: "B",
+            }),
+          ),
+        ).toMatchObject({ _tag: "IssueOperationError", operation: "setProjectRelation" });
+        expect(yield* Effect.flip(limited.update({ ...ref, parent: "ENG-9" }))).toMatchObject({
+          _tag: "IssueOperationError",
+          operation: "update",
+        });
+        expect(
+          yield* Effect.flip(
+            limited.create({
+              ...scopeRef,
+              title: "Sub",
+              body: "",
+              labels: [],
+              assignees: [],
+              blockedBy: ["ENG-9"],
+            }),
+          ),
+        ).toMatchObject({ _tag: "IssueOperationError", operation: "create" });
+      }),
+  );
 });

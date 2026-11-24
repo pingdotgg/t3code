@@ -122,10 +122,50 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
+    "List\nListing\nListed\nissue tracker metadata",
+    {
+      detail: msg(
+        "{status, select, inProgress {Listing issue tracker metadata} completed {Listed issue tracker metadata} failed {Failed to list issue tracker metadata} declined {Declined to list issue tracker metadata} stopped {Stopped listing issue tracker metadata} other {Listing issue tracker metadata}}",
+      ),
+    },
+  ],
+  [
     "File\nFiling\nFiled\nan issue",
     {
       detail: msg(
         "{status, select, inProgress {Filing an issue} completed {Filed an issue} failed {Failed to file an issue} declined {Declined to file an issue} stopped {Stopped filing an issue} other {Filing an issue}}",
+      ),
+    },
+  ],
+  [
+    "Update\nUpdating\nUpdated\nan issue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Updating an issue} completed {Updated an issue} failed {Failed to update an issue} declined {Declined to update an issue} stopped {Stopped updating an issue} other {Updating an issue}}",
+      ),
+    },
+  ],
+  [
+    "Update\nUpdating\nUpdated\nissue dependencies",
+    {
+      detail: msg(
+        "{status, select, inProgress {Updating issue dependencies} completed {Updated issue dependencies} failed {Failed to update issue dependencies} declined {Declined to update issue dependencies} stopped {Stopped updating issue dependencies} other {Updating issue dependencies}}",
+      ),
+    },
+  ],
+  [
+    "Create\nCreating\nCreated\na tracker project",
+    {
+      detail: msg(
+        "{status, select, inProgress {Creating a tracker project} completed {Created a tracker project} failed {Failed to create a tracker project} declined {Declined to create a tracker project} stopped {Stopped creating a tracker project} other {Creating a tracker project}}",
+      ),
+    },
+  ],
+  [
+    "Update\nUpdating\nUpdated\nproject dependencies",
+    {
+      detail: msg(
+        "{status, select, inProgress {Updating project dependencies} completed {Updated project dependencies} failed {Failed to update project dependencies} declined {Declined to update project dependencies} stopped {Stopped updating project dependencies} other {Updating project dependencies}}",
       ),
     },
   ],

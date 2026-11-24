@@ -1,15 +1,23 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
+import {
+  issueEventSentence,
+  issuePriorityLabel,
+  issueRelationLabel,
+} from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import type {
   IssueComment,
+  IssueDetail,
   IssueEvent,
   IssueEventReference,
   IssueLinkedPullRequest,
+  IssuePriority,
   IssueReaction,
+  IssueReference,
+  IssueRelation,
   IssueState,
   IssueSummary,
 } from "@t3tools/contracts";
@@ -241,6 +249,178 @@ function IssueIdentity(props: {
           />
         ) : null}
       </View>
+    </View>
+  );
+}
+
+const PRIORITIES: ReadonlyArray<IssuePriority> = ["none", "urgent", "high", "medium", "low"];
+
+function RelatedIssuesSection(props: {
+  readonly title: string;
+  readonly params: IssueParams;
+  readonly items: ReadonlyArray<{
+    readonly key: string;
+    readonly badge?: string;
+    readonly issue: IssueReference;
+  }>;
+}) {
+  const navigation = useNavigation();
+  if (props.items.length === 0) return null;
+  const host = props.params.host ? { host: props.params.host } : {};
+  return (
+    <View className="gap-2">
+      <PullRequestSectionHeading>{props.title}</PullRequestSectionHeading>
+      {props.items.map((item) => {
+        const status = issueStatus(item.issue.state);
+        return (
+          <Pressable
+            key={item.key}
+            accessibilityRole="button"
+            onPress={() =>
+              navigation.dispatch(
+                StackActions.push("Issue", {
+                  environmentId: props.params.environmentId,
+                  projectId: props.params.projectId,
+                  tracker: props.params.tracker,
+                  ...host,
+                  scope: item.issue.scope,
+                  issueKey: item.issue.key,
+                }),
+              )
+            }
+            className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
+          >
+            <SymbolView name={status.icon} size={15} tintColorClassName={status.tint} />
+            <View className="min-w-0 flex-1">
+              <Text className="text-sm" numberOfLines={2}>
+                {item.issue.title}
+              </Text>
+              <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={1}>
+                {item.badge ? `${item.badge} · ` : ""}
+                {item.issue.displayKey}
+              </Text>
+            </View>
+            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function IssueMetadataRows(props: {
+  readonly detail: IssueDetail;
+  readonly params: IssueParams;
+  readonly access: IssueAccess | null;
+  readonly busy: boolean;
+  readonly onSetPriority: (priority: IssuePriority) => void;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const navigation = useNavigation();
+  const { detail, access } = props;
+  const hasAny =
+    detail.capabilities.priority === true ||
+    detail.project != null ||
+    detail.cycle != null ||
+    detail.dueDate != null ||
+    detail.estimate != null ||
+    detail.parent != null;
+  if (!hasAny) return null;
+  const host = props.params.host ? { host: props.params.host } : {};
+  return (
+    <View className="gap-2">
+      {detail.capabilities.priority ? (
+        <View className="flex-row flex-wrap items-center gap-2">
+          <Text className="text-xs text-foreground-muted">
+            <T>Priority</T>
+          </Text>
+          {access?.priority ? (
+            <Menu
+              title={gt("Priority")}
+              actions={PRIORITIES.map((priority) => ({
+                id: priority,
+                title: issuePriorityLabel(priority, messages),
+              }))}
+              onPressAction={({ nativeEvent }) => {
+                const next = PRIORITIES.find((priority) => priority === nativeEvent.event);
+                if (next && next !== (detail.priority ?? "none")) props.onSetPriority(next);
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                disabled={props.busy}
+                className="flex-row items-center gap-1 active:opacity-70"
+              >
+                <Text className="text-xs font-t3-medium">
+                  {issuePriorityLabel(detail.priority ?? "none", messages)}
+                </Text>
+                <SymbolView name="chevron.down" size={9} tintColorClassName="accent-icon-muted" />
+              </Pressable>
+            </Menu>
+          ) : (
+            <Text className="text-xs font-t3-medium">
+              {issuePriorityLabel(detail.priority ?? "none", messages)}
+            </Text>
+          )}
+        </View>
+      ) : null}
+      {detail.project ? (
+        <View className="flex-row flex-wrap items-center gap-2">
+          <Text className="text-xs text-foreground-muted">
+            <T>Project</T>
+          </Text>
+          <Text className="text-xs font-t3-medium">
+            {detail.project.name}
+            {detail.milestone ? ` · ${detail.milestone.name}` : ""}
+          </Text>
+        </View>
+      ) : null}
+      {detail.cycle || detail.dueDate || detail.estimate != null ? (
+        <View className="flex-row flex-wrap items-center gap-2">
+          {detail.cycle ? (
+            <Text className="text-xs text-foreground-muted">
+              {detail.cycle.name ?? gt("Cycle {number}", { number: String(detail.cycle.number) })}
+            </Text>
+          ) : null}
+          {detail.dueDate ? (
+            <Text className="text-xs text-foreground-muted">
+              {gt("Due {date}", { date: detail.dueDate })}
+            </Text>
+          ) : null}
+          {detail.estimate != null ? (
+            <Text className="text-xs text-foreground-muted">
+              {gt("Estimate {estimate}", { estimate: String(detail.estimate) })}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {detail.parent ? (
+        <View className="flex-row flex-wrap items-center gap-2">
+          <Text className="text-xs text-foreground-muted">
+            <T>Parent</T>
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              navigation.dispatch(
+                StackActions.push("Issue", {
+                  environmentId: props.params.environmentId,
+                  projectId: props.params.projectId,
+                  tracker: props.params.tracker,
+                  ...host,
+                  scope: detail.parent!.scope,
+                  issueKey: detail.parent!.key,
+                }),
+              )
+            }
+          >
+            <Text className="text-xs font-t3-medium text-primary-text">
+              {detail.parent.displayKey} · {detail.parent.title}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -513,6 +693,7 @@ export function IssueRouteScreen({ route }: StaticScreenProps<IssueParams>) {
 
 function IssueRoute({ params }: { readonly params: IssueParams }) {
   const gt = useGT();
+  const messages = useMessages();
   const identity = issueIdentity(params);
   const target = issueTarget(params);
   const navigation = useNavigation();
@@ -542,7 +723,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
-  const [busy, setBusy] = useState<"comment" | "state" | null>(null);
+  const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
+  const [busy, setBusy] = useState<"comment" | "state" | "update" | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [olderCommentsError, setOlderCommentsError] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
@@ -592,6 +774,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
       : Promise.resolve(false);
   const moveTo = (state: string) =>
     void run("state", () => setState({ ...target, input: { ...target.input, state } }));
+  const setPriority = (priority: IssuePriority) =>
+    void run("update", () => update({ ...target, input: { ...target.input, priority } }));
 
   const showComposer = detail?.capabilities.comment === true;
   const commentBlocked =
@@ -730,6 +914,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   )
                 ) : (
                   <>
+                    <IssueMetadataRows
+                      detail={detail}
+                      params={params}
+                      access={access}
+                      busy={busy === "update"}
+                      onSetPriority={setPriority}
+                    />
                     <PullRequestDescription
                       markdown={detail.body}
                       footer={
@@ -742,6 +933,27 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                         ) : undefined
                       }
                     />
+                    {(detail.subIssues?.length ?? 0) > 0 ? (
+                      <RelatedIssuesSection
+                        title={gt("Sub-issues ({count})", { count: detail.subIssues!.length })}
+                        params={params}
+                        items={detail.subIssues!.map((subIssue) => ({
+                          key: subIssue.key,
+                          issue: subIssue,
+                        }))}
+                      />
+                    ) : null}
+                    {(detail.relations?.length ?? 0) > 0 ? (
+                      <RelatedIssuesSection
+                        title={gt("Relations ({count})", { count: detail.relations!.length })}
+                        params={params}
+                        items={detail.relations!.map((relation: IssueRelation) => ({
+                          key: relation.id,
+                          badge: issueRelationLabel(relation.kind, messages),
+                          issue: relation.issue,
+                        }))}
+                      />
+                    ) : null}
                     {detail.linkedPullRequests.length > 0 ? (
                       <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
                     ) : null}

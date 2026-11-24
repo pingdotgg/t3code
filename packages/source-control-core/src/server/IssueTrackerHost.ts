@@ -45,6 +45,9 @@ export function asIssueTrackerAccount(
     update,
     setState,
     setReaction,
+    setRelation,
+    createProject,
+    setProjectRelation,
     listTemplates,
     listCandidates,
   } = api;
@@ -63,6 +66,9 @@ export function asIssueTrackerAccount(
     update: update && ((input) => as(update(input))),
     setState: setState && ((input) => as(setState(input))),
     setReaction: setReaction && ((input) => as(setReaction(input))),
+    setRelation: setRelation && ((input) => as(setRelation(input))),
+    createProject: createProject && ((input) => as(createProject(input))),
+    setProjectRelation: setProjectRelation && ((input) => as(setProjectRelation(input))),
     listTemplates: listTemplates && ((input) => as(listTemplates(input))),
     listCandidates: listCandidates && ((input) => as(listCandidates(input))),
   };

@@ -48,6 +48,13 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+  relations: false,
+  subIssues: false,
+  projects: false,
+  cycles: false,
+  priority: false,
+  estimate: false,
+  dueDate: false,
 };
 
 /** Issue statuses are a github.com preview; Enterprise Server rejects a query that names them. */

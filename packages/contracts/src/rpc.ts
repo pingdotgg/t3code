@@ -206,9 +206,13 @@ import {
   IssueListInput,
   IssueListResult,
   IssueOperationError,
+  IssueProject,
+  IssueProjectCreateInput,
+  IssueProjectSetRelationInput,
   IssueReactionInput,
   IssueRef,
   IssueScopeRef,
+  IssueSetRelationInput,
   IssueSetStateInput,
   IssueTemplateList,
   IssueTrackerBindProjectInput,
@@ -705,6 +709,9 @@ export const WS_METHODS = {
   issuesUpdate: "issues.update",
   issuesSetState: "issues.setState",
   issuesReact: "issues.react",
+  issuesSetRelation: "issues.setRelation",
+  issuesCreateProject: "issues.createProject",
+  issuesSetProjectRelation: "issues.setProjectRelation",
   issuesLinkedThreads: "issues.linkedThreads",
   issueTrackersList: "issueTrackers.list",
   issueTrackersConnect: "issueTrackers.connect",
@@ -1502,6 +1509,24 @@ const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
 
 const WsIssuesReactRpc = Rpc.make(WS_METHODS.issuesReact, {
   payload: IssueReactionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetRelationRpc = Rpc.make(WS_METHODS.issuesSetRelation, {
+  payload: IssueSetRelationInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesCreateProjectRpc = Rpc.make(WS_METHODS.issuesCreateProject, {
+  payload: IssueProjectCreateInput,
+  success: IssueProject,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetProjectRelationRpc = Rpc.make(WS_METHODS.issuesSetProjectRelation, {
+  payload: IssueProjectSetRelationInput,
   success: Schema.Void,
   error: IssueRpcError,
 });
@@ -2470,6 +2495,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssuesUpdateRpc,
   WsIssuesSetStateRpc,
   WsIssuesReactRpc,
+  WsIssuesSetRelationRpc,
+  WsIssuesCreateProjectRpc,
+  WsIssuesSetProjectRelationRpc,
   WsIssueTrackersListRpc,
   WsIssueTrackersConnectRpc,
   WsIssueTrackersBindProjectRpc,

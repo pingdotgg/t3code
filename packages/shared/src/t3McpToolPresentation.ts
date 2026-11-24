@@ -69,7 +69,12 @@ export type T3McpToolSummaryAction =
   | "read-pr-guide"
   | "list-issues"
   | "read-issue"
+  | "list-issue-metadata"
   | "create-issue"
+  | "update-issue"
+  | "set-issue-deps"
+  | "create-issue-project"
+  | "set-issue-project-deps"
   | "comment-issue"
   | "set-issue-state"
   | "link-issue"
@@ -163,7 +168,21 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
   read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  list_issue_metadata: tool(
+    ["List", "Listing", "Listed", "issue tracker metadata"],
+    "list-issue-metadata",
+  ),
   create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
+  update_issue: tool(["Update", "Updating", "Updated", "an issue"], "update-issue"),
+  set_issue_deps: tool(["Update", "Updating", "Updated", "issue dependencies"], "set-issue-deps"),
+  create_issue_project: tool(
+    ["Create", "Creating", "Created", "a tracker project"],
+    "create-issue-project",
+  ),
+  set_issue_project_deps: tool(
+    ["Update", "Updating", "Updated", "project dependencies"],
+    "set-issue-project-deps",
+  ),
   comment_on_issue: tool(
     ["Comment on", "Commenting on", "Commented on", "an issue"],
     "comment-issue",

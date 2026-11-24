@@ -61,6 +61,13 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+  relations: false,
+  subIssues: false,
+  projects: false,
+  cycles: false,
+  priority: false,
+  estimate: false,
+  dueDate: false,
 };
 
 /**
