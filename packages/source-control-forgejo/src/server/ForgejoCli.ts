@@ -63,14 +63,14 @@ const GtAccountsSchema = Schema.Array(
   }),
 );
 
-/** Empty for anything but gt's JSON, which is also what another program named `gt` prints. */
+/** Undefined for anything but gt's JSON; signed out, gt prints an empty list. */
 export function parseGtAccounts(raw: string) {
   const decoded = decodeJsonResult(GtAccountsSchema)(raw);
-  return Result.isSuccess(decoded) ? decoded.success : [];
+  return Result.isSuccess(decoded) ? decoded.success : undefined;
 }
 
 export function parseForgejoLogins(raw: string): ReadonlyArray<typeof ForgejoLoginSchema.Type> {
-  return parseGtAccounts(raw).map((account) => ({
+  return (parseGtAccounts(raw) ?? []).map((account) => ({
     name: account.user,
     url: account.host,
     user: account.user,
@@ -376,30 +376,43 @@ export const make = Effect.gen(function* () {
       }
       return publicLogins(keys.success, input.remoteUrl);
     }
-    // With --json gt exits 0 signed out, and non-zero only when it is not the Gitea CLI.
-    const logins = parseForgejoLogins(
-      (yield* execute({
+    const accounts = yield* execute({
+      cwd: input.cwd,
+      args: ["auth", "status", "--json", GT_ACCOUNT_FIELDS],
+      allowNonZeroExit: true,
+    });
+    // With --json gt exits 0 even signed out, so a failure is a broken gt or another program
+    // of that name, such as Graphite's CLI.
+    if (Number(accounts.exitCode) !== 0)
+      return yield* new ForgejoCliError({
+        command: "gt",
         cwd: input.cwd,
-        args: ["auth", "status", "--json", GT_ACCOUNT_FIELDS],
-        allowNonZeroExit: true,
-      })).stdout,
-    );
+        reason: "missing-cli",
+        detail:
+          "The `gt` on this server's PATH is not a working Gitea CLI. Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`gt` 2.0 or later) and retry.",
+      });
+    const logins = parseForgejoLogins(accounts.stdout);
     const remote = input.remoteUrl ? parseForgejoRemote(input.remoteUrl) : null;
-    if (
-      !remote?.ssh ||
-      logins.some((login) => parseForgejoRemote(login.url)?.hostname === remote.hostname)
-    )
-      return logins;
-    // Only an instance's `ssh_host` setting maps an SSH alias to it, one question per instance.
+    if (!remote?.ssh) return logins;
+    // Only an instance's `ssh_host` setting maps an SSH alias to it. One named after the
+    // remote matches without it; every other instance is asked.
     const sshHosts = new Map(
       yield* Effect.forEach(
-        new Set(logins.map((login) => login.url)),
+        new Set(
+          logins
+            .map((login) => login.url)
+            .filter((url) => parseForgejoRemote(url)?.hostname !== remote.hostname),
+        ),
         (url) =>
           execute({
             cwd: input.cwd,
             args: ["config", "get", "ssh_host", "--host", url],
             allowNonZeroExit: true,
-          }).pipe(Effect.map((result) => [url, result.stdout.trim()] as const)),
+          }).pipe(
+            Effect.map(
+              (result) => [url, Number(result.exitCode) === 0 ? result.stdout.trim() : ""] as const,
+            ),
+          ),
         { concurrency: 4 },
       ),
     );
@@ -812,7 +825,9 @@ export const make = Effect.gen(function* () {
     const status = Number(/^HTTP\/\S+ (\d{3})/m.exec(result.stderr)?.[1]);
     // Exit code 4 without a response: gt holds no usable credential for this server.
     const signedOut = !status && Number(result.exitCode) === 4;
-    if (!status || status >= 400) {
+    // gt follows a read's redirect itself, so any status outside 2xx is the final answer, and a
+    // failed exit after a 2xx means the response did not arrive whole.
+    if (!status || status < 200 || status >= 300 || Number(result.exitCode) !== 0) {
       const body = result.stdout.trim();
       return yield* new ForgejoCliError({
         command: "gt",
@@ -836,9 +851,11 @@ export const make = Effect.gen(function* () {
                 ? "Forgejo API rate limit exceeded."
                 : !status
                   ? "Forgejo API request failed without an HTTP status."
-                  : body
-                    ? `Forgejo API request failed (HTTP ${status}): ${body}`
-                    : `Forgejo API request failed (HTTP ${status}).`,
+                  : status < 300
+                    ? `Forgejo CLI failed after the server answered (HTTP ${status}).`
+                    : body
+                      ? `Forgejo API request failed (HTTP ${status}): ${body}`
+                      : `Forgejo API request failed (HTTP ${status}).`,
       });
     }
     if (result.stdoutTruncated)

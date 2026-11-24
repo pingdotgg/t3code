@@ -13,7 +13,8 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
-  isMissingExecutable,
+  combinedAuthOutput,
+  firstSafeAuthLine,
   providerAuth,
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
@@ -35,6 +36,7 @@ export const discovery = {
   executable: "gt",
   // Graphite's CLI is also `gt`; it answers `--version` but rejects the `version` command.
   versionArgs: ["version"],
+  rejectedVersionMeansMissing: true,
   authArgs: [
     "auth",
     "status",
@@ -45,6 +47,11 @@ export const discovery = {
   remoteRefinementArgs: () => ["auth", "status", "--json", ForgejoCli.GT_ACCOUNT_FIELDS],
   parseAuth: (input) => {
     const accounts = ForgejoCli.parseGtAccounts(input.stdout);
+    if (!accounts)
+      return providerAuth({
+        status: "unknown",
+        detail: firstSafeAuthLine(combinedAuthOutput(input)) ?? "Could not read gt's accounts.",
+      });
     const account =
       accounts.find((entry) => entry.active && entry.verified) ??
       accounts.find((entry) => entry.active) ??
@@ -127,6 +134,7 @@ export const makeDiscovery = Effect.gen(function* () {
           ...discovery,
           executable: "fj",
           versionArgs: ["version"],
+          rejectedVersionMeansMissing: false,
           authArgs: login ? ["--host", login.url, "whoami"] : ["auth", "list"],
           parseAuth: (result) =>
             Result.isFailure(credentials)
@@ -195,7 +203,7 @@ export const makeDiscovery = Effect.gen(function* () {
             remoteUrl: input.context.remoteUrl,
           }).pipe(
             Effect.catchIf(
-              (error) => isMissingExecutable(error.cause),
+              (error) => error.reason === "missing-cli",
               () => Effect.succeed([]),
             ),
             Effect.result,
