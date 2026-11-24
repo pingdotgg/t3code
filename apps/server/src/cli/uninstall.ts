@@ -23,6 +23,7 @@ import {
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
 import { awaitDetachedSpawn } from "../process/windowsVerbatimSpawn.ts";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { findWindowsShim } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -75,7 +76,8 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
-  // The link's own text keeps a pruned (dangling) target; the real path sees through a
+  const scriptTarget = platform === "win32" ? undefined : yield* readPosixLauncherTarget(launcher);
+  // The link or script text keeps a pruned (dangling) target; the real path sees through a
   // symlinked T3 home.
   const targets =
     platform === "win32"
@@ -91,7 +93,10 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
             Effect.orElseSucceed(() => undefined),
           ),
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined)),
-          yield* readPosixLauncherTarget(launcher),
+          scriptTarget,
+          scriptTarget !== undefined
+            ? yield* fs.realPath(scriptTarget).pipe(Effect.orElseSucceed(() => undefined))
+            : undefined,
         ];
   return targets.some(
     (target) =>
@@ -151,9 +156,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   const status = yield* service.status;
   const installedBaseDir =
     status.supported && status.installed ? status.installedBaseDir : undefined;
-  const servesThisHome =
-    installedBaseDir !== undefined &&
-    path.resolve(installedBaseDir) === path.resolve(input.baseDir);
+  const servesThisHome = installedBaseDir !== undefined && status.otherBaseDir === undefined;
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
@@ -254,12 +257,14 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     }
   }
 
-  if (plan.service) {
+  // The prompt can wait a long time; keep a service or launcher that changed hands meanwhile.
+  if (plan.service && (yield* service.status).otherBaseDir !== undefined) {
+    yield* Console.log("Left the background service: it now serves another T3 home.");
+  } else if (plan.service) {
     yield* service.uninstall;
     yield* Console.log("Removed the background service.");
   }
   for (const launcher of plan.launchers) {
-    // The prompt can wait a long time; never delete a file that replaced the launcher meanwhile.
     if (!(yield* ownsLauncher(launcher, plan.versionsDir))) {
       yield* Console.log(`Left ${launcher}: it no longer runs this t3.`);
       continue;
@@ -277,7 +282,10 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     // Windows refuses to unlink this running executable; a detached shell removes it after exit.
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
-      const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
+      const comspec =
+        environment["ComSpec"] ??
+        environment["COMSPEC"] ??
+        windowsSystem32Path(environment, "cmd.exe");
       const notScheduled = () =>
         new CliUninstallError({
           reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,

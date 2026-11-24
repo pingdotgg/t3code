@@ -149,13 +149,17 @@ function KeybindingsSearchInput({
       <InputGroupAddon>
         <SearchIcon aria-hidden className="size-3.5" />
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
           event.preventDefault();
           if (query.length > 0) {
             event.stopPropagation();

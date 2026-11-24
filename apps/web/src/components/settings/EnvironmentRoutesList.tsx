@@ -17,6 +17,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  canRemoveRoute,
   type ConnectionRoute,
   connectionRouteAddress,
   connectionRouteId,
@@ -121,7 +122,7 @@ export function EnvironmentRoutesList({
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
                 refused={environment.refusedRouteIds.includes(connectionRouteId(route.target))}
-                removable={routes.length > 1 && !isLearned(route)}
+                removable={canRemoveRoute(routes, route)}
                 onRemove={() => void confirmRemove(route)}
               />
             ))}

@@ -6,6 +6,7 @@ import { identity } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { Activity, DurableDeferred } from "effect/workflow";
 
 import { checkOptions } from "./options.ts";
 import { stepReferences } from "./runReferences.ts";
@@ -17,6 +18,7 @@ import {
   type StepFailed,
   text,
   waitAs,
+  wakeOf,
 } from "./workflow.ts";
 import type { IssueAddress } from "./WorkflowForge.ts";
 import {
@@ -26,6 +28,7 @@ import {
   AgentTurn,
   WorkflowAgents,
 } from "./WorkflowAgents.ts";
+import * as WorkflowStore from "./WorkflowStore.ts";
 
 /** A thread an agent step ran in, to hand to a later step that should continue it. */
 export interface AgentThread {
@@ -92,6 +95,97 @@ const NEW_THREAD_OPTIONS = [
   "interactionMode",
 ] as const;
 
+/** What the engine needs to see one turn of an agent step through to its end. */
+export const TurnWatch = Schema.Struct({
+  agent: Schema.Struct({
+    step: Schema.String,
+    turn: AgentTurn,
+    startedAt: Schema.optional(Schema.Number),
+    timeoutMs: Schema.optional(Schema.Number),
+    quietMs: Schema.optional(Schema.Number),
+    owesOutput: Schema.Boolean,
+    onFailure: Schema.Literals(["pause", "return"]),
+  }),
+});
+export type TurnWatch = typeof TurnWatch.Type;
+
+/** How a watched turn ended: its result, or why it could not be read, which pauses the run. */
+export const TurnEnd = Schema.Union([
+  Schema.Struct({ result: AgentResult }),
+  Schema.Struct({ lost: Schema.String }),
+]);
+export type TurnEnd = typeof TurnEnd.Type;
+
+/** The turn's result, or its thread stopped when the step's time is up. */
+export const settleTurn = Effect.fn("workflow.agent.settle")(function* ({
+  agent: watch,
+}: TurnWatch): Effect.fn.Return<TurnEnd, never, WorkflowAgents> {
+  const agents = yield* WorkflowAgents;
+  const { turn, startedAt } = watch;
+  const threadOf = { threadId: turn.threadId, environment: turn.environment };
+  const resultOf = (quiet: number | undefined) =>
+    agents
+      .result(turn, { quiet: quiet === undefined ? undefined : Duration.millis(quiet) })
+      .pipe(
+        watch.onFailure === "pause"
+          ? identity
+          : Effect.catch((error) =>
+              Effect.succeed<AgentResult>({ ending: "failed", detail: text(error), reply: "" }),
+            ),
+      );
+  const settled = Effect.gen(function* () {
+    if (watch.timeoutMs === undefined || startedAt === undefined) {
+      return yield* resultOf(watch.quietMs);
+    }
+    const limit = Duration.millis(watch.timeoutMs);
+    const left = startedAt + watch.timeoutMs - (yield* Clock.currentTimeMillis);
+    const result = yield* resultOf(watch.quietMs).pipe(
+      Effect.timeoutOption(Duration.millis(Math.max(0, left))),
+    );
+    if (Option.isSome(result)) return result.value;
+    // A stop that still fails pauses the run, so resuming tries the stop again. A step that
+    // returns its failure says the turn may still be running.
+    const stopping = agents
+      .interrupt({ ...threadOf, turnId: turn.turnId })
+      .pipe(Effect.retry({ times: 2 }));
+    const stop: "stopped" | "ended" | "failed" = yield* watch.onFailure === "pause"
+      ? stopping
+      : stopping.pipe(Effect.orElseSucceed(() => "failed" as const));
+    const late = `it was not done after ${Duration.format(limit)}`;
+    if (stop === "ended") {
+      // The turn ended before it could be stopped, maybe long ago, as a run that resumes late
+      // finds it. What it left is the answer when it is one.
+      const ended = yield* resultOf(undefined);
+      if (ended.ending !== "completed" || !watch.owesOutput || ended.output !== undefined) {
+        return ended;
+      }
+      // Stopping the later turn it may answer from could stop someone else's.
+      return {
+        ending: "stopped" as const,
+        detail: `${late}: its turn ended without its result, and the agent may still be at work on its thread`,
+        reply: "",
+      };
+    }
+    return {
+      ending: "stopped" as const,
+      detail: `${late}${stop === "stopped" ? "" : ", and its turn could not be stopped"}`,
+      reply: "",
+    };
+  });
+  return yield* settled.pipe(
+    Effect.map((result): TurnEnd => ({ result })),
+    Effect.catch((error) => Effect.succeed<TurnEnd>({ lost: text(error) })),
+  );
+});
+
+// An agent turn's wait takes no signal from outside: only the engine's watch ends it.
+const NOTHING_FITS = WorkflowStore.jsonText({ not: {} });
+// A result journaled when the wait for a turn still ran inside its activity, which kept the
+// engine from stopping, and every workflow call with it, until the turn ended.
+const Opened = Schema.Union([AgentResult, Schema.Struct({ ending: Schema.Literal("watching") })]);
+const decodeTurnEnd = Schema.decodeUnknownEffect(Schema.toCodecJson(TurnEnd));
+const encodeWatch = Schema.encodeEffect(Schema.toCodecJson(TurnWatch));
+
 const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   name: string,
   options: AgentOptions<A, I>,
@@ -121,6 +215,10 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   const outputCodec =
     options.returns === undefined ? undefined : Schema.toCodecJson(options.returns);
   const decodeOutput = outputCodec === undefined ? undefined : Schema.decodeEffect(outputCodec);
+  const timeoutMs =
+    options.timeout === undefined
+      ? undefined
+      : Duration.toMillis(Duration.fromInputUnsafe(options.timeout));
   const threadOf = (turn: AgentTurn): AgentThread => ({
     threadId: turn.threadId,
     ...(turn.environment === undefined ? {} : { environment: turn.environment }),
@@ -174,61 +272,73 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
               Effect.succeed<AgentTurn>({ threadId: "", turnId: "", failed: text(error) }),
             ),
       );
-  const resultOf = (turn: AgentTurn, wait = { quiet }) =>
-    agents
-      .result(turn, wait)
-      .pipe(
-        Effect.provideContext(touches),
-        onFailure === "pause"
-          ? identity
-          : Effect.catch((error) =>
-              Effect.succeed<AgentResult>({ ending: "failed", detail: text(error), reply: "" }),
-            ),
-      );
-  /** The turn's result, or its thread stopped when the step's time is up. */
-  const within = Effect.fn("workflow.agent.within")(function* (
+  /**
+   * The turn's result. The engine watches the turn outside the run and wakes the run once it
+   * ends, so an engine that stops while an agent works is not held up by it.
+   */
+  const ended = Effect.fn("workflow.agent.ended")(function* (
     turn: AgentTurn,
     startedAt: number | undefined,
+    round: number,
+    correction: number,
   ) {
-    if (options.timeout === undefined || startedAt === undefined) return yield* resultOf(turn);
-    const limit = Duration.fromInputUnsafe(options.timeout);
-    const left = startedAt + Duration.toMillis(limit) - (yield* Clock.currentTimeMillis);
-    const result = yield* resultOf(turn).pipe(
-      Effect.timeoutOption(Duration.millis(Math.max(0, left))),
+    const watch = WorkflowStore.jsonText(
+      yield* encodeWatch({
+        agent: {
+          step: name,
+          turn,
+          startedAt,
+          timeoutMs,
+          quietMs: quiet === undefined ? undefined : Duration.toMillis(quiet),
+          owesOutput: outputSchema !== undefined,
+          onFailure,
+        },
+      }).pipe(Effect.orDie),
     );
-    if (Option.isSome(result)) return result.value;
-    // A stop that still fails pauses the run unrecorded, so resuming tries the stop again. A step
-    // that returns its failure says the turn may still be running.
-    const stopping = agents
-      .interrupt({ ...threadOf(turn), turnId: turn.turnId })
-      .pipe(Effect.retry({ times: 2 }));
-    const stop: "stopped" | "ended" | "failed" = yield* onFailure === "pause"
-      ? stopping
-      : stopping.pipe(Effect.orElseSucceed(() => "failed" as const));
-    const late = `it was not done after ${Duration.format(limit)}`;
-    if (stop === "ended") {
-      // The turn ended before it could be stopped, maybe long ago, as a run that resumes late
-      // finds it. What it left is the answer when it is one.
-      const ended = yield* resultOf(turn, { quiet: undefined });
-      if (
-        ended.ending !== "completed" ||
-        outputSchema === undefined ||
-        ended.output !== undefined
-      ) {
-        return ended;
-      }
-      // Stopping the later turn it may answer from could stop someone else's.
-      return {
-        ending: "stopped" as const,
-        detail: `${late}: its turn ended without its result, and the agent may still be at work on its thread`,
-        reply: "",
-      };
+    const first = `agent/${name}/${round}/result/${correction}`;
+    for (let lost = 0; ; lost++) {
+      const at = lost === 0 ? first : `${first}/again/${lost}`;
+      const wake = wakeOf(at);
+      const token = yield* DurableDeferred.token(wake);
+      const opened = yield* journaled(
+        run,
+        name,
+        at,
+        Opened,
+        Effect.gen(function* () {
+          yield* run.store.runStatus(run.runId, "waiting", `agent ${name}`);
+          yield* run.store.waitOpened({
+            runId: run.runId,
+            name: at,
+            workflow: run.workflow,
+            key: undefined,
+            token,
+            schemaJson: NOTHING_FITS,
+            requestJson: null,
+            watchJson: watch,
+            deadline: null,
+          });
+          yield* run.watchTurn(at);
+          return { ending: "watching" as const };
+        }),
+      );
+      if (opened.ending !== "watching") return opened;
+      const woke = yield* DurableDeferred.await(wake);
+      const end = yield* Effect.orDie(decodeTurnEnd(woke.value));
+      yield* Activity.make({ name: `${at}/close`, execute: run.store.waitClosed(run.runId, at) });
+      if ("result" in end) return end.result;
+      // Fails the first time it is reached, which pauses the run here. Resuming the run reaches
+      // it again, and the turn is watched once more.
+      yield* journaled(
+        run,
+        name,
+        `${at}/lost`,
+        Schema.Void,
+        Effect.flatMap(run.store.mark(run.runId, `${at}/lost`), (arrivals) =>
+          arrivals > 1 ? Effect.void : Effect.fail(end.lost),
+        ),
+      );
     }
-    return {
-      ending: "stopped" as const,
-      detail: `${late}${stop === "stopped" ? "" : ", and its turn could not be stopped"}`,
-      reply: "",
-    };
   });
   const done = (round: number, produced: Schema.Json, said?: string) =>
     journaled(
@@ -263,16 +373,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
     let stopped = false;
     let died = false;
     for (let correction = 0; turn.failed === undefined; correction++) {
-      const result = yield* journaled(
-        run,
-        name,
-        `agent/${name}/${round}/result/${correction}`,
-        AgentResult,
-        Effect.andThen(
-          run.store.runStatus(run.runId, "waiting", `agent ${name}`),
-          within(turn, startedAt),
-        ),
-      );
+      const result = yield* ended(turn, startedAt, round, correction);
       if (result.ending !== "completed") {
         stopped = result.ending === "stopped";
         died = result.ending === "failed";

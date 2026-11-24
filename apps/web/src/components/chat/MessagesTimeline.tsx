@@ -272,7 +272,6 @@ interface MessagesTimelineProps {
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
   onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
-  onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
@@ -397,7 +396,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   displayThreadKey,
   announceTurnStatus = true,
   onOpenToolDiff,
-  onOpenTurnDiff,
   onOpenThread,
   renderHtmlRender,
   turnItemSource,
@@ -1143,7 +1141,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onFileDownload,
     openPullRequest,
     onOpenToolDiff,
-    onOpenTurnDiff,
     onOpenThread,
     renderHtmlRender,
     turnItemSource,
@@ -1401,7 +1398,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       >
         <div
           ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
+          // An HTML preview can run wider than this lane, which stays the chat column's width.
+          className={cn("chat-content-lane", item.kind !== "html-render" && "overflow-x-clip")}
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
@@ -1508,10 +1506,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
                     : TIMELINE_MAINTAIN_SCROLL_AT_END
               }
+              // A restore owns the scroll position until it lands. Anchoring would
+              // move it for the previous thread's header as the list swaps threads.
               maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                findActive || citationPositioning || restoringThreadPosition
                   ? false
                   : maintainVisibleContentPosition
               }
