@@ -511,6 +511,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? [gt("Diff colors")]
       : []),
+    ...(settings.codeThemeLight !== DEFAULT_UNIFIED_SETTINGS.codeThemeLight ||
+    settings.codeThemeDark !== DEFAULT_UNIFIED_SETTINGS.codeThemeDark
+      ? [gt("Code theme")]
+      : []),
     ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? [gt("Chat width")] : []),
     ...(settings.htmlPreviewWidth !== DEFAULT_UNIFIED_SETTINGS.htmlPreviewWidth
       ? [gt("HTML preview width")]
@@ -711,6 +715,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
+      codeThemeLight: DEFAULT_UNIFIED_SETTINGS.codeThemeLight,
+      codeThemeDark: DEFAULT_UNIFIED_SETTINGS.codeThemeDark,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       htmlPreviewWidth: DEFAULT_UNIFIED_SETTINGS.htmlPreviewWidth,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,

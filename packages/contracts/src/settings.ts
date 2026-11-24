@@ -349,6 +349,10 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/** A syntax theme name for code surfaces. Empty keeps the built-in palette, as do names a client does not offer. */
+export const CodeThemePreference = Schema.String.check(Schema.isMaxLength(64));
+export type CodeThemePreference = typeof CodeThemePreference.Type;
+
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
@@ -421,6 +425,8 @@ export const ClientSettingsSchema = Schema.Struct({
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
+  codeThemeLight: CodeThemePreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  codeThemeDark: CodeThemePreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   htmlPreviewWidth: HtmlPreviewWidth.pipe(
     Schema.withDecodingDefault(Effect.succeed("chat" as const)),
@@ -2096,6 +2102,8 @@ export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  codeThemeLight: Schema.optionalKey(CodeThemePreference),
+  codeThemeDark: Schema.optionalKey(CodeThemePreference),
   chatWidth: Schema.optionalKey(ChatWidth),
   htmlPreviewWidth: Schema.optionalKey(HtmlPreviewWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),

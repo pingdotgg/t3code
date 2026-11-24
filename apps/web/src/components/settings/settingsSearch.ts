@@ -375,6 +375,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "code-theme",
+    title: msg("Code theme"),
+    to: "/settings/appearance",
+    searchTerms: [msg("syntax highlighting colors palette poimandres github vscode dracula nord")],
+  },
+  {
     id: "chat-width",
     title: msg("Chat width"),
     to: "/settings/appearance",

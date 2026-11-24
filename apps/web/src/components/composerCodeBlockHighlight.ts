@@ -40,6 +40,7 @@ function collectCodeBlocks(state: EditorState): Array<{ node: ProseMirrorNode; p
 
 export function composerCodeBlockHighlight(options: {
   resolveTheme: () => DiffThemeName;
+  subscribeToThemeChanges?: (listener: () => void) => () => void;
 }): Extension {
   return Extension.create({
     name: "composerCodeBlockHighlight",
@@ -125,7 +126,10 @@ export function composerCodeBlockHighlight(options: {
                   );
                   const signature = blockSignature(node, theme);
                   // Cache failure as plain text to clear retained colors.
-                  const highlighter = await getSyntaxHighlighterPromise(language).catch(() => null);
+                  const highlighter = await getSyntaxHighlighterPromise(language, {
+                    light: theme,
+                    dark: theme,
+                  }).catch(() => null);
                   // An older request must not bypass the debounce if its text returns.
                   if (disposed || live !== signatures || cache.has(signature)) return;
                   cache.set(signature, {
@@ -148,6 +152,7 @@ export function composerCodeBlockHighlight(options: {
             themeObserver.observe(document.documentElement, {
               attributeFilter: ["class"],
             });
+            const unsubscribeTheme = options.subscribeToThemeChanges?.(() => refresh(false));
 
             return {
               update: () => refresh(true),
@@ -155,6 +160,7 @@ export function composerCodeBlockHighlight(options: {
                 disposed = true;
                 clearTimeout(deferredRefresh);
                 themeObserver.disconnect();
+                unsubscribeTheme?.();
               },
             };
           },

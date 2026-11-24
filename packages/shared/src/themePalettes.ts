@@ -94,12 +94,20 @@ export const THEME_COLOR_ROLES = [
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
+/**
+ * Zed-style syntax colors keyed by Highlights token type, such as `keyword` or `string.escape`.
+ * `foreground` colors untokenized text, as the token type of that name does in Highlights.
+ */
+export type ThemeSyntax = Readonly<
+  Record<string, Readonly<{ color: string; font_style?: "italic"; font_weight?: 700 }>>
+>;
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
   appearance: ThemeAppearance;
   colors: ThemeColors;
   variants?: ThemeVariants;
+  syntax?: Readonly<Partial<Record<ThemeAppearance, ThemeSyntax>>>;
   collection?: Readonly<{ id: string; label: string }>;
   sidebarArtwork?: boolean;
   managed?: boolean;

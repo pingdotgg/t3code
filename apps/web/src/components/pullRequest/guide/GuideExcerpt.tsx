@@ -10,12 +10,9 @@ import { ArrowUpRightIcon } from "lucide-react";
 import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
+import { useDiffThemeNames } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import {
-  getRenderablePatch,
-  resolveDiffThemeName,
-  resolveFileDiffPreviousPath,
-} from "~/lib/diffRendering";
+import { getRenderablePatch, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import {
   buildDiffReviewComment,
@@ -186,6 +183,7 @@ function ExcerptDiff({
   onOpenFile: (path: string) => void;
 }) {
   const resolvedTheme = useRenderedAppearance();
+  const diffThemeNames = useDiffThemeNames();
   const loadExcerptFiles = excerptLoader(excerpt, file, slice.rows, loadDiffFiles);
 
   const annotations = (() => {
@@ -245,7 +243,7 @@ function ExcerptDiff({
     diffStyle: "unified" as const,
     lineDiffType: "none" as const,
     overflow: "scroll" as const,
-    theme: resolveDiffThemeName(resolvedTheme),
+    theme: diffThemeNames[resolvedTheme],
     themeType: resolvedTheme,
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     unsafeCSS: EXCERPT_UNSAFE_CSS,

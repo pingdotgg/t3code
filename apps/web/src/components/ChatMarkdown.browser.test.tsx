@@ -17,6 +17,7 @@ import {
 import type { MarkdownExtensions } from "../markdown/wordsHast";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import { DIFF_THEME_NAMES } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
@@ -359,7 +360,7 @@ it("highlights a code block's own source when an earlier block of the same lengt
   const first = 'const commitSha = "f36a6d8fe0aa";';
   const second = 'const commitSha = "cb06f8d135b3";';
   // The block suspends until the shared highlighter loads, which can outlast vi.waitFor on a busy runner.
-  await getSyntaxHighlighterPromise("ts");
+  await getSyntaxHighlighterPromise("ts", DIFF_THEME_NAMES);
   {
     await using screen = await renderText(`\`\`\`ts\n${first}\n\`\`\``);
     await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(first));

@@ -2,7 +2,8 @@ import { getFiletypeFromFileName } from "@pierre/diffs";
 import type { ProjectContentMatch } from "@t3tools/contracts";
 import { memo, Suspense, use, type CSSProperties } from "react";
 
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import type { DiffThemeName } from "~/lib/diffRendering";
+import { useDiffThemeNames } from "~/hooks/useSettings";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
@@ -129,11 +130,10 @@ function firstLineTokens(
   highlighter: Awaited<ReturnType<typeof getSyntaxHighlighterPromise>>,
   line: string,
   language: string,
-  theme: "light" | "dark",
+  theme: DiffThemeName,
 ) {
   try {
-    return highlighter.codeToTokens(line, { lang: language, theme: resolveDiffThemeName(theme) })
-      .tokens[0];
+    return highlighter.codeToTokens(line, { lang: language, theme }).tokens[0];
   } catch {
     return undefined;
   }
@@ -145,8 +145,9 @@ function SyntaxHighlightedTokens(props: {
   readonly ranges: ReadonlyArray<Range>;
   readonly theme: "light" | "dark";
 }) {
-  const highlighter = use(getSyntaxHighlighterPromise(props.language));
-  const tokens = firstLineTokens(highlighter, props.line, props.language, props.theme);
+  const themeNames = useDiffThemeNames();
+  const highlighter = use(getSyntaxHighlighterPromise(props.language, themeNames));
+  const tokens = firstLineTokens(highlighter, props.line, props.language, themeNames[props.theme]);
 
   return tokens ? (
     <HighlightedTokens line={props.line} ranges={props.ranges} tokens={tokens} />

@@ -67,7 +67,7 @@ import { m, type MessageResolver } from "~/i18n/messages";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, updateClientSettings, useDiffThemeNames } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import {
@@ -89,7 +89,6 @@ import {
   fnv1a32,
   getDiffLineStat,
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
   type RenderablePatch,
@@ -452,6 +451,7 @@ function PullRequestCodeTab({
   const messages = useMessages();
   const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
   const resolvedTheme = useRenderedAppearance();
+  const diffThemeName = useDiffThemeNames()[resolvedTheme];
   // Initialize the shared tokenizer and workers while the diff request is still pending.
   const workerPoolReady = useDiffWorkerPoolReady(useDiffWorkerPool());
   const settings = useClientSettings((settings) => ({
@@ -1199,7 +1199,7 @@ function PullRequestCodeTab({
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
     overflow: wordWrap ? ("wrap" as const) : ("scroll" as const),
-    theme: resolveDiffThemeName(resolvedTheme),
+    theme: diffThemeName,
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
     themeType: resolvedTheme,
     stickyHeaders: true,

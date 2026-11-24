@@ -836,6 +836,9 @@ export function ThemeEditorPanel({
             ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+          ...(mergeTarget.syntax || editingTheme.syntax
+            ? { syntax: { ...mergeTarget.syntax, ...editingTheme.syntax } }
+            : {}),
         });
         retiredTheme = editingTheme;
         retireMergedTheme(editingTheme, mergeTarget);
@@ -856,6 +859,7 @@ export function ThemeEditorPanel({
             ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+          ...(editingTheme.syntax ? { syntax: editingTheme.syntax } : {}),
         });
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
@@ -882,6 +886,7 @@ export function ThemeEditorPanel({
             ...(cssForSave ? { css: cssForSave } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+          ...(mergeTarget.syntax ? { syntax: mergeTarget.syntax } : {}),
         });
       } else {
         savedTheme = installCustomTheme(

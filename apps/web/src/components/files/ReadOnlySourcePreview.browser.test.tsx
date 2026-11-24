@@ -5,6 +5,7 @@ import "~/index.css";
 
 import { render } from "../../../test/render";
 
+import { DIFF_THEME_NAMES } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 // The pool starts its workers before showing any code, which can outlast a cold CI browser.
@@ -29,7 +30,7 @@ function copiedText(target: Element) {
 describe("ReadOnlySourcePreview", () => {
   it("copies the whole file after Select All, wherever the preview is scrolled", async () => {
     // File paints nothing until the shared highlighter has loaded; once it has, mount renders synchronously.
-    await getSyntaxHighlighterPromise("text");
+    await getSyntaxHighlighterPromise("text", DIFF_THEME_NAMES);
     await using screen = await render(
       <div className="flex h-[400px] flex-col">
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
@@ -70,7 +71,7 @@ describe("ReadOnlySourcePreview", () => {
     ["a carriage return and line feed", "\r\n"],
   ])("copies the whole of a file whose lines end in %s", async (_name, ending) => {
     const contents = text.replaceAll("\n", ending);
-    await getSyntaxHighlighterPromise("text");
+    await getSyntaxHighlighterPromise("text", DIFF_THEME_NAMES);
     await using screen = await render(
       <div className="flex h-[400px] flex-col">
         <ReadOnlySourcePreview name="notes.txt" text={contents} wordWrap={false} />
@@ -95,7 +96,7 @@ describe("ReadOnlySourcePreview", () => {
   ])(
     "restores and copies a partial selection after scrolling away and back ($height px)",
     async ({ contents, height }) => {
-      await getSyntaxHighlighterPromise("text");
+      await getSyntaxHighlighterPromise("text", DIFF_THEME_NAMES);
       await using screen = await render(
         <div className="flex flex-col" style={{ height }}>
           <ReadOnlySourcePreview name="notes.txt" text={contents} wordWrap={false} />
@@ -123,7 +124,7 @@ describe("ReadOnlySourcePreview", () => {
   );
 
   it("drops a selection scrolled out of the mounted window when a click lands on its edge", async () => {
-    await getSyntaxHighlighterPromise("text");
+    await getSyntaxHighlighterPromise("text", DIFF_THEME_NAMES);
     await using screen = await render(
       <div className="flex h-[400px] flex-col">
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
@@ -147,7 +148,7 @@ describe("ReadOnlySourcePreview", () => {
   });
 
   it("copies a drag that autoscrolls past the edge of the preview", async () => {
-    await getSyntaxHighlighterPromise("text");
+    await getSyntaxHighlighterPromise("text", DIFF_THEME_NAMES);
     await using screen = await render(
       <div className="flex h-[400px] flex-col">
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
@@ -187,7 +188,7 @@ describe("ReadOnlySourcePreview", () => {
   });
 
   it("extends a selection with Shift+click after its anchor scrolls out of the mounted window", async () => {
-    await getSyntaxHighlighterPromise("text");
+    await getSyntaxHighlighterPromise("text", DIFF_THEME_NAMES);
     await using screen = await render(
       <div className="flex h-[400px] flex-col">
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />

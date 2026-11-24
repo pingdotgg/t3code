@@ -118,7 +118,7 @@ import {
   markAsCompositionReplace,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { getDiffThemeNames, subscribeDiffThemeNames } from "~/hooks/useSettings";
 import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { isThreadNavigationShortcut } from "~/keybindings";
@@ -914,10 +914,8 @@ function createComposerExtensions(richText: boolean) {
             },
           }),
           composerCodeBlockHighlight({
-            resolveTheme: () =>
-              resolveDiffThemeName(
-                document.documentElement.classList.contains("dark") ? "dark" : "light",
-              ),
+            resolveTheme: () => getDiffThemeNames()[resolvedThemeFromDocument()],
+            subscribeToThemeChanges: subscribeDiffThemeNames,
           }),
           ...ComposerBlockExtensions.map((extension) =>
             extension.name === "blockquote"

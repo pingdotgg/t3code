@@ -22,6 +22,7 @@ import {
   type ThemeColorRole,
   type ThemeColors,
   type ThemeDefinition,
+  type ThemeSyntax,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 import {
@@ -176,6 +177,26 @@ function parseStoredThemeVariants(
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
+function parseStoredThemeSyntax(value: unknown): ThemeDefinition["syntax"] {
+  if (!isRecord(value)) return undefined;
+  const syntax: Partial<Record<ThemeAppearance, ThemeSyntax>> = {};
+  for (const [appearance, styles] of Object.entries(value)) {
+    if (!isThemeAppearance(appearance) || !isRecord(styles)) continue;
+    const parsed: Record<string, ThemeSyntax[string]> = {};
+    for (const [tokenType, style] of Object.entries(styles)) {
+      if (!isRecord(style) || typeof style.color !== "string") continue;
+      if (!/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(style.color)) continue;
+      parsed[tokenType] = {
+        color: style.color,
+        ...(style.font_style === "italic" ? { font_style: "italic" } : {}),
+        ...(style.font_weight === 700 ? { font_weight: 700 } : {}),
+      };
+    }
+    if (Object.keys(parsed).length > 0) syntax[appearance] = parsed;
+  }
+  return Object.keys(syntax).length > 0 ? syntax : undefined;
+}
+
 function parseStoredTheme(value: unknown): ThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
@@ -185,6 +206,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
   const collection = parseThemeCollection(value.collection);
+  const syntax = parseStoredThemeSyntax(value.syntax);
 
   return {
     id: value.id,
@@ -192,6 +214,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     appearance: value.appearance,
     colors,
     ...(variants ? { variants } : {}),
+    ...(syntax ? { syntax } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
     ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
@@ -1623,7 +1646,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
 
 /** A copy of `theme` under `name` and the id it derives. The collection stays behind. */
 export function renameTheme(theme: ThemeDefinition, name: string): ThemeDefinition {
-  return parseThemeFile({
+  const renamed = parseThemeFile({
     version: THEME_FILE_VERSION,
     name,
     appearance: theme.appearance,
@@ -1632,6 +1655,7 @@ export function renameTheme(theme: ThemeDefinition, name: string): ThemeDefiniti
     ...(theme.managed ? { managed: true } : {}),
     ...(theme.css ? { css: theme.css } : {}),
   });
+  return theme.syntax ? { ...renamed, syntax: theme.syntax } : renamed;
 }
 
 export function serializeThemeFile(theme: ThemeDefinition): string {
