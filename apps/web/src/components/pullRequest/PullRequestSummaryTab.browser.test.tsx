@@ -273,6 +273,37 @@ it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   );
 });
 
+it("keeps the chosen comment order when the right panel remounts the tab", async () => {
+  setup();
+  const comment = (id: string, createdAt: string) => ({
+    id,
+    kind: "review-comment" as const,
+    body: `Remark ${id}`,
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt,
+    url: null,
+    path: null,
+    reviewState: null,
+  });
+  const value = {
+    ...detail,
+    comments: [comment("10", "2026-09-01T10:00:00Z"), comment("11", "2026-09-02T10:00:00Z")],
+    commentCount: 2,
+  };
+  {
+    await using screen = await render(value);
+    await userEvent.click(screen.getByRole("button", { name: "Show oldest comments first" }));
+    await expect
+      .element(screen.getByRole("button", { name: "Show newest comments first" }))
+      .toBeVisible();
+  }
+  // Switching to another right-panel tab unmounts the pull request surface.
+  await using screen = await render(value);
+  await expect
+    .element(screen.getByRole("button", { name: "Show newest comments first" }))
+    .toBeVisible();
+});
+
 it("scrolls from the keyboard after a click inside it", async () => {
   setup();
   const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
