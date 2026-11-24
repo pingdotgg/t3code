@@ -109,13 +109,21 @@ pub(crate) struct MarkdownOptions<'a> {
     /// Optional callback invoked when a user clicks a workspace file link or inline file path.
     pub(crate) on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
     /// Optional callback invoked with the link and the window position when a user right-clicks a
-    /// web link (Conn's link context menu).
+    /// web link or a workspace file link (Conn's link and file context menus).
     pub(crate) on_link_menu: Option<LinkMenuCallback>,
 }
 
-/// Opens the link menu for `url` at the window position.
+/// What a right-click landed on: a web link (its URL) or a workspace file link (its
+/// workspace-relative path, with a `:line` suffix when the link has one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LinkMenuTarget {
+    Web(String),
+    File(String),
+}
+
+/// Opens the context menu for `target` at the window position.
 pub(crate) type LinkMenuCallback =
-    Rc<dyn Fn(String, gpui_kit::Point<gpui_kit::Pixels>, &mut Window, &mut App)>;
+    Rc<dyn Fn(LinkMenuTarget, gpui_kit::Point<gpui_kit::Pixels>, &mut Window, &mut App)>;
 
 impl MarkdownOptions<'_> {
     fn prose_color(&self, tokens: &Tokens) -> Hsla {
@@ -1196,7 +1204,7 @@ fn render_inline_spans(
 }
 
 /// `styled`, made clickable over `ranges` (URLs and workspace file paths) when there are any. A
-/// right-click on a web link asks `on_link_menu` for the link menu.
+/// right-click on a web link or a workspace file link asks `on_link_menu` for its menu.
 fn interactive_inline_text(
     span_id: &str,
     styled: StyledText,
@@ -1209,14 +1217,7 @@ fn interactive_inline_text(
     if ranges.is_empty() {
         return styled.into_any_element();
     }
-    let menu_targets: Vec<(Range<usize>, String)> = ranges
-        .iter()
-        .zip(&targets)
-        .filter_map(|(range, target)| match target {
-            ClickTarget::Url(url) => Some((range.clone(), url.clone())),
-            ClickTarget::WorkspaceFile(_) => None,
-        })
-        .collect();
+    let menu_targets = menu_targets(&ranges, &targets);
     let text = InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
         .on_click(ranges, move |ix, window, cx| {
             let Some(target) = targets.get(ix) else {
@@ -1231,11 +1232,9 @@ fn interactive_inline_text(
                 }
             }
         });
-    let Some(on_link_menu) = on_link_menu.filter(|_| !menu_targets.is_empty()) else {
-        return text.into_any_element();
-    };
     // Capture phase: `InteractiveText` records a press of any button and opens the link on
-    // release, so a right-click on a link must stop before the text sees it.
+    // release, so a right-click on a link must stop before the text sees it. Without a menu
+    // callback (the question panel, task details) the right-click does nothing.
     div()
         .capture_any_mouse_down(move |event, window, cx| {
             if event.button != gpui_kit::MouseButton::Right {
@@ -1244,21 +1243,42 @@ fn interactive_inline_text(
             let Ok(index) = layout.index_for_position(event.position) else {
                 return;
             };
-            if let Some(url) = link_at(&menu_targets, index) {
+            if let Some(target) = link_at(&menu_targets, index) {
                 cx.stop_propagation();
-                on_link_menu(url.to_owned(), event.position, window, cx);
+                if let Some(on_link_menu) = &on_link_menu {
+                    on_link_menu(target.clone(), event.position, window, cx);
+                }
             }
         })
         .child(text)
         .into_any_element()
 }
 
-/// The web link whose text covers byte `index` of the paragraph.
-fn link_at(links: &[(Range<usize>, String)], index: usize) -> Option<&str> {
+/// The links that open a context menu on a right-click: every click target, web link or
+/// workspace file, so none of them falls through to its left-click action.
+fn menu_targets(
+    ranges: &[Range<usize>],
+    targets: &[ClickTarget],
+) -> Vec<(Range<usize>, LinkMenuTarget)> {
+    ranges
+        .iter()
+        .zip(targets)
+        .map(|(range, target)| {
+            let target = match target {
+                ClickTarget::Url(url) => LinkMenuTarget::Web(url.clone()),
+                ClickTarget::WorkspaceFile(path) => LinkMenuTarget::File(path.clone()),
+            };
+            (range.clone(), target)
+        })
+        .collect()
+}
+
+/// The link whose text covers byte `index` of the paragraph.
+fn link_at(links: &[(Range<usize>, LinkMenuTarget)], index: usize) -> Option<&LinkMenuTarget> {
     links
         .iter()
         .find(|(range, _)| range.contains(&index))
-        .map(|(_, url)| url.as_str())
+        .map(|(_, target)| target)
 }
 
 /// Builds the paragraph text and runs. With a `chip_window`, an inline code span becomes a run
@@ -1589,20 +1609,38 @@ fn looks_like_file_path(rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_right_click_finds_the_web_link_under_the_pointer() {
+    fn a_right_click_finds_the_link_under_the_pointer() {
+        let web = |url: &str| LinkMenuTarget::Web(url.to_owned());
+        let file = |path: &str| LinkMenuTarget::File(path.to_owned());
         let links = vec![
-            (4..10, "https://a.test".to_owned()),
-            (14..20, "https://b.test".to_owned()),
+            (4..10, web("https://a.test")),
+            (14..20, file("src/foo.rs:42")),
         ];
-        assert_eq!(link_at(&links, 4), Some("https://a.test"));
-        assert_eq!(link_at(&links, 9), Some("https://a.test"));
+        assert_eq!(link_at(&links, 4), Some(&web("https://a.test")));
+        assert_eq!(link_at(&links, 9), Some(&web("https://a.test")));
         assert_eq!(
             link_at(&links, 10),
             None,
             "the range end is outside the link"
         );
-        assert_eq!(link_at(&links, 15), Some("https://b.test"));
+        assert_eq!(link_at(&links, 15), Some(&file("src/foo.rs:42")));
         assert_eq!(link_at(&links, 0), None);
+    }
+
+    #[test]
+    fn web_and_file_targets_both_get_a_menu_target() {
+        let ranges = vec![0..3, 5..9];
+        let targets = vec![
+            ClickTarget::Url("https://a.test".to_owned()),
+            ClickTarget::WorkspaceFile("src/foo.rs:42".to_owned()),
+        ];
+        assert_eq!(
+            menu_targets(&ranges, &targets),
+            vec![
+                (0..3, LinkMenuTarget::Web("https://a.test".to_owned())),
+                (5..9, LinkMenuTarget::File("src/foo.rs:42".to_owned())),
+            ]
+        );
     }
 
     use super::*;

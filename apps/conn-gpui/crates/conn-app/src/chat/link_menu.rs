@@ -19,13 +19,16 @@ use gpui_kit::{
 
 use super::{ChatEvent, ChatView};
 use crate::a11y::ConnA11yExt as _;
+use crate::header::details_card::EditorTarget;
+use crate::panels::file_path;
 use crate::panels::linked_items::pr_link::{now_epoch_ms, parse_change_request_url};
 use crate::sidebar::thread_menu::{
     MENU_FONT_PX, MENU_LINE_PX, MENU_ROW_HEIGHT_PX, MENU_ROW_RADIUS_PX, MenuHighlight, menu_surface,
 };
 use crate::theme::hsla;
 
-/// One row of the link menu (`ExternalLinkContextMenuAction`).
+/// One row of the link menu (`ExternalLinkContextMenuAction`) or of the file link menu
+/// (`showFileContextMenu` in `MarkdownFileLink.tsx`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LinkMenuAction {
     LinkToThread,
@@ -33,6 +36,18 @@ pub(crate) enum LinkMenuAction {
     OpenInPreview,
     OpenExternal,
     CopyLink,
+    /// File link: `Preview media` (`preview-media`).
+    PreviewMedia,
+    /// File link: `Open in <editor>` (`open`).
+    OpenInEditor(EditorTarget),
+    /// File link: `Open in integrated browser` for an HTML page or a PDF (`open-in-browser`).
+    OpenFileInBrowser,
+    /// File link: `Reveal in Finder` (`reveal`).
+    RevealInFinder,
+    /// File link: `Copy relative path` (`copy-relative`).
+    CopyRelativePath,
+    /// File link: `Copy full path` (`copy-full`).
+    CopyFullPath,
 }
 
 impl LinkMenuAction {
@@ -40,9 +55,18 @@ impl LinkMenuAction {
         match self {
             Self::LinkToThread => "Link to thread",
             Self::UnlinkFromThread => "Unlink from thread",
-            Self::OpenInPreview => "Open in integrated browser",
+            Self::OpenInPreview | Self::OpenFileInBrowser => "Open in integrated browser",
             Self::OpenExternal => "Open in system browser",
             Self::CopyLink => "Copy Link",
+            Self::PreviewMedia => "Preview media",
+            // `openInEditorMenuLabel`: the editor's name, or `Open in editor` for none.
+            Self::OpenInEditor(EditorTarget::Cursor) => "Open in Cursor",
+            Self::OpenInEditor(EditorTarget::VsCode) => "Open in VS Code",
+            Self::OpenInEditor(EditorTarget::Zed) => "Open in Zed",
+            Self::OpenInEditor(EditorTarget::Finder) => "Open in editor",
+            Self::RevealInFinder => "Reveal in Finder",
+            Self::CopyRelativePath => "Copy relative path",
+            Self::CopyFullPath => "Copy full path",
         }
     }
 
@@ -53,7 +77,93 @@ impl LinkMenuAction {
             Self::OpenInPreview => "chat.link-menu.open-in-preview",
             Self::OpenExternal => "chat.link-menu.open-external",
             Self::CopyLink => "chat.link-menu.copy-link",
+            Self::PreviewMedia => "chat.file-menu.preview-media",
+            Self::OpenInEditor(_) => "chat.file-menu.open",
+            Self::OpenFileInBrowser => "chat.file-menu.open-in-browser",
+            Self::RevealInFinder => "chat.file-menu.reveal",
+            Self::CopyRelativePath => "chat.file-menu.copy-relative",
+            Self::CopyFullPath => "chat.file-menu.copy-full",
         }
+    }
+}
+
+/// What decides the rows of a file link's menu (the props `ChatMarkdown.tsx` passes to
+/// `MarkdownFileLink`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FileMenuFacts {
+    /// A thread is open (`threadRef`): the file can open in the Files panel.
+    pub(crate) has_thread: bool,
+    /// The thread's server can sign a URL for the Browser panel (`isPreviewAvailableFor`).
+    pub(crate) browser_ready: bool,
+    /// The file is on this Mac, so the shell can open and reveal it (`canUseShellActions`).
+    pub(crate) local: bool,
+    /// The editor `Open in` uses (`usePreferredEditor`).
+    pub(crate) editor: EditorTarget,
+}
+
+/// Image and video extensions `mediaMimeTypeFromExtension` knows (`canPreviewMedia`).
+const MEDIA_EXTENSIONS: [&str; 20] = [
+    "avif", "bmp", "heic", "heif", "gif", "ico", "jpeg", "jpg", "png", "svg", "tif", "tiff",
+    "webp", "avi", "m4v", "mkv", "mov", "mp4", "ogv", "webm",
+];
+
+/// The lower-cased extension of the file a link's `path[:line]` names.
+fn path_extension(path: &str) -> Option<String> {
+    let file = file_path::split_line_suffix(path).0;
+    let name = file.rsplit('/').next().unwrap_or(file);
+    name.rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+}
+
+/// `canPreviewMedia`: an image or a video.
+fn is_media_path(path: &str) -> bool {
+    path_extension(path).is_some_and(|extension| MEDIA_EXTENSIONS.contains(&extension.as_str()))
+}
+
+/// `isBrowserPreviewFile`: an HTML page or a PDF.
+fn is_browser_preview_path(path: &str) -> bool {
+    path_extension(path)
+        .is_some_and(|extension| matches!(extension.as_str(), "html" | "htm" | "pdf"))
+}
+
+/// The rows of a workspace file link's menu, in `showFileContextMenu`'s order: `Preview media`
+/// (a media file in an open thread), `Open in <editor>` (a file on this Mac), `Open in integrated
+/// browser` (an HTML page or PDF in a thread whose browser is ready), `Reveal in Finder` (a file
+/// on this Mac), then `Copy relative path` and `Copy full path`. A workspace file link always has
+/// a workspace-relative path, so web's `workspaceRelativePath !== null` check always holds.
+#[must_use]
+pub(crate) fn file_menu_items(path: &str, facts: FileMenuFacts) -> Vec<LinkMenuAction> {
+    let mut items = Vec::with_capacity(6);
+    if facts.has_thread && is_media_path(path) {
+        items.push(LinkMenuAction::PreviewMedia);
+    }
+    if facts.local {
+        items.push(LinkMenuAction::OpenInEditor(facts.editor));
+    }
+    if facts.browser_ready && is_browser_preview_path(path) {
+        items.push(LinkMenuAction::OpenFileInBrowser);
+    }
+    if facts.local {
+        items.push(LinkMenuAction::RevealInFinder);
+    }
+    items.push(LinkMenuAction::CopyRelativePath);
+    items.push(LinkMenuAction::CopyFullPath);
+    items
+}
+
+/// The `open` arguments that open `absolute` in `editor` (`open -a <App> <path>`, or in its default
+/// application for Finder).
+fn open_args(editor: EditorTarget, absolute: &str) -> Vec<String> {
+    match editor.app_name() {
+        Some(app) => vec!["-a".to_owned(), app.to_owned(), absolute.to_owned()],
+        None => vec![absolute.to_owned()],
+    }
+}
+
+/// Runs `open` with `args` on this Mac.
+fn run_open(args: &[String]) {
+    if let Err(error) = std::process::Command::new("open").args(args).spawn() {
+        eprintln!("open {args:?}: {error}");
     }
 }
 
@@ -191,11 +301,51 @@ impl ChatView {
             self.has_thread && self.thread_id.is_some() && self.connection.is_some();
         let can_open_in_preview = self.has_thread && self.thread_id.is_some();
         let thread_link = thread_link_action(&href, thread_loaded, &self.linked_pull_requests);
+        let items = link_menu_items(can_open_in_preview, thread_link);
+        self.show_menu(href, items, position, window, cx);
+    }
+
+    /// Opens the menu for the workspace file link `path` (`path[:line]`) at the window position
+    /// `position` (`showFileContextMenu`).
+    pub(super) fn open_file_menu(
+        &mut self,
+        path: &str,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let has_thread = self.has_thread && self.thread_id.is_some();
+        let local = self.workspace_root.as_deref().is_some_and(|root| {
+            std::path::Path::new(&file_path::absolute_path(
+                root,
+                file_path::split_line_suffix(path).0,
+            ))
+            .exists()
+        });
+        let facts = FileMenuFacts {
+            has_thread,
+            browser_ready: has_thread && self.connection.is_some(),
+            local,
+            editor: EditorTarget::resolve(self.preferred_editor),
+        };
+        let items = file_menu_items(path, facts);
+        self.show_menu(path.to_owned(), items, position, window, cx);
+    }
+
+    /// Shows `items` for `href` (a URL or a file path) at `position`, taking the keyboard.
+    fn show_menu(
+        &mut self,
+        href: String,
+        items: Vec<LinkMenuAction>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let return_focus = window.focused(cx);
         self.link_menu = Some(LinkMenu {
             href,
             position,
-            items: link_menu_items(can_open_in_preview, thread_link),
+            items,
             cursor: None,
             return_focus,
         });
@@ -267,7 +417,54 @@ impl ChatView {
             LinkMenuAction::UnlinkFromThread => {
                 self.update_thread_pull_request_link(&href, false, cx);
             }
+            LinkMenuAction::PreviewMedia => cx.emit(ChatEvent::OpenFile(href)),
+            LinkMenuAction::OpenInEditor(editor) => {
+                run_open(&open_args(editor, &self.absolute_file_path(&href, false)));
+            }
+            LinkMenuAction::RevealInFinder => {
+                run_open(&["-R".to_owned(), self.absolute_file_path(&href, false)]);
+            }
+            LinkMenuAction::OpenFileInBrowser => self.open_file_in_browser(&href, cx),
+            LinkMenuAction::CopyRelativePath => {
+                cx.write_to_clipboard(ClipboardItem::new_string(href));
+            }
+            LinkMenuAction::CopyFullPath => {
+                let full = self.absolute_file_path(&href, true);
+                cx.write_to_clipboard(ClipboardItem::new_string(full));
+            }
         }
+    }
+
+    /// The file link's path on this Mac. `with_position` keeps its `:line`, as `Copy full path`
+    /// does; the shell actions pass the bare file.
+    fn absolute_file_path(&self, path: &str, with_position: bool) -> String {
+        let target = if with_position {
+            path
+        } else {
+            file_path::split_line_suffix(path).0
+        };
+        match self.workspace_root.as_deref() {
+            Some(root) => file_path::absolute_path(root, target),
+            None => target.to_owned(),
+        }
+    }
+
+    /// `openMarkdownFileInPreview`: the server signs a URL for the file, and the Browser panel
+    /// shows it.
+    fn open_file_in_browser(&mut self, path: &str, cx: &mut Context<'_, Self>) {
+        let (Some(conn), Some(thread_id)) = (self.connection.clone(), self.thread_id.clone())
+        else {
+            return;
+        };
+        let file = file_path::split_line_suffix(path).0.to_owned();
+        cx.spawn(async move |this, cx| {
+            if let Ok(url) = conn.workspace_file_url(&thread_id, &file).await {
+                let _ = this.update(cx, |_, cx| {
+                    cx.emit(ChatEvent::OpenInBrowser(url.to_string()));
+                });
+            }
+        })
+        .detach();
     }
 
     /// `updateThreadPullRequestLink`: the same `thread.pull-request.link` / `.unlink` command the
@@ -537,6 +734,133 @@ mod tests {
         ] {
             assert_eq!(resolve_external_web_link(rejected), None, "{rejected}");
         }
+    }
+
+    fn facts(has_thread: bool, browser_ready: bool, local: bool) -> FileMenuFacts {
+        FileMenuFacts {
+            has_thread,
+            browser_ready,
+            local,
+            editor: EditorTarget::Cursor,
+        }
+    }
+
+    fn file_labels(path: &str, facts: FileMenuFacts) -> Vec<&'static str> {
+        file_menu_items(path, facts)
+            .into_iter()
+            .map(LinkMenuAction::label)
+            .collect()
+    }
+
+    #[test]
+    fn a_source_file_on_this_mac_gets_open_reveal_and_both_copies() {
+        assert_eq!(
+            file_labels("src/foo.rs:42", facts(true, true, true)),
+            vec![
+                "Open in Cursor",
+                "Reveal in Finder",
+                "Copy relative path",
+                "Copy full path",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_file_off_this_mac_only_copies() {
+        assert_eq!(
+            file_labels("src/foo.rs", facts(true, true, false)),
+            vec!["Copy relative path", "Copy full path"]
+        );
+    }
+
+    #[test]
+    fn media_in_an_open_thread_offers_preview_media_first() {
+        assert_eq!(
+            file_labels("docs/shot.PNG", facts(true, false, true)),
+            vec![
+                "Preview media",
+                "Open in Cursor",
+                "Reveal in Finder",
+                "Copy relative path",
+                "Copy full path",
+            ]
+        );
+        assert_eq!(
+            file_labels("docs/clip.mp4:3", facts(false, false, true)),
+            vec![
+                "Open in Cursor",
+                "Reveal in Finder",
+                "Copy relative path",
+                "Copy full path",
+            ],
+            "without a thread there is no panel to preview in"
+        );
+    }
+
+    #[test]
+    fn an_html_page_or_pdf_offers_the_integrated_browser_between_open_and_reveal() {
+        for path in ["site/index.html", "site/a.htm:7", "docs/spec.pdf"] {
+            assert_eq!(
+                file_labels(path, facts(true, true, true)),
+                vec![
+                    "Open in Cursor",
+                    "Open in integrated browser",
+                    "Reveal in Finder",
+                    "Copy relative path",
+                    "Copy full path",
+                ],
+                "{path}"
+            );
+        }
+        assert_eq!(
+            file_labels("site/index.html", facts(true, false, true)),
+            vec![
+                "Open in Cursor",
+                "Reveal in Finder",
+                "Copy relative path",
+                "Copy full path",
+            ],
+            "the server cannot sign the page for the browser yet"
+        );
+        assert!(
+            !file_labels("src/foo.rs", facts(true, true, true))
+                .contains(&"Open in integrated browser")
+        );
+    }
+
+    #[test]
+    fn the_open_row_names_the_editor() {
+        let label = |editor| {
+            file_menu_items(
+                "a.rs",
+                FileMenuFacts {
+                    editor,
+                    ..facts(true, true, true)
+                },
+            )[0]
+            .label()
+        };
+        assert_eq!(label(EditorTarget::VsCode), "Open in VS Code");
+        assert_eq!(label(EditorTarget::Zed), "Open in Zed");
+        assert_eq!(label(EditorTarget::Finder), "Open in editor");
+    }
+
+    #[test]
+    fn an_editor_opens_the_file_with_its_app_and_finder_with_the_default() {
+        assert_eq!(
+            open_args(EditorTarget::VsCode, "/w/a.rs"),
+            vec!["-a", "Visual Studio Code", "/w/a.rs"]
+        );
+        assert_eq!(open_args(EditorTarget::Finder, "/w/a.rs"), vec!["/w/a.rs"]);
+    }
+
+    #[test]
+    fn extensions_ignore_the_line_suffix_and_the_case() {
+        assert!(is_media_path("a/b.JPG:12"));
+        assert!(!is_media_path("a/photo"));
+        assert!(!is_media_path("a.png/readme"));
+        assert!(is_browser_preview_path("A.HTML"));
+        assert!(!is_browser_preview_path("a.htmlx"));
     }
 
     #[test]

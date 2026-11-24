@@ -1205,6 +1205,7 @@ impl ConnApp {
         } else {
             None
         };
+        let preferred_editor = self.thread_details.preferred_editor;
         self.chat.update(cx, |chat, cx| {
             if let Some((perf_thread, opened_at)) = perf_open {
                 chat.set_perf_open(perf_thread, opened_at);
@@ -1215,6 +1216,7 @@ impl ConnApp {
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
             chat.set_linked_pull_requests(linked_pull_requests, cx);
+            chat.set_preferred_editor(preferred_editor);
             chat.set_child_approvals(child_approvals, cx);
             chat.set_branch_context(branch_context, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
@@ -4835,6 +4837,8 @@ impl ConnApp {
     ) {
         self.thread_details.preferred_editor = Some(editor);
         self.thread_details.open_in_menu_open = false;
+        self.chat
+            .update(cx, |chat, _| chat.set_preferred_editor(Some(editor)));
         cx.notify();
     }
 

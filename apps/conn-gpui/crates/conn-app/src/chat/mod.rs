@@ -260,6 +260,8 @@ pub(crate) struct ChatView {
     link_menu_focus_pending: bool,
     /// Pull requests the open thread links, to offer `Unlink from thread` on their links.
     linked_pull_requests: Vec<link_menu::LinkedPullRequest>,
+    /// The editor picked in the `Open in` card, for `Open in <editor>` on a file link.
+    preferred_editor: Option<crate::header::details_card::EditorTarget>,
     link_command_seq: u64,
     /// Height of the composer lane, measured while painting. The timeline scrolls behind the
     /// composer, so its last row keeps this much room below it.
@@ -476,6 +478,7 @@ impl ChatView {
             link_menu_focus: cx.focus_handle(),
             link_menu_focus_pending: false,
             linked_pull_requests: Vec::new(),
+            preferred_editor: None,
             link_command_seq: 0,
             composer_height: Rc::new(std::cell::Cell::new(0.0)),
             composer_height_applied: 0.0,
@@ -933,6 +936,14 @@ impl ChatView {
         }
     }
 
+    /// The editor the `Open in` card picked; `None` lets the file menu use the first installed.
+    pub(crate) fn set_preferred_editor(
+        &mut self,
+        editor: Option<crate::header::details_card::EditorTarget>,
+    ) {
+        self.preferred_editor = editor;
+    }
+
     /// `Read /private/tmp/x/src/main.rs` → `Read src/main.rs` under root `/tmp/x`.
     fn relative_title(&self, title: &str) -> String {
         let Some(root) = self.workspace_root.as_deref() else {
@@ -1072,9 +1083,14 @@ impl ChatView {
                     cx.emit(ChatEvent::OpenFile(path));
                 });
             })),
-            on_link_menu: Some(Rc::new(move |url, position, window, cx| {
-                let _ = entity_link.update(cx, |view, cx| {
-                    view.open_link_menu(&url, position, window, cx);
+            on_link_menu: Some(Rc::new(move |target, position, window, cx| {
+                let _ = entity_link.update(cx, |view, cx| match &target {
+                    markdown::LinkMenuTarget::Web(url) => {
+                        view.open_link_menu(url, position, window, cx);
+                    }
+                    markdown::LinkMenuTarget::File(path) => {
+                        view.open_file_menu(path, position, window, cx);
+                    }
                 });
             })),
             prose: None,
