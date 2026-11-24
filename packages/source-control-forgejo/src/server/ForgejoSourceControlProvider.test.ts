@@ -359,7 +359,7 @@ it.effect("does not merge on Forgejo when the repository settings cannot be read
     const { provider, writes } = forgejoMergeProvider(
       Effect.fail(
         new ForgejoCli.ForgejoCliError({
-          command: "tea",
+          command: "gt",
           cwd: "/forgejo",
           detail: "Forgejo is unavailable.",
         }),
@@ -1053,7 +1053,7 @@ it.effect("reads a Gitea pull request list at most once for branches that have n
             if (!input.path.startsWith("repos/maria/project/pulls?"))
               return Effect.fail(
                 new ForgejoCli.ForgejoCliError({
-                  command: "tea",
+                  command: "gt",
                   cwd: input.cwd,
                   httpStatus: 404,
                   detail: "Forgejo API request failed (HTTP 404): Not Found",
@@ -1156,7 +1156,7 @@ it.effect("reads only the changed front of a Gitea pull request list it has read
                 ? encodeJsonEffect(found).pipe(Effect.orDie, Effect.map(processOutput))
                 : Effect.fail(
                     new ForgejoCli.ForgejoCliError({
-                      command: "tea",
+                      command: "gt",
                       cwd: input.cwd,
                       httpStatus: 404,
                       detail: "Forgejo API request failed (HTTP 404): Not Found",
@@ -1224,23 +1224,17 @@ it.effect(
               Layer.succeed(
                 HttpClient.HttpClient,
                 HttpClient.make(() => {
-                  throw new Error("tea must handle its own HTTP request");
+                  throw new Error("gt must handle its own HTTP request");
                 }),
               ),
               TestSourceControlHost.layer({
                 process: {
                   run: (input) => {
-                    if (input.args[0] === "login")
+                    if (input.args[0] === "auth")
                       return Effect.succeed(
                         processOutput(
                           encodeJson([
-                            {
-                              name: "work",
-                              url: "http://forgejo.local:3000",
-                              ssh_host: "forgejo.local",
-                              user: "maria",
-                              default: "true",
-                            },
+                            { host: "http://forgejo.local:3000", user: "maria", active: true },
                           ]),
                         ),
                       );
@@ -1546,19 +1540,18 @@ it.effect("discovers Forgejo accounts and retains the server port", () =>
       processOutput(
         yield* encodeJsonEffect([
           {
-            name: "work",
-            url: "http://forgejo.local:3000",
-            ssh_host: "git.forgejo.local",
+            host: "http://forgejo.local:3000",
             user: "maria",
-            default: "true",
-            valid: "true",
+            active: true,
+            verified: true,
+            error: null,
           },
         ]),
       ),
     );
     assert.deepStrictEqual(
-      firstNonEmptyLine("\u001b[1mtea version 0.16.0\u001b[0m\n"),
-      Option.some("tea version 0.16.0"),
+      firstNonEmptyLine("\u001b[1mgt version 2.0.0 (2026-11-18)\u001b[0m\n"),
+      Option.some("gt version 2.0.0 (2026-11-18)"),
     );
     assert.strictEqual(auth.status, "authenticated");
     assert.deepStrictEqual(auth.account, Option.some("maria"));
@@ -1567,36 +1560,44 @@ it.effect("discovers Forgejo accounts and retains the server port", () =>
       processOutput(
         encodeJson([
           {
-            name: "work",
-            url: "http://forgejo.local:3000",
+            host: "http://forgejo.local:3000",
             user: "maria",
-            default: "true",
-            valid: "false",
+            active: true,
+            verified: false,
+            error: "authentication rejected by http://forgejo.local:3000; run gt auth login",
           },
         ]),
       ),
     );
     assert.strictEqual(revoked.status, "unauthenticated");
+    const unreachable = ForgejoSourceControlProvider.discovery.parseAuth(
+      processOutput(
+        encodeJson([
+          {
+            host: "http://forgejo.local:3000",
+            user: "maria",
+            active: true,
+            verified: false,
+            error: "cannot reach http://forgejo.local:3000 (connection refused)",
+          },
+        ]),
+      ),
+    );
+    assert.strictEqual(unreachable.status, "unknown");
     const refined = ForgejoSourceControlProvider.discovery.refineUnknownRemote({
       cwd: "/repo",
       context: {
         provider: {
           kind: SourceControlProviderKind.make("unknown"),
-          name: "git.forgejo.local",
-          baseUrl: "https://git.forgejo.local",
+          name: "forgejo.local",
+          baseUrl: "https://forgejo.local",
         },
         remoteName: "origin",
-        remoteUrl: "git@git.forgejo.local:maria/project.git",
+        remoteUrl: "git@forgejo.local:maria/project.git",
       },
       auth: processOutput(
         yield* encodeJsonEffect([
-          {
-            name: "work",
-            url: "http://forgejo.local:3000",
-            ssh_host: "git.forgejo.local",
-            user: "maria",
-            default: "true",
-          },
+          { host: "http://forgejo.local:3000", user: "maria", active: true },
         ]),
       ),
     });
@@ -1610,24 +1611,11 @@ it.effect("discovers Forgejo accounts and retains the server port", () =>
 
 it.effect("does not choose a default Forgejo login across ambiguous SSH server ports", () =>
   Effect.gen(function* () {
-    const logins = ForgejoCli.parseForgejoLogins(
-      yield* encodeJsonEffect([
-        {
-          name: "one",
-          url: "http://forgejo.local:3000",
-          ssh_host: "forgejo.local",
-          user: "maria",
-          default: "true",
-        },
-        {
-          name: "two",
-          url: "http://forgejo.local:4000",
-          ssh_host: "forgejo.local",
-          user: "maria",
-          default: "false",
-        },
-      ]),
-    );
+    const accounts = yield* encodeJsonEffect([
+      { host: "http://forgejo.local:3000", user: "one", active: true },
+      { host: "http://forgejo.local:4000", user: "two", active: true },
+    ]);
+    const logins = ForgejoCli.parseForgejoLogins(accounts);
     const remote = ForgejoCli.parseForgejoRemote("git@forgejo.local:maria/project.git");
     assert.isNotNull(remote);
     assert.deepStrictEqual(
@@ -1655,7 +1643,7 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
         remoteUrl: "git@forgejo.local:maria/project.git",
         requestedHost: "forgejo.local:4000",
       },
-      auth: processOutput(yield* encodeJsonEffect(logins)),
+      auth: processOutput(accounts),
     });
     assert.strictEqual(refined?.baseUrl, "http://forgejo.local:4000");
     const https = ForgejoCli.parseForgejoRemote("http://forgejo.local:4000/maria/project.git");
@@ -1679,7 +1667,7 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
   }),
 );
 
-it.effect("rejects HTTP failures even when tea exits successfully", () =>
+it.effect("reads the HTTP status of a request gt fails", () =>
   Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     const result = yield* cli
@@ -1707,7 +1695,7 @@ it.effect("rejects HTTP failures even when tea exits successfully", () =>
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make(() => {
-        throw new Error("tea must handle its own HTTP request");
+        throw new Error("gt must handle its own HTTP request");
       }),
     ),
     Effect.provide(
@@ -1716,26 +1704,32 @@ it.effect("rejects HTTP failures even when tea exits successfully", () =>
           run: (input) => {
             if (input.args[0] === "api") {
               assert.strictEqual(input.stdin, '{"state":"closed"}');
-              assert.include(input.args, "work");
+              assert.deepStrictEqual(input.args.slice(0, 6), [
+                "api",
+                "--include",
+                "--host",
+                "http://forgejo.local:3000",
+                "--user",
+                "maria",
+              ]);
+              assert.strictEqual(input.allowNonZeroExit, true);
               assert.include(
                 input.args,
                 "http://forgejo.local:3000/api/v1/repos/maria/project/pulls/42",
               );
             }
             return Effect.succeed(
-              input.args[0] === "login"
+              input.args[0] === "auth"
                 ? processOutput(
                     encodeJson([
-                      {
-                        name: "work",
-                        url: "http://forgejo.local:3000",
-                        ssh_host: "forgejo.local",
-                        user: "maria",
-                        default: "true",
-                      },
+                      { host: "http://forgejo.local:3000", user: "maria", active: true },
                     ]),
                   )
-                : processOutput('{"message":"not found"}', { stderr: "HTTP/1.1 404 Not Found\n" }),
+                : processOutput('{"message":"not found"}', {
+                    stderr:
+                      "HTTP/1.1 404 Not Found\n\nError: not found (HTTP 404 PATCH /api/v1/repos/maria/project/pulls/42)\n",
+                    exitCode: ChildProcessSpawner.ExitCode(1),
+                  }),
             );
           },
         },
@@ -1744,7 +1738,7 @@ it.effect("rejects HTTP failures even when tea exits successfully", () =>
   ),
 );
 
-it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
+it.effect("keeps Gitea's failure reason when gt reports an HTTP error", () =>
   Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     const result = yield* cli
@@ -1771,7 +1765,7 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make(() => {
-        throw new Error("tea must handle its own HTTP request");
+        throw new Error("gt must handle its own HTTP request");
       }),
     ),
     Effect.provide(
@@ -1779,16 +1773,10 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
         process: {
           run: (input) =>
             Effect.succeed(
-              input.args[0] === "login"
+              input.args[0] === "auth"
                 ? processOutput(
                     encodeJson([
-                      {
-                        name: "work",
-                        url: "http://forgejo.local:3000",
-                        ssh_host: "forgejo.local",
-                        user: "maria",
-                        default: "true",
-                      },
+                      { host: "http://forgejo.local:3000", user: "maria", active: true },
                     ]),
                   )
                 : processOutput(
@@ -1796,6 +1784,7 @@ it.effect("keeps Gitea's failure reason when tea reports an HTTP error", () =>
                     {
                       stderr:
                         "HTTP/1.1 405 Method Not Allowed\nContent-Type: application/json;charset=utf-8\n",
+                      exitCode: ChildProcessSpawner.ExitCode(1),
                     },
                   ),
             ),
@@ -1848,10 +1837,10 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
           baseUrl: "https://code.test/forgejo",
         },
         remoteName: "origin",
-        remoteUrl: "ssh://git@code.test/forgejo/project.git",
+        remoteUrl: "ssh://git@ssh.code.test/forgejo/project.git",
       },
     });
-    assert.strictEqual(sameOwnerAsMount.command, "tea");
+    assert.strictEqual(sameOwnerAsMount.command, "gt");
     assert.strictEqual(sameOwnerAsMount.repository, "forgejo/project");
   }).pipe(
     Effect.provideService(
@@ -1869,7 +1858,7 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make(() => {
-        throw new Error("tea must handle its own HTTP request");
+        throw new Error("gt must handle its own HTTP request");
       }),
     ),
     Effect.provide(
@@ -1880,18 +1869,10 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
               return Effect.succeed(
                 processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
               );
-            if (input.args[0] === "login")
+            if (input.args[0] === "auth")
               return Effect.succeed(
                 processOutput(
-                  encodeJson([
-                    {
-                      name: "mounted",
-                      url: "https://code.test/forgejo",
-                      ssh_host: "code.test",
-                      user: "maria",
-                      default: "true",
-                    },
-                  ]),
+                  encodeJson([{ host: "https://code.test/forgejo", user: "maria", active: true }]),
                 ),
               );
             const supported = [
@@ -1900,8 +1881,17 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
               "https://code.test/forgejo/api/v1/repos/maria/project",
               "https://code.test/forgejo/api/v1/repos/reviewer/project/contents/file.ts",
             ];
-            if (input.args.at(-1)?.endsWith("/user")) assert.notInclude(input.args, "--repo");
-            assert.strictEqual(input.command, "tea");
+            assert.strictEqual(input.command, "gt");
+            if (input.args[0] === "config") {
+              assert.deepStrictEqual(input.args, [
+                "config",
+                "get",
+                "ssh_host",
+                "--host",
+                "https://code.test/forgejo",
+              ]);
+              return Effect.succeed(processOutput("ssh.code.test\n"));
+            }
             return Effect.succeed(
               supported.includes(input.args.at(-1) ?? "")
                 ? processOutput("[]", { stderr: "HTTP/1.1 200 OK\n" })
@@ -2311,7 +2301,7 @@ it.effect(
           assert.strictEqual(spec.type, "managed-cli");
           if (spec.type !== "managed-cli") return;
           const result = yield* spec.probe("/repo");
-          assert.strictEqual(result.executable, scenario === "missing" ? "tea" : "fj");
+          assert.strictEqual(result.executable, scenario === "missing" ? "gt" : "fj");
           assert.strictEqual(
             result.auth.status,
             scenario === "revoked"
@@ -2329,7 +2319,7 @@ it.effect(
               : Option.none(),
           );
           assert.strictEqual(
-            commands.some((command) => command.startsWith("tea ")),
+            commands.some((command) => command.startsWith("gt ")),
             scenario === "missing",
           );
           assert.include(commands, "fj version");
@@ -2405,18 +2395,18 @@ it.effect(
                         }),
                       );
                     }
-                    assert.strictEqual(input.command, "tea");
+                    assert.strictEqual(input.command, "gt");
                     return Effect.succeed(
-                      input.args[0] === "--version"
-                        ? processOutput("tea version 0.16.0")
+                      input.args[0] === "version"
+                        ? processOutput("gt version 2.0.0 (2026-11-18)")
                         : processOutput(
                             encodeJson([
                               {
-                                name: "work",
-                                url: "http://forgejo.local:3000",
+                                host: "http://forgejo.local:3000",
                                 user: "maria",
-                                default: "true",
-                                valid: "true",
+                                active: true,
+                                verified: true,
+                                error: null,
                               },
                             ]),
                           ),
@@ -2433,7 +2423,7 @@ it.effect(
     }),
 );
 
-it.effect("explains a slow fj instead of advising an install when tea is absent", () =>
+it.effect("explains a slow fj instead of advising an install when gt is absent", () =>
   Effect.gen(function* () {
     const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
     assert.strictEqual(spec.type, "managed-cli");
