@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's Digest has no streaming sha512 for update packages.
+import * as NodeCrypto from "node:crypto";
+
 import {
   DESKTOP_UPDATE_RESTART_MARKER_FILE,
   DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
@@ -82,6 +85,10 @@ const UpdateInfo = Schema.Struct({
   releaseDate: Schema.optional(Schema.String),
 });
 
+const CachedDownloadInfo = Schema.fromJsonString(
+  Schema.Struct({ fileName: Schema.String, sha512: Schema.String }),
+);
+
 const DownloadProgressInfo = Schema.Struct({
   percent: Schema.Number,
 });
@@ -95,6 +102,7 @@ const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
+const decodeCachedDownloadInfo = Schema.decodeUnknownEffect(CachedDownloadInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -379,6 +387,41 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
+// Mirrors electron-updater 6.8.9's MacUpdater.filterFilesForArch and Provider.findFile: resuming
+// a cached artifact the updater would not select makes it download the selected one instead.
+function selectUpdateFile(
+  files: ElectronUpdater.ElectronUpdaterOfferedFiles["files"],
+  platform: NodeJS.Platform,
+  isDebPackage: boolean,
+  runtimeInfo: DesktopRuntimeInfo,
+) {
+  // findFile matches process.arch, which "other" does not preserve.
+  if (runtimeInfo.appArch === "other") return undefined;
+  const mentions = (file: (typeof files)[number], text: string) =>
+    file.pathname.includes(text) || file.infoUrl.includes(text);
+  let candidates = files;
+  if (platform === "darwin") {
+    const isArm64File = (file: (typeof files)[number]) => mentions(file, "arm64");
+    const preferArm64 = runtimeInfo.hostArch === "arm64" && files.some(isArm64File);
+    candidates = files.filter((file) => isArm64File(file) === preferArm64);
+  }
+  const [extension, excluded] =
+    platform === "darwin"
+      ? ["zip", ["pkg", "dmg"]]
+      : platform === "win32"
+        ? ["exe", undefined]
+        : isDebPackage
+          ? ["deb", ["appimage", "rpm", "pacman"]]
+          : ["appimage", ["rpm", "deb", "pacman"]];
+  const hasExtension = (file: (typeof files)[number], ext: string) =>
+    file.pathname.toLowerCase().endsWith(`.${ext}`);
+  const packageFiles = candidates.filter((file) => hasExtension(file, extension));
+  const selected =
+    packageFiles.find((file) => mentions(file, runtimeInfo.appArch)) ?? packageFiles[0];
+  if (selected !== undefined || excluded === undefined) return selected ?? candidates[0];
+  return candidates.find((file) => !excluded.some((ext) => hasExtension(file, ext)));
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
@@ -645,41 +688,20 @@ export const make = Effect.gen(function* () {
       );
     });
 
-    return yield* actionReservation === "held"
-      ? check
-      : check.pipe(
-          Effect.onInterrupt(() => setState(state)),
-          Effect.ensuring(finishUpdateAction("check")),
-        );
+    if (actionReservation === "held") return yield* check;
+    // The restore validates the cache against the offer this check left, so no other check may
+    // replace that offer before the download starts.
+    return yield* check.pipe(
+      Effect.onInterrupt(() => setState(state)),
+      Effect.tap(() => resumeCachedDownload),
+      Effect.ensuring(finishUpdateAction("check")),
+    );
   });
 
-  // Install refreshes before downloading, and a second check could pick a stale, older release.
-  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+  // Holder of the download reservation; releases it when the download settles.
+  const downloadReservedUpdate = Effect.fn("desktop.updates.downloadReservedUpdate")(function* (
     refresh: boolean,
   ) {
-    const admission = yield* Effect.scoped(
-      admitAfterCheck(
-        Effect.gen(function* () {
-          const state = yield* Ref.get(updateStateRef);
-          if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
-            return "refused" as const;
-          }
-          const activeAction = yield* Ref.get(activeUpdateActionRef);
-          if (Option.isSome(activeAction)) {
-            return activeAction.value === "check"
-              ? ("wait-for-check" as const)
-              : ("refused" as const);
-          }
-          return (yield* tryStartUpdateAction("download"))
-            ? ("admitted" as const)
-            : ("refused" as const);
-        }),
-      ),
-    );
-    if (admission === "refused") {
-      return { accepted: false, completed: false };
-    }
-
     const offered = yield* Ref.get(updateStateRef);
     let state = offered;
     return yield* Effect.gen(function* () {
@@ -752,6 +774,96 @@ export const make = Effect.gen(function* () {
       Effect.ensuring(finishUpdateAction("download")),
     );
   });
+
+  // Install refreshes before downloading, and a second check could pick a stale, older release.
+  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+    refresh: boolean,
+  ) {
+    const admission = yield* Effect.scoped(
+      admitAfterCheck(
+        Effect.gen(function* () {
+          const state = yield* Ref.get(updateStateRef);
+          if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
+            return "refused" as const;
+          }
+          const activeAction = yield* Ref.get(activeUpdateActionRef);
+          if (Option.isSome(activeAction)) {
+            return activeAction.value === "check"
+              ? ("wait-for-check" as const)
+              : ("refused" as const);
+          }
+          return (yield* tryStartUpdateAction("download"))
+            ? ("admitted" as const)
+            : ("refused" as const);
+        }),
+      ),
+    );
+    if (admission === "refused") {
+      return { accepted: false, completed: false };
+    }
+    return yield* downloadReservedUpdate(refresh);
+  });
+
+  // A launch that quit without installing leaves its verified package in electron-updater's cache.
+  // downloadUpdate re-hashes it and emits update-downloaded without fetching it again.
+  const resumeCachedDownload = Effect.gen(function* () {
+    const offered = yield* electronUpdater.offeredUpdateFiles;
+    if (Option.isNone(offered)) return;
+    const { version } = offered.value;
+    const sha512 = selectUpdateFile(
+      offered.value.files,
+      environment.platform,
+      isDebPackage,
+      environment.runtimeInfo,
+    )?.sha512;
+    if (sha512 === undefined) return;
+    const stillOffered = Ref.get(updateStateRef).pipe(
+      Effect.flatMap((state) =>
+        state.status === "available" && state.availableVersion === version
+          ? offerable(version, state)
+          : Effect.succeed(false),
+      ),
+    );
+    if (!(yield* stillOffered)) return;
+
+    const pendingDirectory = yield* electronUpdater.pendingDownloadDirectory;
+    if (Option.isNone(pendingDirectory)) return;
+    const cached = yield* fileSystem
+      .readFileString(environment.path.join(pendingDirectory.value, "update-info.json"))
+      .pipe(Effect.flatMap(decodeCachedDownloadInfo), Effect.option);
+    if (Option.isNone(cached) || cached.value.sha512 !== sha512) return;
+    // Damaged bytes would make downloadUpdate discard the cache and fetch the package again.
+    const packageSha512 = yield* Effect.suspend(() => {
+      const hash = NodeCrypto.createHash("sha512");
+      return fileSystem
+        .stream(environment.path.join(pendingDirectory.value, cached.value.fileName))
+        .pipe(
+          Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))),
+          Effect.map(() => hash.digest("base64")),
+          Effect.option,
+        );
+    });
+    if (Option.getOrUndefined(packageSha512) !== sha512) return;
+    if ((yield* Ref.get(desktopState.quitting)) || !(yield* stillOffered)) return;
+
+    yield* logUpdaterInfo("restoring cached update download", { version });
+    // An interrupt between the handover and the download's own release would strand the reservation.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Ref.modify(activeUpdateActionRef, (activeAction) =>
+        Option.isSome(activeAction) && activeAction.value === "check"
+          ? ([true, Option.some<UpdateAction>("download")] as const)
+          : ([false, activeAction] as const),
+      ).pipe(
+        Effect.flatMap((claimedFromCheck) =>
+          claimedFromCheck
+            ? restore(downloadReservedUpdate(false)).pipe(
+                Effect.ensuring(finishUpdateAction("download")),
+              )
+            : Effect.void,
+        ),
+      ),
+    );
+  }).pipe(Effect.withSpan("desktop.updates.resumeCachedDownload"));
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
