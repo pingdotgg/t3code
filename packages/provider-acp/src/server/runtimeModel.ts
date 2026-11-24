@@ -1103,18 +1103,24 @@ const POWERSHELL_EXE_NAME = /^(?:.+[/\\])?(?:powershell|pwsh)(?:\.exe)?$/iu;
 const POWERSHELL_VALUE_FLAG = /^-(?:executionpolicy|ep|windowstyle|w|inputformat|outputformat)$/iu;
 const POSIX_SHELL_NAME = /^(?:.+[/\\])?(?:ba|z)?sh(?:\.exe)?$/iu;
 const POSIX_SHELL_FLAG = /^-[a-z]+$/iu;
-const SHELL_REDIRECTION_TOKEN = /^(?:\d+|\*)?(?:>>?(?:&\d+|\S*)|<\S*)$/u;
-const SHELL_INPUT_REDIRECTION = /^\d*<$/u;
-const SHELL_INPUT_REDIRECTION_ATTACHED = /^\d*<\S+$/u;
-const HEREDOC_DELIMITER = /^[A-Za-z_][A-Za-z0-9_.-]*$/u;
+const SHELL_INPUT_REDIRECTION = /^\d*<(?:<<)?$/u;
+const SHELL_INPUT_REDIRECTION_ATTACHED = /^\d*<(?!<<).+$/u;
 
 interface ShellToken {
   readonly raw: string;
   readonly value: string;
   readonly quoted: boolean;
   readonly singleQuoted: boolean;
+  readonly redirection: boolean;
   readonly start: number;
   readonly end: number;
+}
+
+function decodePowerShellSingleQuoted(raw: string): string | undefined {
+  if (raw.length < 2 || !raw.startsWith("'") || !raw.endsWith("'")) return undefined;
+  const inner = raw.slice(1, -1);
+  if (inner.replaceAll("''", "").includes("'")) return undefined;
+  return inner.replaceAll("''", "'");
 }
 
 function isLineContinuation(command: string, index: number): number {
@@ -1153,7 +1159,13 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
 
   while (index < length) {
     const ch = command[index]!;
-    if (ch === " " || ch === "\t" || ch === "\r") {
+    if (ch === "\n") {
+      flushSegment();
+      index += 1;
+      consumePendingHeredocs();
+      continue;
+    }
+    if (/\s/u.test(ch)) {
       index += 1;
       continue;
     }
@@ -1162,15 +1174,14 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
       index += continuation;
       continue;
     }
-    if (ch === "\n") {
-      flushSegment();
-      index += 1;
-      consumePendingHeredocs();
-      continue;
-    }
     if (ch === "#") {
       const lineEnd = command.indexOf("\n", index);
       index = lineEnd === -1 ? length : lineEnd;
+      continue;
+    }
+    if (ch === "<" && command[index + 1] === "#") {
+      const commentEnd = command.indexOf("#>", index + 2);
+      index = commentEnd === -1 ? length : commentEnd + 2;
       continue;
     }
     if (ch === ";" || ch === "(" || ch === ")") {
@@ -1217,20 +1228,41 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
           value: raw,
           quoted: true,
           singleQuoted: quote === "'",
+          redirection: false,
           start,
           end: index,
         });
         continue;
       }
     }
-    if (ch === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+    if (ch === "<" && command[index + 1] === "<" && command[index + 2] === "<") {
+      currentSegment.push({
+        raw: "<<<",
+        value: "<<<",
+        quoted: false,
+        singleQuoted: false,
+        redirection: true,
+        start: index,
+        end: index + 3,
+      });
+      index += 3;
+      continue;
+    }
+    if (ch === "<" && command[index + 1] === "<") {
       const start = index;
       index += 2;
       const stripTabs = command[index] === "-";
       if (stripTabs) index += 1;
-      while (index < length && (command[index] === " " || command[index] === "\t")) index += 1;
+      while (
+        index < length &&
+        command[index] !== "\n" &&
+        command[index] !== "\r" &&
+        /\s/u.test(command[index]!)
+      ) {
+        index += 1;
+      }
       let delimiter = "";
-      while (index < length && !/[\s;|&()]/u.test(command[index]!)) {
+      while (index < length && !/[\s;|&()<>]/u.test(command[index]!)) {
         const c = command[index]!;
         if (c === "'" || c === '"') {
           index += 1;
@@ -1247,13 +1279,14 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
           index += 1;
         }
       }
-      if (HEREDOC_DELIMITER.test(delimiter)) pendingHeredocs.push({ delimiter, stripTabs });
+      if (delimiter.length > 0) pendingHeredocs.push({ delimiter, stripTabs });
       const raw = command.slice(start, index);
       currentSegment.push({
         raw,
         value: raw,
         quoted: false,
         singleQuoted: false,
+        redirection: true,
         start,
         end: index,
       });
@@ -1264,15 +1297,41 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
     let value = "";
     let quoted = false;
     let allSingleQuoted = true;
+    let redirection = false;
     while (index < length) {
       const c = command[index]!;
       if (
         /[\s;|()]/u.test(c) ||
         (c === "&" && command[index - 1] !== ">" && command[index - 1] !== "<") ||
         (c === "$" && command[index + 1] === "(") ||
-        (c === "<" && command[index + 1] === "<" && command[index + 2] !== "<") ||
-        isLineContinuation(command, index) > 0
+        (c === "<" && (command[index + 1] === "#" || command[index + 1] === "<"))
       ) {
+        break;
+      }
+      if (c === ">" || c === "<") {
+        if (redirection) {
+          if (c === ">" && /^(?:\d+|\*)?>$/u.test(command.slice(start, index))) {
+            value += c;
+            index += 1;
+            continue;
+          }
+          break;
+        }
+        if (index === start || (!quoted && /^(?:\d+|\*)$/u.test(command.slice(start, index)))) {
+          redirection = true;
+          allSingleQuoted = false;
+          value += c;
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      const wordContinuation = isLineContinuation(command, index);
+      if (wordContinuation > 0) {
+        if (c === "\\") {
+          index += wordContinuation;
+          continue;
+        }
         break;
       }
       if (c === "'") {
@@ -1293,6 +1352,13 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
             index += 1;
             break;
           }
+          if (inner === "\\") {
+            const quotedContinuation = isLineContinuation(command, index);
+            if (quotedContinuation > 0) {
+              index += quotedContinuation;
+              continue;
+            }
+          }
           if ((inner === "\\" || inner === "`") && index + 1 < length) {
             const next = command[index + 1]!;
             if (next === '"' || next === inner) {
@@ -1307,9 +1373,9 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
       } else {
         allSingleQuoted = false;
         if (
-          (c === "\\" || c === "`") &&
+          (c === "\\" || c === "`" || c === "^") &&
           index + 1 < length &&
-          /[;|&\s'"()]/u.test(command[index + 1]!)
+          (/[;|&\s'"()<>]/u.test(command[index + 1]!) || (c === "^" && command[index + 1] === "^"))
         ) {
           value += command[index + 1]!;
           index += 2;
@@ -1324,6 +1390,7 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
       value,
       quoted,
       singleQuoted: quoted && allSingleQuoted,
+      redirection,
       start,
       end: index,
     });
@@ -1345,9 +1412,7 @@ function unwrapShellWrapper(
   const token = tokens[index]!;
   const isTrailingCommandArg = (argIndex: number) =>
     argIndex === tokens.length - 1 ||
-    (argIndex < tokens.length - 1 &&
-      !tokens[argIndex + 1]!.quoted &&
-      SHELL_REDIRECTION_TOKEN.test(tokens[argIndex + 1]!.raw));
+    (argIndex < tokens.length - 1 && tokens[argIndex + 1]!.redirection);
   if (CMD_EXE_NAME.test(token.value)) {
     let next = index + 1;
     let sawCommandFlag = false;
@@ -1376,7 +1441,11 @@ function unwrapShellWrapper(
       next += 1;
       if (flag === "-c" || flag === "-command") {
         if (depth === 0 && next < tokens.length && isTrailingCommandArg(next)) {
-          return { kind: "nested", command: tokens[next]!.value };
+          const arg = tokens[next]!;
+          const nested = arg.singleQuoted
+            ? (decodePowerShellSingleQuoted(arg.raw) ?? arg.value)
+            : arg.value;
+          return { kind: "nested", command: nested };
         }
         return { kind: "advance", index: next };
       }
@@ -1414,21 +1483,19 @@ function extractWindowsAcpMcpFallbackCall(
     while (index < tokens.length) {
       const token = tokens[index]!;
       if (
-        (!token.quoted &&
-          (token.value === "." ||
-            token.value.toLowerCase() === "call" ||
-            SHELL_INPUT_REDIRECTION_ATTACHED.test(token.raw))) ||
+        (!token.quoted && (token.value === "." || token.value.toLowerCase() === "call")) ||
+        (token.redirection && SHELL_INPUT_REDIRECTION_ATTACHED.test(token.raw)) ||
         SHELL_ENV_ASSIGNMENT.test(token.raw)
       ) {
         index += 1;
         continue;
       }
       if (
-        !token.quoted &&
-        (SHELL_INPUT_REDIRECTION.test(token.raw) ||
-          (POWERSHELL_VARIABLE_NAME.test(token.raw) &&
-            tokens[index + 1]?.raw === "=" &&
-            !tokens[index + 1]!.quoted))
+        (token.redirection && SHELL_INPUT_REDIRECTION.test(token.raw)) ||
+        (!token.quoted &&
+          POWERSHELL_VARIABLE_NAME.test(token.raw) &&
+          tokens[index + 1]?.raw === "=" &&
+          !tokens[index + 1]!.quoted)
       ) {
         index += 2;
         continue;
@@ -1460,7 +1527,7 @@ function extractWindowsAcpMcpFallbackCall(
     const argTokens: Array<ShellToken> = [];
     for (let argIndex = index + 2; argIndex < tokens.length; argIndex += 1) {
       const arg = tokens[argIndex]!;
-      if (!arg.quoted && SHELL_REDIRECTION_TOKEN.test(arg.raw)) break;
+      if (arg.redirection) break;
       argTokens.push(arg);
     }
     const rawArg =
@@ -1484,10 +1551,8 @@ function extractWindowsAcpMcpFallbackCall(
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
-  const candidates = [
-    trimmed,
-    ...(trimmed.startsWith("'") && trimmed.endsWith("'") ? [trimmed.slice(1, -1)] : []),
-  ];
+  const decodedSingleQuoted = decodePowerShellSingleQuoted(trimmed);
+  const candidates = decodedSingleQuoted === undefined ? [trimmed] : [decodedSingleQuoted];
   for (const candidate of candidates) {
     try {
       const parsed: unknown = JSON.parse(candidate);
