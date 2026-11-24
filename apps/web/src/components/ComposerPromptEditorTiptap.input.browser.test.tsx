@@ -594,6 +594,27 @@ it.each([
   expect(editor.view.hasFocus()).toBe(true);
 });
 
+it("parses markdown dropped below the first line of an empty composer", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  const box = editor.view.dom.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "a **bold** word");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: box.left + 4,
+        clientY: box.bottom - 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("a **bold** word");
+  expect(editor.state.doc.textContent).toBe("a bold word");
+});
+
 it("drops text on a rule's edge without replacing the rule", async () => {
   await using screen = await mountEditor("before\n\n---\n\nafter");
   const { editor } = screen;

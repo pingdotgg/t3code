@@ -1563,11 +1563,18 @@ function ComposerPromptEditorTiptapInner(
           if (moved || view.dragging || !data || data.files.length > 0) return false;
           const target = view.posAtCoords({ left: event.clientX, top: event.clientY });
           if (!target || !readPastedPlainText(data)) return false;
-          // Between blocks, ProseMirror's drop inserts a new block; a nearby selection would replace or join one.
-          if (!view.state.doc.resolve(target.pos).parent.inlineContent) return false;
-          view.dispatch(
-            view.state.tr.setSelection(TextSelection.create(view.state.doc, target.pos)),
-          );
+          let pos = target.pos;
+          const $target = view.state.doc.resolve(pos);
+          if (!$target.parent.inlineContent) {
+            // Between blocks, fill an adjacent empty paragraph (the padding of an empty composer); otherwise
+            // ProseMirror's drop inserts a new block, where a nearby selection would replace or join one.
+            const isEmptyParagraph = (node: typeof $target.nodeAfter) =>
+              node?.type.name === "paragraph" && node.content.size === 0;
+            if (isEmptyParagraph($target.nodeAfter)) pos += 1;
+            else if (isEmptyParagraph($target.nodeBefore)) pos -= 1;
+            else return false;
+          }
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
           // Handling the drop skips ProseMirror's own focus call.
           view.focus();
           return insertClipboardText(view, data);
