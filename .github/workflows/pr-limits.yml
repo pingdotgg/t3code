@@ -29,7 +29,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      issues: read
       pull-requests: write
     steps:
       # pull_request_target has a write token. Load the script from the default
