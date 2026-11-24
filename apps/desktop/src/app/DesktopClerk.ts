@@ -139,7 +139,6 @@ export const make = Effect.gen(function* () {
   yield* Effect.acquireRelease(
     Effect.try({
       try: () =>
-        // electron-store rebases a relative path under userData, so keep it absolute.
         createDesktopClerkBridge(
           path.resolve(environment.stateDir, "clerk"),
           environment.isDevelopment,
