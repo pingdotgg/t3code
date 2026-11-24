@@ -1182,10 +1182,24 @@ const make = Effect.gen(function* () {
     ),
     pull_request_review: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
+        if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
+          return yield* new PullRequestForgeError({
+            detail:
+              "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
+          });
+        }
         const { target, ref } = yield* locate(input);
         const comments = yield* reviewComments(ref, input.comments ?? []);
         yield* pullRequests
-          .submitReview({ ...ref, verdict: input.verdict, body: input.body ?? "", comments })
+          .submitReview({
+            ...ref,
+            verdict: input.verdict,
+            body: input.body ?? "",
+            comments,
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
+          })
           .pipe(Effect.mapError(forgeFailure));
         return identityOf(target);
       }),
