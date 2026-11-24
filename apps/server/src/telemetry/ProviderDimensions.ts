@@ -151,7 +151,14 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
               ]) ?? "root"),
       });
     case "t3_thread_send":
-      return defined({ delivery: stringField(output, "delivery") });
+      return defined({
+        delivery: oneOf(stringField(output, "delivery"), [
+          "started",
+          "queued",
+          "steered",
+          "restarted",
+        ]),
+      });
     case "t3_thread_send_attachments":
       return { delivery: "auto" };
     case "schedule_task": {
@@ -166,6 +173,8 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
   }
 }
 
+const ERROR_CODE_SHAPE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
 /** Outcome of a tool call, with the stable failure code when the call failed. */
 export function toolOutcome(
   result:
@@ -178,7 +187,12 @@ export function toolOutcome(
   // closed `code`; the MCP layer does not always set isError for them.
   const code = stringField(content, "code") ?? stringField(asFields(content.error), "_tag");
   if (result.isError === true || (content._tag !== undefined && code !== undefined)) {
-    return { outcome: "error", errorCode: code ?? "unknown" };
+    // Codes and tags are identifiers; anything else may be a message or a value, which stays in
+    // local traces rather than analytics.
+    return {
+      outcome: "error",
+      errorCode: code !== undefined && ERROR_CODE_SHAPE.test(code) ? code : "unknown",
+    };
   }
   return { outcome: "ok" };
 }
