@@ -8238,7 +8238,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   );
 
   it.effect.each([
-    ["T3 Code's idle compaction", "agent", "server", undefined, true, "/compact"],
+    ["HYR Code's idle compaction", "agent", "server", undefined, true, "/compact"],
     ["compacting on return", "user", "web", "onReturn", true, "/compact"],
     ["a typed /compact", "user", "mobile", undefined, false, "/compact"],
     ["a normalized idle command", "agent", "server", undefined, true, " \t\u00a0/COMPACT\u3000\n"],

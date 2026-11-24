@@ -8,7 +8,7 @@ const isNewer = (candidate: string, current: string) =>
 
 /**
  * Picks the release a managed installation's `start` downloads. A fresh install
- * gets T3 Code's pinned release; an existing one moves to the newest known
+ * gets HYR Code's pinned release; an existing one moves to the newest known
  * release above it. Null means nothing newer is known, so `start` re-checks the
  * installed runtime instead of downgrading it.
  */

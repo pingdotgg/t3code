@@ -90,7 +90,7 @@ EOF
 
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/t3code.desktop" <<'EOF'
 [Desktop Entry]
-Name=T3 Code Nightly
+Name=HYR Code Nightly
 Comment=Nightly desktop control surface for local coding agents
 Exec=t3code-nightly %U
 TryExec=t3code-nightly

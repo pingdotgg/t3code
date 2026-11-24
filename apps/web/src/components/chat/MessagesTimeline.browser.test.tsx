@@ -1631,7 +1631,7 @@ describe("MessagesTimeline agent messages", () => {
     expect(screen.buttons("Open thread")).toHaveLength(0);
   });
 
-  it("leaves messages sent by T3 Code as full bubbles", async () => {
+  it("leaves messages sent by HYR Code as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),

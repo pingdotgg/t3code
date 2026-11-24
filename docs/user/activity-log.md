@@ -42,7 +42,7 @@ are spaced out, so a quick step can be skipped for a newer one.
 The agent's reasoning text is never read. The setting follows the agent's real activity, whatever
 **Tool calls in chat** hides, and applies to this browser or device only.
 
-To hear the open thread and what it's doing when you switch to T3 Code, turn on **Screen reader
+To hear the open thread and what it's doing when you switch to HYR Code, turn on **Screen reader
 window title** in the same section. The window title then starts with the thread's status
 (**Working**, **Needs approval**, or **Needs your input**) and its name, then the project, so a
 screen reader says them first. When the turn ends, only the status goes away.

@@ -1,7 +1,7 @@
 Pod::Spec.new do |s|
   s.name = 'T3VoiceTranscription'
   s.version = '1.0.0'
-  s.summary = 'Local recording conversion for T3 Code dictation.'
+  s.summary = 'Local recording conversion for HYR Code dictation.'
   s.author = 'T3 Tools'
   s.homepage = 'https://t3tools.com'
   s.platform = :ios, '18.0'

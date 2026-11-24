@@ -69,5 +69,5 @@ Unsigned `dev:desktop` cannot exercise passkeys. For renderer HMR with passkeys,
 
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 T3CODE_PORT=13773 \
-  "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
+  "/Applications/HYR Code (Alpha).app/Contents/MacOS/HYR Code (Alpha)"
 ```

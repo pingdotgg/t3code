@@ -18,12 +18,12 @@ export function codexAuthCallbackPage(
   const title = success ? "You're signed in" : "Sign-in couldn't finish";
   const description = success
     ? destination
-      ? "Returning to T3 Code. You're ready to continue."
-      : "Return to T3 Code to continue. You can close this tab."
-    : "Return to T3 Code and try signing in again.";
+      ? "Returning to HYR Code. You're ready to continue."
+      : "Return to HYR Code to continue. You can close this tab."
+    : "Return to HYR Code and try signing in again.";
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark"><title>${escapeHtml(title)} · T3 Code</title>
+<meta name="color-scheme" content="light dark"><title>${escapeHtml(title)} · HYR Code</title>
 ${success && destination ? `<meta http-equiv="refresh" content="1;url=${escapeHtml(destination)}">` : ""}
 <style>
 :root{font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#18181b;background:#fafafa;color-scheme:light dark}
@@ -37,6 +37,6 @@ a{display:inline-flex;align-items:center;justify-content:center;margin-top:28px;
 </style></head><body><main><div class="brand"><strong>T3</strong> Code</div>
 <div class="status" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${success ? '<path d="m5 12 4 4L19 6"/>' : '<path d="m6 6 12 12M6 18 18 6"/>'}</svg></div>
 <h1>${escapeHtml(title)}</h1><p>${description}</p>
-${destination ? `<a href="${escapeHtml(destination)}">Return to T3 Code</a>` : ""}
+${destination ? `<a href="${escapeHtml(destination)}">Return to HYR Code</a>` : ""}
 </main><script nonce="${escapeHtml(nonce)}">history.replaceState(null,"","/auth/callback");</script></body></html>`;
 }

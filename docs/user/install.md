@@ -1,12 +1,12 @@
-# Install T3 Code
+# Install HYR Code
 
-T3 Code runs coding agents on your computer and lets you control them from its
+HYR Code runs coding agents on your computer and lets you control them from its
 desktop, web, or mobile app. Set up the machine where the agents will work first.
 
 ## Requirements
 
 You need an installed, authenticated provider before starting a thread. You can
-launch T3 Code and configure providers afterwards.
+launch HYR Code and configure providers afterwards.
 
 ## Command line
 
@@ -47,7 +47,7 @@ command it names and open the pairing URL to connect to that server. Stop it
 before starting a replacement, or use a different `--base-dir` for an
 independent server.
 
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
+To try HYR Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`). It offers to install the `t3` command first. If you say no,
 it asks again at the next minor release, and `npx t3 install` installs it later.
 `npx t3` always runs the version npm picked, even when a `t3` is installed. On
@@ -79,7 +79,7 @@ or use a package manager:
 | Windows            | `winget install T3Tools.T3Code`                              |
 | Windows (Scoop)    | `scoop install extras/t3code`                                |
 | macOS              | `brew install --cask t3-code`                                |
-| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb`                           |
+| Debian, Ubuntu     | `sudo apt install ./HYR-Code-*.deb`                          |
 | Arch Linux         | `yay -S t3code-bin`                                          |
 | Arch Linux nightly | `yay -S t3code-nightly-bin`                                  |
 | Nix                | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code` |
@@ -92,11 +92,11 @@ architecture with `uname -m`: for `x86_64`, choose a file ending in
 `arm64.deb`.
 
 To launch an AppImage, open a terminal in its download folder. Replace
-`T3-Code.AppImage` below with the exact filename you downloaded:
+`HYR-Code.AppImage` below with the exact filename you downloaded:
 
 ```bash
-chmod +x ./T3-Code.AppImage
-./T3-Code.AppImage
+chmod +x ./HYR-Code.AppImage
+./HYR-Code.AppImage
 ```
 
 The `.deb` updates itself like the other desktop builds. It asks for your
@@ -109,7 +109,7 @@ in-app updater.
 
 ### Nix (nixpkgs)
 
-T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).
+HYR Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).
 The command above installs from `nixos-unstable` and requires Nix 2.30 or later with
 `nix-command` and `flakes` enabled. Launch the desktop app with `t3code-desktop`;
 the package also includes the `t3` command.
@@ -143,7 +143,7 @@ add it again. If you already have another `t3`, it stays as it is.
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Sharing & access** to run agents and projects
-there. Install the provider CLIs inside that distro. T3 Code installs its own
+there. Install the provider CLIs inside that distro. HYR Code installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.
 
@@ -169,7 +169,7 @@ folder paths, so in the web app use **Add project** instead.
 
 ## Mobile app
 
-Install T3 Code from the
+Install HYR Code from the
 [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
 [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
 The phone connects to a server on another machine. Follow
@@ -203,19 +203,19 @@ computer.
 | Grok Build          | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
 | Kiro                | Install [Kiro CLI](https://kiro.dev/docs/cli/), then run `kiro-cli login`.                                                                                |
 | OpenCode            | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
-| Antigravity         | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
+| Antigravity         | Install and sign in with Google from HYR Code's provider settings.                                                                                        |
 | Pi                  | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
 | Muse Code           | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 | fx                  | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
 | ACP Registry agents | Add GitHub Copilot and other [ACP agents](./providers-acp.md#add-an-agent) from **Settings → Providers → Add provider → Show more**.                      |
 
-Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
+Provider CLIs must be on the server's `PATH`. If HYR Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
 Cursor's executable is `cursor-agent`, although its login command is
 `agent login`. Codex connected through ChatGPT and Antigravity can use their
 managed runtimes without a `PATH` entry.
 
-T3 Code warns when a provider version has known compatibility problems with your
+HYR Code warns when a provider version has known compatibility problems with your
 release. Check **Settings → Providers** on that environment for the recommended
 version or range. When its package manager supports installing a specific version,
 you can install the recommendation there. Otherwise use the provider's installer
@@ -224,24 +224,24 @@ on the environment's machine. An unlisted version is unverified.
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
 (Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
-the CLI's own update command when T3 Code cannot tell. Claude, Codex, and
-OpenCode installs T3 Code cannot identify stay manual: update them through the
-installer you used. T3 Code runs `mise upgrade`
+the CLI's own update command when HYR Code cannot tell. Claude, Codex, and
+OpenCode installs HYR Code cannot identify stay manual: update them through the
+installer you used. HYR Code runs `mise upgrade`
 only for a tool your mise config requests as `latest` when the provider's binary
 path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
 pinned version, or a path into one version's directory, through mise yourself.
 Update a CLI installed with Nix through Nix.
-Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
+Cursor and Antigravity update with HYR Code. Homebrew and Chocolatey installs
 compare against the version their package manager offers, which can trail the
 npm release; update Claude installed with Chocolatey through Chocolatey.
 
 The managed runtimes for Antigravity and for Codex connected through ChatGPT
-first install the release T3 Code tested. When T3 Code finds a newer compatible
+first install the release HYR Code tested. When HYR Code finds a newer compatible
 release, their setup in **Settings → Providers** offers an update.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
-base URL. Mark secret values as sensitive; after saving, T3 Code does not display
+base URL. Mark secret values as sensitive; after saving, HYR Code does not display
 their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
@@ -254,7 +254,7 @@ To run the supported harnesses through a LiteLLM gateway, see
 
 ### Provider check timeouts
 
-If a provider works in its CLI but T3 Code reports a timeout while checking it,
+If a provider works in its CLI but HYR Code reports a timeout while checking it,
 allow more time in the T3 server's environment. For example, give Codex and
 Claude readiness checks 60 seconds:
 
@@ -299,5 +299,5 @@ installation, update checks, and shutdown limits keep their existing behavior.
 - [Permission modes](./permission-modes.md): choose when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
 - [Running in the background](./background-service.md): keep a host available.
-- [Updating T3 Code](./updating.md): update the app and connected servers.
-- [Managed policy](./managed-policy.md): configure T3 Code for everyone on a machine.
+- [Updating HYR Code](./updating.md): update the app and connected servers.
+- [Managed policy](./managed-policy.md): configure HYR Code for everyone on a machine.

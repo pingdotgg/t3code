@@ -2586,7 +2586,7 @@ export function AboutSettingsPanel() {
           {...setting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? gt("How we handle your data, including the anonymous usage data T3 Code collects.")
+              ? gt("How we handle your data, including the anonymous usage data HYR Code collects.")
               : gt("How we handle your data. {telemetryOff}", { telemetryOff })
           }
           control={
@@ -2601,7 +2601,7 @@ export function AboutSettingsPanel() {
         />
         <SettingsRow
           {...setting("open-source-licenses")}
-          description={gt("Notices for dependencies, assets, and optional tools used by T3 Code.")}
+          description={gt("Notices for dependencies, assets, and optional tools used by HYR Code.")}
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

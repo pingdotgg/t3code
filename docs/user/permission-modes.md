@@ -38,14 +38,14 @@ including some personal Google accounts, do not. Without it, an Antigravity thre
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
 
-T3 Code offers no **Auto-accept edits** for fx, and **Full access** only with fx 0.0.14 or later. An fx
+HYR Code offers no **Auto-accept edits** for fx, and **Full access** only with fx 0.0.14 or later. An fx
 thread set to a mode its fx lacks runs in **Supervised**.
 
 Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Grok
 file-change approvals offer **Allow all edits this session**. Its command approvals have no
 session-wide choice, because Grok would remember that command for the whole project.
 
-ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
+ACP Registry agents run their own tools in their own mode; HYR Code answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 In **Full access**, commands that Codex's dangerous-command check would ask about run without

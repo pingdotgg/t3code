@@ -55,7 +55,7 @@ const make = Effect.gen(function* () {
     );
     if (runtime === undefined) return yield* stopped(input.server);
     if (runtime.mcpSignIn === undefined) {
-      return yield* fail(input.server, "This agent can't sign MCP servers in from T3 Code.");
+      return yield* fail(input.server, "This agent can't sign MCP servers in from HYR Code.");
     }
     return { providerThread, mcpSignIn: runtime.mcpSignIn };
   });

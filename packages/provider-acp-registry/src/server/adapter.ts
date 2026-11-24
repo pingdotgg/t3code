@@ -259,7 +259,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
   // Copilot CLI 1.0.105 rejects stdio MCP servers from the client, and Command Code cannot
   // start the stdio bridge on Windows (it spawns MCP commands through cmd.exe, which splits
-  // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
+  // the unquoted "HYR Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
   const useHttpMcpServers =
     copilotRouting !== undefined || prefersHttpMcpTransport(options.settings);
   const flavor: AcpAdapterV2Flavor = {

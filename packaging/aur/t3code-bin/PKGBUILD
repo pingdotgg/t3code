@@ -89,7 +89,7 @@ EOF
 
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/t3code.desktop" <<'EOF'
 [Desktop Entry]
-Name=T3 Code
+Name=HYR Code
 Comment=Desktop control surface for local coding agents
 Exec=t3code %U
 TryExec=t3code

@@ -5,7 +5,7 @@ package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 Pod::Spec.new do |s|
   s.name = 'T3HighlightsNative'
   s.version = package['version']
-  s.summary = 'Native @pierre/highlights syntax highlighter for T3 Code mobile.'
+  s.summary = 'Native @pierre/highlights syntax highlighter for HYR Code mobile.'
   s.description = 'Runs the @pierre/highlights lexers, compiled from WebAssembly to C with wasm2c.'
   s.homepage = 'https://t3tools.com'
   s.license = { :type => 'UNLICENSED' }

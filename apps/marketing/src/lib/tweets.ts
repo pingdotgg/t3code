@@ -17,16 +17,16 @@ export const tweets = [
   {
     handle: "dhh",
     content:
-      "Omarchy is going to ship with an installer for T3 Code because it's a cool project that a lot of people enjoy. Squashing beefs in the process is just bonus.",
+      "Omarchy is going to ship with an installer for HYR Code because it's a cool project that a lot of people enjoy. Squashing beefs in the process is just bonus.",
     excerpt:
-      "Omarchy is going to ship with an installer for T3 Code because it's a cool project...",
+      "Omarchy is going to ship with an installer for HYR Code because it's a cool project...",
     link: "https://x.com/dhh/status/2090332565966123041",
   },
   {
     handle: "MichaelArnaldi",
     content:
-      "Since I've started using T3 Code I no longer care which harness is used, I'd actually love to get rid of all of them and just use @tim_smart 's clanka",
-    excerpt: "Since I've started using T3 Code I no longer care which harness is used",
+      "Since I've started using HYR Code I no longer care which harness is used, I'd actually love to get rid of all of them and just use @tim_smart 's clanka",
+    excerpt: "Since I've started using HYR Code I no longer care which harness is used",
     link: "https://x.com/MichaelArnaldi/status/2110290227021365720",
   },
   {
@@ -36,13 +36,13 @@ export const tweets = [
   },
   {
     handle: "tannerlinsley",
-    content: "I would just use T3 Code at that point and contribute back.",
+    content: "I would just use HYR Code at that point and contribute back.",
     link: "https://x.com/tannerlinsley/status/2035067912659341399",
   },
   {
     handle: "RhysSullivan",
     content:
-      "T3 Code is worth giving a try if you haven’t yet\n\nIt takes what I liked so much about codex’s remote setup and improves upon it, it’s a great UX using it on both desktop and mobile\n\nAlso is just nice to have all the official harnesses in one app",
+      "HYR Code is worth giving a try if you haven’t yet\n\nIt takes what I liked so much about codex’s remote setup and improves upon it, it’s a great UX using it on both desktop and mobile\n\nAlso is just nice to have all the official harnesses in one app",
     excerpt: "It takes what I liked so much about codex’s remote setup and improves upon it",
     link: "https://x.com/RhysSullivan/status/2089750636686643493",
   },
@@ -55,33 +55,33 @@ export const tweets = [
   {
     handle: "AtharvaIngle7",
     content:
-      "T3 Code is miles ahead of anything else i've tried (even the Codex app, which i haven't opened in a month fyi).",
-    excerpt: "T3 Code is miles ahead of anything else i've tried",
+      "HYR Code is miles ahead of anything else i've tried (even the Codex app, which i haven't opened in a month fyi).",
+    excerpt: "HYR Code is miles ahead of anything else i've tried",
     link: "https://x.com/AtharvaIngle7/status/2114267747203039682",
   },
   {
     handle: "appfactory",
     content:
-      "This is a popular opinion now, but T3 Code is a pleasure to use.\n\nIt is the most sane version of an agent orchestrator that I've used: It has well thought out defaults and good performance.\n\nWell done T3 Team!",
+      "This is a popular opinion now, but HYR Code is a pleasure to use.\n\nIt is the most sane version of an agent orchestrator that I've used: It has well thought out defaults and good performance.\n\nWell done T3 Team!",
     excerpt: "It is the most sane version of an agent orchestrator that I've used",
     link: "https://x.com/appfactory/status/2108498055074812393",
   },
   {
     handle: "linuz90",
     content:
-      "I’m at the gym and my own personal gym app misses some exercises.\n\nSo I launch a T3 Code thread and ship updates as I train.\n\nGolden age for makers or peak AI psychosis?",
+      "I’m at the gym and my own personal gym app misses some exercises.\n\nSo I launch a HYR Code thread and ship updates as I train.\n\nGolden age for makers or peak AI psychosis?",
     excerpt:
-      "...gym app misses some exercises. So I launch a T3 Code thread and ship updates as I train.",
+      "...gym app misses some exercises. So I launch a HYR Code thread and ship updates as I train.",
     link: "https://x.com/linuz90/status/2110051011578745210",
   },
   {
     handle: "ex0t1clol",
-    content: "T3 Code is proof electron apps don't have to suck",
+    content: "HYR Code is proof electron apps don't have to suck",
     link: "https://x.com/ex0t1clol/status/2054666870008021197",
   },
   {
     handle: "mweinbach",
-    content: "T3 Code with connect in just a web browser is so killer I love it so much",
+    content: "HYR Code with connect in just a web browser is so killer I love it so much",
     link: "https://x.com/mweinbach/status/2077595624707395636",
   },
   {
@@ -101,26 +101,26 @@ export const tweets = [
   {
     handle: "amritwt",
     content:
-      "I finally installed T3 Code and I am in awe about how it connects to a remote VM seamlessly with no Tailscale",
+      "I finally installed HYR Code and I am in awe about how it connects to a remote VM seamlessly with no Tailscale",
     excerpt: "...I am in awe about how it connects to a remote VM seamlessly with no Tailscale",
     link: "https://x.com/amritwt/status/2104046763418263999",
   },
   {
     handle: "_winter_wonders",
-    content: "Heartbreaking: AI-hater has to admit T3 Code is really good.",
+    content: "Heartbreaking: AI-hater has to admit HYR Code is really good.",
     link: "https://x.com/_winter_wonders/status/2052350198764970434",
   },
   {
     handle: "szdziedzic",
     content:
-      "I became a T3 Code user recently - it’s great especially if you have many subs and many machines to manage. I recommend giving it a shot if you haven’t already 👏.",
+      "I became a HYR Code user recently - it’s great especially if you have many subs and many machines to manage. I recommend giving it a shot if you haven’t already 👏.",
     excerpt: "...it’s great especially if you have many subs and many machines to manage.",
     link: "https://x.com/szdziedzic/status/2103225721007005823",
   },
   {
     handle: "JoshuaRileyDev",
     content:
-      "Well I was 2,000 miles away on holiday and able to do iOS development from just my phone, T3 Code’s remote feature is a magical experience",
+      "Well I was 2,000 miles away on holiday and able to do iOS development from just my phone, HYR Code’s remote feature is a magical experience",
     excerpt: "I was 2,000 miles away on holiday and able to do iOS development from just my phone",
     link: "https://x.com/JoshuaRileyDev/status/2094379365408616837",
   },

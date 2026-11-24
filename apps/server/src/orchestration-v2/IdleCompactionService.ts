@@ -22,7 +22,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 /**
  * Beta: when a run completes on a Claude instance set to compact before the
  * cache expires, waits until shortly before its prompt cache expires and sends
- * `/compact` as a visible T3 Code turn. Timers live in
+ * `/compact` as a visible HYR Code turn. Timers live in
  * memory, so a server restart skips compactions that were still waiting.
  */
 export const make = Effect.gen(function* () {

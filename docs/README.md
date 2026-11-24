@@ -1,8 +1,8 @@
-# T3 Code docs
+# HYR Code docs
 
-## Using T3 Code
+## Using HYR Code
 
-- [Install T3 Code](./user/install.md)
+- [Install HYR Code](./user/install.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
@@ -17,7 +17,7 @@
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
-- [Use T3 Code as your default browser](./user/default-browser.md)
+- [Use HYR Code as your default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Secrets](./user/secrets.md)
@@ -27,13 +27,13 @@
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
-- [Updating T3 Code](./user/updating.md)
+- [Updating HYR Code](./user/updating.md)
 - [Triage an issue](./user/triage.md)
 - Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Kiro](./user/providers-kiro.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md) · [fx](./user/providers-fx.md) · [LiteLLM](./user/providers-litellm.md)
 
 ---
 
-## Working on T3 Code
+## Working on HYR Code
 
 Start with the [development runbook](./operations/00_development.md),
 [contribution policy](../CONTRIBUTING.md), and [trademark policy](../TRADEMARK.md).

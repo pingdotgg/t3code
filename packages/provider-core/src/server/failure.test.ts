@@ -120,7 +120,7 @@ it("preserves actionable T3 errors wrapped by turn startup", () => {
     new ProviderSetupError({
       instanceId: ProviderInstanceId.make("codex"),
       operation: "runtime",
-      detail: "Codex 0.144.3 does not work with this T3 Code release.",
+      detail: "Codex 0.144.3 does not work with this HYR Code release.",
     }),
   ]) {
     const cause = new ProviderAdapter.ProviderAdapterTurnStartError({

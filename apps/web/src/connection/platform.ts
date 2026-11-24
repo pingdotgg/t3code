@@ -275,7 +275,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
         reason: "configuration",
         detail: m(
           msg(
-            "{label} runs T3 Code {serverVersion}, but this desktop is {appVersion}, and that server could not accept its pairing. Restart the T3 server on {label} so it runs {appVersion}, then retry.",
+            "{label} runs HYR Code {serverVersion}, but this desktop is {appVersion}, and that server could not accept its pairing. Restart the T3 server on {label} so it runs {appVersion}, then retry.",
             {
               label: descriptor.label,
               serverVersion: descriptor.serverVersion,

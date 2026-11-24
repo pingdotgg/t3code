@@ -25,7 +25,7 @@ const environmentFor = (
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
     desktopSettingsPath: path.join(input.baseDir, "userdata", "desktop-settings.json"),
-    serverRoot: "/opt/T3 Code/resources/app.asar",
+    serverRoot: "/opt/HYR Code/resources/app.asar",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -129,7 +129,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* Effect.all([command.addToPath, command.addToPath], { concurrency: "unbounded" });
       expect((yield* command.addToPath).pathSetup).toEqual({ file: "~/.zshrc", added: true });
       expect(yield* fs.readFileString(zshrc)).toBe(
-        '# mine\n# Added by T3 Code\nexport PATH="$PATH:$HOME/.local/bin"\n',
+        '# mine\n# Added by HYR Code\nexport PATH="$PATH:$HOME/.local/bin"\n',
       );
 
       expect((yield* command.uninstall).installedPath).toBeNull();

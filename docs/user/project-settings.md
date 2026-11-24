@@ -224,7 +224,7 @@ are, and cleanup covers both the default folder and the custom one.
 ## Fast worktree checkout on macOS
 
 Fast worktree checkout is a beta. Turn it on for each Mac in **Settings → Labs → Fast worktree
-checkout**. T3 Code then keeps a few recent checkouts of each repository in the `caches` folder of
+checkout**. HYR Code then keeps a few recent checkouts of each repository in the `caches` folder of
 the T3 home directory. A new worktree is cloned from one of them with APFS copy-on-write, which is
 about twice as fast as writing every file and makes the first `git status` in it fast as well.
 Turning it off deletes the cache.
@@ -285,7 +285,7 @@ working. Current logs, message attachments, and browser profiles are kept.
 
 Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to
 every checkout in the project group and appears on connected clients. Choose **Automatic** to let
-T3 Code detect an icon again.
+HYR Code detect an icon again.
 
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
@@ -299,6 +299,6 @@ In Source control & issues, enable **Automatically pull** to keep the default-br
 with its configured upstream. Choose an environment to set the default or a project to override it.
 On mobile, use **Settings → Source control & issues** to change selected environment defaults or project overrides.
 
-T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
+HYR Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.

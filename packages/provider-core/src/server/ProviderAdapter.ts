@@ -70,7 +70,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   sandboxPolicy: Schema.optional(Schema.Unknown),
   /**
    * The administrator's ceiling, when a managed policy sets one. `runtimeMode` is already under
-   * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
+   * it; adapters use it to refuse native mode choices a user makes beside HYR Code's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
   /** The thread's LiteLLM request tags; only a LiteLLM launcher sends them. */

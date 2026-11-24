@@ -72,7 +72,7 @@ it.layer(NodeServices.layer)("checkpointWorkspace", (it) => {
       assert.deepStrictEqual(yield* repositoryState(repo, worktree, worktreeIndex), before);
       assert.strictEqual(
         yield* git(workspace, ["log", "--format=%s%x00%an", "-1"]),
-        "initial\u0000T3 Code Test\n",
+        "initial\u0000HYR Code Test\n",
       );
       assert.strictEqual(
         (yield* git(workspace, ["ls-files"])).trim().split("\n").join(","),

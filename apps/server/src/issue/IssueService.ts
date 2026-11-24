@@ -826,7 +826,7 @@ const make = Effect.gen(function* () {
         if (found === null) {
           return yield* new IssueOperationError({
             operation: "resolveUrl",
-            detail: `No project in T3 Code is on ${link.host}. Add any ${link.host} project to read its issues.`,
+            detail: `No project in HYR Code is on ${link.host}. Add any ${link.host} project to read its issues.`,
           });
         }
         return found.resolved;

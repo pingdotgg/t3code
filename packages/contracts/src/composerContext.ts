@@ -219,7 +219,7 @@ export const ThreadContextRecord = Schema.Struct({
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
 /**
- * One of the user's machines (a T3 Code environment), mentioned so the agent
+ * One of the user's machines (a HYR Code environment), mentioned so the agent
  * links it or works there. Only identity travels: the agent links it by id,
  * and the user's client supplies its addresses.
  */

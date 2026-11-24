@@ -65,7 +65,7 @@ export class SpeechModelStore extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<string>, PlatformError>;
     /** The outside file a linked model points at. */
     readonly linkedFrom: (model: ModelFile) => Effect.Effect<string | undefined>;
-    /** Removes T3 Code's file or link; a linked file itself is left in place. */
+    /** Removes HYR Code's file or link; a linked file itself is left in place. */
     readonly remove: (model: ModelFile) => Effect.Effect<void, PlatformError>;
   }
 >()("t3/speech/SpeechModelStore") {}
@@ -251,7 +251,7 @@ const make = Effect.gen(function* () {
         for (const model of models) {
           if (model.size !== size || linked.includes(model.id)) continue;
           const finalPath = modelPath(model);
-          // Pointing at T3 Code's own model folder must not replace a file with a link to itself.
+          // Pointing at HYR Code's own model folder must not replace a file with a link to itself.
           if ((yield* realPath(file)) === (yield* realPath(finalPath))) continue;
           if (yield* verifiedPath(model, finalPath)) continue;
           const hashed = yield* expectedFile(model, file);

@@ -1,6 +1,6 @@
 # Text generation models
 
-T3 Code writes some text for you: thread titles, commit messages, pull request titles and
+HYR Code writes some text for you: thread titles, commit messages, pull request titles and
 descriptions, branch names, and voice transcript cleanup. Pick the model for this in
 **Settings → Threads → Text generation model**. **Settings → Source control & issues** and
 **Settings → Voice** can each pick a different one.
@@ -22,7 +22,7 @@ Give it a name if you add more than one from the same service. Your key is store
 environment, like other [secrets](./secrets.md), and can come from a secret provider instead of
 being typed in.
 
-T3 Code lists the service's models to check the connection, then shows the model picker for each
+HYR Code lists the service's models to check the connection, then shows the model picker for each
 text task so you can switch any of them to the new generator, or keep what they use. **Test** next
 to a picker has the chosen model answer a tiny prompt, which proves the key works; some services
 list their models without checking it. **Show models** in the generator's menu lists its models

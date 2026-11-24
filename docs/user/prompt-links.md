@@ -1,6 +1,6 @@
 # Prompt links
 
-A prompt link opens T3 Code with a prompt ready to send. Use one to share a prompt on social
+A prompt link opens HYR Code with a prompt ready to send. Use one to share a prompt on social
 media, or to put a one-click fix in a pull request comment.
 
 A link never runs anything. It opens a draft. You read the prompt, then press Send. A link cannot
@@ -41,24 +41,24 @@ this step next time.
   counts only for its own owner. When you do not have the repository, choose **Clone** or **Use
   without project**.
 - **`provider` and `model`**: used when you have that provider set up. Otherwise your default
-  model is used, and T3 Code tells you.
+  model is used, and HYR Code tells you.
 - **`pr`**: opens the thread linked to that pull request on any connected machine, with the prompt
   in its composer. When no thread is linked, the draft goes on the pull request branch in a new
-  worktree. T3 Code checks the code out only after you confirm, because the checkout runs your
+  worktree. HYR Code checks the code out only after you confirm, because the checkout runs your
   setup script on it.
 
 A thread link with a prompt, such as `https://app.t3.codes/<environment>/<thread>?prompt=…`,
-puts the prompt in that thread's composer. If you already typed a draft there, T3 Code asks
+puts the prompt in that thread's composer. If you already typed a draft there, HYR Code asks
 before it replaces it.
 
-T3 Code removes characters you cannot see, such as zero-width and hidden tag characters, because
-they can hide instructions for the agent. When a prompt had them, T3 Code warns you that it may be
+HYR Code removes characters you cannot see, such as zero-width and hidden tag characters, because
+they can hide instructions for the agent. When a prompt had them, HYR Code warns you that it may be
 malicious.
 
 ## Share a thread
 
 **Copy thread** copies a link such as `https://app.t3.codes/threads/<environment>/<thread>`. Paste
-it anywhere, such as Slack, a GitHub comment, or your notes. On a phone with T3 Code installed, it
+it anywhere, such as Slack, a GitHub comment, or your notes. On a phone with HYR Code installed, it
 opens the thread in the app. Elsewhere, opening it asks where to open it, like a prompt link, then
-opens the thread. Only someone connected to the machine that runs the thread can see it. In T3 Code,
+opens the thread. Only someone connected to the machine that runs the thread can see it. In HYR Code,
 a thread link in a message opens the thread in the app.

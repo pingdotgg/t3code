@@ -1,7 +1,7 @@
 # Secrets
 
-T3 Code can read credentials from a secret provider, so the credential stays in your password
-manager and T3 Code saves only a reference to it. Agents can also ask you for a secret in a
+HYR Code can read credentials from a secret provider, so the credential stays in your password
+manager and HYR Code saves only a reference to it. Agents can also ask you for a secret in a
 private card instead of in the chat.
 
 The Secrets settings page is in preview and is not in every build yet. Secret requests from agents
@@ -9,9 +9,9 @@ work everywhere.
 
 ## Secret providers
 
-1Password is the supported provider. T3 Code reads secrets with the
+1Password is the supported provider. HYR Code reads secrets with the
 [1Password CLI](https://developer.1password.com/docs/cli/) (`op`), so `op` must be installed and
-signed in on the machine that runs the T3 Code server. When you use T3 Code on another machine or
+signed in on the machine that runs the HYR Code server. When you use HYR Code on another machine or
 from your phone, that is the remote machine, not the device in front of you.
 
 A desktop sign-in asks for approval on that machine, which a remote user cannot answer. On a remote
@@ -32,19 +32,19 @@ as `op://vault/item/field`. Copy the reference from 1Password with **Copy Secret
 Select the check button next to a reference to read it now. If it reads, providers that use it
 start using the new value.
 
-T3 Code reads the secret when it needs it, for example when a provider starts. Change the
+HYR Code reads the secret when it needs it, for example when a provider starts. Change the
 credential in 1Password and refresh to use the new value.
 
 ## When a secret cannot be read
 
 If 1Password is locked or signed out, the provider or feature that needs the secret shows an error
 naming the secret provider. Unlock 1Password on the server's machine, then select **Refresh** in
-**Settings → Providers**. T3 Code never replaces a saved credential it cannot read with another
+**Settings → Providers**. HYR Code never replaces a saved credential it cannot read with another
 login.
 
 ## Remove a secret provider
 
-When you remove a secret provider in **Settings → Secrets**, T3 Code lists the fields that read
+When you remove a secret provider in **Settings → Secrets**, HYR Code lists the fields that read
 from it. Removing it clears those fields, so set them again before you need them. The secrets in
 1Password are not touched.
 
@@ -56,10 +56,10 @@ you to paste it into the chat. Type or paste the value and select **Save securel
 
 If the environment has a secret provider, the card also lets you pick it and enter a reference
 instead of the value. Answering with a reference needs permission to manage providers, as saving a
-reference in Settings does; a session without it sees only the value field. T3 Code reads the secret once, when you answer. If 1Password is locked, the
+reference in Settings does; a session without it sees only the value field. HYR Code reads the secret once, when you answer. If 1Password is locked, the
 card says so and the request stays open: unlock it and try again, or enter the value.
 
-The value never appears in the conversation. Most requests keep it from the agent too: T3 Code
+The value never appears in the conversation. Most requests keep it from the agent too: HYR Code
 passes it to the tool that needs it. When an agent has to run a command with the value, the card
 says so instead: the value goes into a private file that the agent's commands can read for about 24
 hours.

@@ -1,6 +1,6 @@
 # Resolve the upstream merge
 
-This checkout is the HYRMedia fork of T3 Code. A merge of upstream `pingdotgg/t3code` `main` is in progress and stopped on conflicts. Read `AGENTS.md`, then finish the merge. The conflicted files are listed at the end of this prompt.
+This checkout is the HYRMedia fork of HYR Code. A merge of upstream `pingdotgg/t3code` `main` is in progress and stopped on conflicts. Read `AGENTS.md`, then finish the merge. The conflicted files are listed at the end of this prompt.
 
 The merged code must keep upstream's behavior and every fork feature. Fork features include LiteLLM, request tags, and the Hardened release. Read both sides of each conflict and the commits behind them (`git log --merge -p -- <file>`) before you edit.
 

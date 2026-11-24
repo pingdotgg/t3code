@@ -1,6 +1,6 @@
 # 1Password service account on a remote server
 
-Use a 1Password service account when the T3 Code server runs on a machine you are not sitting at, such as a
+Use a 1Password service account when the HYR Code server runs on a machine you are not sitting at, such as a
 headless host, a VM, or a [background service](./background-service.md) you reach through
 [remote access](./remote-access.md).
 
@@ -14,11 +14,11 @@ For the basics, see [Secrets](./secrets.md). To use a self-hosted Connect server
 ## Set it up
 
 1. In 1Password, open Developer, then Service Accounts, and create one.
-2. Give it read access to only the vaults T3 Code needs. Access is fixed when the account is created, and a
+2. Give it read access to only the vaults HYR Code needs. Access is fixed when the account is created, and a
    service account cannot reach Personal, Private, or Employee vaults.
 3. Copy the token. It is shown once.
 4. Install the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on the machine
-   that runs the T3 Code server.
+   that runs the HYR Code server.
 5. Put `OP_SERVICE_ACCOUNT_TOKEN` in the server's environment. For a background service, add it to
    `service.env` and restart the service. See
    [Configure the service environment](./background-service.md#configure-the-service-environment).
@@ -48,6 +48,6 @@ that needs it. If the server cannot read the secret, that feature shows an error
 - A name in a reference can contain letters, digits, spaces, `.`, `_`, and `-`. An item titled
   `Service Token: CI` cannot be written as a reference, so use its item ID instead, for example
   `op://Automation/<item-id>/credential`.
-- T3 Code waits up to 45 seconds for 1Password. After that the secret counts as unreadable and the feature
+- HYR Code waits up to 45 seconds for 1Password. After that the secret counts as unreadable and the feature
   that needs it shows an error naming the secret provider.
 - Do not set `OP_CONNECT_HOST` and `OP_CONNECT_TOKEN` in the same environment.

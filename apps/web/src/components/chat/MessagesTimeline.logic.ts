@@ -621,7 +621,7 @@ type MessagesTimelineRowContent =
       label: string;
       tokenCounts: ReturnType<typeof contextCompactionTokenCounts>;
       active: boolean;
-      /** Replaces "Context compacted" when T3 Code compacted without being asked. */
+      /** Replaces "Context compacted" when HYR Code compacted without being asked. */
       title?: string;
       /** The compaction finished, so `title` names it. */
       compacted?: true;

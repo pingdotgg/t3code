@@ -1,11 +1,11 @@
 ---
 name: t3-workflows
-description: Author, edit, run, and debug durable T3 Code workflows (`~/.t3/workflows/*.ts`). Use when asked to build or change a multi-step T3 Code automation tying together agent threads, code steps, schedules, webhooks, issue/PR trackers, or human approvals, or to inspect, resume, signal, or cancel workflow runs.
+description: Author, edit, run, and debug durable HYR Code workflows (`~/.t3/workflows/*.ts`). Use when asked to build or change a multi-step HYR Code automation tying together agent threads, code steps, schedules, webhooks, issue/PR trackers, or human approvals, or to inspect, resume, signal, or cancel workflow runs.
 ---
 
-# T3 Code workflows
+# HYR Code workflows
 
-A workflow is a TypeScript function the T3 Code server runs durably on Effect v4 (`effect/workflow`). Every step's result is stored, so restarts replay to where the run left off and a failing step pauses the run instead of losing it. Runs can sleep for days, wait on signals or pull requests, ask a person a question, and launch agents in ordinary threads.
+A workflow is a TypeScript function the HYR Code server runs durably on Effect v4 (`effect/workflow`). Every step's result is stored, so restarts replay to where the run left off and a failing step pauses the run instead of losing it. Runs can sleep for days, wait on signals or pull requests, ask a person a question, and launch agents in ordinary threads.
 
 Use a workflow for multi-stage work that must not be lost or repeated (triage → fix → verify, nightly reports, webhook reactions). For a single prompt on a timer, use a scheduled task instead.
 

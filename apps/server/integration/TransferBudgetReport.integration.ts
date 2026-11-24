@@ -446,7 +446,7 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
 
 export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun>): string {
   const lines = [
-    "# T3 Code thread transfer budget",
+    "# HYR Code thread transfer budget",
     "",
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
     "The measured turn is observed on three sockets at once: one with only the thread subscription (the capped rows), one with only the shell subscription, and a second client holding both. Server egress is the sum of the three. After the turn the second client disconnects and new sockets resubscribe from the cursor it held before the turn, which is the cursor a backgrounded phone would hold. SQL statements are the SQL client's per-statement spans, counted across V2 persistence and the HTTP/WebSocket handlers.",

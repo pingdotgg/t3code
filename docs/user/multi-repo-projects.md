@@ -11,7 +11,7 @@ The project folder does not have to be a Git repository itself.
 
 ## Which repositories a project covers
 
-There is no list to keep. A project covers every repository inside its folder: T3 Code looks one
+There is no list to keep. A project covers every repository inside its folder: HYR Code looks one
 level down, and one level further inside folders that are not repositories themselves, such as
 `src` or `packages`. It reads the disk each time, so a repository you clone there is part of the
 project straight away, and one you delete is gone from it. Worktrees of another repository are left
@@ -125,12 +125,12 @@ place. It receives these environment variables:
 | `T3_WORKTREE_REPOSITORIES` | The repositories chosen for the thread, one path per line. |
 
 Every repository of the project that the command checks out at the same relative place becomes the
-thread's checkout of it. `remove` is optional and runs before T3 Code removes whatever is left.
+thread's checkout of it. `remove` is optional and runs before HYR Code removes whatever is left.
 
 What the commands can rely on, and what they must do:
 
 - **Checkouts are linked worktrees on the thread's branch.** Make each one with
-  `git worktree add` from the repository it belongs to, on `T3_WORKTREE_BRANCH`. T3 Code later
+  `git worktree add` from the repository it belongs to, on `T3_WORKTREE_BRANCH`. HYR Code later
   removes, restores, and renames these through Git, so it refuses a clone or a checkout on another
   branch and the thread does not start.
 - **`create` can run more than once.** It runs again when a thread's folder has gone missing, by

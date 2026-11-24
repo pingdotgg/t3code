@@ -64,7 +64,7 @@ export const replaceOutdatedService = Effect.fn("OpenCode2Service.replaceOutdate
     // Configured variables below can change PATH, which a bare name would then resolve against.
     const executable = yield* resolveCommandPath(input.binaryPath, { env: input.environment });
     if (executable === null) return;
-    // A scope of its own keeps the service alive when T3 Code's systemd unit stops.
+    // A scope of its own keeps the service alive when HYR Code's systemd unit stops.
     const launch = yield* (yield* AgentScope).wrap({
       command: executable,
       args: ["serve", "--service"],

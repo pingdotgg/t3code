@@ -1,6 +1,6 @@
 # Product usage data
 
-The T3 Code server sends product usage events to T3 Code's own endpoint at `ingest.t3.codes`,
+The HYR Code server sends product usage events to HYR Code's own endpoint at `ingest.t3.codes`,
 associated with a hashed account or installation identifier. To count how many installations one person
 uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
 Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
@@ -15,19 +15,19 @@ which is off unless you turn it on.
 
 ## Agent feedback
 
-Agent feedback lets agents tell the T3 team about T3 Code: a T3 tool or `t3` command that did not
+Agent feedback lets agents tell the T3 team about HYR Code: a T3 tool or `t3` command that did not
 do what they expected, a confusing instruction, or a missing capability. Choose a mode in
 **Agent feedback** in **Settings > Labs**:
 
 - **Off**, the default: agents do not see the feedback tools, and `t3 feedback` stops with a
   message pointing to Labs.
-- **When I ask**: agents send a report only when you ask them to, about anything in T3 Code.
-- **Automatic**: agents also report T3 Code problems they hit on their own, such as a T3 tool that
+- **When I ask**: agents send a report only when you ask them to, about anything in HYR Code.
+- **Automatic**: agents also report HYR Code problems they hit on their own, such as a T3 tool that
   failed and made them find another way. These reports carry no outline and no message text, and
   go out without asking you. `t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`
   sends one the same way, so it works only in this mode.
 
-When you ask your agent for a report, in either mode, T3 Code shows it in the thread as a card
+When you ask your agent for a report, in either mode, HYR Code shows it in the thread as a card
 with exactly what would leave your machine, and sends it only if you press **Send**. The agent
 carries on without waiting and never learns your answer. The card stays open until you answer it,
 even after the turn ends or the server restarts; **Don't send** sends nothing, and the agent is
@@ -48,7 +48,7 @@ and you can decline the old one. Tool inputs and outputs, files, and attachments
 show you at most 3 report cards and send 3 reports on its own per turn, and `t3 feedback` can
 send at most 10 an hour.
 
-Before anything is saved, T3 Code removes file paths (when text mentions one, the rest of that line
+Before anything is saved, HYR Code removes file paths (when text mentions one, the rest of that line
 goes with it), your user name, machine name, project title, branch, and git remote, and anything
 that looks like a key, token, email address, or URL with a password. It cannot recognise your code
 or a name written in a sentence, so only include the conversation when it holds nothing you would
@@ -63,7 +63,7 @@ exactly what each one holds.
 
 ## Relay connection diagnostics
 
-T3 Code sends relay connection traces to Axiom to diagnose T3 Connect connectivity. These are
+HYR Code sends relay connection traces to Axiom to diagnose T3 Connect connectivity. These are
 separate from product events. Depending on the client version, traces can include connection
 timings, environment identifiers and the connected machine's name. Failed spans can include error
 messages and stack traces; error text can quote a value the app was handling.
@@ -85,13 +85,13 @@ if the server has opted out. The browser app has no relay tracing toggle.
 
 ## Mobile app diagnostics
 
-When the iOS or Android app crashes or hits an error, it sends a report to T3 Code: the error
+When the iOS or Android app crashes or hits an error, it sends a report to HYR Code: the error
 message, the stack trace, the app version, and the device model and OS version. Each launch also
 sends startup timings, and every report carries a random ID for the install. Reports go through
 the T3 Connect relay to Axiom. They do not include your threads, prompts, or connection details,
 but an error message can quote a value the app was handling.
 
-To stop sending them, turn off **Send crash reports** in **Settings > About T3 Code > Diagnostics**.
+To stop sending them, turn off **Send crash reports** in **Settings > About HYR Code > Diagnostics**.
 
 The mobile app also sends relay connection traces when its build has tracing configured. These
 carry an identifier for the current app session. **Send crash reports** does not control these

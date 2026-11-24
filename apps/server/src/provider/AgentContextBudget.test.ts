@@ -131,6 +131,12 @@ const codexAdditionalContext = () =>
 // Fork tool fields live here. agentContextBudget.json keeps upstream's values so that upstream
 // changes to it merge without a conflict.
 const FORK_MCP_TOOL_LIST_BYTES = 232;
+// "HYR Code" is one byte longer than upstream's "T3 Code" at each mention.
+const FORK_BRAND_BYTES = {
+  claudeSystemAppendBytes: 3,
+  codexAdditionalContextBytes: 5,
+  mcpToolListJsonBytes: 4,
+};
 
 const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -175,8 +181,14 @@ it.effect("agent context matches the committed budget", () =>
       measured,
       "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
     ).toEqual({
-      ...budget,
-      mcpToolListJsonBytes: budget.mcpToolListJsonBytes + FORK_MCP_TOOL_LIST_BYTES,
+      claudeSystemAppendBytes:
+        budget.claudeSystemAppendBytes + FORK_BRAND_BYTES.claudeSystemAppendBytes,
+      codexAdditionalContextBytes:
+        budget.codexAdditionalContextBytes + FORK_BRAND_BYTES.codexAdditionalContextBytes,
+      mcpToolListJsonBytes:
+        budget.mcpToolListJsonBytes +
+        FORK_MCP_TOOL_LIST_BYTES +
+        FORK_BRAND_BYTES.mcpToolListJsonBytes,
     });
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );

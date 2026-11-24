@@ -342,8 +342,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
             input.cause === "provider_exit"
               ? "The agent runtime exited and stopped background work"
               : note.settled
-                ? "T3 Code restarted and stopped background work"
-                : "T3 Code restarted and resumed this turn",
+                ? "HYR Code restarted and stopped background work"
+                : "HYR Code restarted and resumed this turn",
           detail: text,
         },
         attachments: [],
