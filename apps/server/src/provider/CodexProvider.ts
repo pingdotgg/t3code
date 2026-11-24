@@ -140,7 +140,7 @@ const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
-const CODEX_CLIENT_NAME = "T3 Code";
+const CODEX_CLIENT_NAME = "HYR Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
@@ -946,7 +946,7 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex is disabled in HYR Code settings.",
       },
     });
   }
@@ -1047,7 +1047,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex is disabled in HYR Code settings.",
       },
     });
   }

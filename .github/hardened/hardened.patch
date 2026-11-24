@@ -1,19 +1,34 @@
 diff --git a/apps/desktop/package.json b/apps/desktop/package.json
-index f87fa2045..52f5fda8b 100644
+index e94d895f23..dbafec29fa 100644
 --- a/apps/desktop/package.json
 +++ b/apps/desktop/package.json
-@@ -41,5 +41,5 @@
+@@ -44,5 +44,5 @@
      "tailwindcss": "^4.0.0",
      "vite-plus": "catalog:"
    },
--  "productName": "T3 Code (Beta)"
-+  "productName": "T3 Code (Hardened)"
+-  "productName": "HYR Code (Beta)"
++  "productName": "HYR Code"
  }
+diff --git a/apps/desktop/src/app/DesktopEnvironment.test.ts b/apps/desktop/src/app/DesktopEnvironment.test.ts
+index 3b83fdf1c9..7e52cb292b 100644
+--- a/apps/desktop/src/app/DesktopEnvironment.test.ts
++++ b/apps/desktop/src/app/DesktopEnvironment.test.ts
+@@ -68,8 +68,8 @@ describe("DesktopEnvironment", () => {
+       );
+       const production = yield* makeEnvironment();
+ 
+-      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
+-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
++      assert.equal(development.stateDir, "/Users/alice/.t3-hyr/dev");
++      assert.equal(production.stateDir, "/Users/alice/.t3-hyr/userdata");
+     }),
+   );
+ });
 diff --git a/apps/desktop/src/app/DesktopEnvironment.ts b/apps/desktop/src/app/DesktopEnvironment.ts
-index 1066198b8..4f90fddda 100644
+index bf89fad512..c6d4c825f5 100644
 --- a/apps/desktop/src/app/DesktopEnvironment.ts
 +++ b/apps/desktop/src/app/DesktopEnvironment.ts
-@@ -96,7 +96,7 @@ function resolveDesktopAppStageLabel(input: {
+@@ -95,7 +95,7 @@ function resolveDesktopAppStageLabel(input: {
      return "Dev";
    }
  
@@ -22,8 +37,17 @@ index 1066198b8..4f90fddda 100644
  }
  
  export function resolveDesktopAppBranding(input: {
+@@ -106,7 +106,7 @@ export function resolveDesktopAppBranding(input: {
+   return {
+     baseName: APP_BASE_NAME,
+     stageLabel,
+-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
++    displayName: stageLabel === "Hardened" ? APP_BASE_NAME : `${APP_BASE_NAME} (${stageLabel})`,
+   };
+ }
+ 
 diff --git a/apps/desktop/src/app/DesktopStatePaths.ts b/apps/desktop/src/app/DesktopStatePaths.ts
-index 006dd9709..10cd30092 100644
+index 006dd97092..10cd300925 100644
 --- a/apps/desktop/src/app/DesktopStatePaths.ts
 +++ b/apps/desktop/src/app/DesktopStatePaths.ts
 @@ -16,7 +16,7 @@ export function resolveDesktopBaseDir(input: {
@@ -36,7 +60,7 @@ index 006dd9709..10cd30092 100644
  }
  
 diff --git a/apps/desktop/src/app/DesktopUserData.ts b/apps/desktop/src/app/DesktopUserData.ts
-index 99a082b43..41c5c8674 100644
+index 0124aa72e0..6d0c57ad12 100644
 --- a/apps/desktop/src/app/DesktopUserData.ts
 +++ b/apps/desktop/src/app/DesktopUserData.ts
 @@ -41,7 +41,7 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
@@ -49,10 +73,10 @@ index 99a082b43..41c5c8674 100644
      const legacyPath = path.join(input.appDataDirectory, names.legacy);
      const inspect = (resourcePath: string) =>
 diff --git a/apps/server/src/cloud/CloudLink.ts b/apps/server/src/cloud/CloudLink.ts
-index 8986a5b19..7ae2308da 100644
+index 6c9c70246b..69f04fc976 100644
 --- a/apps/server/src/cloud/CloudLink.ts
 +++ b/apps/server/src/cloud/CloudLink.ts
-@@ -718,6 +718,7 @@ const make = Effect.gen(function* () {
+@@ -716,6 +716,7 @@ const make = Effect.gen(function* () {
    const startManagedTunnelIfOriginConfirmed = Effect.fn(
      "environment.cloud.startManagedCloudTunnelIfOriginConfirmed",
    )(function* (localOrigin: string, options?: { readonly requireConfirmedOrigin?: boolean }) {
@@ -61,10 +85,10 @@ index 8986a5b19..7ae2308da 100644
      const parsedOrigin = yield* Effect.try({
        try: () => parseManagedEndpointLocalOrigin(localOrigin),
 diff --git a/apps/server/src/cloud/publicConfig.ts b/apps/server/src/cloud/publicConfig.ts
-index 15594f116..1e64356ff 100644
+index 85ffbbb046..a1fd921a66 100644
 --- a/apps/server/src/cloud/publicConfig.ts
 +++ b/apps/server/src/cloud/publicConfig.ts
-@@ -100,9 +100,9 @@ export function resolveRelayClientTracingConfig(
+@@ -101,9 +101,9 @@ export function resolveRelayClientTracingConfig(
      : null;
  }
  
@@ -77,7 +101,7 @@ index 15594f116..1e64356ff 100644
      Config.mapEffect(validateRelayUrl),
    );
  }
-@@ -204,7 +204,7 @@ export function makeCloudCliOAuthConfig({
+@@ -218,7 +218,7 @@ export function makeCloudCliOAuthConfig({
  
  export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
  
@@ -87,23 +111,23 @@ index 15594f116..1e64356ff 100644
    (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
    (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
 diff --git a/apps/server/src/guest/GuestShareService.ts b/apps/server/src/guest/GuestShareService.ts
-index 1f65217e4..d1b6d6f78 100644
+index 5ff7ae2277..d5e2bbd628 100644
 --- a/apps/server/src/guest/GuestShareService.ts
 +++ b/apps/server/src/guest/GuestShareService.ts
-@@ -266,7 +266,7 @@ const make = Effect.gen(function* () {
+@@ -295,7 +295,7 @@ const make = Effect.gen(function* () {
    );
    // A beta: while it is off, no link opens and every guest request is refused.
    const sharingEnabled = serverSettings.getSettings.pipe(
 -    Effect.map((settings) => settings.guestSharingEnabled),
-+    Effect.map(() => false),
++    Effect.as(false),
      Effect.orElseSucceed(() => false),
    );
  
 diff --git a/apps/server/src/provider/ModelManifest.ts b/apps/server/src/provider/ModelManifest.ts
-index 3cebfb22c..104ed35fb 100644
+index 7d790b472f..6416c99ebc 100644
 --- a/apps/server/src/provider/ModelManifest.ts
 +++ b/apps/server/src/provider/ModelManifest.ts
-@@ -256,7 +256,7 @@ export const make = Effect.gen(function* () {
+@@ -288,7 +288,7 @@ export const make = Effect.gen(function* () {
    });
  });
  
@@ -113,10 +137,10 @@ index 3cebfb22c..104ed35fb 100644
  export const layerTest = Layer.suspend(() =>
    layerModelCatalog.pipe(Layer.provideMerge(layerBundledOnly)),
 diff --git a/apps/server/src/telemetry/AnalyticsService.ts b/apps/server/src/telemetry/AnalyticsService.ts
-index 1e1873568..77ad26015 100644
+index eb222ae743..9bcaf02980 100644
 --- a/apps/server/src/telemetry/AnalyticsService.ts
 +++ b/apps/server/src/telemetry/AnalyticsService.ts
-@@ -58,12 +58,12 @@ function retryDelayMs(failures: number, random: number): number {
+@@ -66,12 +66,12 @@ function retryDelayMs(failures: number, random: number): number {
  
  const TelemetryEnvConfig = Config.all({
    posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
@@ -133,9 +157,19 @@ index 1e1873568..77ad26015 100644
    maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
      Config.withDefault(1_000),
 diff --git a/apps/web/src/branding.logic.ts b/apps/web/src/branding.logic.ts
+index 3071a6c095..0054ec80aa 100644
 --- a/apps/web/src/branding.logic.ts
 +++ b/apps/web/src/branding.logic.ts
-@@ -24,6 +24,6 @@ export function resolveWebAppStageLabel(input: {
+@@ -4,7 +4,7 @@ export function formatAppDisplayName(input: {
+   readonly baseName: string;
+   readonly stageLabel: string;
+ }): string {
+-  if (input.stageLabel.trim().toLowerCase() === "latest") {
++  if (["latest", "hardened"].includes(input.stageLabel.trim().toLowerCase())) {
+     return input.baseName;
+   }
+ 
+@@ -24,7 +24,7 @@ export function resolveWebAppStageLabel(input: {
  }): string {
    return (
      // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
@@ -143,11 +177,12 @@ diff --git a/apps/web/src/branding.logic.ts b/apps/web/src/branding.logic.ts
 +    resolveHostedAppChannelLabel(input.hostedAppChannel) ?? (input.development ? "Dev" : "Hardened")
    );
  }
+ 
 diff --git a/apps/web/src/cloud/publicConfig.ts b/apps/web/src/cloud/publicConfig.ts
-index 9f1238b85..9d20f0355 100644
+index ec9cf15bb7..b68ff0f5b0 100644
 --- a/apps/web/src/cloud/publicConfig.ts
 +++ b/apps/web/src/cloud/publicConfig.ts
-@@ -80,6 +80,7 @@ export function resolveRelayTracingConfig() {
+@@ -86,6 +86,7 @@ export function resolveRelayTracingConfig() {
  }
  
  export function hasCloudPublicConfig(): boolean {
@@ -156,10 +191,10 @@ index 9f1238b85..9d20f0355 100644
    if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
      return false;
 diff --git a/packages/contracts/src/ipc.ts b/packages/contracts/src/ipc.ts
-index 34d416208..bfd7d8db5 100644
+index d323c9a26d..ed2d16445e 100644
 --- a/packages/contracts/src/ipc.ts
 +++ b/packages/contracts/src/ipc.ts
-@@ -78,7 +78,7 @@ export type DesktopUpdateStatus =
+@@ -90,7 +90,7 @@ export type DesktopUpdateStatus =
  export type DesktopRuntimeArch = "arm64" | "x64" | "other";
  export type DesktopTheme = "light" | "dark" | "system";
  export type DesktopUpdateChannel = "latest" | "nightly";
@@ -168,7 +203,7 @@ index 34d416208..bfd7d8db5 100644
  
  export const DesktopUpdateStatusSchema = Schema.Literals([
    "disabled",
-@@ -93,7 +93,7 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
+@@ -105,7 +105,7 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
  export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
  export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
  export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
@@ -178,10 +213,10 @@ index 34d416208..bfd7d8db5 100644
  export interface DesktopAppBranding {
    baseName: string;
 diff --git a/scripts/build-desktop-artifact.ts b/scripts/build-desktop-artifact.ts
-index ac2ed7826..59810268f 100644
+index a2b35e8196..bd685db6c1 100644
 --- a/scripts/build-desktop-artifact.ts
 +++ b/scripts/build-desktop-artifact.ts
-@@ -62,7 +62,7 @@ import { Command, Flag } from "effect/cli";
+@@ -63,7 +63,7 @@ import { Command, Flag } from "effect/cli";
  import { ChildProcess, ChildProcessSpawner } from "effect/process";
  
  const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;

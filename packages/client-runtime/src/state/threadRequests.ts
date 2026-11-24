@@ -78,7 +78,7 @@ export function fullAccessOverrideExplanation(
       )
     : resolve(
         msg(
-          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.",
+          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. HYR Code can't turn these off, so check the request and approve it if it's what you expect.",
         ),
       );
 }

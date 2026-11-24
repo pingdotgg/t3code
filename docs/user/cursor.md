@@ -11,11 +11,11 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
 - A paid Cursor plan on the account used for browser sign-in or `CURSOR_API_KEY`.
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
-The adapter currently uses the SDK's local-agent runtime so runs operate in the selected T3 Code
-workspace. Cursor cloud agents need repository and cloud-environment configuration that T3 Code does
+The adapter currently uses the SDK's local-agent runtime so runs operate in the selected HYR Code
+workspace. Cursor cloud agents need repository and cloud-environment configuration that HYR Code does
 not expose yet.
 
-Custom Cursor MCP servers and plugins are not configured in T3 Code. They load from the environment
+Custom Cursor MCP servers and plugins are not configured in HYR Code. They load from the environment
 machine's Cursor config when the agent opens: project `.cursor/mcp.json`, user `~/.cursor/mcp.json`,
 and installed plugins under `~/.cursor/plugins`. A project's own Cursor config, including its
 `.cursor/mcp.json`, loads only in **Full access**; in the other
@@ -30,7 +30,7 @@ servers, or after a successful CLI login, use **Restart agent session**.
 
 ## Sign in
 
-Choose **Sign in**, then open the sign-in page and complete it in your browser. T3 Code
+Choose **Sign in**, then open the sign-in page and complete it in your browser. HYR Code
 updates automatically when sign-in finishes. This works when connected to a remote environment too.
 On mobile, use **Settings > Providers** for an already configured Cursor instance.
 
@@ -49,7 +49,7 @@ The adapter supports:
 - creating and resuming local Cursor agent threads;
 - changing the model and model parameters between turns;
 - assistant text, reasoning, tool activity, plans, and todo streaming;
-- thread-scoped T3 Code MCP tools alongside ambient Cursor MCP/plugins from disk;
+- thread-scoped HYR Code MCP tools alongside ambient Cursor MCP/plugins from disk;
 - image attachments;
 - interruption, queued app messages, and in-turn steering;
 - provider conversation snapshots through `Agent.messages.list()`;
@@ -84,7 +84,7 @@ isolation when Cursor Auto-review is enabled, because the SDK does not support a
 there. Restricted modes without Auto-review, including the default Auto-accept edits mode, still
 request the sandbox and cannot start on Windows. Explicit sandbox policies remain authoritative,
 including restrictive policies that the Windows SDK rejects. Explicit approval policy overrides
-control Auto-review, which is not represented as an interactive T3 Code approval flow.
+control Auto-review, which is not represented as an interactive HYR Code approval flow.
 
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
 V2 execution does not launch that binary, and the SDK does not expose an API endpoint override.

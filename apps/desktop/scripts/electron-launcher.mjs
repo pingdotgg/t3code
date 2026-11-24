@@ -13,7 +13,7 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Beta)";
+const APP_DISPLAY_NAME = isDevelopment ? "HYR Code (Dev)" : "HYR Code (Beta)";
 const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
@@ -268,8 +268,8 @@ function resolveMacBundleInfoPlistStrings(executableName) {
     CFBundleExecutable: executableName,
     CFBundleIconFile: "icon.icns",
     NSScreenCaptureUsageDescription:
-      "T3 Code captures the active window when you use the snapshot shortcut.",
-    NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
+      "HYR Code captures the active window when you use the snapshot shortcut.",
+    NSDocumentsFolderUsageDescription: "HYR Code reads project files you open in the desktop app.",
   };
 }
 

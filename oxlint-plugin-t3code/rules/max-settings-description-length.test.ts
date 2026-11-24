@@ -11,7 +11,7 @@ const long = "Agents ".repeat(30);
 describe("t3code/max-settings-description-length", () => {
   rule.valid(
     "allows a short description",
-    `const row = <SettingsRow title="Theme" description="Choose how T3 Code looks." />;`,
+    `const row = <SettingsRow title="Theme" description="Choose how HYR Code looks." />;`,
   );
 
   rule.valid(

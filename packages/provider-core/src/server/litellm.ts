@@ -96,7 +96,7 @@ export class LiteLLMGatewayError extends Schema.TaggedError<LiteLLMGatewayError>
 export const liteLLMShimScript = (harness: LiteLLMHarness): string =>
   [
     "#!/bin/sh",
-    "# Written by T3 Code for a LiteLLM provider instance. Rewritten on every start.",
+    "# Written by HYR Code for a LiteLLM provider instance. Rewritten on every start.",
     `if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then exec ${harness} --version; fi`,
     ...(harness === "opencode"
       ? ['if [ "${OPENCODE_CONFIG_CONTENT-}" = "{}" ]; then unset OPENCODE_CONFIG_CONTENT; fi']

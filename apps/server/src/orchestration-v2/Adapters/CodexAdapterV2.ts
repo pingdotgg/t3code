@@ -985,7 +985,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
+    // Its own entry, so the folder list reaches the model without HYR Code's MCP tools too.
     const workspaceInstructions = buildWorkspaceInstructions(input.runtimePolicy);
     const workspaceContext =
       workspaceInstructions === ""
@@ -9258,7 +9258,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   catch: () =>
                     new ProviderMcpSignInError({
                       server,
-                      detail: `Codex returned a sign-in page for ${server} that T3 Code can't open.`,
+                      detail: `Codex returned a sign-in page for ${server} that HYR Code can't open.`,
                     }),
                 });
                 const redirectUri = params.get("redirect_uri");

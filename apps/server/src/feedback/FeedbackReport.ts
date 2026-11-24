@@ -66,7 +66,7 @@ export const FeedbackAwaitingApproval = Schema.Struct({
 export type FeedbackAwaitingApproval = typeof FeedbackAwaitingApproval.Type;
 
 export const FEEDBACK_OFF_MESSAGE =
-  "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";
+  "Agent feedback is off. Turn it on in HYR Code under Settings > Labs, then try again.";
 
 export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
   "FeedbackOffError",

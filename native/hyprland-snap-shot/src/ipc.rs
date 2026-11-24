@@ -166,7 +166,7 @@ pub fn destination(windows: Vec<Window>, pid: u32, title: &str) -> Result<Option
         .filter(|w| w.pid == pid && w.title == title && w.mapped && !w.hidden);
     let found = matches.next();
     if matches.next().is_some() {
-        return Err("More than one T3 Code window matches the capture destination.".into());
+        return Err("More than one HYR Code window matches the capture destination.".into());
     }
     Ok(found)
 }
@@ -184,7 +184,7 @@ pub fn activate(pid: u32, title: &str) -> Result<()> {
             if request(&lua)?.trim() != "ok"
                 && request(&format!("/dispatch focuswindow address:0x{address:x}"))?.trim() != "ok"
             {
-                return Err("Hyprland could not focus T3 Code.".into());
+                return Err("Hyprland could not focus HYR Code.".into());
             }
             return Ok(());
         }
@@ -192,9 +192,9 @@ pub fn activate(pid: u32, title: &str) -> Result<()> {
     }
 }
 
-/// Waits for one Hyprland event, or explains that T3 Code never appeared before `deadline`.
+/// Waits for one Hyprland event, or explains that HYR Code never appeared before `deadline`.
 fn next_event(events: &mut BufReader<UnixStream>, deadline: Instant) -> Result<()> {
-    let not_visible = "T3 Code did not become visible.";
+    let not_visible = "HYR Code did not become visible.";
     let left = deadline.checked_duration_since(Instant::now());
     events.get_ref().set_read_timeout(Some(
         left.filter(|left| !left.is_zero()).ok_or(not_visible)?,
@@ -261,9 +261,11 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(3);
         assert_eq!(
             next_event(&mut events, deadline).unwrap_err().to_string(),
-            "T3 Code did not become visible."
+            "HYR Code did not become visible."
         );
-        hyprland.write_all(b"openwindow>>1,1,t3,T3 Code\n").unwrap();
+        hyprland
+            .write_all(b"openwindow>>1,1,t3,HYR Code\n")
+            .unwrap();
         assert!(next_event(&mut events, deadline).is_ok());
         drop(hyprland);
         assert_eq!(

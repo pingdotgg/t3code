@@ -1,4 +1,4 @@
-// Starts real T3 Code dev environments for staging a launch video: fresh homes, fictional
+// Starts real HYR Code dev environments for staging a launch video: fresh homes, fictional
 // machine labels, the free replay agent, no paid provider. Import from a staging script.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";

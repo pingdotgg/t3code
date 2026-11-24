@@ -4688,7 +4688,7 @@ export function permissionResultFromDecision(input: {
   readonly toolUseID: string;
   readonly suggestions?: Parameters<CanUseTool>[2]["suggestions"];
   readonly feedback?: string;
-  /** Under an administrator's ceiling, T3 Code's mode is the only one; Claude cannot switch it. */
+  /** Under an administrator's ceiling, HYR Code's mode is the only one; Claude cannot switch it. */
   readonly managedCeiling?: boolean;
 }): PermissionResult {
   if (input.decision === "accept" || input.decision === "acceptForSession") {
@@ -11274,7 +11274,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               failure: makeProviderFailure({
                 class: "provider_error",
                 code: "claude_mod_ui_unsupported",
-                message: `The Claude Code mod "${focusedPlugin}" is waiting for input in its terminal pane, which T3 Code cannot show. Disable the mod for sessions run from T3 Code, or run the task in the Claude Code terminal.`,
+                message: `The Claude Code mod "${focusedPlugin}" is waiting for input in its terminal pane, which HYR Code cannot show. Disable the mod for sessions run from HYR Code, or run the task in the Claude Code terminal.`,
               }),
             });
             // Closing ends the CLI process and abandons the held tool call

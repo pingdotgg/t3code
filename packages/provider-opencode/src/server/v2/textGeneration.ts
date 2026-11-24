@@ -119,7 +119,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   // either request can stall while the event stream stays connected.
   const generate = Effect.gen(function* () {
     const session = yield* client.session.create({
-      title: `T3 Code ${input.operation}`,
+      title: `HYR Code ${input.operation}`,
       location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
       model: Model.Ref.make({
         providerID: Provider.ID.make(parsed.providerID),

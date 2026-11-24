@@ -209,7 +209,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     if (!cursorSettings.enabled) {
       return yield* new TextGenerationError({
         operation,
-        detail: "Cursor is disabled in T3 Code settings.",
+        detail: "Cursor is disabled in HYR Code settings.",
       });
     }
 

@@ -106,7 +106,7 @@ export const retryAfterGatewayAuthRejection = Effect.fn(
     notification: {
       source: { kind: "system" },
       outcome: "updated",
-      summary: "The gateway key expired. T3 Code renewed it and sent your message again",
+      summary: "The gateway key expired. HYR Code renewed it and sent your message again",
       detail: sourceMessage.text,
     },
     modelSelection: source.modelSelection,

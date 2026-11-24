@@ -1,6 +1,6 @@
 # Claude
 
-T3 Code uses Claude Code's login and configuration. Start with the default provider
+HYR Code uses Claude Code's login and configuration. Start with the default provider
 for one account; [provider setup](./install.md#providers) covers installation and
 shared provider settings.
 
@@ -41,12 +41,12 @@ For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
 File paths in the `--settings` and `--append-system-prompt-file` launch arguments
-can start with `~` for the home directory of the machine running T3 Code. Any
+can start with `~` for the home directory of the machine running HYR Code. Any
 other relative path is read from the thread's project folder, or its worktree.
 
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
-T3 Code uses the Claude configuration on the connected server.
+HYR Code uses the Claude configuration on the connected server.
 
 ## Compact long conversations
 
@@ -74,7 +74,7 @@ over 200,000 tokens. Each Claude provider's settings can override it:
 - **When you return** shows the **Compact** chip described above. This is the default.
 - **Before the cache expires (beta)** tries to compact an idle thread shortly before its
   prompt cache expires, while the history is still cached.
-  The compaction appears in the thread as a `/compact` turn sent by T3 Code.
+  The compaction appears in the thread as a `/compact` turn sent by HYR Code.
   If the window is missed, such as when you enable this mode after the cache has
   expired or the server restarts before compaction runs, it falls back to
   **When you return**. Switch the chip to **Keep** to keep the full history for that message.
@@ -95,7 +95,7 @@ A steer waits until Claude finishes the tool calls it is running, then Claude re
 in the same turn. The message shows as unread until then. If Claude drops it before
 reading it, the message is sent as the next turn, after any messages queued before it.
 If Claude exits or the server restarts first, the message waits in the queue in that
-same place until you resume it. If you press Stop, T3 Code shows a notice with the text
+same place until you resume it. If you press Stop, HYR Code shows a notice with the text
 of any steer Claude had not read.
 
 ## Skills
@@ -123,14 +123,14 @@ row in the thread; open it to see every step.
 When an MCP server you added to Claude needs you to sign in, the thread shows a notice with
 **Sign in**, once per session; on mobile, tap the notice. Approve access on the page it opens. Your
 browser then goes to a page that may not load, especially when Claude runs on another machine:
-copy that page's address, paste it into T3 Code, and choose **Finish sign-in**. Claude keeps the
+copy that page's address, paste it into HYR Code, and choose **Finish sign-in**. Claude keeps the
 sign-in and reconnects the server. Connectors you added on claude.ai are signed in on claude.ai,
-so T3 Code doesn't ask about them. Signing in needs permission to manage providers.
+so HYR Code doesn't ask about them. Signing in needs permission to manage providers.
 
 ## Claude in Chrome
 
 Claude threads can use the Claude in Chrome extension, which works in your own
-Chrome with its sign-ins. T3 Code sessions load it only when asked: add `--chrome`
+Chrome with its sign-ins. HYR Code sessions load it only when asked: add `--chrome`
 to **Launch arguments** in the Claude instance's settings in **Settings > Providers**.
 It applies to sessions that start after you save. Set up the extension as you would
 for Claude Code first; see Claude Code's [Chrome guide](https://code.claude.com/docs/en/chrome).
@@ -156,11 +156,11 @@ If that Claude config directory has a cached Anthropic login, run `/logout` in a
 Claude Code session using that directory before starting the router setup. Cached
 login credentials can conflict with the router token.
 
-Select the model you want in T3 Code. For an OpenRouter model outside the built-in
+Select the model you want in HYR Code. For an OpenRouter model outside the built-in
 list, open that Claude instance in **Settings > Providers** and add its full model
 ID with **Add custom model**. Then select it in the chat model picker.
 `ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
-do not replace the explicit model ID selected in T3 Code. Custom models may have
+do not replace the explicit model ID selected in HYR Code. Custom models may have
 fewer effort, thinking, or context controls than built-in models.
 
 Verify the model used in OpenRouter's activity dashboard. For current compatibility

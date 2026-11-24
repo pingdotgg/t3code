@@ -1402,7 +1402,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:triage",
       searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
       title: gt("Triage an issue"),
-      description: gt("An agent investigates a T3 Code problem and helps file an issue"),
+      description: gt("An agent investigates a HYR Code problem and helps file an issue"),
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
     });
@@ -1740,7 +1740,7 @@ function OpenCommandPaletteDialog(props: {
       "openclaw",
       "hermes",
     ],
-    title: gt("Use T3 Code in another app (MCP)"),
+    title: gt("Use HYR Code in another app (MCP)"),
     icon: <PlugIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       openUseInAnotherApp(

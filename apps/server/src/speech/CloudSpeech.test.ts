@@ -45,7 +45,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
         .transcribe(provider, pcm, {
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
           speechLanguage: "en",
-          speechCustomWords: ["T3 Code", ...words].map((term) => ({ term, aliases: [] })),
+          speechCustomWords: ["HYR Code", ...words].map((term) => ({ term, aliases: [] })),
           speechHints: ["Server"],
         })
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
@@ -71,7 +71,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     );
     expect(form.getAll(provider === "openai" ? "keywords[]" : "keyterm")).toEqual([
       "Server",
-      "T3 Code",
+      "HYR Code",
       ...words.slice(0, 98),
     ]);
     expect(form.get(provider === "openai" ? "languages[]" : "language")).toBe("en");

@@ -1,7 +1,7 @@
 # 1Password Connect on a remote server
 
 Use a 1Password Connect server when you already run one, for example on a home server or in Kubernetes, and
-want the T3 Code server to read secrets through it. Connect needs no desktop approval, so it works on a
+want the HYR Code server to read secrets through it. Connect needs no desktop approval, so it works on a
 headless or [remote](./remote-access.md) host.
 
 If you do not run Connect, a [service account](./secrets-1password-service-account.md) is simpler. For the
@@ -9,10 +9,10 @@ basics, see [Secrets](./secrets.md).
 
 ## Set it up
 
-1. In 1Password, create a Connect server and an access token. Limit the token to the vaults T3 Code needs.
-2. Deploy the Connect API and sync containers where the T3 Code server can reach them.
+1. In 1Password, create a Connect server and an access token. Limit the token to the vaults HYR Code needs.
+2. Deploy the Connect API and sync containers where the HYR Code server can reach them.
 3. Install the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on the machine
-   that runs the T3 Code server.
+   that runs the HYR Code server.
 4. Put `OP_CONNECT_HOST` and `OP_CONNECT_TOKEN` in the server's environment. `OP_CONNECT_HOST` is the Connect
    API's address, including the port if it is not the default for its scheme. Use an `https://` address
    unless Connect runs on the same machine or a private network you trust, because the token and secrets
@@ -53,6 +53,6 @@ cannot read the secret, that feature shows an error naming the secret provider.
   `Service Token: CI` cannot be written as a reference, so use its item ID instead, for example
   `op://Automation/<item-id>/credential`.
 - A Connect token sees only the vaults it was created for. A reference to any other vault cannot be read.
-- T3 Code waits up to 45 seconds for 1Password. After that the secret counts as unreadable and the feature
+- HYR Code waits up to 45 seconds for 1Password. After that the secret counts as unreadable and the feature
   that needs it shows an error naming the secret provider.
 - Do not set `OP_SERVICE_ACCOUNT_TOKEN` in the same environment.

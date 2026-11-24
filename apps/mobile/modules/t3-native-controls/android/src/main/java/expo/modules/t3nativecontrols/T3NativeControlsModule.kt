@@ -127,7 +127,7 @@ private fun saveImageToPictures(context: Context, source: Uri, mimeType: String,
   val values = ContentValues().apply {
     put(MediaStore.Images.Media.DISPLAY_NAME, name)
     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/T3 Code")
+    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/HYR Code")
     put(MediaStore.Images.Media.IS_PENDING, 1)
   }
   val target = resolver.insert(

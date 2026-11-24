@@ -1,21 +1,21 @@
 # Codex
 
-Use your ChatGPT plan or an existing Codex CLI login to code in T3 Code.
+Use your ChatGPT plan or an existing Codex CLI login to code in HYR Code.
 
 ## Connect with ChatGPT
 
 Connect during onboarding or in **Settings → Providers**. For a remote machine,
-select that environment first. T3 Code handles Codex installation; sign in on
+select that environment first. HYR Code handles Codex installation; sign in on
 OpenAI and allow sharing of your ChatGPT plan.
 
-Manage shared usage and credits in ChatGPT through **Manage usage** in T3 Code.
+Manage shared usage and credits in ChatGPT through **Manage usage** in HYR Code.
 If a request uses a feature that ChatGPT sharing does not support, use another
 provider for that request.
 
 Fast and Ultrafast speeds are unavailable with this connection. To use the speed
 options your account supports, [use an existing Codex login](#use-an-existing-codex-login).
 
-When reconnecting, choose the same account in T3 Code and on OpenAI's sign-in
+When reconnecting, choose the same account in HYR Code and on OpenAI's sign-in
 page. Disconnecting stops running threads but keeps their history and lets you
 reconnect later.
 
@@ -24,7 +24,7 @@ localhost page into the sign-in panel, even if that page could not load.
 
 ## Use an existing Codex login
 
-T3 Code can use your installed Codex and its existing login. Run `codex login`
+HYR Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.
 
@@ -42,7 +42,7 @@ for configuration and other providers.
 
 ## Generate images
 
-Codex can generate images directly in a T3 Code thread when your Codex version,
+Codex can generate images directly in a HYR Code thread when your Codex version,
 model, and account support native image generation.
 
 If Codex reports that its image tool is unavailable, image generation may be
@@ -53,7 +53,7 @@ Codex provider and add this to **Launch arguments**, keeping any other arguments
 -c features.image_generation=true
 ```
 
-This enables the feature for that T3 Code provider without changing your shared
+This enables the feature for that HYR Code provider without changing your shared
 Codex configuration. You do not need another provider instance or a separate image
 API key. The flag does not add image support to an unsupported model or account.
 
@@ -65,7 +65,7 @@ image appears in the thread.
 
 Add another ChatGPT account in **Settings → Providers**, then select the account
 from the thread's model picker. Compatible accounts can continue the same thread.
-Connecting accounts through T3 Code leaves your CLI login unchanged.
+Connecting accounts through HYR Code leaves your CLI login unchanged.
 
 ### Multiple CLI logins
 
@@ -88,7 +88,7 @@ Then add a second Codex instance in **Settings > Providers**:
 | Codex Work     | `~/.codex`      | Leave empty         |
 | Codex Personal | `~/.codex`      | `~/.codex_personal` |
 
-Both instances must use the same **CODEX_HOME path**. T3 Code prepares the shared
+Both instances must use the same **CODEX_HOME path**. HYR Code prepares the shared
 state in the shadow directory; do not populate it by copying your whole Codex
 home.
 
@@ -102,7 +102,7 @@ from the other home.
 
 ## Switch accounts in an existing thread
 
-Choose the other account from the thread's model picker. T3 Code offers compatible
+Choose the other account from the thread's model picker. HYR Code offers compatible
 Codex instances that share the thread's **CODEX_HOME path**. Changing accounts does
 not move the conversation into a separate Codex home.
 
@@ -133,7 +133,7 @@ for command and file approvals.
 When an MCP server you added to Codex needs you to sign in, the thread shows a notice with
 **Sign in**; on mobile, tap the notice. Approve access on the page it opens. Your browser then goes
 to a page that may not load, especially when Codex runs on another machine: copy that page's
-address, paste it into T3 Code, and choose **Finish sign-in**. Codex reconnects the server in that
+address, paste it into HYR Code, and choose **Finish sign-in**. Codex reconnects the server in that
 thread and keeps the sign-in for other threads on the same Codex instance; an instance with its own
 home, such as a second account, may need to sign in separately. Signing in needs permission to
 manage providers.
@@ -144,14 +144,14 @@ Connecting ChatGPT in **Settings → Providers** signs in the Codex provider.
 Using your signed-in Chrome profile through the extension requires a browser
 connection for the current Codex thread.
 
-If a T3 Code thread reports `The browser access host is unavailable`, its browser
+If a HYR Code thread reports `The browser access host is unavailable`, its browser
 host is unavailable; this does not identify an extension connection failure.
 For a task that requested Chrome, follow [OpenAI's setup guide](https://learn.chatgpt.com/docs/chrome-extension),
 then select Chrome in a Codex chat in the ChatGPT desktop app.
 If the task runs on a remote environment, `localhost` in the desktop browser
 refers to your computer. Forward the remote page's port or use a URL reachable
-from your computer before repeating the task. Connecting to T3 Code through a
-relay or tunnel does not by itself expose that page. T3 Code's built-in browser
+from your computer before repeating the task. Connecting to HYR Code through a
+relay or tunnel does not by itself expose that page. HYR Code's built-in browser
 preview uses its own browser session.
 
 ## Use Daybreak

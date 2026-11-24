@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Build, sign, notarize, and publish T3 Code (Hardened), the HYRMedia fork, for macOS arm64.
+# Build, sign, notarize, and publish HYR Code, the HYRMedia hardened build, for macOS arm64.
 # Needs the HYRMedia Developer ID certificate in a keychain. Notarizes with an App Store
 # Connect API key when APPLE_API_KEY_PATH, APPLE_API_KEY_ID, and APPLE_API_ISSUER are set,
 # otherwise with the local asc login.
 #
 # Usage: release.sh [--version X.Y.Z] [--no-publish] [checkout]
-#   checkout     T3 Code checkout to build (default: this repository)
+#   checkout     HYR Code checkout to build (default: this repository)
 #   --version    release version (default: the fork's latest release + 1 patch)
 #   --no-publish build, sign, and notarize only; skip the tag and GitHub release
 #
 # hardened.patch is applied only while the build runs, and reverted on exit. It:
 # - sets bundle ID com.hyrmedia.t3code.litellm, Electron profile t3code-hardened,
-#   and data home ~/.t3-hyr, so the app never shares state with T3 Code or Nightly
+#   and data home ~/.t3-hyr, so the app never shares state with T3 Code or its Nightly
 # - turns off telemetry, T3 Connect (relay, tunnels), guest share links,
 #   and the model manifest fetch from upstream. LAN and Tailscale access stay
 #   available and are off until the user turns them on in Settings.
@@ -78,7 +78,7 @@ env -u ELECTRON_RUN_AS_NODE -u GITHUB_REPOSITORY \
 git checkout -- .
 trap - EXIT
 
-ZIP_NAME="T3-Code-$VERSION-arm64.zip"
+ZIP_NAME="HYR-Code-$VERSION-arm64.zip"
 OUT="$OUT_ROOT/$VERSION"
 rm -rf "$OUT" && mkdir -p "$OUT/app"
 ditto -x -k "release/$ZIP_NAME" "$OUT/app"
@@ -139,10 +139,10 @@ ${LAST_TAG:+
 [Full source changes](https://github.com/$REPO/compare/$LAST_TAG...$TAG)}
 EOF
 
-git tag -a "$TAG" -m "T3 Code (Hardened) $VERSION" "$COMMIT"
+git tag -a "$TAG" -m "HYR Code $VERSION" "$COMMIT"
 git push origin "$TAG"
 gh release create "$TAG" -R "$REPO" --verify-tag --latest \
-  --title "T3 Code (Hardened) $VERSION" \
+  --title "HYR Code $VERSION" \
   --notes-file "$OUT/notes.md" \
   "$OUT/$ZIP_NAME" "$OUT/latest-mac.yml" "$OUT/hardened.patch" "$OUT/SHA256SUMS"
 echo "Published https://github.com/$REPO/releases/tag/$TAG"

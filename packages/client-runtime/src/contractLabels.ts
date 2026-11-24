@@ -70,7 +70,7 @@ export function managedUpdatesMessage(
   organization: string,
   resolve: MFunctionType = mFallback,
 ): string {
-  return resolve(msg("{organization} manages T3 Code updates.", { organization }));
+  return resolve(msg("{organization} manages HYR Code updates.", { organization }));
 }
 
 /** @public */
@@ -79,7 +79,7 @@ export function managedNightlyDeniedMessage(
   resolve: MFunctionType = mFallback,
 ): string {
   return resolve(
-    msg("{organization} manages T3 Code updates. Only stable releases can be installed.", {
+    msg("{organization} manages HYR Code updates. Only stable releases can be installed.", {
       organization,
     }),
   );
@@ -200,7 +200,7 @@ const BROWSER_IMPORT_FAILURE_MESSAGES: Record<BrowserImportFailureReason, string
     "No encryption key in your Keychain. Sign in to that browser once, then retry.",
   ),
   needsFullDiskAccess: msg(
-    "Give T3 Code Full Disk Access in System Settings → Privacy & Security, then retry.",
+    "Give HYR Code Full Disk Access in System Settings → Privacy & Security, then retry.",
   ),
   browserRunning: msg("Quit the browser first so its cookie database can be read."),
   unsupportedPlatform: msg("Importing from this browser isn't possible on this platform."),

@@ -1984,7 +1984,7 @@ it.effect(
           environmentId,
           requestNamespace: "client:linked",
           thread: undefined,
-          client: { sessionId: "linked", label: "T3 Code · laptop", access: "auto" },
+          client: { sessionId: "linked", label: "HYR Code · laptop", access: "auto" },
           capabilities: new Set(["orchestration"]),
           issuedAt: 1,
         };

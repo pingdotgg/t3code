@@ -1,6 +1,6 @@
 ---
 name: test-t3-mobile
-description: Test T3 Code's native iOS and Android app through its Device panel and returned AgentDevice command. Use for mobile verification, native-client builds, Metro launch, and mobile pairing against isolated development state.
+description: Test HYR Code's native iOS and Android app through its Device panel and returned AgentDevice command. Use for mobile verification, native-client builds, Metro launch, and mobile pairing against isolated development state.
 ---
 
 # Test T3 Mobile
@@ -26,7 +26,7 @@ Test with meaningful project and thread data. Read the shared
 [SQLite fixture reference](../test-t3-app/references/sqlite-fixtures.md) only
 when inspecting or seeding SQLite. Stop the test server before fixture writes.
 
-## Launch T3 Code Dev
+## Launch HYR Code Dev
 
 From the checkout being tested on the selected device host, run:
 
@@ -73,7 +73,7 @@ arguments stored in `agent_device_command` and the Bash array
   "$agent_device_command" "${agent_device_target_args[@]}"
 ```
 
-It issues a fresh credential and opens T3 Code Dev's existing pairing route
+It issues a fresh credential and opens HYR Code Dev's existing pairing route
 through AgentDevice. For a backend on the device host, use
 `http://127.0.0.1:<server-port>` on iOS or `http://10.0.2.2:<server-port>`
 on Android. For a remote backend, use its reachable origin.

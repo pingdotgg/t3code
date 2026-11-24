@@ -53,7 +53,7 @@ export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(func
       auth: { status: "unknown" },
       message: settings.enabled
         ? "Checking Muse Code CLI availability..."
-        : "Muse Code is disabled in T3 Code settings.",
+        : "Muse Code is disabled in HYR Code settings.",
     },
   });
 });

@@ -1,15 +1,15 @@
 # Pi
 
-T3 Code can use your existing Pi coding agent installation while keeping Pi's models, auth,
+HYR Code can use your existing Pi coding agent installation while keeping Pi's models, auth,
 extensions, skills, context files, and native session history.
 
 ## Set Up Pi
 
-1. Install [Pi](https://pi.dev) on the machine running the T3 Code server. Pi requires Node.js
-   22.19 or newer; its platform installers can install Node if needed. T3 Code supports Pi
+1. Install [Pi](https://pi.dev) on the machine running the HYR Code server. Pi requires Node.js
+   22.19 or newer; its platform installers can install Node if needed. HYR Code supports Pi
    0.84.3 or newer.
 2. Run `pi` in a terminal, then `/login` to connect your model provider or configure its API key.
-3. Open T3 Code Settings, enable Pi, and refresh the provider.
+3. Open HYR Code Settings, enable Pi, and refresh the provider.
 
 For an npm installation, use:
 
@@ -19,7 +19,7 @@ npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
 If `pi` is not on the server's `PATH`, set Pi's binary path to the executable. Provider environment
 variables and launch arguments are also available for installations that need a custom agent
-directory, endpoint, or model configuration. `--provider` must be paired with `--model`. T3 Code
+directory, endpoint, or model configuration. `--provider` must be paired with `--model`. HYR Code
 rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
 parts of the process lifecycle.
 
@@ -35,7 +35,7 @@ update it through that manager instead. For example, a Nix profile installation 
 
 ## What Carries Over
 
-T3 Code discovers the models reported by Pi and exposes their supported thinking levels. The
+HYR Code discovers the models reported by Pi and exposes their supported thinking levels. The
 thinking picker marks the discovered active model's configured level as its default without
 overriding it. Other models keep their Pi defaults when no level is selected. A model that lists
 `serviceTiers` (for example `[{ "id": "priority", "name": "Fast" }]`) in its Pi definition gets
@@ -44,25 +44,25 @@ a speed picker with Standard plus those tiers. A chosen tier is sent as the requ
 use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
 preserve the native conversation through the selected turn in the destination workspace.
 Switching providers uses portable conversation context. Extension
-dialogs appear in the T3 Code composer, and the thread details context window follows Pi's own usage
+dialogs appear in the HYR Code composer, and the thread details context window follows Pi's own usage
 reporting while a response streams and after it settles.
 
 Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
 loads for the current workspace; selecting one uses Pi's native skill expansion.
 
 Pi loads its normal user extensions, and project extensions once the folder is trusted in Pi.
-Blocking `select`, `confirm`, `input`, and `editor` dialogs work in T3 Code. Notifications appear in
+Blocking `select`, `confirm`, `input`, and `editor` dialogs work in HYR Code. Notifications appear in
 the work log. Extensions can publish status text near the composer. Terminal titles and generic
-widgets do not have a T3 Code equivalent.
+widgets do not have a HYR Code equivalent.
 
 ## Permission Modes
 
-T3 Code applies the composer permission mode through Pi's blocking tool hook:
+HYR Code applies the composer permission mode through Pi's blocking tool hook:
 
 - **Supervised** asks before commands, file changes, and extension tools. Read-only tools continue.
 - **Auto-accept edits** allows Pi's edit and write tools, but asks before commands and extension
   tools.
-- **Full access** allows tools without T3 Code approval prompts.
+- **Full access** allows tools without HYR Code approval prompts.
 
 The **Auto** option is not shown for Pi because Pi does not expose an AI approval reviewer.
 Threads that already stored Auto before Pi support was added behave and display as Supervised.
@@ -71,9 +71,9 @@ Changing the mode restarts the Pi provider session and resumes the same native c
 policy covers Pi tool calls; it is not an operating-system sandbox, and code that a trusted Pi
 extension runs outside a tool call remains governed by Pi's own extension trust model.
 
-T3 Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
-installs Pi's example `subagent` extension, T3 Code also shows its task progress and results in that
-UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
+HYR Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
+installs Pi's example `subagent` extension, HYR Code also shows its task progress and results in that
+UI. Pi runs those children without a session, so they cannot be opened or resumed as HYR Code
 threads.
 
 ## Troubleshooting
@@ -81,7 +81,7 @@ threads.
 - If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh
   the provider in Settings.
 - If no models appear, open Pi directly and confirm its authentication and model configuration.
-- If discovery cannot complete, T3 Code keeps Pi available with the `Pi default` model. Start a
+- If discovery cannot complete, HYR Code keeps Pi available with the `Pi default` model. Start a
   thread to let the interactive Pi session handle any startup prompt.
 - If Pi skips project settings, extensions, skills, prompts, MCP servers, or system prompt files
   because the folder is not trusted, the thread shows a notice on the first turn of the Pi session.

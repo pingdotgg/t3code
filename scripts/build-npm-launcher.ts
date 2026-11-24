@@ -36,7 +36,7 @@ export function npmLauncherPackageManifest(version: string, databaseMigration: n
     name: NPM_LAUNCHER_PACKAGE_NAME,
     version,
     description:
-      "T3 Code CLI. Downloads the self-contained executable for this platform from the GitHub Release.",
+      "HYR Code CLI. Downloads the self-contained executable for this platform from the GitHub Release.",
     license: serverPackageJson.license,
     repository: serverPackageJson.repository,
     bin: { t3: "./bin/t3.mjs" },

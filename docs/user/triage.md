@@ -1,7 +1,7 @@
 # Triage an issue
 
-Triage lets your own coding agent investigate a T3 Code problem. The agent
-reads the logs and state of the machine, checks the T3 Code source for that
+Triage lets your own coding agent investigate a HYR Code problem. The agent
+reads the logs and state of the machine, checks the HYR Code source for that
 version, finds known issues, and can help you write a good GitHub issue. It asks
 before it applies a fix or posts anything.
 
@@ -9,7 +9,7 @@ before it applies a fix or posts anything.
 
 Open the command palette and choose **Triage an issue**. A new thread with no
 project opens, with the triage playbook linked in the message. Choose any
-provider, describe what went wrong after the link, and send. T3 Code gets the
+provider, describe what went wrong after the link, and send. HYR Code gets the
 source for the server's version while you write.
 
 Triage runs on the machine of the thread or draft that you have open. With
@@ -37,6 +37,6 @@ npx t3 triage --agent codex
 ```
 
 Antigravity needs Google's standalone `agy` CLI on your `PATH` and its own sign-in.
-The ACP runtime installed through T3 Code does not include this terminal CLI.
+The ACP runtime installed through HYR Code does not include this terminal CLI.
 Install it using [Google's CLI setup guide](https://antigravity.google/docs/cli-getting-started).
 Pass `--model <model-id>` to choose a model, or leave it out to use the CLI's default.

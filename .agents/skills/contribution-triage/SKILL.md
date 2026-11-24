@@ -1,6 +1,6 @@
 ---
 name: contribution-triage
-description: Enforce T3 Code's PR contribution policy by closing ineligible submissions and triggering Macroscope review for eligible work within authorized scope. Supports explicit dry runs. Use for contribution moderation, not installation diagnostics or a full code review.
+description: Enforce HYR Code's PR contribution policy by closing ineligible submissions and triggering Macroscope review for eligible work within authorized scope. Supports explicit dry runs. Use for contribution moderation, not installation diagnostics or a full code review.
 ---
 
 # Contribution triage

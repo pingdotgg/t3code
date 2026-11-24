@@ -9134,7 +9134,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 recorded?.failure ??
                   makeProviderFailure({
                     class: "provider_error",
-                    message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
+                    message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so HYR Code stopped the turn and restarted the agent. Send a message to continue.`,
                   }),
                 recorded === undefined
                   ? undefined

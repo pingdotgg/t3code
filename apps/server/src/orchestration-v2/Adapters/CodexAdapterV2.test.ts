@@ -262,7 +262,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
       assert.deepEqual((yield* build("approval-required")).sandboxPolicy, { type: "readOnly" });
       assert.deepEqual((yield* build("full-access")).sandboxPolicy, { type: "dangerFullAccess" });
-      // The folder list reaches the model without T3 Code's MCP tools.
+      // The folder list reaches the model without HYR Code's MCP tools.
       assert.deepEqual(Object.keys(autoAcceptEdits.additionalContext ?? {}), ["t3_code_workspace"]);
       assert.include(
         autoAcceptEdits.additionalContext?.["t3_code_workspace"]?.value,
@@ -712,7 +712,7 @@ function codexReplayPreamble(input: {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "T3 Code", title: "T3 Code", version: packageJson.version },
+          clientInfo: { name: "HYR Code", title: "HYR Code", version: packageJson.version },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
@@ -729,7 +729,7 @@ function codexReplayPreamble(input: {
       frame: {
         id: 1,
         result: {
-          userAgent: "T3 Code/0.156.1",
+          userAgent: "HYR Code/0.156.1",
           codexHome: "/tmp/codex-home",
           platformFamily: "unix",
           platformOs: "macos",
@@ -1361,7 +1361,7 @@ describe("CodexAdapterV2 session initialize", () => {
               frame: {
                 id: 1,
                 result: {
-                  userAgent: "T3 Code/0.144.3 (Mac OS 15.5.0; x86_64) unknown (T3 Code; 0.1.5)",
+                  userAgent: "HYR Code/0.144.3 (Mac OS 15.5.0; x86_64) unknown (HYR Code; 0.1.5)",
                   codexHome: "/tmp/codex-home",
                   platformFamily: "unix",
                   platformOs: "macos",
@@ -1385,7 +1385,7 @@ describe("CodexAdapterV2 session initialize", () => {
       assert.instanceOf(failure.cause, ProviderSetupError);
       assert.equal(
         failure.cause.message,
-        "Codex 0.144.3 does not work with this T3 Code release. Update Codex to >=0.159.0, then retry.",
+        "Codex 0.144.3 does not work with this HYR Code release. Update Codex to >=0.159.0, then retry.",
       );
     }).pipe(
       Effect.scoped,
@@ -4680,7 +4680,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   item: {
                     type: itemType,
                     id,
-                    ...(itemType === "webSearch" ? { query: "T3 Code", action: null } : {}),
+                    ...(itemType === "webSearch" ? { query: "HYR Code", action: null } : {}),
                   },
                   ...timestamps,
                 },
@@ -4767,7 +4767,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(unfinished[0]?.id, unfinished[1]?.id);
         assert.deepEqual(unfinished[1]?.startedAt, DateTime.makeUnsafe(1782622443000));
         if (unfinished[1]?.type === "web_search") {
-          assert.deepEqual(unfinished[1].patterns, ["T3 Code"]);
+          assert.deepEqual(unfinished[1].patterns, ["HYR Code"]);
           assert.deepEqual(
             harness.events.flatMap((event) =>
               event.type === "node.updated" &&

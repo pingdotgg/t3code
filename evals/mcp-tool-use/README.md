@@ -1,8 +1,8 @@
 # MCP tool use
 
-Replays small fake threads on Claude and Codex models and checks how they use T3's MCP tools: delegation, PR linking, previews, scheduling, and more. Each case reproduces a real mistake an agent made in T3 Code.
+Replays small fake threads on Claude and Codex models and checks how they use T3's MCP tools: delegation, PR linking, previews, scheduling, and more. Each case reproduces a real mistake an agent made in HYR Code.
 
-The model sees what it sees in T3 Code. A trimmed capture of a real harness turn supplies the harness prompt and native tools. T3's instructions, tool descriptions, and schemas come from this checkout. A cheap model plays the shell, so nothing runs on your machine.
+The model sees what it sees in HYR Code. A trimmed capture of a real harness turn supplies the harness prompt and native tools. T3's instructions, tool descriptions, and schemas come from this checkout. A cheap model plays the shell, so nothing runs on your machine.
 
 ## Run
 
@@ -359,7 +359,7 @@ Limits: the shell is simulated, so a CLI's output is the simulator's reading of 
 
 `templates/` holds one trimmed capture per harness. Refresh them when a harness changes its prompt or native tools:
 
-1. Capture one T3 Code turn through CLIProxyAPI, with T3's MCP server connected.
+1. Capture one HYR Code turn through CLIProxyAPI, with T3's MCP server connected.
 2. From `evals/`, run `pnpm mcp-tool-use:trim-capture <claude|codex> <capture.json> mcp-tool-use/templates/<claude|codex>.json.gz`. It keeps only what `run.ts` reads, and removes user instructions, the user's own skills and agents, account ids, and home paths.
 3. Read the output for user data before you commit it: `zcat <file> | less`.
 4. Run the full eval on the old and new templates, and compare.
