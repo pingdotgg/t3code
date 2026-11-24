@@ -1991,65 +1991,75 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("does not file T3 sandbox chats under the Codex project they were moved into", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const nowMs = Date.parse("2026-11-08T12:00:00.000Z");
-        yield* TestClock.setTime(nowMs);
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const homeDir = yield* makeTempDir("t3code-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
-        const projectDir = path.join(homeDir, "code", "my-project");
-        const sandboxDir = path.join(configBaseDir, "worktrees", "my-project", "wt-1");
-        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
-        yield* fileSystem.makeDirectory(sandboxDir, { recursive: true });
+    it.effect.each([{ layout: "plain" }, { layout: "symlinked into Downloads" }] as const)(
+      "does not file T3 sandbox chats under the Codex project they were moved into ($layout base dir)",
+      ({ layout }) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-11-08T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const homeDir = yield* makeTempDir("t3code-home-");
+          let configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          let realBaseDir = configBaseDir;
+          if (layout === "symlinked into Downloads") {
+            // A Downloads folder is scratch, so only the base's real spelling tells the sandbox apart.
+            realBaseDir = path.join(homeDir, "Downloads", "t3-data");
+            yield* fileSystem.makeDirectory(realBaseDir, { recursive: true });
+            configBaseDir = path.join(homeDir, "t3-link");
+            yield* fileSystem.symlink(realBaseDir, configBaseDir);
+          }
+          const projectDir = path.join(homeDir, "code", "my-project");
+          const sandboxDir = path.join(realBaseDir, "worktrees", "my-project", "wt-1");
+          yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+          yield* fileSystem.makeDirectory(sandboxDir, { recursive: true });
 
-        const projectId = "019a5f00-0000-7000-8000-000000000101";
-        const chats = [
-          {
-            id: "019a5f00-0000-7000-8000-00000000010a",
-            cwd: projectDir,
-            message: "Started in the project",
-          },
-          {
-            id: "019a5f00-0000-7000-8000-00000000010b",
-            cwd: sandboxDir,
-            message: "Started in a T3 worktree",
-          },
-        ];
-        const rolloutPaths: Array<string> = [];
-        for (const [index, chat] of chats.entries()) {
-          const filePath = path.join(
-            codexHomePath,
-            "sessions",
-            "2026",
-            "11",
-            "08",
-            `rollout-2026-11-08T08-0${index}-00-${chat.id}.jsonl`,
-          );
-          rolloutPaths.push(filePath);
-          yield* writeTranscript({
-            filePath,
-            contents: [
-              encodeTranscriptRecord({
-                type: "session_meta",
-                payload: { id: chat.id, cwd: chat.cwd },
-              }),
-              encodeTranscriptRecord({ type: "turn_context", payload: { cwd: chat.cwd } }),
-              encodeTranscriptRecord({
-                type: "event_msg",
-                payload: { type: "user_message", message: chat.message },
-              }),
-            ].join("\n"),
-            mtimeMs: nowMs - 60_000 + index,
-          });
-        }
-        yield* Effect.sync(() => {
-          const db = new NodeSqlite.DatabaseSync(path.join(codexHomePath, "state_5.sqlite"));
-          try {
-            db.exec(`
+          const projectId = "019a5f00-0000-7000-8000-000000000101";
+          const chats = [
+            {
+              id: "019a5f00-0000-7000-8000-00000000010a",
+              cwd: projectDir,
+              message: "Started in the project",
+            },
+            {
+              id: "019a5f00-0000-7000-8000-00000000010b",
+              cwd: sandboxDir,
+              message: "Started in a T3 worktree",
+            },
+          ];
+          const rolloutPaths: Array<string> = [];
+          for (const [index, chat] of chats.entries()) {
+            const filePath = path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "11",
+              "08",
+              `rollout-2026-11-08T08-0${index}-00-${chat.id}.jsonl`,
+            );
+            rolloutPaths.push(filePath);
+            yield* writeTranscript({
+              filePath,
+              contents: [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: chat.id, cwd: chat.cwd },
+                }),
+                encodeTranscriptRecord({ type: "turn_context", payload: { cwd: chat.cwd } }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: chat.message },
+                }),
+              ].join("\n"),
+              mtimeMs: nowMs - 60_000 + index,
+            });
+          }
+          yield* Effect.sync(() => {
+            const db = new NodeSqlite.DatabaseSync(path.join(codexHomePath, "state_5.sqlite"));
+            try {
+              db.exec(`
               CREATE TABLE projects (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -2071,37 +2081,37 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
                 project_id TEXT REFERENCES projects(id) ON DELETE SET NULL
               );
             `);
-            db.prepare("INSERT INTO projects VALUES (?, ?, '{}', 0, ?, ?)").run(
-              projectId,
-              "my-project",
-              nowMs,
-              nowMs,
-            );
-            db.prepare("INSERT INTO project_roots VALUES (?, 0, ?)").run(projectId, projectDir);
-            const insertThread = db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?)");
-            for (const [index, chat] of chats.entries()) {
-              insertThread.run(chat.id, rolloutPaths[index]!, chat.cwd, projectId);
+              db.prepare("INSERT INTO projects VALUES (?, ?, '{}', 0, ?, ?)").run(
+                projectId,
+                "my-project",
+                nowMs,
+                nowMs,
+              );
+              db.prepare("INSERT INTO project_roots VALUES (?, 0, ?)").run(projectId, projectDir);
+              const insertThread = db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?)");
+              for (const [index, chat] of chats.entries()) {
+                insertThread.run(chat.id, rolloutPaths[index]!, chat.cwd, projectId);
+              }
+            } finally {
+              db.close();
             }
-          } finally {
-            db.close();
-          }
-        });
+          });
 
-        const threads = yield* runRecentThreads({
-          claudeHomePath,
-          codexHomePath,
-          configBaseDir,
-          workspaceRoot: projectDir,
-        }).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
-        expect(threads.map((thread) => thread.title)).toEqual(["Started in the project"]);
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            configBaseDir,
+            workspaceRoot: projectDir,
+          }).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
+          expect(threads.map((thread) => thread.title)).toEqual(["Started in the project"]);
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir }).pipe(
-          Effect.provideService(HostProcess.HomeDirectory, homeDir),
-        );
-        expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
-          { path: projectDir, threadCount: 1 },
-        ]);
-      }),
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, homeDir),
+          );
+          expect(result.candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual(
+            [{ path: projectDir, threadCount: 1 }],
+          );
+        }),
     );
 
     it.effect("imports a rewound Codex thread with the history its new rollout inherits", () =>

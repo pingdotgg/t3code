@@ -1626,11 +1626,16 @@ export const make = Effect.gen(function* () {
   });
 
   // Only chats left in a scratch folder, such as Codex's, take their project's root; T3's own stay excluded.
-  const projectCwd = (cwd: string, projectRoots: ReadonlyArray<string> | undefined) => {
+  const projectCwd = Effect.fnUntraced(function* (
+    cwd: string,
+    projectRoots: ReadonlyArray<string> | undefined,
+  ) {
     if (projectRoots === undefined) return cwd;
     const resolved = path.resolve(expandHomePath(cwd.trim(), homeDir));
-    return isScratchPath(resolved) && !isT3OwnedPath(resolved) ? projectRoots[0]! : cwd;
-  };
+    if (!isScratchPath(resolved) || isT3OwnedPath(resolved)) return cwd;
+    const realCwd = yield* realPathOf(resolved);
+    return isT3OwnedPath(realCwd, realT3Dirs) ? cwd : projectRoots[0]!;
+  });
 
   const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
@@ -1799,7 +1804,7 @@ export const make = Effect.gen(function* () {
             sameTranscriptIdentity(imported.source, transcript.identity),
         )?.cwd ?? (yield* readCwd(source, transcript, budget));
       if (rolloutCwd === null || rolloutCwd === false) continue;
-      const cwd = projectCwd(rolloutCwd, transcript.projectRoots);
+      const cwd = yield* projectCwd(rolloutCwd, transcript.projectRoots);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
@@ -2296,7 +2301,7 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const expandedCwd = expandHomePath(
-            projectCwd(snapshot.cwd.value, transcript.projectRoots).trim(),
+            (yield* projectCwd(snapshot.cwd.value, transcript.projectRoots)).trim(),
             homeDir,
           );
           if (!path.isAbsolute(expandedCwd) || !(yield* belongsToRoot(path.resolve(expandedCwd)))) {
