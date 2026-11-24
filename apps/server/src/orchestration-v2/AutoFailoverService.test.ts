@@ -71,6 +71,17 @@ describe("autoFailoverPlan", () => {
     expect(result?.cooldownUntilMs).toBe(now + 5 * 60_000);
   });
 
+  it("benches a lapsed Claude plan like a limit without a reset", () => {
+    // A cancelled plan's token still says "pro", so Auto kept picking it and every turn failed.
+    const lapsed = shell({
+      lastErrorClass: "provider_error",
+      lastErrorCode: "api_error_403",
+      lastError:
+        "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead",
+    });
+    expect(plan(lapsed)?.cooldownUntilMs).toBe(now + 30 * 60_000);
+  });
+
   it("moves a hand-picked thread to Auto at the level its model implies", () => {
     const picked = (model: string) =>
       shell({ modelSelection: { instanceId: ProviderInstanceId.make("grok"), model } });
@@ -78,7 +89,10 @@ describe("autoFailoverPlan", () => {
       instanceId: "grok",
       model: "auto-medium",
     });
-    expect(plan(picked("gpt-6.1-sol"))?.command.modelSelection?.model).toBe("auto-high");
+    expect(plan(picked("gpt-6.1-sol"))?.command.modelSelection?.model).toBe("auto-medium");
+    expect(plan(picked("gpt-6.2-sol"))?.command.modelSelection?.model).toBe("auto-medium");
+    expect(plan(picked("gpt-6.2-astra"))?.command.modelSelection?.model).toBe("auto-high");
+    expect(plan(picked("gpt-6.1-terra"))?.command.modelSelection?.model).toBe("auto-low");
     expect(plan(picked("claude-haiku-5-5"))?.command.modelSelection?.model).toBe("auto-low");
     // A delegated thread keeps the model its parent chose.
     const delegated = {
@@ -92,6 +106,15 @@ describe("autoFailoverPlan", () => {
   it("leaves other failures, stale runs and workflow steps alone", () => {
     expect(
       plan(shell({ lastErrorClass: "provider_error", lastErrorCode: "api_error_404" })),
+    ).toBeNull();
+    expect(
+      plan(
+        shell({
+          lastErrorClass: "provider_error",
+          lastErrorCode: "api_error_403",
+          lastError: "Request not allowed",
+        }),
+      ),
     ).toBeNull();
     expect(plan(shell({ latestRunId: RunId.make("run:newer") }))).toBeNull();
     expect(plan(shell({ status: "idle" }))).toBeNull();

@@ -53,29 +53,29 @@ const opencode = (model: string, effort: string): AutoCandidate => ({
 });
 
 /**
- * Orchestrator candidates per level, best first: Claude A/B, Claude on Antigravity A/B, ChatGPT
- * (Codex), Grok, Gemini, then free OpenCode models. Models a provider does not list are skipped,
- * so paid-plan models (Sol, Astra) wait until the plan has them.
+ * High and medium prefer Claude, then ChatGPT (Codex), then Claude on Antigravity.
+ * Low spends Claude, Antigravity and free OpenCode models before ChatGPT and Grok.
+ * Each level has its own ChatGPT models and effort to conserve the plan's allowance.
+ * Unlisted models are skipped, including paid models after the plan ends.
  */
 const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>> = {
   high: [
     claude("claude-opus-5-5", "max"),
-    antigravity("claude-opus-4-6-thinking", "high"),
-    codex("gpt-6.1-sol", "high"),
+    codex("gpt-6.2-astra", "high"),
     codex("gpt-6-astra", "high"),
-    codex("gpt-6-luna", "high"),
+    codex("gpt-6.2-sol", "high"),
+    antigravity("claude-opus-4-6-thinking", "high"),
     grok("high"),
     antigravity("gemini-3.8-flash", "high"),
   ],
   medium: [
     claude("claude-opus-5-5", "medium"),
     claude("claude-fable-5-2", "medium"),
-    antigravity("claude-opus-4-6-thinking", "medium"),
+    codex("gpt-6.2-sol", "medium"),
     codex("gpt-6.1-sol", "medium"),
-    codex("gpt-6-astra", "medium"),
+    antigravity("claude-opus-4-6-thinking", "medium"),
     claude("claude-sonnet-5-5", "medium"),
     antigravity("claude-sonnet-4-6", "medium"),
-    codex("gpt-6-luna", "medium"),
     grok("medium"),
     antigravity("gemini-3.8-flash", "medium"),
     opencode("opencode/big-pickle", "medium"),
@@ -90,6 +90,7 @@ const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>>
     opencode("opencode/deepseek-v4.1-flash-free", "medium"),
     opencode("opencode/glm-5.3-flash-free", "medium"),
     codex("gpt-6-luna", "low"),
+    codex("gpt-6.1-terra", "low"),
     grok("low"),
   ],
 };
