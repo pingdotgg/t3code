@@ -182,7 +182,6 @@ class WorkerChild
   killed = false;
   spawned = false;
   exited = false;
-  /** Kill ends the whole tree, as Effect's spawner does on Windows. */
   killsTree = false;
   readonly #writes = new Map<number, Array<(error?: Error | null) => void>>();
   readonly #finals = new Map<number, (error?: Error | null) => void>();

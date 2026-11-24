@@ -219,7 +219,15 @@ describe("SpawnWorker", () => {
         const cliExited = new Promise((resolve) => cli.once("exit", resolve));
         cli.kill();
         yield* Effect.promise(() => cliExited);
-        expect(() => process.kill(grandchild, 0)).toThrow();
+        const survived = (() => {
+          try {
+            return process.kill(grandchild, 0);
+          } catch {
+            return false;
+          }
+        })();
+        if (survived) process.kill(grandchild);
+        expect(survived).toBe(false);
       }
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
