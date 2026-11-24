@@ -405,7 +405,7 @@ describe("Antigravity subscription limits", () => {
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-21T10:16:04Z")));
       const { probe } = yield* fixture({
-        summaryStatus: 404,
+        summaryStatus: 403,
         models: {
           models: {
             "gemini-a": {
@@ -455,7 +455,7 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("merges quota groups that only one endpoint reports", () =>
+  it.effect("merges extra quota groups while respecting disabled metered buckets", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
         summaryByHost: {
@@ -466,7 +466,7 @@ describe("Antigravity subscription limits", () => {
                 displayName: "Claude and GPT models",
                 buckets: [
                   { bucketId: "3p-weekly", window: "weekly", remainingFraction: 0.5 },
-                  { bucketId: "3p-5h", window: "5h", remainingFraction: 0.3 },
+                  { bucketId: "3p-5h", window: "5h", remainingFraction: 1, disabled: true },
                 ],
               },
             ],
@@ -475,14 +475,12 @@ describe("Antigravity subscription limits", () => {
       });
       const limits = yield* probe;
       expect(limits.windows.map((window) => window.id).toSorted()).toEqual([
-        "3p-5h",
         "3p-weekly",
         "gemini-5h",
         "gemini-weekly",
       ]);
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
-      expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(70);
       expect(byId.get("3p-weekly")?.usedPercent).toBe(50);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -557,14 +555,30 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("keeps one endpoint's quotas when the other fails", () =>
+  it.effect("does not substitute the other host when the metering host fails", () =>
+    Effect.gen(function* () {
+      for (const [authMethod, host] of [
+        ["oauth-personal", "daily-cloudcode-pa.googleapis.com"],
+        ["oauth-business", "cloudcode-pa.googleapis.com"],
+      ] as const) {
+        const { probe, requests } = yield* fixture({
+          authMethod,
+          summaryStatusByHost: { [host]: 503 },
+        });
+        const limits = yield* probe;
+        expect(limits.windows).toEqual([]);
+        expect(limits.unavailable?.reason).toBe("probeFailed");
+        expect(requests.some(({ url }) => url.endsWith(":fetchAvailableModels"))).toBe(false);
+      }
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("keeps metered quotas when the other host fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
-        summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 503 },
+        summaryStatusByHost: { "cloudcode-pa.googleapis.com": 503 },
       });
-      const limits = yield* probe;
-      expect(limits.unavailable).toBeUndefined();
-      expect(limits.windows).toHaveLength(4);
+      expect((yield* probe).windows).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -603,8 +617,8 @@ describe("Antigravity subscription limits", () => {
 
   it.effect("falls back to model quotas without inventing a window duration", () =>
     Effect.gen(function* () {
-      const { probe } = yield* fixture({
-        summaryStatus: 404,
+      const { probe, requests } = yield* fixture({
+        summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 404 },
         models: {
           models: {
             "gemini-a": {
@@ -620,6 +634,11 @@ describe("Antigravity subscription limits", () => {
         },
       });
       const limits = yield* probe;
+      expect(
+        requests
+          .filter(({ url }) => url.endsWith(":fetchAvailableModels"))
+          .map(({ url }) => new URL(url).host),
+      ).toEqual(["daily-cloudcode-pa.googleapis.com"]);
       expect(limits.windows).toHaveLength(2);
       expect(limits.windows.find((window) => window.id === "gemini-quota")?.usedPercent).toBe(40);
       expect(
@@ -627,6 +646,19 @@ describe("Antigravity subscription limits", () => {
           (window) => window.kind === "other" && window.windowDurationMins === undefined,
         ),
       ).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("keeps an all-disabled summary even when model quotas are available", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({
+        summary: { buckets: [{ bucketId: "example", disabled: true }] },
+        models: { models: { "gemini-a": { quotaInfo: { remainingFraction: 1 } } } },
+      });
+      const limits = yield* probe;
+      expect(limits.windows).toEqual([]);
+      expect(limits.unavailable).toBeUndefined();
+      expect(requests.some(({ url }) => url.endsWith(":fetchAvailableModels"))).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

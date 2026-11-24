@@ -28,7 +28,7 @@ const PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 const ENDPOINTS = {
   "oauth-personal": [DAILY_ENDPOINT, PROD_ENDPOINT],
   "oauth-business": [PROD_ENDPOINT, DAILY_ENDPOINT],
-};
+} as const;
 const SUMMARY_WINDOW_MINS = new Map([
   ["5h", 5 * 60],
   ["weekly", 7 * 24 * 60],
@@ -248,16 +248,23 @@ export const antigravityAccountFingerprint = (userInfo: unknown) =>
 
 /** Windows from a `retrieveUserQuotaSummary` answer requested at `requestedAt`. */
 export const antigravitySummaryWindows = (response: unknown, requestedAt: number) =>
-  decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt)));
+  decodeSummary(response).pipe(
+    Effect.map((summary) =>
+      [...summaryBuckets(summary, requestedAt).values()].filter((window) => window !== undefined),
+    ),
+  );
 
-function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
-  const windows = new Map<string, ServerProviderUsageWindow>();
+function summaryBuckets(summary: typeof Summary.Type, requestedAt: number) {
+  const windows = new Map<string, ServerProviderUsageWindow | undefined>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
     ? summary.groups
     : [{ buckets: summary.buckets }];
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
-      if (bucket.disabled) continue;
+      if (bucket.disabled) {
+        windows.set(bucket.bucketId, undefined);
+        continue;
+      }
       // Argon and Carbon are metered separately from the default Gemini buckets.
       const family = bucket.bucketId.startsWith("gemini-argon-")
         ? group.displayName?.trim() || "Gemini Argon"
@@ -281,7 +288,7 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
       if (window) windows.set(window.id, window);
     }
   }
-  return [...windows.values()];
+  return windows;
 }
 
 /** Older accounts expose model quotas without a window length. Do not invent a reset cadence. */
@@ -431,49 +438,47 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         account = cached.account;
       }
     }
-    const endpoints = ENDPOINTS[input.authMethod];
-    // Merge endpoints because quota groups differ; the metered host's reading of a bucket wins.
-    const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
-      operation: string,
-      parse: (
-        response: unknown,
-        requestedAt: number,
-      ) => Effect.Effect<ServerProviderUsageWindow[], E>,
-    ) {
-      const responses = yield* Effect.forEach(
-        endpoints,
-        (endpoint) =>
-          Effect.gen(function* () {
-            // Capture each request after auth, so refresh latency does not widen the tolerance.
-            const requestedAt = yield* Clock.currentTimeMillis;
-            return yield* request(
-              HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
-                HttpClientRequest.setHeaders({
-                  Authorization: `Bearer ${accessToken}`,
-                  "User-Agent": antigravityUserAgent(platform, architecture),
-                }),
-                HttpClientRequest.bodyJsonUnsafe(projectId ? { project: projectId } : {}),
-              ),
-            ).pipe(
-              Effect.flatMap((response) => parse(response, requestedAt)),
-              Effect.orElseSucceed(() => []),
-            );
+    const [meteringHost, otherHost] = ENDPOINTS[input.authMethod];
+    const post = (host: string, operation: string) =>
+      request(
+        HttpClientRequest.post(`${host}/v1internal:${operation}`).pipe(
+          HttpClientRequest.setHeaders({
+            Authorization: `Bearer ${accessToken}`,
+            "User-Agent": antigravityUserAgent(platform, architecture),
           }),
-        { concurrency: "unbounded" },
+          HttpClientRequest.bodyJsonUnsafe(projectId ? { project: projectId } : {}),
+        ),
       );
-      const windows = new Map<string, ServerProviderUsageWindow>();
-      for (const window of responses.flat()) {
-        if (!windows.has(window.id)) windows.set(window.id, window);
-      }
-      return [...windows.values()];
+    const readSummary = Effect.fn("AntigravityUsageProbe.readSummary")(function* (host: string) {
+      const requestedAt = yield* Clock.currentTimeMillis;
+      const summary = yield* post(host, "retrieveUserQuotaSummary").pipe(
+        Effect.flatMap(decodeSummary),
+      );
+      return summaryBuckets(summary, requestedAt);
     });
-    const summary = yield* fetchWindows("retrieveUserQuotaSummary", antigravitySummaryWindows);
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
+    // Older accounts can expose model quotas without access to the summary operation.
+    const meteredSummary = readSummary(meteringHost).pipe(
+      Effect.catchTags({
+        HttpClientError: (error) =>
+          error.response?.status === 403 || error.response?.status === 404
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+      }),
+    );
+    const [metered, other] = yield* Effect.all(
+      [meteredSummary, readSummary(otherHost).pipe(Effect.orElseSucceed(() => undefined))],
+      { concurrency: "unbounded" },
+    );
+    // The other host may add groups, but cannot override a metered or disabled bucket.
+    const windows = metered?.size
+      ? [...new Map([...(other ?? []), ...metered]).values()].filter(
+          (window) => window !== undefined,
+        )
+      : yield* post(meteringHost, "fetchAvailableModels").pipe(
+          Effect.flatMap(decodeModels),
+          Effect.map(modelWindows),
         );
-    if (windows.length === 0) {
+    if (!metered?.size && windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
