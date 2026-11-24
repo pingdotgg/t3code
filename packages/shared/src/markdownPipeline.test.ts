@@ -1043,19 +1043,23 @@ it.each([
   },
 );
 
-it("repairs bare local media embeds and file links with spaces across Windows and POSIX paths", () => {
+it("repairs bare local media embeds and file links with spaces across Windows, POSIX, and relative paths", () => {
   const winSlash = "Z:/Projects/Demo App/Output Shots/final-bust.jpg";
   const winBackslash = String.raw`C:\Users\First Last\.t3\design-review\r6-1.png`;
   const winFileLink = "C:/Users/First Last/Downloads GC/project/src/DetailsTab.tsx:42";
   const macIcloud = "/Users/test/Mobile Documents/iCloud~md~notes/cover photo.png";
   const wslParens = "/mnt/c/Project (demo)/screen shot.webp";
   const homePath = "~/My Documents/notes.md";
+  const relBang = "./img !32.png";
+  const relParens = "screenshots/my shot (1).png";
+  const relDoc = "../my docs/spec.md:12";
   const wrapped = "/work/Already wrapped.png";
   const authored = [
     `**Compare** ![Bust](${winSlash}) ![Round 6](${winBackslash})`,
     `![Cover](${macIcloud}) ![Screenshot](${wslParens})`,
+    `![Bang](${relBang}) ![RelParens](${relParens})`,
     `![Wrapped](<${wrapped}> "Title")`,
-    `Files: [DetailsTab.tsx:42](${winFileLink}), [notes.md](${homePath})`,
+    `Files: [DetailsTab.tsx:42](${winFileLink}), [notes.md](${homePath}), [spec](${relDoc})`,
     "",
     `\`![Inline code](${winSlash})\``,
     "",
@@ -1064,7 +1068,7 @@ it("repairs bare local media embeds and file links with spaces across Windows an
     "```",
     "",
     String.raw`\![Escaped](${wslParens})`,
-    "![Relative](some folder/image.png)",
+    "[Prose](see section 1/2)",
     "![Network](//example.test/a b.png)",
     "![External](https://example.test/a b.png)",
     "![Partial](/work/a b.png",
@@ -1075,6 +1079,8 @@ it("repairs bare local media embeds and file links with spaces across Windows an
     winBackslash,
     macIcloud,
     wslParens,
+    relBang,
+    relParens,
     wrapped,
   ]);
 
@@ -1085,8 +1091,10 @@ it("repairs bare local media embeds and file links with spaces across Windows an
     if ("children" in node) node.children.forEach(visit);
   };
   visit(processor.runSync(processor.parse(authored), authored) as Root);
-  expect(linkUrls).toContain(`file:///${winFileLink}`);
-  expect(linkUrls).toContain(homePath);
+  expect(linkUrls.map(decodeURI)).toContain(`file:///${winFileLink}`);
+  expect(linkUrls.map(decodeURI)).toContain(homePath);
+  expect(linkUrls.map(decodeURI)).toContain(relDoc);
+  expect(linkUrls.map(decodeURI)).not.toContain("see section 1/2");
 
   const codeSpan = "![`label](/work/c d.png)`";
   expect(

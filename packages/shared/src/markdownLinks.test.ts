@@ -293,11 +293,13 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[a](" + "(".repeat(32) + "x" + ")".repeat(32) + ")", ["(".repeat(32) + "x" + ")".repeat(32)]],
     ["[a](" + "(".repeat(33) + "x" + ")".repeat(33) + ") [b](ok)", ["ok"]],
     [
-      String.raw`![Bust](Z:/Projects/Demo App/Output Shots/bust.jpg) [Details](C:\Users\First Last\src\Details.tsx:12) [Notes](/Users/me/Mobile Documents/notes.md)`,
+      String.raw`![Bust](Z:/Projects/Demo App/Output Shots/bust.jpg) [Details](C:\Users\First Last\src\Details.tsx:12) [Notes](/Users/me/Mobile Documents/notes.md) ![Shot](./img !32.png) ![Rel](screenshots/my shot (1).png)`,
       [
         "Z:/Projects/Demo App/Output Shots/bust.jpg",
         String.raw`C:\Users\First Last\src\Details.tsx:12`,
         "/Users/me/Mobile Documents/notes.md",
+        "./img !32.png",
+        "screenshots/my shot (1).png",
       ],
     ],
   ])("keeps balanced parentheses in a destination like the parser: %s", (markdown, hrefs) => {

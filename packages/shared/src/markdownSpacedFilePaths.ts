@@ -2,7 +2,35 @@ import type { Root, RootContent } from "mdast";
 import type { Plugin } from "unified";
 import { spacedFilePathDestinationEnd } from "./markdownLinks.ts";
 
-const SPACED_FILE_LINK_TRIGGER = /\]\([ \t]*(?:\/(?![/\\])|~[\\/]|[A-Za-z]:[\\/])/;
+function hasSpacedDestinationAfterBracket(source: string): boolean {
+  let pos = source.indexOf("](");
+  while (pos >= 0) {
+    let index = pos + 2;
+    while (source[index] === " " || source[index] === "\t") index += 1;
+    const first = source[index];
+    if (first !== undefined && first !== "<" && first !== "#") {
+      let sawSpace = false;
+      let parenDepth = 0;
+      for (; index < source.length; index += 1) {
+        const ch = source[index]!;
+        if (ch === "\r" || ch === "\n") break;
+        if (ch === " " || ch === "\t") {
+          sawSpace = true;
+        } else if (ch === "(") {
+          parenDepth += 1;
+        } else if (ch === ")") {
+          if (parenDepth === 0) {
+            if (sawSpace) return true;
+            break;
+          }
+          parenDepth -= 1;
+        }
+      }
+    }
+    pos = source.indexOf("](", pos + 2);
+  }
+  return false;
+}
 
 type OffsetRange = readonly [number, number];
 
@@ -133,7 +161,7 @@ function* spacedFilePathCandidates(
   source: string,
   protectedRanges: ReadonlyArray<OffsetRange>,
 ): Generator<SpacedFilePathCandidate> {
-  if (!SPACED_FILE_LINK_TRIGGER.test(source)) return;
+  if (!hasSpacedDestinationAfterBracket(source)) return;
   const inlineCodeSpanEnd = createInlineCodeSpanFinder(source, protectedRanges);
   const openBrackets: number[] = [];
   const token = /[[\]\\`]|\n[ \t\r]*\n/g;
@@ -192,7 +220,7 @@ export interface WrappedSpacedFilePaths {
 }
 
 export function hasSpacedFilePathCandidate(source: string): boolean {
-  return SPACED_FILE_LINK_TRIGGER.test(source);
+  return hasSpacedDestinationAfterBracket(source);
 }
 
 /**

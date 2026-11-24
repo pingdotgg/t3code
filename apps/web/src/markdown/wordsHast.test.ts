@@ -599,5 +599,11 @@ describe("wordsHast", () => {
     expect(wordsHtml("[Open `README\n.md`](/tmp/My Project/README.md)")).toContain(
       `href="/tmp/My%20Project/README.md"`,
     );
+    expect(wordsHtml("![a](./img !32.png)\n\n![b](screenshots/my shot (1).png)")).toContain(
+      `src="./img%20!32.png"`,
+    );
+    expect(wordsHtml("![b](screenshots/my shot (1).png)")).toContain(
+      `src="screenshots/my%20shot%20(1).png"`,
+    );
   });
 });

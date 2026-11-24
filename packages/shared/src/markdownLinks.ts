@@ -555,7 +555,7 @@ function markdownLinkTailScanner(markdown: string) {
 // link's opening parenthesis while that parenthesis counts toward this depth.
 const MAX_BARE_DESTINATION_PAREN_DEPTH = 32;
 
-const SPACED_FILE_PATH_PREFIX = /^(?:\/(?![/\\])|~[\\/]|[A-Za-z]:[\\/])/;
+const EXPLICIT_SPACED_PATH_PREFIX = /^(?:\/(?![/\\])|~[\\/]|[A-Za-z]:[\\/]|\.\.?[\\/])/;
 
 function hasTrailingUnescapedBackslash(value: string): boolean {
   let count = 0;
@@ -567,15 +567,15 @@ function hasTrailingUnescapedBackslash(value: string): boolean {
 
 /**
  * Scans a bare Markdown link destination starting at `start` (after `(` and optional horizontal
- * whitespace) for a local absolute or home file path containing spaces.
+ * whitespace) for a local file path containing spaces (absolute, home, or relative).
  */
 export function spacedFilePathDestinationEnd(
   markdown: string,
   start: number,
 ): { readonly hrefEnd: number; readonly end: number } | null {
-  const prefix = SPACED_FILE_PATH_PREFIX.exec(markdown.slice(start, start + 3))?.[0];
-  if (!prefix) return null;
-  const isWindows = prefix.length === 3 && prefix[1] === ":";
+  if (markdown[start] === "<" || markdown[start] === "#") return null;
+  const prefix = EXPLICIT_SPACED_PATH_PREFIX.exec(markdown.slice(start, start + 3))?.[0];
+  const isWindows = prefix !== undefined && prefix.length === 3 && prefix[1] === ":";
   let parenDepth = 0;
   let closeParen = -1;
   for (let index = start; index < markdown.length; index += 1) {
@@ -613,8 +613,19 @@ export function spacedFilePathDestinationEnd(
     hrefEnd -= 1;
   }
   const path = markdown.slice(start, hrefEnd);
-  if (!/[ \t]/.test(path) || hasTrailingUnescapedBackslash(path)) return null;
-  if (!parseMarkdownFileLink(path)) return null;
+  if (!/[ \t]/.test(path) || hasTrailingUnescapedBackslash(path) || isNetworkPath(path)) {
+    return null;
+  }
+  const parsed = parseMarkdownFileLink(path);
+  if (!parsed) return null;
+  if (!prefix) {
+    // Unprefixed relative paths require a slash and a file-shaped basename so prose like `(a/b c)` stays text.
+    if (!PATH_SEPARATOR_PATTERN.test(parsed.path)) return null;
+    const basename = parsed.path.split(PATH_SEPARATOR_PATTERN).at(-1) ?? "";
+    if (!FILE_EXTENSION_PATTERN.test(basename) && !EXTENSIONLESS_FILE_NAMES.has(basename)) {
+      return null;
+    }
+  }
   return { hrefEnd, end: closeParen + 1 };
 }
 
