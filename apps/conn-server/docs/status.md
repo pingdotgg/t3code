@@ -103,6 +103,44 @@ Proof: `a_fork_receipt_belongs_to_its_target_thread`,
 in `conn-engine`; `client-check.mjs` (a year-10000 anchor decodes with T3's shell schema);
 `thread-cli-diff.mjs` compares every event type's `providerInstanceId` with the T3 server's.
 
+**Provider sign-in (2026-11-23):** `provider.auth.*` serves one flow: Antigravity's credential
+check (`authMethod` `gemini-api-key` or `agent-platform`, with an API or AI router key), as
+T3's `AntigravityAuth.ts` runs it without a browser (start, cancel, subscribe, one flow per
+instance owned by the starting session, T3's texts). Those entries say `canAuthenticate: true`
+and `auth.canLogout: false`. Agent Platform without a key would use Application Default
+Credentials, outside the key-only rule: it says `canAuthenticate: false` and never starts
+`agy` for a check.
+Left out by Nick's 2026-11-20 decision (providers sign in through Orbit's AI router, the
+server holds no provider sign-in): managed Codex and its token broker, and Antigravity's
+Google sign-in (`oauth-personal`, `oauth-business`: the link, `complete`'s redirect
+forward, `logout`); those entries now say `canAuthenticate: false`. Claude, Codex and Grok
+have no controller in T3 either. As in T3: a flow belongs to the provider instance that
+started it, and replacing or removing the instance stops its check and ends its streams;
+the stream sends every step (`starting`, `verifying`, the result) and the 90 s and 30 s
+hints; the 300 s timeout picks T3's text by step; a subscriber that falls behind gets the state
+now and only newer changes; cancel answers after the agent has stopped and both temp folders
+are gone, a start meanwhile is refused, and the check itself ends that state, so a client that
+leaves mid-cancel changes nothing; an agent that exits on its own is cleaned up by the same
+path as a stop, and a failed start waits for it; every signal by an agent's PID or group goes
+through its process supervisor before the reap, so a reused PID is never signalled; the agent
+starts (folders, spawn, cleanup of a failed spawn) on a blocking thread, and a check cancelled
+meanwhile still stops what it started; after a check the agent's session files for the
+check's workspace go (`removeAntigravitySessionFiles`: an absent file counts as removed, other
+errors stop it, `.meta` goes last); beyond T3, a check that ended with `session/new` sent and
+unanswered also removes the session stored meanwhile (found by its `.meta`; no scan when no
+session could exist), and a symlinked `.meta`, an `antigravity-acp` symlink, or a
+`conversations` or `brain` folder outside the profile is never followed; a custom executable may have
+any name (`resolveCommandPath`); the server's own setup errors (a missing executable, an
+unusable scratch folder) keep T3's texts, while a profile it cannot prepare shows the check's
+and the refresh's fixed texts, as T3's transport error does; known ACP errors
+(`-32602`, `session/new` `-32603`, `SUBSCRIPTION_REQUIRED`, access denied) get T3's fixed
+texts, and the agent's own message never reaches a client. By design: a check does not stop
+the instance's running sessions (T3 does), since it changes no credential. Proof: the
+`provider_auth` tests (gated stub provider, paused clock), the stub-`agy` tests in
+`antigravity_provider.rs` (process and folders after cancel and after a rejected key), the
+Antigravity entry test, `check-copies.mjs` for the texts, and `provider-auth-diff.mjs`
+(unchanged) for the others.
+
 **Model catalog refresh (2026-11-23):** `server.refreshProviders` follows T3's `ws.ts`.
 - `modelCatalogOnly` answers no providers, refetches a manifest older than 5 minutes, and
   joins the shared full probe pass until the providers were probed with the manifest now

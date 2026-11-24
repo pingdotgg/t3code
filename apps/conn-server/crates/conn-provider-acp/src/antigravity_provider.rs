@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use conn_contract::{ProviderCapabilities, ProviderInstanceId, from_json, to_json};
 use conn_provider::{
-    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderResult, Session,
+    BoxFuture, CredentialCheck, OpenSessionInput, OpenedSession, Provider, ProviderError,
+    ProviderResult, Session,
 };
 use conn_provider_support::ids::{Env, SystemEnv};
 use conn_provider_support::process::{LaunchSpec, Process};
@@ -19,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::antigravity::{self, AntigravitySettings, Directories, Observed};
-use crate::session::{self, AcpSession};
+use crate::session::{self, AcpSession, OpenControl, OpenError, SessionNew, SpawnError};
 use crate::{ANTIGRAVITY, MAX_LINE_BYTES, lock, stop_process};
 
 /// The limit for `agy --version` in a health check.
@@ -51,6 +52,9 @@ pub struct AntigravityProvider {
     /// Tests start a scripted agent here instead of `agy`.
     #[cfg(test)]
     test_spawner: Option<session::Spawner>,
+    /// Tests count the scans for a throwaway session's files here.
+    #[cfg(test)]
+    scans: std::sync::atomic::AtomicUsize,
 }
 
 impl std::fmt::Debug for AntigravityProvider {
@@ -79,6 +83,8 @@ impl AntigravityProvider {
             observed: Arc::default(),
             #[cfg(test)]
             test_spawner: None,
+            #[cfg(test)]
+            scans: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -234,11 +240,8 @@ impl AntigravityProvider {
     }
 
     /// Starts `agy acp` and opens a session in `cwd` (T3's `openSession` start); the session
-    /// reports the account and models. `control` may end the open; the agent is stopped then.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one call per purpose; the fields are the session's own inputs"
-    )]
+    /// reports the account and models. A throwaway's `control` may end the open; the agent is
+    /// stopped then.
     async fn start(
         &self,
         cwd: String,
@@ -247,26 +250,26 @@ impl AntigravityProvider {
         provider_session_id: String,
         mcp_servers: Vec<conn_provider::McpServer>,
         purpose: Purpose,
-        control: session::OpenControl,
-    ) -> ProviderResult<(AcpSession, mpsc::Receiver<conn_provider::ProviderEvent>)> {
-        let workspace = purpose == Purpose::Thread;
+    ) -> Result<(AcpSession, mpsc::Receiver<conn_provider::ProviderEvent>), OpenError> {
+        let (workspace, control) = match purpose {
+            Purpose::Thread => (true, OpenControl::default()),
+            Purpose::Throwaway(control) => (false, control),
+        };
         if let Some(issue) = self.settings.config_issue() {
-            return Err(ProviderError::Failed {
+            return Err(OpenError::Other(ProviderError::Failed {
                 operation: "configure",
                 detail: issue.into(),
-            });
+            }));
         }
         let spawner = self.session_spawner(&cwd).await?;
         let (dirs, settings) = (self.dirs.clone(), self.settings.clone());
         tokio::task::spawn_blocking(move || antigravity::prepare_profile(&dirs, &settings))
             .await
-            .map_err(|_| ProviderError::Failed {
-                operation: "start",
-                detail: "The Antigravity profile directory could not be created.".into(),
-            })?
-            .map_err(|_| ProviderError::Failed {
-                operation: "start",
-                detail: "The Antigravity profile directory could not be created.".into(),
+            .unwrap_or(Err(antigravity::PROFILE_DIRECTORY_FAILED))
+            .map_err(|detail| ProviderError::Failed {
+                // Not a setup step T3 shows as is ([`credential_failure`]).
+                operation: PROFILE_OPERATION,
+                detail: detail.into(),
             })?;
         let self_command = self.self_command();
         let config = session::Config {
@@ -303,7 +306,7 @@ impl AntigravityProvider {
             AcpSession::open_with(config, spawner, session::system_env(), tx, control)
                 .await
                 .inspect_err(|error| {
-                    if is_sign_in_required(error) {
+                    if open_sign_in_required(error) {
                         self.auth_required();
                     }
                 })?;
@@ -315,78 +318,195 @@ impl AntigravityProvider {
         Ok((session, events))
     }
 
-    /// `refreshModels`: a throwaway session in a scratch folder that publishes the catalog,
-    /// closed after. A sign-in failure publishes the signed-out entry first; any other failure
-    /// leaves the entry as the last check made it. The error carries the text T3 shows for a
-    /// failed explicit refresh.
-    async fn load_models(&self) -> ProviderResult<()> {
-        let failed = |detail: &str| ProviderError::Failed {
-            operation: "refresh-models",
-            detail: detail.to_owned(),
-        };
+    /// A throwaway session in a scratch folder, closed once it has answered: the session
+    /// proves the credentials and lists the models ([`Self::session_started`]), then
+    /// publishes the catalog ([`Self::publish_catalog`]). The control's abort ends both. On
+    /// an abort or a failure the agent is stopped and both folders are gone before this
+    /// returns.
+    async fn throwaway_session(&self, mut control: OpenControl) -> Result<(), OpenError> {
+        // The open consumes its abort, so the abort is relayed to the open and the publish.
+        let abort = control.abort.take();
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let mut open_stopped = stopped.clone();
+        control.abort = Some(Box::pin(async move {
+            let _ = open_stopped.wait_for(|stop| *stop).await;
+        }));
+        let run = self.throwaway_run(control, stopped);
+        tokio::pin!(run);
+        if let Some(abort) = abort {
+            tokio::select! {
+                result = &mut run => return result,
+                () = abort => {
+                    stop.send_replace(true);
+                }
+            }
+        }
+        run.await
+    }
+
+    async fn throwaway_run(
+        &self,
+        mut control: OpenControl,
+        mut stopped: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), OpenError> {
+        let session_new = Arc::new(std::sync::Mutex::new(SessionNew::NotSent));
+        control.session_new = Some(session_new.clone());
         let parent = self.dirs.runtime_temp.join("setup");
         let Ok(Ok(cwd)) = tokio::task::spawn_blocking(move || make_run_temp(&parent)).await else {
-            return Err(failed(REFRESH_FAILED));
+            return Err(OpenError::Other(ProviderError::Failed {
+                operation: "start",
+                detail: SETUP_WORKSPACE_FAILED.to_owned(),
+            }));
         };
         let workspace = cwd.display().to_string();
         let policy =
             json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": workspace});
-        let scratch = workspace.clone();
-        // T3's scoped refresh: the limit interrupts the work, then the scope stops the agent
-        // before the refresh answers.
-        let deadline = tokio::time::Instant::now() + MODEL_LOAD_TIMEOUT;
-        let loaded = async {
-            let control = session::OpenControl {
-                abort: Some(Box::pin(tokio::time::sleep_until(deadline))),
-            };
-            let (session, _events) = self
-                .start(
-                    workspace,
-                    policy,
-                    String::new(),
-                    format!("antigravity-models-{}", conn_support::uuid_v4()),
-                    Vec::new(),
-                    Purpose::ModelRefresh,
-                    control,
-                )
-                .await?;
-            let session_id = session.handshake().await.1["sessionId"]
-                .as_str()
-                .map(str::to_owned);
-            let published = tokio::time::timeout_at(deadline, self.publish_catalog(&session)).await;
-            session.close().await;
-            if let Some(session_id) = session_id {
-                let profile = self.dirs.profile.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    antigravity::remove_session_files(&profile, &session_id, &scratch);
-                })
-                .await;
+        let started = self
+            .start(
+                workspace.clone(),
+                policy,
+                String::new(),
+                format!("antigravity-models-{}", conn_support::uuid_v4()),
+                Vec::new(),
+                Purpose::Throwaway(control),
+            )
+            .await;
+        let result = match started {
+            Ok((session, _events)) => {
+                let published = tokio::select! {
+                    () = self.publish_catalog(&session) => Ok(()),
+                    _ = stopped.wait_for(|stop| *stop) => Err(OpenError::Aborted),
+                };
+                session.close().await;
+                published
             }
-            Ok::<bool, ProviderError>(published.is_ok())
-        }
-        .await;
-        let timed_out = tokio::time::Instant::now() >= deadline;
-        let result = match loaded {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(failed(REFRESH_TIMED_OUT)),
-            Err(_) if timed_out => Err(failed(REFRESH_TIMED_OUT)),
-            Err(error) => Err(failed(&refresh_failure_detail(&error))),
+            Err(error) => Err(error),
         };
-        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&cwd)).await;
+        // T3's finalizer (`AntigravityDriver.ts` `makeDisposableRuntime`): the agent has
+        // stopped, so its files for this workspace can go, found by the id it returned. Beyond
+        // T3: when the open ended with `session/new` unanswered, the agent may have stored the
+        // session already; its `.meta` names this scratch folder.
+        let session_new = std::mem::take(&mut *lock(&session_new));
+        #[cfg(test)]
+        if session_new == SessionNew::Sent {
+            self.scans
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        let profile = self.dirs.profile.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            match session_new {
+                SessionNew::Created(id) => {
+                    antigravity::remove_session_files(&profile, &id, &workspace)
+                }
+                SessionNew::Sent => antigravity::remove_sessions_in(&profile, &workspace),
+                SessionNew::NotSent => {}
+            }
+            std::fs::remove_dir_all(&cwd)
+        })
+        .await;
         result
+    }
+
+    /// `refreshModels`. A failure leaves the entry as the last check made it. The error
+    /// carries the text T3 shows for a failed explicit refresh.
+    async fn load_models(&self) -> ProviderResult<()> {
+        let deadline = tokio::time::Instant::now() + MODEL_LOAD_TIMEOUT;
+        let control = OpenControl {
+            abort: Some(Box::pin(tokio::time::sleep_until(deadline))),
+            ..OpenControl::default()
+        };
+        self.throwaway_session(control)
+            .await
+            .map_err(|error| ProviderError::Failed {
+                operation: "refresh-models",
+                detail: match error {
+                    OpenError::Aborted => REFRESH_TIMED_OUT.to_owned(),
+                    error => refresh_failure_detail(&ProviderError::from(error)),
+                },
+            })
+    }
+
+    /// T3's Antigravity sign-in without a browser (`antigravityAuthUsesBrowser` false): a
+    /// session with the credentials from the settings that publishes the catalog before it
+    /// succeeds, as T3's `onAuthenticated` does. The error carries T3's text.
+    async fn check_credentials(&self, check: CredentialCheck) -> ProviderResult<()> {
+        // Never start `agy` without a key: it would fall back to another sign-in.
+        if !self.settings.has_key_sign_in() {
+            return Err(ProviderError::Unsupported {
+                operation: "credential_check",
+            });
+        }
+        let control = OpenControl {
+            abort: Some(check.abort),
+            on_step: Some(check.on_step),
+            ..OpenControl::default()
+        };
+        self.throwaway_session(control)
+            .await
+            .map_err(|error| ProviderError::Failed {
+                operation: "start",
+                detail: credential_failure(&error).to_owned(),
+            })
     }
 }
 
-/// Why a session starts: a thread's workspace gets a snapshot; a model refresh runs in a
-/// scratch folder that is no workspace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why a session starts: a thread's workspace gets a snapshot; a throwaway session (a model
+/// refresh or a credential check) runs in a scratch folder that is no workspace, with its own
+/// abort and steps.
 enum Purpose {
     Thread,
-    ModelRefresh,
+    Throwaway(OpenControl),
 }
 
+/// T3's `safeAuthFailure` without a browser: a setup failure's own text, fixed texts for the
+/// agent's known JSON-RPC errors, and one fixed text for the rest. The agent's own message
+/// never reaches the client: it can quote the credentials.
+fn credential_failure(error: &OpenError) -> &str {
+    match error {
+        OpenError::Other(ProviderError::Failed {
+            operation: "configure" | "resolve" | "start",
+            detail,
+        }) => detail,
+        OpenError::Rpc { method, error, .. } => {
+            let message = error.message.to_ascii_lowercase();
+            if error.message.contains("SUBSCRIPTION_REQUIRED") {
+                SUBSCRIPTION_REQUIRED
+            } else if ["access_denied", "denied access", "cancelled"]
+                .iter()
+                .any(|needle| message.contains(needle))
+            {
+                NOT_APPROVED
+            } else if *method == "session/new" && error.code == -32603 {
+                NO_SESSION
+            } else if error.code == -32602 {
+                REJECTED
+            } else {
+                CREDENTIALS_FAILED
+            }
+        }
+        _ => CREDENTIALS_FAILED,
+    }
+}
+
+/// The profile's preparation, which T3 fails as a transport error (`authSupportError`): its
+/// text shows when a session opens, while a check and a refresh show their fixed texts.
+const PROFILE_OPERATION: &str = "prepare-profile";
+
+/// `AntigravityDriver.ts` texts for the server's own setup steps (`tools/check-copies.mjs`).
+const SETUP_WORKSPACE_FAILED: &str = "Could not create an Antigravity setup workspace.";
+const RUNTIME_TEMP_FAILED: &str = "Could not create an Antigravity runtime temp directory.";
 /// T3's `refreshModels` limit for the throwaway session.
 const MODEL_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+/// `AntigravityAuth.ts` texts for a failed credential check (`tools/check-copies.mjs`).
+const CREDENTIALS_FAILED: &str =
+    "Antigravity could not authenticate with the configured credentials.";
+const SUBSCRIPTION_REQUIRED: &str =
+    "Google requires an eligible Antigravity subscription for this account.";
+const NOT_APPROVED: &str = "Google sign-in was not approved. Start sign-in again.";
+const NO_SESSION: &str =
+    "Antigravity authenticated, but could not initialize a session or load models.";
+const REJECTED: &str =
+    "Antigravity rejected the configured credentials. Check the provider settings.";
 /// `AntigravityDriver.ts` texts for a failed explicit refresh (`tools/check-copies.mjs`).
 const REFRESH_FAILED: &str =
     "Could not refresh Antigravity models. The previous model list is unchanged.";
@@ -405,6 +525,18 @@ fn is_sign_in_required(error: &ProviderError) -> bool {
             ..
         }
     )
+}
+
+/// [`is_sign_in_required`] for a session that did not open.
+fn open_sign_in_required(error: &OpenError) -> bool {
+    match error {
+        OpenError::Rpc {
+            recognised: Some(error),
+            ..
+        }
+        | OpenError::Other(error) => is_sign_in_required(error),
+        _ => false,
+    }
 }
 
 /// T3's texts: a sign-in instruction, a configuration or start failure's own text, the
@@ -428,7 +560,8 @@ fn refresh_failure_detail(error: &ProviderError) -> String {
 }
 
 /// Starts `agy acp` with a fresh temp folder of its own (`run-<random>` under the runtime
-/// temp folder); the folder goes when the process has ended.
+/// temp folder); the folder goes when the process has ended. Blocking: the session runs it on
+/// a blocking thread.
 fn spawner(
     executable: PathBuf,
     dirs: Directories,
@@ -438,7 +571,8 @@ fn spawner(
     cwd: String,
 ) -> session::Spawner {
     Arc::new(move || {
-        let run_temp = make_run_temp(&dirs.runtime_temp)?;
+        let run_temp = make_run_temp(&dirs.runtime_temp)
+            .map_err(|_| SpawnError::Setup(RUNTIME_TEMP_FAILED))?;
         let launch = antigravity::launch(
             &executable,
             &dirs,
@@ -465,7 +599,7 @@ fn spawner(
             Ok(process) => process,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&run_temp);
-                return Err(error);
+                return Err(error.into());
             }
         };
         let writer = process.writer();
@@ -485,8 +619,8 @@ fn spawner(
     })
 }
 
-/// A new `run-XXXXXXXX` folder (0700) below `parent`. Blocking, but small: called from the
-/// spawner, which the session runs while it starts an agent.
+/// A new `run-XXXXXXXX` folder (0700) below `parent`. Blocking: the session runs the spawner
+/// on a blocking thread, and the check calls it through `spawn_blocking`.
 fn make_run_temp(parent: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(parent)?;
     for _ in 0..16 {
@@ -562,6 +696,16 @@ impl Provider for AntigravityProvider {
         Some(Box::pin(self.load_models()))
     }
 
+    /// Only with a configured key: T3's Google sign-in and Agent Platform's Application
+    /// Default Credentials are not served here.
+    fn has_credential_check(&self) -> bool {
+        self.settings.has_key_sign_in()
+    }
+
+    fn credential_check(&self, check: CredentialCheck) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(self.check_credentials(check))
+    }
+
     fn open_session(
         &self,
         input: OpenSessionInput,
@@ -588,7 +732,6 @@ impl Provider for AntigravityProvider {
                     input.provider_session_id.as_str().to_owned(),
                     input.mcp_servers.clone(),
                     Purpose::Thread,
-                    session::OpenControl::default(),
                 )
                 .await?;
             let now = SystemEnv.now();
@@ -772,6 +915,63 @@ mod tests {
         );
     }
 
+    /// No session can exist when the agent never started, so nothing is scanned for one.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_setup_failure_does_no_scan() {
+        let (provider, _, dir) = provider(Vec::new());
+        assert!(provider.load_models().await.is_err());
+        assert_eq!(provider.scans.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A check that ends while `session/new` is outstanding knows no session id: the files
+    /// the agent stored for its scratch folder are found by their `.meta` and go.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_abort_during_session_new_removes_that_sessions_files() {
+        const ID: &str = "4b6f0f2e-9c1d-4a7b-8e3f-2d5c6b7a8f90";
+        let mut script = handshake(json!([]));
+        script.pop(); // `session/new` gets no reply.
+        let (provider, scripts, dir) = provider(vec![script]);
+        let script = scripts[0].clone();
+        let setup = provider.dirs.runtime_temp.join("setup");
+        let conversations = provider
+            .dirs
+            .profile
+            .join("antigravity-acp")
+            .join("conversations");
+        let stored = conversations.clone();
+        let abort = Box::pin(async move {
+            while !lock(&script)
+                .written
+                .iter()
+                .any(|frame| frame["method"] == "session/new")
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            // The agent stores the session for its scratch folder, as `agy` does.
+            let run = std::fs::read_dir(&setup)
+                .unwrap()
+                .flatten()
+                .next()
+                .unwrap()
+                .path();
+            std::fs::create_dir_all(&stored).unwrap();
+            let meta = json!({"cwd": run.display().to_string()}).to_string();
+            std::fs::write(stored.join(format!("{ID}.meta")), meta).unwrap();
+            std::fs::write(stored.join(format!("{ID}.db")), "history").unwrap();
+        });
+        let control = OpenControl {
+            abort: Some(abort),
+            ..OpenControl::default()
+        };
+        let result = provider.throwaway_session(control).await;
+        assert!(matches!(result, Err(OpenError::Aborted)), "{result:?}");
+        assert_eq!(provider.scans.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(!conversations.join(format!("{ID}.meta")).exists());
+        assert!(!conversations.join(format!("{ID}.db")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// T3's `publishCatalog`: each model is selected, then the original again, and the
     /// updates the agent sends before each reply are applied before the session closes. Each
     /// model keeps the thinking levels it reported; here `gemini-b` reports its own through a
@@ -826,6 +1026,43 @@ mod tests {
         assert_eq!(
             levels("gemini-b"),
             (vec!["minimal", "max"], json!("minimal"), Value::Null)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// T3's sign-in runs `publishCatalog` before it succeeds (`onAuthenticated`): a
+    /// credential check lists each model's own thinking levels, as a refresh does.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_credential_check_lists_each_models_thinking_levels() {
+        let a = || options("gemini-a", &["low", "high"]);
+        let b = options("gemini-b", &["minimal", "max"]);
+        let mut script = handshake(a());
+        script.extend([
+            select("gemini-a"),
+            reply("session/set_config_option", json!({"configOptions": a()})),
+            select("gemini-b"),
+            reply("session/set_config_option", json!({"configOptions": b})),
+            select("gemini-a"),
+            reply("session/set_config_option", json!({"configOptions": a()})),
+        ]);
+        let (mut provider, scripts, dir) = provider(vec![script]);
+        provider.settings = AntigravitySettings::from_instance(Some(&json!({
+            "enabled": true, "config": {"authMethod": "gemini-api-key", "apiKey": "k"}
+        })));
+        provider
+            .credential_check(CredentialCheck {
+                abort: Box::pin(std::future::pending()),
+                on_step: Box::new(|_| {}),
+            })
+            .await
+            .unwrap();
+        complete(&scripts[0]);
+        assert_eq!(
+            levels(&entry_of(&provider), "gemini-b"),
+            (
+                vec!["minimal".to_owned(), "max".to_owned()],
+                json!("minimal")
+            )
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1205,8 +1442,7 @@ mod tests {
                 String::new(),
                 "exits".into(),
                 Vec::new(),
-                Purpose::ModelRefresh,
-                session::OpenControl::default(),
+                Purpose::Throwaway(OpenControl::default()),
             )
             .await
             .unwrap();
@@ -1501,5 +1737,448 @@ mod tests {
         assert!(models.contains(&"gemini-a".to_owned()), "{models:?}");
         assert!(!models.contains(&"gemini-z".to_owned()), "{models:?}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod credential_check_tests {
+    use super::*;
+    use conn_provider::CheckStep;
+    use conn_provider_support::process::pid_alive;
+
+    const SECRET: &str = "AIza-synthetic-secret-7f3a";
+
+    /// A stub `agy`: writes its pid, answers `initialize`, then answers `authenticate` with
+    /// `authenticate` (a shell line) or never.
+    fn stub(root: &Path, authenticate: &str) -> PathBuf {
+        let path = root.join("bin").join("agy");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+echo $$ > '{pid}'
+while IFS= read -r line; do
+  id=${{line##*,\"id\":}}
+  id=${{id%%[,\}}]*}}
+  case "$line" in
+    *'"method":"initialize"'*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":1,"agentCapabilities":{{}}}}}}\n' "$id" ;;
+    *'"method":"authenticate"'*) {authenticate} ;;
+  esac
+done
+"#,
+            pid = root.join("pid").display(),
+        );
+        conn_support::test_util::executable(&path, &script).unwrap();
+        path
+    }
+
+    fn fresh(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("agy-check-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn provider(root: &Path, agy: &Path) -> AntigravityProvider {
+        configured(
+            root,
+            json!({"authMethod": "gemini-api-key", "apiKey": "k",
+                "binaryPath": agy.display().to_string()}),
+        )
+    }
+
+    fn configured(root: &Path, config: Value) -> AntigravityProvider {
+        AntigravityProvider::for_instance(
+            "antigravity".into(),
+            AntigravityConfig {
+                state_dir: root.join("state"),
+                attachments_dir: None,
+                self_command: Some("/conn-server".into()),
+                model_manifest: Default::default(),
+                status_notifier: Default::default(),
+            },
+            Some(&json!({"enabled": true, "config": config})),
+        )
+    }
+
+    fn no_abort() -> CredentialCheck {
+        CredentialCheck {
+            abort: Box::pin(std::future::pending()),
+            on_step: Box::new(|_| {}),
+        }
+    }
+
+    fn pid(root: &Path) -> u32 {
+        std::fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    /// Every file or folder left below the instance's runtime temp folder, except the empty
+    /// `setup` folder.
+    fn leftovers(provider: &AntigravityProvider) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        let mut open = vec![provider.dirs.runtime_temp.clone()];
+        while let Some(dir) = open.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    open.push(path.clone());
+                }
+                if path != provider.dirs.runtime_temp.join("setup") {
+                    found.push(path);
+                }
+            }
+        }
+        found
+    }
+
+    /// T3 interrupts the check and its scope ends the agent and removes both temp folders
+    /// (`AntigravityDriver.ts`): when the check returns, the agent is gone and so are they.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cancelled_check_stops_the_agent_and_removes_its_folders() {
+        let root = fresh("cancel");
+        let provider = provider(&root, &stub(&root, ":"));
+        let (abort, aborted) = tokio::sync::oneshot::channel::<()>();
+        let (step_tx, mut steps) = mpsc::unbounded_channel();
+        let check = provider.credential_check(CredentialCheck {
+            abort: Box::pin(async move {
+                let _ = aborted.await;
+            }),
+            on_step: Box::new(move |step| {
+                let _ = step_tx.send(step);
+            }),
+        });
+        tokio::pin!(check);
+        let step = tokio::select! {
+            result = &mut check => panic!("the check ended early: {result:?}"),
+            step = steps.recv() => step,
+        };
+        assert_eq!(step, Some(CheckStep::Initialized));
+        let agent = pid(&root);
+        assert!(pid_alive(agent));
+        assert!(!leftovers(&provider).is_empty());
+
+        abort.send(()).unwrap();
+        assert!(check.await.is_err());
+        assert!(!pid_alive(agent), "the agent still runs");
+        assert_eq!(leftovers(&provider), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A rejected key gets T3's fixed text, never the agent's message (it can quote the
+    /// key), and the agent and its folders go as on a cancel.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_rejected_key_shows_t3s_text_without_the_agents_message() {
+        let root = fresh("rejected");
+        let reject = format!(
+            r#"printf '{{"jsonrpc":"2.0","id":%s,"error":{{"code":-32602,"message":"Invalid API key {SECRET}"}}}}\n' "$id""#
+        );
+        let provider = provider(&root, &stub(&root, &reject));
+        let error = provider
+            .credential_check(CredentialCheck {
+                abort: Box::pin(std::future::pending()),
+                on_step: Box::new(|_| {}),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ProviderError::Failed {
+                operation: "start",
+                detail: REJECTED.into(),
+            }
+        );
+        assert!(!format!("{error} {error:?}").contains(SECRET));
+        assert!(!pid_alive(pid(&root)), "the agent still runs");
+        assert_eq!(leftovers(&provider), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An agent that exits during the handshake: the failed check returns only after its
+    /// folders are gone, whichever of the exit and the stop comes first
+    /// (`AntigravityDriver.ts`: one scope finalizer). Repeated, as the order varies.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_agent_that_exits_during_the_handshake_leaves_no_folders() {
+        let root = fresh("exits");
+        let provider = provider(&root, &stub(&root, "exit 3"));
+        for _ in 0..4 {
+            let error = provider.credential_check(no_abort()).await.unwrap_err();
+            assert_eq!(
+                error,
+                ProviderError::Failed {
+                    operation: "start",
+                    detail: CREDENTIALS_FAILED.into(),
+                }
+            );
+            assert!(!pid_alive(pid(&root)), "the agent still runs");
+            assert_eq!(leftovers(&provider), Vec::<PathBuf>::new());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Agent Platform without a key would sign in with Application Default Credentials:
+    /// no sign-in is offered, and the check never starts `agy`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn agent_platform_without_a_key_offers_no_sign_in() {
+        let root = fresh("adc");
+        let agy = stub(&root, ":");
+        let provider = configured(
+            &root,
+            json!({"authMethod": "agent-platform", "gcpProject": "p",
+                "gcpLocation": "us-central1", "binaryPath": agy.display().to_string()}),
+        );
+        assert!(!provider.has_credential_check());
+        let error = provider.credential_check(no_abort()).await.unwrap_err();
+        assert_eq!(
+            error,
+            ProviderError::Unsupported {
+                operation: "credential_check"
+            }
+        );
+        assert!(!root.join("pid").exists(), "agy was started");
+        let keyed = configured(
+            &root,
+            json!({"authMethod": "agent-platform", "apiKey": "router-key",
+                "binaryPath": agy.display().to_string()}),
+        );
+        assert!(keyed.has_credential_check());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stub `agy` that signs in and opens a session the way `agy acp` stores one: the
+    /// conversation database, its journal and `.meta` (with the session's cwd), and `brain/`.
+    fn session_stub(root: &Path, session_id: &str) -> PathBuf {
+        session_stub_replying(root, session_id, true)
+    }
+
+    /// [`session_stub`]; without `reply` the agent stores the session and never answers
+    /// `session/new`. `.meta` comes last and whole (a rename), as a test waits for it.
+    fn session_stub_replying(root: &Path, session_id: &str, reply: bool) -> PathBuf {
+        let reply = if reply {
+            format!(
+                r#"printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"{session_id}"}}}}\n' "$id""#
+            )
+        } else {
+            ":".to_owned()
+        };
+        let path = root.join("bin").join("agy");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+echo $$ > '{pid}'
+while IFS= read -r line; do
+  id=${{line##*,\"id\":}}
+  id=${{id%%[,\}}]*}}
+  case "$line" in
+    *'"method":"initialize"'*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":1,"agentCapabilities":{{}}}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      cwd=${{line#*\"cwd\":\"}}
+      cwd=${{cwd%%\"*}}
+      acp="$GEMINI_HOME/antigravity-acp"
+      mkdir -p "$acp/conversations" "$acp/brain/{session_id}"
+      printf 'db' > "$acp/conversations/{session_id}.db"
+      printf 'wal' > "$acp/conversations/{session_id}.db-wal"
+      printf 'artifact' > "$acp/brain/{session_id}/output.txt"
+      printf '{{"cwd":"%s"}}' "$cwd" > "$acp/conversations/{session_id}.meta-new"
+      mv "$acp/conversations/{session_id}.meta-new" "$acp/conversations/{session_id}.meta"
+      {reply} ;;
+    *'"method":'*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{}}}}\n' "$id" ;;
+  esac
+done
+"#,
+            pid = root.join("pid").display(),
+        );
+        conn_support::test_util::executable(&path, &script).unwrap();
+        path
+    }
+
+    /// T3's `makeDisposableRuntime` finalizer (`removeAntigravitySessionFiles`): after a
+    /// check succeeds and the agent closes, the session it opened in the check's workspace is
+    /// gone; another workspace's session and the user's own history stay.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_successful_check_removes_its_session_files() {
+        const SESSION: &str = "4b6f0f2e-9c1d-4a7b-8e3f-2d5c6b7a8f90";
+        const OTHER: &str = "0e0c4a55-2b3d-4f6e-9a1b-7c8d9e0f1a2b";
+        let root = fresh("session-files");
+        let provider = provider(&root, &session_stub(&root, SESSION));
+        let conversations = provider.dirs.profile.join("antigravity-acp/conversations");
+        std::fs::create_dir_all(&conversations).unwrap();
+        std::fs::write(conversations.join("user-session.db"), "keep").unwrap();
+        std::fs::write(conversations.join(format!("{OTHER}.db")), "keep").unwrap();
+        std::fs::write(
+            conversations.join(format!("{OTHER}.meta")),
+            r#"{"cwd":"/projects/app"}"#,
+        )
+        .unwrap();
+
+        provider.credential_check(no_abort()).await.unwrap();
+        for suffix in [".db", ".db-wal", ".meta"] {
+            let file = conversations.join(format!("{SESSION}{suffix}"));
+            assert!(!file.exists(), "{} is left", file.display());
+        }
+        let brain = provider
+            .dirs
+            .profile
+            .join("antigravity-acp/brain")
+            .join(SESSION);
+        assert!(!brain.exists(), "brain/ is left");
+        for kept in [
+            "user-session.db".to_owned(),
+            format!("{OTHER}.db"),
+            format!("{OTHER}.meta"),
+        ] {
+            assert!(conversations.join(&kept).exists(), "{kept} was removed");
+        }
+        assert!(!pid_alive(pid(&root)), "the agent still runs");
+        assert_eq!(leftovers(&provider), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Beyond T3, which keeps them: a check cancelled after the agent stored its session but
+    /// before `session/new` answered still removes that session's files, found by the
+    /// scratch folder its `.meta` names.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_check_cancelled_before_the_session_reply_removes_its_session_files() {
+        const SESSION: &str = "4b6f0f2e-9c1d-4a7b-8e3f-2d5c6b7a8f90";
+        let root = fresh("cancel-session");
+        let provider = provider(&root, &session_stub_replying(&root, SESSION, false));
+        let acp = provider.dirs.profile.join("antigravity-acp");
+        let meta = acp.join(format!("conversations/{SESSION}.meta"));
+        let stored = meta.clone();
+        let error = provider
+            .credential_check(CredentialCheck {
+                abort: Box::pin(async move {
+                    while !stored.exists() {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                }),
+                on_step: Box::new(|_| {}),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ProviderError::Failed {
+                operation: "start",
+                detail: CREDENTIALS_FAILED.into(),
+            }
+        );
+        for left in [
+            meta,
+            acp.join(format!("conversations/{SESSION}.db")),
+            acp.join(format!("brain/{SESSION}")),
+        ] {
+            assert!(!left.exists(), "{} is left", left.display());
+        }
+        assert!(!pid_alive(pid(&root)), "the agent still runs");
+        assert_eq!(leftovers(&provider), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// T3 fails a profile it cannot prepare as a transport error (`authSupportError`), not a
+    /// setup error: a check shows its fixed text, and so does a refresh. The server's own
+    /// setup steps keep their text (`local_setup_failures_keep_the_servers_text`).
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unwritable_profile_shows_the_fixed_texts() {
+        let root = fresh("profile");
+        let provider = provider(&root, &stub(&root, ":"));
+        // A folder where `settings.json` goes: the profile folders exist, the write fails.
+        let settings = provider.dirs.profile.join("antigravity-acp/settings.json");
+        std::fs::create_dir_all(&settings).unwrap();
+        assert_eq!(
+            provider.credential_check(no_abort()).await.unwrap_err(),
+            ProviderError::Failed {
+                operation: "start",
+                detail: CREDENTIALS_FAILED.into(),
+            }
+        );
+        let refresh = provider.refresh_models().unwrap().await.unwrap_err();
+        assert_eq!(
+            refresh,
+            ProviderError::Failed {
+                operation: "refresh-models",
+                detail: REFRESH_FAILED.into(),
+            }
+        );
+        assert!(!root.join("pid").exists(), "agy was started");
+        assert_eq!(leftovers(&provider), Vec::<PathBuf>::new());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// T3's `safeAuthFailure` shows a `ProviderSetupError`'s own text: a missing executable
+    /// and an unusable scratch folder are local problems, not rejected credentials.
+    #[tokio::test(flavor = "current_thread")]
+    async fn local_setup_failures_keep_the_servers_text() {
+        let root = fresh("setup-failures");
+        let missing = configured(
+            &root,
+            json!({"authMethod": "gemini-api-key", "apiKey": "k",
+                "binaryPath": root.join("bin/agy").display().to_string()}),
+        );
+        assert_eq!(
+            missing.credential_check(no_abort()).await.unwrap_err(),
+            ProviderError::Failed {
+                operation: "start",
+                detail: "The custom Antigravity executable is not installed or not executable."
+                    .into(),
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let root = fresh("setup-workspace");
+        let provider = provider(&root, &stub(&root, ":"));
+        // A file where the scratch folder's parent should be.
+        std::fs::create_dir_all(&provider.dirs.runtime_temp).unwrap();
+        std::fs::write(provider.dirs.runtime_temp.join("setup"), "not a folder").unwrap();
+        assert_eq!(
+            provider.credential_check(no_abort()).await.unwrap_err(),
+            ProviderError::Failed {
+                operation: "start",
+                detail: "Could not create an Antigravity setup workspace.".into(),
+            }
+        );
+        assert!(!root.join("pid").exists(), "agy was started");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `safeAuthFailure` without a browser, case by case; no case shows the agent's message.
+    #[test]
+    fn credential_failures_map_to_t3s_texts() {
+        let rpc = |method, code, message: &str| OpenError::Rpc {
+            method,
+            error: crate::protocol::RpcError {
+                code,
+                message: format!("{message} {SECRET}"),
+                data: None,
+            },
+            recognised: None,
+        };
+        let cases = [
+            (rpc("authenticate", -32602, "bad key"), REJECTED),
+            (
+                rpc("authenticate", -32000, "SUBSCRIPTION_REQUIRED"),
+                SUBSCRIPTION_REQUIRED,
+            ),
+            (
+                rpc("authenticate", -32000, "Access_Denied by user"),
+                NOT_APPROVED,
+            ),
+            (rpc("session/new", -32603, "boom"), NO_SESSION),
+            (rpc("initialize", -32603, "boom"), CREDENTIALS_FAILED),
+            (OpenError::Aborted, CREDENTIALS_FAILED),
+            (
+                OpenError::Other(ProviderError::Failed {
+                    operation: "configure",
+                    detail: "Add an API key.".into(),
+                }),
+                "Add an API key.",
+            ),
+        ];
+        for (error, text) in &cases {
+            assert_eq!(credential_failure(error), *text, "{error:?}");
+        }
     }
 }

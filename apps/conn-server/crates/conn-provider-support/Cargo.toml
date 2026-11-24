@@ -30,5 +30,9 @@ nix = { workspace = true, features = ["signal"] }
 name = "sigchld_masked"
 harness = false
 
+[[test]]
+name = "supervisor_sigchld_masked"
+harness = false
+
 [lints]
 workspace = true

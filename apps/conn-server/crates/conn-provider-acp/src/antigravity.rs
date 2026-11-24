@@ -159,11 +159,18 @@ impl AntigravitySettings {
         }
     }
 
-    fn uses_credentials(&self) -> bool {
+    pub(crate) fn uses_credentials(&self) -> bool {
         matches!(
             self.auth_method.as_str(),
             "gemini-api-key" | "agent-platform"
         )
+    }
+
+    /// The in-app sign-in this server serves: a check of a configured key (a Gemini API key,
+    /// or the AI router's key). Agent Platform without a key would sign in with Application
+    /// Default Credentials, outside the key-only rule (Nick, 2026-11-20), so it gets none.
+    pub(crate) fn has_key_sign_in(&self) -> bool {
+        self.uses_credentials() && !self.api_key.trim().is_empty()
     }
 }
 
@@ -172,16 +179,13 @@ impl AntigravitySettings {
 /// `AntigravityInstallation.resolve` for an agent this server did not install: the configured
 /// path, or `agy` on `PATH`. Only the `agy` CLI (1.5.0+, `agy acp`) is supported; T3's managed
 /// runtime with its `localharness_external` sibling is installed by T3 itself, and this
-/// server installs nothing (Nick, 2026-11-14). Blocking: call it off the runtime thread.
+/// server installs nothing (Nick, 2026-11-14). A custom path is looked up as T3's
+/// `resolveProviderCliOnPath` does (`resolveCommandPath`): any executable file, whatever its
+/// name, so a wrapper such as `agy-router` works. Blocking: call it off the runtime thread.
 pub(crate) fn resolve_executable(
     binary_path: &str,
     path_var: Option<&str>,
 ) -> Result<PathBuf, String> {
-    let is_cli = |p: &Path| {
-        p.file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| matches!(n.to_ascii_lowercase().as_str(), "agy" | "antigravity"))
-    };
     if !binary_path.is_empty() {
         let candidate = expand_home(binary_path);
         let found = if candidate.components().count() > 1 {
@@ -189,16 +193,154 @@ pub(crate) fn resolve_executable(
         } else {
             search_path(&candidate, path_var)
         };
-        return match found {
-            Some(path) if is_cli(&path) || std::fs::canonicalize(&path).is_ok_and(|r| is_cli(&r)) => {
-                Ok(path)
-            }
-            _ => Err("The custom Antigravity executable is missing or not executable, or it needs a localharness_external sibling. The agy CLI does not.".into()),
-        };
+        return found.ok_or_else(|| CUSTOM_EXECUTABLE_MISSING.into());
     }
-    search_path(Path::new("agy"), path_var).ok_or_else(|| {
-        "Antigravity ACP runtime is not installed. Install it in this environment's provider settings or set a custom ACP executable path. The Antigravity app, IDE, and CLI are separate installations.".into()
-    })
+    search_path(Path::new("agy"), path_var).ok_or_else(|| EXECUTABLE_MISSING.into())
+}
+
+/// `AntigravityDriver.ts` texts for `resolveExecutable` (`tools/check-copies.mjs`).
+const CUSTOM_EXECUTABLE_MISSING: &str =
+    "The custom Antigravity executable is not installed or not executable.";
+const EXECUTABLE_MISSING: &str =
+    "Antigravity (agy) is not installed on this environment's PATH. Orbit installs it.";
+
+// ---- the files of a throwaway session ------------------------------------------------------
+
+/// `removeAntigravitySessionFiles`: once the agent has closed, removes the native session it
+/// opened in `cwd`. The unique temporary `cwd` in the session's `.meta` proves the session is
+/// ours; any other session stays. Blocking: call it off the runtime thread.
+///
+/// Beyond T3: `antigravity-acp` must be a real folder inside the profile, not a symlink; the
+/// `conversations` and `brain` folders are resolved once, before anything is removed, and must
+/// lie inside it; a `.meta` that is a symlink proves nothing; and the files go only while the
+/// checked `.meta` is still the same file in the same folder. Removal stops at the first error, as in
+/// T3, and `.meta` goes last, so an incomplete cleanup keeps its ownership marker.
+pub(crate) fn remove_session_files(profile: &Path, session_id: &str, cwd: &str) {
+    if !is_native_session_id(session_id) {
+        return;
+    }
+    if let Err(error) = remove_owned_session(profile, session_id, cwd) {
+        eprintln!("Could not remove temporary Antigravity session files: {error}");
+    }
+}
+
+fn remove_owned_session(profile: &Path, session_id: &str, cwd: &str) -> std::io::Result<()> {
+    use std::io::ErrorKind::NotFound;
+    let absent_is_done = |result: std::io::Result<()>| match result {
+        Err(error) if error.kind() == NotFound => Ok(()),
+        other => other,
+    };
+    let acp = profile.join("antigravity-acp");
+    match std::fs::symlink_metadata(&acp) {
+        Ok(meta) if meta.is_dir() => {}
+        // A symlink (or anything but a folder) could lead out of the profile.
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    let acp = std::fs::canonicalize(acp)?;
+    if !acp.starts_with(std::fs::canonicalize(profile)?) {
+        return Ok(());
+    }
+    let folder = |name: &str| -> std::io::Result<Folder> {
+        match std::fs::canonicalize(acp.join(name)) {
+            Ok(dir) if dir.starts_with(&acp) => Ok(Folder::Inside(dir)),
+            Ok(_) => Ok(Folder::Outside),
+            Err(error) if error.kind() == NotFound => Ok(Folder::Absent),
+            Err(error) => Err(error),
+        }
+    };
+    let (Folder::Inside(conversations), brain) = (folder("conversations")?, folder("brain")?)
+    else {
+        return Ok(());
+    };
+    if brain == Folder::Outside {
+        return Ok(());
+    }
+    let file = |suffix: &str| conversations.join(format!("{session_id}{suffix}"));
+    let meta_path = file(".meta");
+    let checked = match std::fs::symlink_metadata(&meta_path) {
+        Ok(meta) if meta.is_file() => meta,
+        // A symlink (or anything but a file) proves no ownership.
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut opened = std::fs::File::open(&meta_path)?;
+    if !same_file(&opened.metadata()?, &checked) {
+        return Ok(());
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut opened, &mut text)?;
+    let owner = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|meta| meta["cwd"].as_str().map(str::to_owned));
+    if owner.as_deref() != Some(cwd) {
+        return Ok(());
+    }
+    // The checked `.meta` must still be there, in the folder resolved above.
+    let unchanged = std::fs::symlink_metadata(&meta_path)
+        .is_ok_and(|now| same_file(&now, &checked))
+        && folder("conversations")? == Folder::Inside(conversations.clone())
+        && folder("brain")? == brain;
+    if !unchanged {
+        return Ok(());
+    }
+    for suffix in [".db", ".db-wal", ".db-shm", ".db-journal"] {
+        absent_is_done(std::fs::remove_file(file(suffix)))?;
+    }
+    if let Folder::Inside(brain) = brain {
+        absent_is_done(std::fs::remove_dir_all(brain.join(session_id)))?;
+    }
+    absent_is_done(std::fs::remove_file(meta_path))
+}
+
+/// Where a folder of `antigravity-acp` resolves.
+#[derive(Debug, PartialEq, Eq)]
+enum Folder {
+    Inside(PathBuf),
+    Absent,
+    /// It leads out of `antigravity-acp`.
+    Outside,
+}
+
+/// The same file on disk: device and inode on Unix.
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev() && a.ino() == b.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        a.len() == b.len() && a.modified().ok() == b.modified().ok()
+    }
+}
+
+/// The sessions whose `.meta` names `cwd`: what a check left behind when it ended with its
+/// `session/new` sent and unanswered, so no id names the session. Beyond T3, which keeps those
+/// files. Each `.meta` is read, so call it only then.
+pub(crate) fn remove_sessions_in(profile: &Path, cwd: &str) {
+    let conversations = profile.join("antigravity-acp").join("conversations");
+    let Ok(entries) = std::fs::read_dir(&conversations) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if let Some(session_id) = name.to_str().and_then(|n| n.strip_suffix(".meta")) {
+            remove_session_files(profile, session_id, cwd);
+        }
+    }
+}
+
+/// `Schema.isUUID(4)`: a version 4 UUID with the RFC variant, so the id is safe in a path.
+fn is_native_session_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    crate::grok_background::is_uuid(id)
+        && bytes.get(14) == Some(&b'4')
+        && bytes
+            .get(19)
+            .is_some_and(|b| matches!(b.to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b'))
 }
 
 fn expand_home(path: &str) -> PathBuf {
@@ -267,55 +409,32 @@ pub(crate) fn directories(state_dir: &Path, instance_id: &str) -> Directories {
 /// with the sign-in method (never a credential). Blocking. The browser check T3 runs (its
 /// Node helper) is not needed: our helper is this server's own executable.
 /// Not ported: the links to the user's `~/.gemini` skills (`linkAntigravityUserSkills`).
+/// The error is T3's text; T3 raises it as a transport error (`authSupportError`), not a
+/// setup error, so a check shows its own fixed text instead.
 pub(crate) fn prepare_profile(
     dirs: &Directories,
     settings: &AntigravitySettings,
-) -> std::io::Result<()> {
+) -> Result<(), &'static str> {
     let acp = dirs.profile.join("antigravity-acp");
     for dir in [&dirs.profile, &acp, &dirs.runtime_temp] {
-        std::fs::create_dir_all(dir)?;
+        std::fs::create_dir_all(dir).map_err(|_| PROFILE_DIRECTORY_FAILED)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| PROFILE_PERMISSIONS_FAILED)?;
         }
     }
     std::fs::write(acp.join("settings.json"), profile_settings(settings))
+        .map_err(|_| PROFILE_SETTINGS_FAILED)
 }
 
-/// `removeAntigravitySessionFiles`, after the agent closed: a native session's database,
-/// metadata and brain folder go when its id is a v4 UUID and its metadata names `cwd`, the
-/// unique scratch folder that proves the session is ours. Anything else leaves them.
-pub(crate) fn remove_session_files(profile: &Path, session_id: &str, cwd: &str) {
-    if !is_uuid_v4(session_id) {
-        return;
-    }
-    let acp = profile.join("antigravity-acp");
-    let conversations = acp.join("conversations");
-    let Ok(text) = std::fs::read_to_string(conversations.join(format!("{session_id}.meta"))) else {
-        return;
-    };
-    let named = serde_json::from_str::<Value>(&text).is_ok_and(|meta| meta["cwd"] == cwd);
-    if !named {
-        return;
-    }
-    for suffix in [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"] {
-        let _ = std::fs::remove_file(conversations.join(format!("{session_id}{suffix}")));
-    }
-    let _ = std::fs::remove_dir_all(acp.join("brain").join(session_id));
-}
-
-/// Effect's `isUUID(4)`: `xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx`, any case.
-fn is_uuid_v4(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    bytes.len() == 36
-        && bytes.iter().enumerate().all(|(at, byte)| match at {
-            8 | 13 | 18 | 23 => *byte == b'-',
-            14 => *byte == b'4',
-            19 => matches!(byte.to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b'),
-            _ => byte.is_ascii_hexdigit(),
-        })
-}
+/// `antigravityAuthSupport.ts` texts for `prepareAntigravityProfile` (`tools/check-copies.mjs`).
+pub(crate) const PROFILE_DIRECTORY_FAILED: &str =
+    "The Antigravity profile directory could not be created.";
+const PROFILE_PERMISSIONS_FAILED: &str =
+    "The Antigravity profile directory permissions could not be set.";
+const PROFILE_SETTINGS_FAILED: &str = "The Antigravity profile settings could not be written.";
 
 /// `antigravityProfileSettings`: `{"auth":{"type":…},"gcp":{…}}` and a newline.
 fn profile_settings(settings: &AntigravitySettings) -> String {
@@ -924,7 +1043,7 @@ pub(crate) fn entry(
     checked_at: &str,
     catalog: Option<&Catalog>,
 ) -> Value {
-    let auth = if observed.authenticated {
+    let mut auth = if observed.authenticated {
         json!({"status": "authenticated", "type": settings.auth_method, "label": settings.auth_label()})
     } else if observed.signed_out {
         if settings.uses_credentials() {
@@ -935,6 +1054,11 @@ pub(crate) fn entry(
     } else {
         json!({"status": "unknown", "type": settings.auth_method})
     };
+    // T3's sign-out is Google's; credentials leave through the settings. Without this the
+    // clients fall back to `setup.canAuthenticate` and offer a sign-out this server refuses.
+    if settings.uses_credentials() {
+        auth["canLogout"] = json!(false);
+    }
     let status = if !settings.enabled {
         "disabled"
     } else {
@@ -974,9 +1098,12 @@ pub(crate) fn entry(
     entry.insert("skills".into(), json!([]));
     // Orbit installs and updates every provider CLI and owns `PATH`; this server installs
     // nothing (Nick, 2026-11-20). T3 says `canInstall: true` for its managed runtime.
+    // T3 always says `canAuthenticate: true`. This server serves only the credential check
+    // (an API key or Agent Platform), not Google sign-in: providers sign in through Orbit's
+    // AI router (Nick, 2026-11-20).
     entry.insert(
         "setup".into(),
-        json!({"canAuthenticate": true, "canInstall": false}),
+        json!({"canAuthenticate": settings.has_key_sign_in(), "canInstall": false}),
     );
     entry.insert("supportsConversationRollback".into(), json!(true));
     entry.insert("supportsTextGeneration".into(), json!(false));
@@ -1504,6 +1631,232 @@ pub(crate) fn stderr_sign_in(line: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// `AntigravityTextGeneration.test.ts`'s session-file cases for
+    /// `removeAntigravitySessionFiles`, against a scratch profile.
+    mod session_files {
+        use super::super::remove_session_files;
+        use std::path::{Path, PathBuf};
+
+        const SESSION_ID: &str = "4b6f0f2e-9c1d-4a7b-8e3f-2d5c6b7a8f90";
+
+        struct Profile {
+            root: PathBuf,
+            conversations: PathBuf,
+            brain: PathBuf,
+        }
+
+        impl Profile {
+            fn new(name: &str) -> Self {
+                let root = std::env::temp_dir()
+                    .join(format!("agy-session-files-{}-{name}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&root);
+                let acp = root.join("antigravity-acp");
+                let conversations = acp.join("conversations");
+                let brain = acp.join("brain").join(SESSION_ID);
+                std::fs::create_dir_all(&conversations).unwrap();
+                std::fs::create_dir_all(&brain).unwrap();
+                std::fs::write(conversations.join("user-session.db"), "keep native history")
+                    .unwrap();
+                std::fs::write(brain.join("output.txt"), "helper artifact").unwrap();
+                for suffix in [".db", ".db-wal"] {
+                    std::fs::write(
+                        conversations.join(format!("{SESSION_ID}{suffix}")),
+                        "helper",
+                    )
+                    .unwrap();
+                }
+                Self {
+                    root,
+                    conversations,
+                    brain,
+                }
+            }
+
+            fn file(&self, suffix: &str) -> PathBuf {
+                self.conversations.join(format!("{SESSION_ID}{suffix}"))
+            }
+
+            fn meta(&self, cwd: &str) {
+                std::fs::write(
+                    self.file(".meta"),
+                    serde_json::json!({ "cwd": cwd }).to_string(),
+                )
+                .unwrap();
+            }
+
+            fn profile(&self) -> &Path {
+                &self.root
+            }
+        }
+
+        impl Drop for Profile {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+
+        /// "assertCleaned": the session, its journal, its metadata and its brain go; other
+        /// sessions stay.
+        #[test]
+        fn removes_the_session_the_temporary_workspace_owns() {
+            let profile = Profile::new("owned");
+            profile.meta("/tmp/t3-antigravity-setup-1");
+            remove_session_files(profile.profile(), SESSION_ID, "/tmp/t3-antigravity-setup-1");
+            for suffix in [".db", ".db-wal", ".meta"] {
+                assert!(!profile.file(suffix).exists(), "{suffix}");
+            }
+            assert!(!profile.brain.exists());
+            let kept = std::fs::read_to_string(profile.conversations.join("user-session.db"));
+            assert_eq!(kept.unwrap(), "keep native history");
+        }
+
+        /// "refuses unsafe native session IDs without deleting other files".
+        #[test]
+        fn refuses_unsafe_native_session_ids() {
+            let profile = Profile::new("unsafe");
+            remove_session_files(profile.profile(), "../../user-session", "/tmp/w");
+            let kept = std::fs::read_to_string(profile.conversations.join("user-session.db"));
+            assert_eq!(kept.unwrap(), "keep native history");
+            assert!(profile.file(".db").exists());
+        }
+
+        /// "keeps native sessions whose metadata belongs to a different workspace".
+        #[test]
+        fn keeps_native_sessions_of_another_workspace() {
+            let profile = Profile::new("other");
+            profile.meta("/projects/app");
+            remove_session_files(
+                profile.profile(),
+                SESSION_ID,
+                "different-temporary-workspace",
+            );
+            assert!(profile.file(".db").exists());
+            assert!(profile.file(".meta").exists());
+            assert!(profile.brain.exists());
+        }
+
+        /// `AntigravitySessionFiles.ts`: an absent file is removed already (`force`), and any
+        /// other removal error ends the cleanup. `.meta` goes last, after `brain/`, so an
+        /// incomplete cleanup keeps its ownership marker.
+        #[test]
+        fn a_failed_removal_stops_and_keeps_the_ownership_marker() {
+            let profile = Profile::new("stuck");
+            profile.meta("/tmp/t3-antigravity-setup-2");
+            // A folder with content where the journal is: unlinking it fails.
+            std::fs::remove_file(profile.file(".db-wal")).unwrap();
+            std::fs::create_dir_all(profile.file(".db-wal").join("busy")).unwrap();
+            remove_session_files(profile.profile(), SESSION_ID, "/tmp/t3-antigravity-setup-2");
+            assert!(
+                !profile.file(".db").exists(),
+                "the step before the error ran"
+            );
+            assert!(profile.brain.exists(), "brain/ went after the error");
+            assert!(
+                profile.file(".meta").exists(),
+                "the marker went after the error"
+            );
+
+            // Absent files (`.db-shm`, `.db-journal`, and now `.db`) do not stop it.
+            std::fs::remove_dir_all(profile.file(".db-wal")).unwrap();
+            remove_session_files(profile.profile(), SESSION_ID, "/tmp/t3-antigravity-setup-2");
+            assert!(!profile.brain.exists());
+            assert!(!profile.file(".meta").exists());
+        }
+
+        /// A `.meta` that is a symlink proves nothing, even when its target names the cwd.
+        #[cfg(unix)]
+        #[test]
+        fn a_symlinked_meta_proves_nothing() {
+            let profile = Profile::new("meta-link");
+            let elsewhere = profile.root.join("elsewhere.meta");
+            std::fs::write(&elsewhere, r#"{"cwd":"/tmp/t3-antigravity-setup-3"}"#).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, profile.file(".meta")).unwrap();
+            remove_session_files(profile.profile(), SESSION_ID, "/tmp/t3-antigravity-setup-3");
+            assert!(profile.file(".db").exists());
+            assert!(profile.brain.exists());
+        }
+
+        /// The `conversations` folder resolves once and must stay inside the profile: one
+        /// that links elsewhere is not cleaned, even with a matching `.meta` there.
+        #[cfg(unix)]
+        #[test]
+        fn a_conversations_link_out_of_the_profile_is_not_followed() {
+            let profile = Profile::new("dir-link");
+            let outside = profile.root.with_extension("outside");
+            let _ = std::fs::remove_dir_all(&outside);
+            std::fs::rename(&profile.conversations, &outside).unwrap();
+            std::os::unix::fs::symlink(&outside, &profile.conversations).unwrap();
+            profile.meta("/tmp/t3-antigravity-setup-4");
+            remove_session_files(profile.profile(), SESSION_ID, "/tmp/t3-antigravity-setup-4");
+            let kept = outside.join(format!("{SESSION_ID}.db")).exists();
+            let _ = std::fs::remove_dir_all(&outside);
+            assert!(kept, "a file outside the profile was removed");
+        }
+
+        /// An `antigravity-acp` that links out of the profile is refused, so nothing there
+        /// is removed, even with a matching `.meta`.
+        #[cfg(unix)]
+        #[test]
+        fn an_acp_link_out_of_the_profile_is_refused() {
+            let profile = Profile::new("acp-link");
+            profile.meta("/tmp/t3-antigravity-setup-6");
+            let acp = profile.root.join("antigravity-acp");
+            let outside = profile.root.with_extension("acp-outside");
+            let _ = std::fs::remove_dir_all(&outside);
+            std::fs::rename(&acp, &outside).unwrap();
+            std::os::unix::fs::symlink(&outside, &acp).unwrap();
+            remove_session_files(profile.profile(), SESSION_ID, "/tmp/t3-antigravity-setup-6");
+            let kept: Vec<bool> = [".db", ".db-wal", ".meta"]
+                .iter()
+                .map(|suffix| {
+                    outside
+                        .join("conversations")
+                        .join(format!("{SESSION_ID}{suffix}"))
+                        .exists()
+                })
+                .chain([outside.join("brain").join(SESSION_ID).exists()])
+                .collect();
+            let _ = std::fs::remove_dir_all(&outside);
+            assert_eq!(kept, [true; 4], "a file outside the profile was removed");
+        }
+
+        /// A check that ended before `session/new` answered knows no session id: the sessions
+        /// whose `.meta` names its scratch folder go, and every other one stays.
+        #[test]
+        fn sessions_of_a_scratch_folder_go_without_their_id() {
+            const OTHER: &str = "0e0c4a55-2b3d-4f6e-9a1b-7c8d9e0f1a2b";
+            let profile = Profile::new("by-cwd");
+            profile.meta("/tmp/t3-antigravity-setup-5");
+            let other = profile.conversations.join(format!("{OTHER}.meta"));
+            std::fs::write(&other, r#"{"cwd":"/projects/app"}"#).unwrap();
+            super::super::remove_sessions_in(profile.profile(), "/tmp/t3-antigravity-setup-5");
+            assert!(!profile.file(".db").exists());
+            assert!(!profile.file(".meta").exists());
+            assert!(!profile.brain.exists());
+            assert!(other.exists());
+            assert!(profile.conversations.join("user-session.db").exists());
+        }
+    }
+
+    /// T3's `resolveCommandPath`: a custom path is any executable file, whatever its name, so
+    /// a wrapper such as `agy-router` works by path and on `PATH`.
+    #[cfg(unix)]
+    #[test]
+    fn a_custom_wrapper_with_another_name_resolves() {
+        let root = std::env::temp_dir().join(format!("agy-resolve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let wrapper = root.join("agy-router");
+        conn_support::test_util::executable(&wrapper, "#!/bin/sh\nexec agy \"$@\"\n").unwrap();
+        let by_path = resolve_executable(&wrapper.display().to_string(), None);
+        let on_path = resolve_executable("agy-router", Some(&root.display().to_string()));
+        let missing = resolve_executable(&root.join("agy").display().to_string(), None);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(by_path, Ok(wrapper.clone()));
+        assert_eq!(on_path, Ok(wrapper));
+        assert_eq!(missing, Err(CUSTOM_EXECUTABLE_MISSING.to_owned()));
+    }
+
     fn setup() -> Value {
         json!({"configOptions": [
             {"id": "model", "category": "model", "type": "select", "currentValue": "gemini-3.1-pro",
@@ -1570,6 +1923,30 @@ mod tests {
         );
         assert_eq!(entry["version"], "1.5.13");
         assert_eq!(entry["setup"]["canInstall"], false);
+        // Google sign-in is not served here (Orbit's AI router); only the credential check.
+        assert_eq!(entry["setup"]["canAuthenticate"], false);
+        assert!(entry["auth"].get("canLogout").is_none());
+        for method in ["gemini-api-key", "agent-platform"] {
+            let settings = AntigravitySettings::from_instance(Some(&json!({
+                "enabled": true, "config": {"authMethod": method, "apiKey": "k"}
+            })));
+            let shown = super::entry(
+                "antigravity",
+                &settings,
+                &next,
+                "2026-11-20T00:00:00.000Z",
+                None,
+            );
+            assert_eq!(shown["setup"]["canAuthenticate"], true, "{method}");
+            assert_eq!(shown["auth"]["canLogout"], false, "{method}");
+        }
+        // Agent Platform with only a GCP project would use Application Default Credentials.
+        let adc = AntigravitySettings::from_instance(Some(&json!({"enabled": true, "config": {
+            "authMethod": "agent-platform", "gcpProject": "p", "gcpLocation": "us-central1"
+        }})));
+        assert!(!adc.has_key_sign_in());
+        let shown = super::entry("antigravity", &adc, &next, "2026-11-20T00:00:00.000Z", None);
+        assert_eq!(shown["setup"]["canAuthenticate"], false);
     }
 
     /// A health check that finds no account opens a session; the session makes the entry
@@ -1791,7 +2168,8 @@ mod tests {
         assert_eq!(shown["status"], "warning");
         assert_eq!(
             shown["auth"],
-            json!({"status": "unauthenticated", "type": "gemini-api-key", "label": "Gemini API key"})
+            json!({"status": "unauthenticated", "type": "gemini-api-key",
+                "label": "Gemini API key", "canLogout": false})
         );
         assert_eq!(
             shown["message"],

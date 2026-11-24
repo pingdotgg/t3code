@@ -307,7 +307,15 @@ more per `providerInstances` entry with that driver (`supportsMultipleInstances`
 - **One accepted difference:** `BROWSER` runs this server (`<self> antigravity-browser -- %s`,
   which reports the URL on stderr with T3's marker) where T3 runs its Node with an inline
   script.
-- **Not built:** browser sign-in (`provider.auth.*` answer "no sign-in" for every provider);
+- **Sign-in:** only the credential check (`credential_check`, for `gemini-api-key` and
+  `agent-platform` with a configured key; never Application Default Credentials): a
+  throwaway session that reports T3's steps, stops its agent and removes both temp folders on
+  cancel or failure, and maps known ACP errors to T3's fixed texts. An agent's exit and an
+  explicit stop share one cleanup (`Stopper` in `session.rs`), run once, awaited by both;
+  after a confirmed exit it signals nothing. A finished throwaway session's files (the
+  conversation database, `.meta` and `brain/`) go once the agent has closed, only when the
+  `.meta` names the session's own scratch folder.
+- **Not built:** Google sign-in in the browser (Orbit's AI router signs providers in);
   T3's managed runtime (`localharness_external`) and its install; links to `~/.gemini`
   skills; `AntigravityProtocol` (tool call normalization, read repair, `interaction_*`
   questions, the `allow_always` security warning); audio, text, PDF and video attachments as

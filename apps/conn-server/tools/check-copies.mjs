@@ -218,6 +218,47 @@ same(
     stateText("NO_BROWSER_PREFIX"),
     /const NATIVE_CLI_NO_BROWSER_PREFIX = "([^"]*)";/.exec(ts("apps/server/src/provider/antigravityAuthSupport.ts"))?.[1],
   );
+  // The server's own setup errors, which the credential check shows as they are.
+  const driverTexts = [
+    ["crates/conn-provider-acp/src/antigravity_provider.rs", ["SETUP_WORKSPACE_FAILED", "RUNTIME_TEMP_FAILED"]],
+    ["crates/conn-provider-acp/src/antigravity.rs", ["CUSTOM_EXECUTABLE_MISSING", "EXECUTABLE_MISSING"]],
+  ];
+  for (const [file, names] of driverTexts) {
+    const source = rust(file);
+    for (const name of names) {
+      const ours = new RegExp(`const ${name}: &str =\\s*"([^"]*)";`).exec(source)?.[1];
+      same(`${NodePath.basename(file)} ${name} is a text of AntigravityDriver.ts`, ours !== undefined && agyTs.includes(`"${ours}"`), true);
+    }
+  }
+}
+
+// ---- Antigravity's profile texts (apps/server/src/provider/antigravityAuthSupport.ts) --------
+{
+  const supportTs = ts("apps/server/src/provider/antigravityAuthSupport.ts");
+  const source = rust("crates/conn-provider-acp/src/antigravity.rs");
+  for (const name of ["PROFILE_DIRECTORY_FAILED", "PROFILE_PERMISSIONS_FAILED", "PROFILE_SETTINGS_FAILED"]) {
+    const ours = new RegExp(`const ${name}: &str =\\s*"([^"]*)";`).exec(source)?.[1];
+    same(`antigravity.rs ${name} is a text of antigravityAuthSupport.ts`, ours !== undefined && supportTs.includes(`"${ours}"`), true);
+  }
+}
+
+// ---- Antigravity's credential check (apps/server/src/provider/AntigravityAuth.ts) -----------
+{
+  const authTs = ts("apps/server/src/provider/AntigravityAuth.ts");
+  const texts = [
+    ["crates/conn-server/src/methods/provider_auth.rs", ["CHECKING", "VERIFYING", "CONNECTED",
+      "IN_PROGRESS", "NOT_ACTIVE", "EXPIRED", "CANCELLED", "NO_LINK_YET", "OTHER_CLIENT",
+      "CHECK_FAILED", "NOT_STARTED", "NOT_RESPONDING", "NO_RESPONSE", "UNREACHABLE"]],
+    ["crates/conn-provider-acp/src/antigravity_provider.rs", ["CREDENTIALS_FAILED",
+      "SUBSCRIPTION_REQUIRED", "NOT_APPROVED", "NO_SESSION", "REJECTED"]],
+  ];
+  for (const [file, names] of texts) {
+    const source = rust(file);
+    for (const name of names) {
+      const ours = new RegExp(`const ${name}: &str =\\s*"([^"]*)";`).exec(source)?.[1];
+      same(`${NodePath.basename(file)} ${name} is a text of AntigravityAuth.ts`, ours !== undefined && authTs.includes(`"${ours}"`), true);
+    }
+  }
 }
 
 // ---- The Codex status probe's tables (apps/server/src/provider/CodexProvider.ts) ---------------

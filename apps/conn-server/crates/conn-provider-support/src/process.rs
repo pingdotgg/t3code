@@ -1,13 +1,19 @@
 //! One CLI child process: a writer task for stdin, a reader task for stdout, a stderr tail, and
 //! a supervisor that owns the child, reaps it, and stops its process group.
 //!
+//! The supervisor is the only one that reaps the child, and every signal by the child's pid or
+//! group id goes through it before the reap ([`Process::while_unreaped`]): until then the pid,
+//! and the process group named after it, cannot belong to another process.
+//!
 //! Bounded everywhere: stdin lines queue in a 64-slot channel, stdout lines are capped (longer
 //! ones are reported and dropped), and lines go to the owner over the bounded channel it passes
 //! in, so a slow consumer slows the CLI instead of growing memory.
 
 use std::{
+    future::Future,
     io,
     path::PathBuf,
+    pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
@@ -64,11 +70,19 @@ impl ExitInfo {
 
 /// Sees each stderr line; a line it returns is delivered as stdout.
 pub type StderrObserver = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+/// Work that signals by the child's pid, run by the supervisor before the reap.
+type HeldWork = Box<dyn FnOnce(u32) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+
+struct HeldRequest {
+    work: HeldWork,
+    done: oneshot::Sender<()>,
+}
 
 pub struct Process {
     pub pid: u32,
     writer: mpsc::Sender<String>,
     kill: Arc<Notify>,
+    held: mpsc::Sender<HeldRequest>,
     exited: watch::Receiver<bool>,
     /// Fires when the writer task has closed the child's stdin.
     stdin_closed: oneshot::Receiver<()>,
@@ -170,10 +184,12 @@ impl Process {
 
         let kill = Arc::new(Notify::new());
         let (exited_tx, exited) = watch::channel(false);
+        let (held, held_rx) = mpsc::channel(2);
         tokio::spawn(supervise(Supervised {
             child,
             pid,
             kill: kill.clone(),
+            held: held_rx,
             stdout_done,
             stderr_done,
             tail,
@@ -184,6 +200,7 @@ impl Process {
             pid,
             writer,
             kill,
+            held,
             exited,
             stdin_closed,
         })
@@ -197,9 +214,30 @@ impl Process {
         *self.exited.borrow()
     }
 
+    /// Waits up to `timeout` until the child is reaped; `true` when it is.
+    pub async fn wait_exit(&self, timeout: Duration) -> bool {
+        let mut exited = self.exited.clone();
+        tokio::time::timeout(timeout, exited.wait_for(|done| *done))
+            .await
+            .is_ok_and(|seen| seen.is_ok())
+    }
+
     /// Kills the child now (SIGKILL). The supervisor reaps it.
     pub fn kill(&self) {
         self.kill.notify_one();
+    }
+
+    /// Runs `work` with the child's pid while the child is not reaped, so the pid and the
+    /// process group named after it are still this child's. Signal by pid only in here.
+    /// Returns `false`, without running `work`, once the child has exited.
+    pub async fn while_unreaped<F, Fut>(&self, work: F) -> bool
+    where
+        F: FnOnce(u32) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let (done, finished) = oneshot::channel();
+        let work: HeldWork = Box::new(move |pid| Box::pin(work(pid)));
+        self.held.send(HeldRequest { work, done }).await.is_ok() && finished.await.is_ok()
     }
 
     /// Ends input, waits [`CLOSE_GRACE`], then kills. Returns once the child is reaped.
@@ -233,7 +271,6 @@ impl Process {
     /// the child still runs. Returns once the child is reaped. This is how the T3 server stops
     /// a CLI (Effect's spawner with `forceKillAfter`).
     pub async fn terminate(mut self, grace: Duration) {
-        let pid = self.pid;
         // As in `shutdown`: dropping our sender lets the writer task end stdin. `self` stays
         // whole, because `Process` has a `Drop`.
         let (closed, _) = mpsc::channel(1);
@@ -244,9 +281,10 @@ impl Process {
         // the signal back for long.
         let _ = tokio::time::timeout(Duration::from_millis(200), stdin_closed).await;
         #[cfg(unix)]
-        signal_group(pid, rustix::process::Signal::TERM);
-        #[cfg(not(unix))]
-        let _ = pid;
+        self.while_unreaped(|pid| async move {
+            signal_group(pid, rustix::process::Signal::TERM);
+        })
+        .await;
         let mut exited = self.exited.clone();
         let wait = exited.wait_for(|done| *done);
         if tokio::time::timeout(grace, wait).await.is_err() {
@@ -271,6 +309,7 @@ struct Supervised {
     child: Child,
     pid: u32,
     kill: Arc<Notify>,
+    held: mpsc::Receiver<HeldRequest>,
     stdout_done: oneshot::Receiver<()>,
     stderr_done: oneshot::Receiver<()>,
     tail: Arc<Mutex<String>>,
@@ -283,24 +322,35 @@ async fn supervise(s: Supervised) {
         mut child,
         pid,
         kill,
+        held,
         stdout_done,
         stderr_done,
         tail,
         events,
         exited,
     } = s;
-    let status = tokio::select! {
-        status = child.wait() => status,
-        _ = kill.notified() => {
-            let _ = child.start_kill();
-            child.wait().await
+    #[cfg(unix)]
+    let status = {
+        let ours = run_until_exit(&mut child, pid, &kill, held).await;
+        // Tools the agent started share the CLI's process group; stop what is left, while the
+        // unreaped child still holds the group's id.
+        if ours {
+            signal_group(pid, rustix::process::Signal::KILL);
+        }
+        child.wait().await
+    };
+    #[cfg(not(unix))]
+    let status = {
+        let _ = pid;
+        drop(held);
+        tokio::select! {
+            status = child.wait() => status,
+            _ = kill.notified() => {
+                let _ = child.start_kill();
+                child.wait().await
+            }
         }
     };
-    // Tools the agent started share the CLI's process group; stop what is left.
-    #[cfg(unix)]
-    kill_group(pid).await;
-    #[cfg(not(unix))]
-    let _ = pid;
     // A grandchild can hold stdout open; do not wait on it forever.
     let _ = tokio::time::timeout(Duration::from_secs(2), stdout_done).await;
     let _ = tokio::time::timeout(Duration::from_millis(200), stderr_done).await;
@@ -330,10 +380,47 @@ fn exit_signal(_: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
-/// SIGKILL to the group created at spawn (pgid = the pid captured at spawn).
+/// Serves kills and [`Process::while_unreaped`] until the child exits, without reaping it.
+/// `true` when the exited child is still unreaped, so its pid and group id are still its own.
 #[cfg(unix)]
-async fn kill_group(pgid: u32) {
-    signal_group(pgid, rustix::process::Signal::KILL);
+async fn run_until_exit(
+    child: &mut Child,
+    pid: u32,
+    kill: &Notify,
+    mut held: mpsc::Receiver<HeldRequest>,
+) -> bool {
+    let mut exit = std::pin::pin!(wait_exit_after(Duration::ZERO, pid));
+    loop {
+        tokio::select! {
+            looked = &mut exit => match looked {
+                Ok(()) => return true,
+                Err(error) if error.kind() == io::ErrorKind::InvalidInput => return false,
+                // Not our child: nothing to wait for, and nothing may be sent to that pid.
+                Err(error) if error.raw_os_error() == Some(rustix::io::Errno::CHILD.raw_os_error()) => {
+                    return false;
+                }
+                // Another error: look again after a poll, and keep serving kills meanwhile.
+                Err(_) => exit.set(wait_exit_after(EXIT_POLL, pid)),
+            },
+            () = kill.notified() => {
+                signal_group(pid, rustix::process::Signal::KILL);
+                let _ = child.start_kill();
+            }
+            Some(request) = held.recv() => {
+                (request.work)(pid).await;
+                let _ = request.done.send(());
+            }
+        }
+    }
+}
+
+/// [`wait_exit_unreaped`] after `delay`.
+#[cfg(unix)]
+async fn wait_exit_after(delay: Duration, pid: u32) -> io::Result<()> {
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    wait_exit_unreaped(pid).await
 }
 
 /// Sends `signal` to the process group `pgid`. A group already gone is not an error.
@@ -617,6 +704,32 @@ mod tests {
         };
         assert_eq!(lines, ["term"]);
         assert_eq!(info.signal, Some(9));
+    }
+
+    /// Work by pid runs only while the child is unreaped, so the pid is still the child's
+    /// (`waitid` still finds it); once the child is reaped, nothing runs.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn work_by_pid_runs_only_before_the_reap() {
+        use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+        let (tx, mut rx) = mpsc::channel(8);
+        let process = Process::spawn(&sh("read line; exit 0"), 1024, tx).unwrap();
+        let (seen_tx, seen) = oneshot::channel();
+        let ran = process
+            .while_unreaped(move |pid| async move {
+                let raw = Pid::from_raw(i32::try_from(pid).unwrap()).unwrap();
+                let options = WaitIdOptions::EXITED | WaitIdOptions::NOWAIT | WaitIdOptions::NOHANG;
+                let _ = seen_tx.send(waitid(WaitId::Pid(raw), options).is_ok());
+            })
+            .await;
+        assert!(ran);
+        assert_eq!(seen.await, Ok(true), "the pid was no longer this child's");
+        process.writer().send("go".into()).await.unwrap();
+        while !matches!(rx.recv().await, Some(ProcEvent::Exited(_))) {}
+        let late = process
+            .while_unreaped(|_| async { panic!("work ran after the reap") })
+            .await;
+        assert!(!late);
     }
 
     #[tokio::test(flavor = "current_thread")]

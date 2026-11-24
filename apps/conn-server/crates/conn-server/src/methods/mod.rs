@@ -21,6 +21,7 @@ mod peer_links;
 mod preview;
 mod projects;
 pub mod provider;
+pub mod provider_auth;
 pub(crate) mod pull_requests;
 mod scheduled;
 mod secrets;
@@ -76,6 +77,8 @@ pub struct Deps {
     pub peers: Option<Arc<crate::peers::PeerLinks>>,
     /// `model-manifest.json` (`crate::model_manifest`); `server.refreshProviders` refreshes it.
     pub model_manifest: Option<Arc<crate::model_manifest::ModelManifest>>,
+    /// `provider.auth.*` flows (`provider_auth`).
+    pub provider_auth: provider_auth::AuthFlows,
 }
 
 impl std::fmt::Debug for Deps {

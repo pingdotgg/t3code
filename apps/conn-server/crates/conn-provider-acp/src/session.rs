@@ -24,7 +24,7 @@ use crate::mapper::{self, Disposition, Mapper, Out, PromptOutcome};
 use crate::ordered::{J, obj};
 use crate::policy;
 use crate::prompt::{self, InstructionState};
-use crate::protocol::RequestId;
+use crate::protocol::{RequestId, RpcError};
 
 pub(crate) const EVENT_CAPACITY: usize = 256;
 /// `ACP_TEXT_FLUSH_INTERVAL`.
@@ -44,6 +44,20 @@ pub(crate) struct Spawned {
     pub stop: Box<dyn FnOnce(StopKind) -> BoxFuture<'static, ()> + Send>,
 }
 
+impl Spawned {
+    /// Stops an agent that has no reader: its input and output go first, so a full event
+    /// channel cannot hold up the exit report the stop waits for.
+    fn stop_unread(self, kind: StopKind) -> BoxFuture<'static, ()> {
+        let Self {
+            writer,
+            events,
+            stop,
+        } = self;
+        drop((writer, events));
+        stop(kind)
+    }
+}
+
 /// How a runtime ends (T3 `AcpSessionRuntime`, owned detached process group).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StopKind {
@@ -56,15 +70,47 @@ pub(crate) enum StopKind {
     Exited,
 }
 
-/// What may end an open early ([`AcpSession::open_with`]).
+/// What [`AcpSession::open_with`] adds to a plain open.
 #[derive(Default)]
 pub(crate) struct OpenControl {
-    /// Ends the open; the agent is stopped before `open_with` returns.
+    /// Ends the open early; the agent is stopped before `open_with` returns.
     pub abort: Option<BoxFuture<'static, ()>>,
+    /// Told when the agent has answered `initialize`, and when the session is open.
+    pub on_step: Option<Box<dyn Fn(conn_provider::CheckStep) + Send + Sync>>,
+    /// Kept up to date with what became of `session/new`, also when the open fails.
+    pub session_new: Option<Arc<std::sync::Mutex<SessionNew>>>,
 }
 
-/// Starts the agent for this session (the real process, or a replay agent in tests).
-pub(crate) type Spawner = Arc<dyn Fn() -> std::io::Result<Spawned> + Send + Sync>;
+/// What became of an open's `session/new`: whether the agent may have stored a session, and
+/// its id once the agent named it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SessionNew {
+    #[default]
+    NotSent,
+    /// Sent; no reply named the session.
+    Sent,
+    Created(String),
+}
+
+/// Starts the agent for this session (the real process, or a replay agent in tests). It may
+/// block (folders, `fork`/`exec`): the session runs it on a blocking thread.
+pub(crate) type Spawner = Arc<dyn Fn() -> Result<Spawned, SpawnError> + Send + Sync>;
+
+/// Why a [`Spawner`] started no agent.
+#[derive(Debug)]
+pub(crate) enum SpawnError {
+    /// A step the server owns before the spawn failed: T3's `ProviderSetupError`, whose text
+    /// the user sees.
+    Setup(&'static str),
+    /// The process did not start (T3's spawn error, shown as a fixed text).
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for SpawnError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
 
 pub(crate) struct Config {
     /// `None` holds streamed text until the segment closes, as T3's paused test clock does.
@@ -119,14 +165,50 @@ fn notify_observer(observer: &Observer, update: &HeldUpdate) {
 
 struct Runtime {
     connection: Connection,
-    stop: Option<Box<dyn FnOnce(StopKind) -> BoxFuture<'static, ()> + Send>>,
+    stopper: Arc<Stopper>,
     generation: u64,
+}
+
+type StopFn = Box<dyn FnOnce(StopKind) -> BoxFuture<'static, ()> + Send>;
+
+/// Ends one agent and removes its files, once, whoever comes first: an explicit stop, or the
+/// drive task when the agent exited on its own. A later caller waits until the first is done,
+/// as T3's scope finalizer runs once whatever ended the scope.
+struct Stopper {
+    stop: std::sync::Mutex<Option<StopFn>>,
+    done: tokio::sync::OnceCell<()>,
+}
+
+impl Stopper {
+    fn new(stop: StopFn) -> Arc<Self> {
+        Arc::new(Self {
+            stop: std::sync::Mutex::new(Some(stop)),
+            done: tokio::sync::OnceCell::new(),
+        })
+    }
+
+    async fn stop(&self, kind: StopKind) {
+        self.done
+            .get_or_init(|| async {
+                let stop = self
+                    .stop
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                if let Some(stop) = stop {
+                    stop(kind).await;
+                }
+            })
+            .await;
+    }
 }
 
 struct State<E: Env> {
     mapper: Mapper<E>,
     events: Option<mpsc::Sender<ProviderEvent>>,
     runtime: Option<Runtime>,
+    /// The latest agent's [`Stopper`]; it stays after the drive task took `runtime`.
+    stopper: Option<Arc<Stopper>>,
     generation: u64,
     /// The ACP session id (`activeSessionId`).
     session_id: Option<String>,
@@ -215,6 +297,9 @@ struct Inner {
     /// The run whose start Stop abandoned (`abandon_turn_start`). Outside `state`, which a
     /// start holds across awaits; one is enough, as a stale id matches no later run.
     abandoned_run: std::sync::Mutex<Option<String>>,
+    /// The spawn in flight. A start cancelled meanwhile leaves it here, and the stop that
+    /// follows claims and stops what it started (`stop_cancelled_spawn`).
+    spawning: Mutex<Option<tokio::task::JoinHandle<Result<Spawned, SpawnError>>>>,
 }
 
 impl Inner {
@@ -257,6 +342,55 @@ fn protocol_error(detail: impl Into<String>) -> ProviderError {
     }
 }
 
+/// Why [`AcpSession::open_with`] opened no session. The agent is stopped in every case.
+#[derive(Debug)]
+pub(crate) enum OpenError {
+    /// [`OpenControl::abort`] fired.
+    Aborted,
+    /// The agent answered `method` with a JSON-RPC error (T3's `AcpRequestError`), with
+    /// what the flavor recognised in it (`Flavor::rpc_failure`).
+    Rpc {
+        method: &'static str,
+        error: RpcError,
+        recognised: Option<ProviderError>,
+    },
+    Other(ProviderError),
+}
+
+impl From<ProviderError> for OpenError {
+    fn from(error: ProviderError) -> Self {
+        Self::Other(error)
+    }
+}
+
+impl From<OpenError> for ProviderError {
+    fn from(error: OpenError) -> Self {
+        match error {
+            OpenError::Aborted => Self::Failed {
+                operation: "start",
+                detail: "The agent start was stopped.".into(),
+            },
+            OpenError::Rpc {
+                method,
+                error,
+                recognised,
+            } => recognised.unwrap_or_else(|| plain_failed(method, &CallError::Rpc(error))),
+            OpenError::Other(error) => error,
+        }
+    }
+}
+
+fn call_failed(flavor: &Flavor, method: &'static str, error: CallError) -> OpenError {
+    match error {
+        CallError::Rpc(error) => OpenError::Rpc {
+            method,
+            recognised: (flavor.rpc_failure)(&error),
+            error,
+        },
+        error => OpenError::Other(failed(flavor, method, &error)),
+    }
+}
+
 fn failed(flavor: &Flavor, operation: &'static str, error: &CallError) -> ProviderError {
     if let CallError::Provider(error) = error {
         return error.clone();
@@ -266,6 +400,10 @@ fn failed(flavor: &Flavor, operation: &'static str, error: &CallError) -> Provid
     {
         return recognised;
     }
+    plain_failed(operation, error)
+}
+
+fn plain_failed(operation: &'static str, error: &CallError) -> ProviderError {
     ProviderError::Failed {
         operation,
         detail: conn_provider_support::redact::redact(&error.detail()),
@@ -330,7 +468,7 @@ impl AcpSession {
             let initialize = match inner.initialize(&connection).await {
                 Ok(initialize) => initialize,
                 Err(error) => {
-                    inner.stop_runtime().await;
+                    inner.end_runtime().await;
                     return Err(error);
                 }
             };
@@ -358,7 +496,7 @@ impl AcpSession {
             {
                 Ok(setup) => setup,
                 Err(error) => {
-                    inner.stop_runtime().await;
+                    inner.end_runtime().await;
                     return Err(failed(inner.config.flavor, method, &error));
                 }
             };
@@ -538,10 +676,12 @@ impl AcpSession {
         env: Box<dyn Env + Sync>,
         events: mpsc::Sender<ProviderEvent>,
     ) -> ProviderResult<(Self, Value)> {
-        Self::open_with(config, spawner, env, events, OpenControl::default()).await
+        Self::open_with(config, spawner, env, events, OpenControl::default())
+            .await
+            .map_err(ProviderError::from)
     }
 
-    /// [`Self::open`] that `control.abort` can end early. On any failure the agent is stopped
+    /// [`Self::open`] with an abort and step reports. On any failure the agent is stopped
     /// and its files are removed before this returns, as T3's scoped runtime does.
     pub(crate) async fn open_with(
         config: Config,
@@ -549,7 +689,7 @@ impl AcpSession {
         env: Box<dyn Env + Sync>,
         events: mpsc::Sender<ProviderEvent>,
         control: OpenControl,
-    ) -> ProviderResult<(Self, Value)> {
+    ) -> Result<(Self, Value), OpenError> {
         let mapper = Mapper::new(
             DynEnv(env),
             config.flavor,
@@ -563,6 +703,7 @@ impl AcpSession {
                 mapper,
                 events: Some(events),
                 runtime: None,
+                stopper: None,
                 generation: 0,
                 session_id: None,
                 initialize: Value::Null,
@@ -587,18 +728,18 @@ impl AcpSession {
             }),
             config,
             abandoned_run: std::sync::Mutex::new(None),
+            spawning: Mutex::new(None),
         });
-        let steps = async {
-            let connection = inner.start_runtime().await?;
-            inner.start_session(&connection).await
-        };
-        let outcome = match control.abort {
+        let OpenControl {
+            abort,
+            on_step,
+            session_new,
+        } = control;
+        let steps = Self::open_steps(&inner, on_step.as_deref(), session_new.as_deref());
+        let outcome = match abort {
             Some(abort) => tokio::select! {
                 outcome = steps => outcome,
-                () = abort => Err(ProviderError::Failed {
-                    operation: "start",
-                    detail: "The agent start was stopped.".into(),
-                }),
+                () = abort => Err(OpenError::Aborted),
             },
             None => steps.await,
         };
@@ -615,6 +756,20 @@ impl AcpSession {
                 Err(error)
             }
         }
+    }
+
+    async fn open_steps(
+        inner: &Arc<Inner>,
+        on_step: Option<&(dyn Fn(conn_provider::CheckStep) + Send + Sync)>,
+        session_new: Option<&std::sync::Mutex<SessionNew>>,
+    ) -> Result<String, OpenError> {
+        let step = |step: conn_provider::CheckStep| {
+            if let Some(on_step) = on_step {
+                on_step(step);
+            }
+        };
+        let connection = inner.start_runtime().await?;
+        inner.start_session(&connection, &step, session_new).await
     }
 
     /// The agent's `initialize` result and the session setup result, as last seen.
@@ -704,50 +859,92 @@ impl AcpSession {
 }
 
 impl Inner {
-    /// Spawns the agent and the task that reads it.
+    /// Spawns the agent and the task that reads it. The spawn slot stays locked until the
+    /// agent is installed or stopped, so a close waits for either ([`Self::stop_cancelled_spawn`]).
     async fn start_runtime(self: &Arc<Self>) -> ProviderResult<Connection> {
-        let spawned = (self.spawner)().map_err(|error| ProviderError::Failed {
-            operation: "start",
-            detail: format!("could not start {}: {error}", self.config.flavor.driver),
+        let mut spawning = self.spawning.lock().await;
+        let spawner = self.spawner.clone();
+        let task = spawning.insert(tokio::task::spawn_blocking(move || spawner()));
+        let joined = task.await;
+        *spawning = None;
+        let spawned =
+            joined.unwrap_or_else(|error| Err(SpawnError::Io(std::io::Error::other(error))));
+        let spawned = spawned.map_err(|error| match error {
+            SpawnError::Setup(detail) => ProviderError::Failed {
+                operation: "start",
+                detail: detail.to_owned(),
+            },
+            SpawnError::Io(error) => ProviderError::Failed {
+                operation: "spawn",
+                detail: format!("could not start {}: {error}", self.config.flavor.driver),
+            },
         })?;
-        let (connection, incoming) = Connection::start_with_signal(
-            spawned.writer,
-            spawned.events,
-            EVENT_CAPACITY,
-            self.config.flavor.stdout_signal,
-        );
-        let generation = {
+        let (connection, incoming, generation) = {
             let mut state = self.state.lock().await;
+            if state.closed {
+                drop(state);
+                spawned.stop_unread(StopKind::Kill).await;
+                return Err(ProviderError::SessionStopped);
+            }
+            let Spawned {
+                writer,
+                events,
+                stop,
+            } = spawned;
+            let (connection, incoming) = Connection::start_with_signal(
+                writer,
+                events,
+                EVENT_CAPACITY,
+                self.config.flavor.stdout_signal,
+            );
             state.generation += 1;
             state.prompt_seq = 0;
             state.instruction_state = None;
             state.delivered_notes = None;
             state.delivery = None;
             state.mapper.reset_compaction();
+            let stopper = Stopper::new(stop);
+            state.stopper = Some(stopper.clone());
             state.runtime = Some(Runtime {
                 connection: connection.clone(),
-                stop: Some(spawned.stop),
+                stopper,
                 generation: state.generation,
             });
-            state.generation
+            (connection, incoming, state.generation)
         };
+        drop(spawning);
         tokio::spawn(drive(Arc::downgrade(self), incoming, generation));
         Ok(connection)
     }
 
     /// `initialize`, `session/new` and the model (T3's `start`): returns the root session id.
     /// Startup metadata the agent sent for that session before its reply is applied then.
-    async fn start_session(self: &Arc<Self>, connection: &Connection) -> ProviderResult<String> {
-        let initialize = self.initialize(connection).await?;
+    /// `step` hears T3's check steps; `session_new` follows what became of `session/new`.
+    async fn start_session(
+        self: &Arc<Self>,
+        connection: &Connection,
+        step: &(dyn Fn(conn_provider::CheckStep) + Sync),
+        session_new: Option<&std::sync::Mutex<SessionNew>>,
+    ) -> Result<String, OpenError> {
+        let record = |state: SessionNew| {
+            if let Some(slot) = session_new {
+                *crate::lock(slot) = state;
+            }
+        };
+        let initialize = self.send_initialize(connection).await?;
+        step(conn_provider::CheckStep::Initialized);
+        self.authenticate(connection, &initialize).await?;
+        record(SessionNew::Sent);
         let setup = connection
             .call("session/new", self.session_setup_params(&initialize, None))
             .await
-            .map_err(|e| failed(self.config.flavor, "session/new", &e))?;
+            .map_err(|e| call_failed(self.config.flavor, "session/new", e))?;
         let session_id = setup["sessionId"]
             .as_str()
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| protocol_error("session/new returned no session id"))?
             .to_owned();
+        record(SessionNew::Created(session_id.clone()));
         {
             let mut state = self.state.lock().await;
             state.session_id = Some(session_id.clone());
@@ -762,6 +959,7 @@ impl Inner {
                 self.root_update(&mut state, params).await;
             }
         }
+        step(conn_provider::CheckStep::Verifying);
         let model = self.config.model.clone();
         let effort = self.config.effort.clone();
         self.configure(connection, &model, effort.as_deref(), &[])
@@ -769,24 +967,23 @@ impl Inner {
         // T3's start commits only when no termination was recorded (Antigravity's sign-in
         // URL right behind the last reply).
         if let Some(failure) = connection.failure() {
-            return Err(failure);
+            return Err(failure.into());
         }
         Ok(session_id)
     }
 
-    /// Ends the current runtime as a close does: a failed start leaves no agent, no `run-*`
-    /// folder and (on Linux) no process tree behind. The driver ignores its exit.
-    async fn stop_runtime(&self) {
-        let stop = {
+    /// Ends the current runtime as a close does, and keeps the session: a failed restart
+    /// leaves no agent, no `run-*` folder and (on Linux) no process tree behind. The driver
+    /// ignores its exit; when it is ending the agent already, this waits for it.
+    async fn end_runtime(&self) {
+        let stopper = {
             let mut state = self.state.lock().await;
             state.generation += 1;
-            state
-                .runtime
-                .take()
-                .and_then(|mut runtime| runtime.stop.take())
+            state.runtime = None;
+            state.stopper.clone()
         };
-        if let Some(stop) = stop {
-            stop(StopKind::Kill).await;
+        if let Some(stopper) = stopper {
+            stopper.stop(StopKind::Kill).await;
         }
     }
 
@@ -815,36 +1012,75 @@ impl Inner {
     /// `initialize`, as `AcpSessionRuntime.initializeOnce` and effect-acp's negotiating
     /// request send it: the v2 fields, then the v1 ones.
     async fn initialize(&self, connection: &Connection) -> ProviderResult<Value> {
+        let initialize = self.send_initialize(connection).await?;
+        self.authenticate(connection, &initialize).await?;
+        Ok(initialize)
+    }
+
+    /// The `initialize` request alone (T3's `runtime.initialize()`).
+    async fn send_initialize(&self, connection: &Connection) -> Result<Value, OpenError> {
         let flavor = self.config.flavor;
         let (name, version) = match flavor.client_info {
             Some(info) => info(self.config.runtime_version.as_deref()),
             None => ("t3-code".to_owned(), self.config.client_version.clone()),
         };
         let params = initialize_params(flavor, &name, &version, true);
-        let initialize = connection
+        connection
             .call("initialize", params)
             .await
-            .map_err(|e| failed(flavor, "initialize", &e))?;
-        if flavor.authenticate_eagerly {
-            // The configured method is authoritative: Antigravity accepts methods it does not
-            // list. effect-acp names it by the protocol generation of the reply's shape.
-            let method = if initialize.get("info").is_some() {
-                "auth/login"
-            } else {
-                "authenticate"
-            };
-            connection
-                .call(
-                    method,
-                    obj().with(
-                        "methodId",
-                        self.config.auth_method.clone().unwrap_or_default(),
-                    ),
-                )
-                .await
-                .map_err(|e| failed(flavor, "authenticate", &e))?;
+            .map_err(|e| call_failed(flavor, "initialize", e))
+    }
+
+    /// The eager `authenticate` that T3's `start` sends first, for a flavor that wants it.
+    async fn authenticate(
+        &self,
+        connection: &Connection,
+        initialize: &Value,
+    ) -> Result<(), OpenError> {
+        if !self.config.flavor.authenticate_eagerly {
+            return Ok(());
         }
-        Ok(initialize)
+        // The configured method is authoritative: Antigravity accepts methods it does not
+        // list. effect-acp names it by the protocol generation of the reply's shape.
+        let method = if initialize.get("info").is_some() {
+            "auth/login"
+        } else {
+            "authenticate"
+        };
+        connection
+            .call(
+                method,
+                obj().with(
+                    "methodId",
+                    self.config.auth_method.clone().unwrap_or_default(),
+                ),
+            )
+            .await
+            .map(drop)
+            .map_err(|e| call_failed(self.config.flavor, "authenticate", e))
+    }
+
+    /// Ends the agent of a session that did not open, and waits until it is gone and its
+    /// files are removed, also when it exited first and the drive task is ending it.
+    async fn stop_runtime(&self) {
+        {
+            let mut state = self.state.lock().await;
+            state.closed = true;
+            state.events = None;
+        }
+        self.stop_cancelled_spawn().await;
+        self.end_runtime().await;
+    }
+
+    /// Waits until a start in flight has installed or stopped its agent, and stops the agent
+    /// of a start that was cancelled while its spawn ran.
+    async fn stop_cancelled_spawn(&self) {
+        let task = self.spawning.lock().await.take();
+        if let Some(task) = task
+            && let Ok(Ok(spawned)) = task.await
+        {
+            spawned.stop_unread(StopKind::Kill).await;
+        }
     }
 
     /// `configureSession`'s model part: switch the session's model (and Grok's reasoning
@@ -1316,12 +1552,12 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
                 } else {
                     StopKind::Kill
                 };
-                let stop = {
+                let stopper = {
                     let mut state = inner.state.lock().await;
                     if state.generation != generation {
                         return;
                     }
-                    let stop = state.runtime.take().and_then(|mut r| r.stop.take());
+                    let stopper = state.runtime.take().map(|runtime| runtime.stopper);
                     state.active_prompt = None;
                     state.ordered_calls.clear();
                     state.restart_required = true;
@@ -1333,11 +1569,11 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
                     };
                     let outs = state.mapper.agent_exited(&detail);
                     inner.deliver(&mut state, outs).await;
-                    stop
+                    stopper
                 };
                 // The agent's own folder goes; the process tree too while it still runs.
-                if let Some(stop) = stop {
-                    stop(kind).await;
+                if let Some(stopper) = stopper {
+                    stopper.stop(kind).await;
                 }
                 return;
             }
@@ -1741,10 +1977,10 @@ impl Session for AcpSession {
                     state.active_prompt = None;
                     state.restart_required = true;
                     state.generation += 1;
-                    let stop = state.runtime.take().and_then(|mut r| r.stop.take());
+                    let stopper = state.runtime.take().map(|r| r.stopper);
                     drop(state);
-                    if let Some(stop) = stop {
-                        stop(StopKind::Terminate).await;
+                    if let Some(stopper) = stopper {
+                        stopper.stop(StopKind::Terminate).await;
                     }
                     Ok(())
                 }
@@ -1825,8 +2061,8 @@ impl Session for AcpSession {
                 let runtime = state.runtime.take();
                 state.generation += 1;
                 let (connection, stop) = match runtime {
-                    Some(mut runtime) => (Some(runtime.connection.clone()), runtime.stop.take()),
-                    None => (None, None),
+                    Some(runtime) => (Some(runtime.connection.clone()), Some(runtime.stopper)),
+                    None => (None, state.stopper.clone()),
                 };
                 (connection, state.session_id.clone(), can_close, stop)
             };
@@ -1838,8 +2074,9 @@ impl Session for AcpSession {
                 )
                 .await;
             }
+            inner.stop_cancelled_spawn().await;
             if let Some(stop) = stop {
-                stop(StopKind::Kill).await;
+                stop.stop(StopKind::Kill).await;
             }
             let mut state = inner.state.lock().await;
             state.events = None;
@@ -1868,6 +2105,235 @@ impl Drop for AcpSession {
 /// A clock for real sessions.
 pub(crate) fn system_env() -> Box<dyn Env + Sync> {
     Box::new(SystemEnv)
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+
+    use super::*;
+
+    fn config() -> Config {
+        Config {
+            flush_interval: None,
+            finalize_debounce: FINALIZE_DEBOUNCE,
+            flavor: &crate::flavor::GROK,
+            instance_id: "grok".into(),
+            provider_session_id: "s".into(),
+            cwd: "/tmp".into(),
+            runtime_mode: "full-access".into(),
+            policy: json!({}),
+            effort: None,
+            model: String::new(),
+            mcp_servers: Vec::new(),
+            client_version: "0.0.0".into(),
+            attachments_dir: None,
+            auth_method: None,
+            runtime_version: None,
+            self_command: "/conn-server".into(),
+            default_model: None,
+            observer: None,
+        }
+    }
+
+    /// The spawner may block (folders, `fork` and `exec`): it runs off the runtime thread.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_spawner_runs_off_the_runtime_thread() {
+        let runtime_thread = std::thread::current().id();
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let record = seen.clone();
+        let spawner: Spawner = Arc::new(move || {
+            *crate::lock(&record) = Some(std::thread::current().id());
+            Err(SpawnError::Setup("no agent"))
+        });
+        let (tx, _events) = mpsc::channel(8);
+        let opened =
+            AcpSession::open_with(config(), spawner, system_env(), tx, OpenControl::default())
+                .await;
+        assert!(opened.is_err());
+        let spawned_on = *crate::lock(&seen);
+        assert!(spawned_on.is_some(), "the spawner did not run");
+        assert_ne!(spawned_on, Some(runtime_thread));
+    }
+
+    /// An open aborted while its spawn runs still owns what the spawn starts: it returns
+    /// only after that agent is stopped.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_spawn_aborted_meanwhile_is_stopped_before_the_open_returns() {
+        let (abort_tx, abort_rx) = tokio::sync::oneshot::channel::<()>();
+        let abort_tx = std::sync::Mutex::new(Some(abort_tx));
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(AtomicBool::new(false));
+        let (stop_flag, release_flag) = (stopped.clone(), released.clone());
+        let spawner: Spawner = Arc::new(move || {
+            if let Some(abort) = crate::lock(&abort_tx).take() {
+                let _ = abort.send(());
+            }
+            // Only the abort releases the spawn; on the runtime thread it never could.
+            let release = crate::lock(&release_rx).recv_timeout(Duration::from_secs(5));
+            release_flag.store(release.is_ok(), SeqCst);
+            let (writer, _) = mpsc::channel(1);
+            let (_, events) = mpsc::channel(1);
+            let stop_flag = stop_flag.clone();
+            Ok(Spawned {
+                writer,
+                events,
+                stop: Box::new(move |_| Box::pin(async move { stop_flag.store(true, SeqCst) })),
+            })
+        });
+        let control = OpenControl {
+            abort: Some(Box::pin(async move {
+                let _ = abort_rx.await;
+                let _ = release_tx.send(());
+            })),
+            ..OpenControl::default()
+        };
+        let (tx, _events) = mpsc::channel(8);
+        let opened = AcpSession::open_with(config(), spawner, system_env(), tx, control).await;
+        assert!(matches!(opened, Err(OpenError::Aborted)));
+        assert!(
+            released.load(SeqCst),
+            "the abort did not run during the spawn"
+        );
+        assert!(stopped.load(SeqCst), "the spawned agent was not stopped");
+    }
+
+    /// An agent whose startup output filled the event channel still stops when its open is
+    /// aborted: nothing reads that channel, so the stop must not wait on it.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_aborted_spawn_with_a_full_event_channel_still_stops() {
+        use conn_provider_support::process::{LaunchSpec, Process, wait_gone};
+        let (abort_tx, abort_rx) = tokio::sync::oneshot::channel::<()>();
+        let abort_tx = std::sync::Mutex::new(Some(abort_tx));
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let pid = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let spawned_pid = pid.clone();
+        let spawner: Spawner = Arc::new(move || {
+            let lines = EVENT_CAPACITY + 64;
+            let spec = LaunchSpec {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    format!(
+                        "i=0; while [ $i -lt {lines} ]; do echo '{{}}'; i=$((i+1)); done; exec sleep 30"
+                    ),
+                ],
+                ..LaunchSpec::default()
+            };
+            let (events_tx, events) = mpsc::channel(EVENT_CAPACITY);
+            let process = Process::spawn(&spec, 1024, events_tx)?;
+            spawned_pid.store(process.pid, SeqCst);
+            // The output fills all the slots before the abort.
+            std::thread::sleep(Duration::from_millis(300));
+            if let Some(abort) = crate::lock(&abort_tx).take() {
+                let _ = abort.send(());
+            }
+            // Only the abort releases the spawn, so the open is aborted while it runs.
+            let _ = crate::lock(&release_rx).recv_timeout(Duration::from_secs(5));
+            let writer = process.writer();
+            Ok(Spawned {
+                writer,
+                events,
+                stop: Box::new(move |kind| Box::pin(crate::stop_process(process, kind))),
+            })
+        });
+        let control = OpenControl {
+            abort: Some(Box::pin(async move {
+                let _ = abort_rx.await;
+                let _ = release_tx.send(());
+            })),
+            ..OpenControl::default()
+        };
+        let (tx, _events) = mpsc::channel(8);
+        let opened = tokio::time::timeout(
+            Duration::from_secs(10),
+            AcpSession::open_with(config(), spawner, system_env(), tx, control),
+        )
+        .await;
+        assert!(
+            matches!(opened, Ok(Err(OpenError::Aborted))),
+            "the stop did not complete"
+        );
+        let pid = pid.load(SeqCst);
+        assert!(pid > 0 && wait_gone(pid, Duration::from_secs(5)).await);
+    }
+
+    /// `close` during a restart's spawn returns only after the new agent is stopped.
+    #[tokio::test(flavor = "current_thread")]
+    async fn close_waits_for_a_restart_spawn_in_flight() {
+        let script = crate::replay_agent::Script::new(
+            vec![
+                json!({"type": "expect_outbound", "frame": {"kind": "request", "method": "initialize", "params": "<any>"}}),
+                json!({"type": "emit_inbound", "frame": {"kind": "response", "method": "initialize",
+                    "result": {"protocolVersion": 1, "agentCapabilities": {}}}}),
+                json!({"type": "expect_outbound", "frame": {"kind": "request", "method": "session/new", "params": "<any>"}}),
+                json!({"type": "emit_inbound", "frame": {"kind": "response", "method": "session/new",
+                    "result": {"sessionId": "s1"}}}),
+            ],
+            "/tmp",
+        );
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let started_tx = std::sync::Mutex::new(Some(started_tx));
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop_flag = stopped.clone();
+        let starts = std::sync::atomic::AtomicUsize::new(0);
+        let spawner: Spawner = Arc::new(move || {
+            if starts.fetch_add(1, SeqCst) == 0 {
+                // The first start: the agent that opens the session.
+                let (writer, events) = crate::replay_agent::spawn(script.clone());
+                return Ok(Spawned {
+                    writer,
+                    events,
+                    stop: Box::new(|_| Box::pin(async {})),
+                });
+            }
+            if let Some(started) = crate::lock(&started_tx).take() {
+                let _ = started.send(());
+            }
+            let _ = crate::lock(&release_rx).recv_timeout(Duration::from_secs(5));
+            let (writer, _) = mpsc::channel(1);
+            let (_, events) = mpsc::channel(1);
+            let stop_flag = stop_flag.clone();
+            Ok(Spawned {
+                writer,
+                events,
+                stop: Box::new(move |_| {
+                    Box::pin(async move {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        stop_flag.store(true, SeqCst);
+                    })
+                }),
+            })
+        });
+        let (tx, _events) = mpsc::channel(64);
+        let (session, _) =
+            AcpSession::open_with(config(), spawner, system_env(), tx, OpenControl::default())
+                .await
+                .unwrap();
+        let inner = session.inner.clone();
+        inner.state.lock().await.restart_required = true;
+        let restart = tokio::spawn(async move { inner.start_runtime().await.map(drop) });
+        started_rx.await.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = release_tx.send(());
+        });
+        session.close().await;
+        assert!(
+            stopped.load(SeqCst),
+            "close returned before the restarted agent stopped"
+        );
+        assert!(matches!(
+            restart.await.unwrap(),
+            Err(ProviderError::SessionStopped)
+        ));
+    }
 }
 
 #[cfg(test)]

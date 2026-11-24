@@ -7,13 +7,10 @@
 //! no model to send with. [`server_providers`] builds those entries; each provider crate adds
 //! its own line there.
 //!
-//! Sign-in (`provider.auth.*`): the T3 server has no in-app sign-in for the providers this
-//! server offers. Claude, Codex (`setupMode` other than `managed`) and Grok are CLI-owned: their
-//! T3 instances carry no `ProviderAuthController`, their entries say
-//! `setup.canAuthenticate: false`, and the clients show no sign-in for them (users run
-//! `claude auth login` or `codex login` on the machine; the `auth.json` watch and the status
-//! probe pick the result up). So every `provider.auth.*` method, the stream included, answers
-//! T3's `ProviderSetupError` from `ProviderAuthService.getController`. No CLI starts.
+//! Sign-in (`provider.auth.*`): see `provider_auth`. Claude, Codex (`setupMode` other than
+//! `managed`) and Grok are CLI-owned in T3 too: their instances carry no
+//! `ProviderAuthController`, their entries say `setup.canAuthenticate: false`, and every
+//! `provider.auth.*` call for them answers T3's `ProviderSetupError`. No CLI starts.
 //! `crates/conn-server/tools/provider-auth-diff.mjs` compares both servers.
 //!
 //! Install and update (`provider.install.*`, `server.updateProvider`): not served, by
@@ -29,54 +26,14 @@ use std::time::Duration;
 use conn_support::time::Mark;
 
 use conn_contract::{
-    ProviderAuthCancelInput, ProviderAuthCompleteInput, ProviderAuthRespondInput,
-    ProviderAuthStartInput, ProviderSetupError, ProviderSetupInput, ProviderUploadFeedbackError,
-    ProviderUploadFeedbackInput, ProviderUploadFeedbackResult, lit,
+    ProviderSetupError, ProviderUploadFeedbackError, ProviderUploadFeedbackInput,
+    ProviderUploadFeedbackResult, lit,
 };
-use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::watch;
 
 use super::Deps;
 use crate::table::{Failure, MethodTable};
-
-/// `ProviderAuthRemoveMethodInput` (not exported by the contract, so not generated).
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoveMethodInput {
-    instance_id: String,
-    /// Required, as in T3; no controller reads it.
-    #[serde(rename = "methodId")]
-    _method_id: String,
-}
-
-/// `ProviderAuthService.getController` for an instance without a sign-in controller: T3's
-/// `ProviderSetupError`, with `operation` as T3 names it.
-fn no_sign_in(deps: &Deps, instance_id: String, operation: &str) -> Failure {
-    let detail = if deps.providers.get(&instance_id).is_some() {
-        "This provider does not support sign-in in Conn."
-    } else {
-        "This provider instance is no longer available."
-    };
-    Failure::fail(&ProviderSetupError {
-        tag: lit::ProviderSetupError,
-        instance_id,
-        operation: operation.to_owned(),
-        detail: detail.to_owned(),
-        cause: None,
-    })
-}
-
-/// Registers one `provider.auth.*` unary method that answers [`no_sign_in`].
-macro_rules! no_sign_in_method {
-    ($table:expr, $deps:expr, $tag:literal, $operation:literal, $input:ty) => {{
-        let deps = $deps.clone();
-        $table.unary($tag, move |_, input: $input| {
-            let failure = no_sign_in(&deps, input.instance_id, $operation);
-            async move { Err::<Value, _>(failure) }
-        });
-    }};
-}
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     // The engine finds the thread's running session; the provider uploads (Codex only).
@@ -87,58 +44,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             ProviderUploadFeedbackError,
         >(table, engine, "provider.uploadFeedback");
     }
-    no_sign_in_method!(
-        table,
-        deps,
-        "provider.auth.start",
-        "start",
-        ProviderAuthStartInput
-    );
-    no_sign_in_method!(
-        table,
-        deps,
-        "provider.auth.respond",
-        "respond",
-        ProviderAuthRespondInput
-    );
-    no_sign_in_method!(
-        table,
-        deps,
-        "provider.auth.complete",
-        "complete",
-        ProviderAuthCompleteInput
-    );
-    no_sign_in_method!(
-        table,
-        deps,
-        "provider.auth.cancel",
-        "cancel",
-        ProviderAuthCancelInput
-    );
-    no_sign_in_method!(
-        table,
-        deps,
-        "provider.auth.removeMethod",
-        "removeMethod",
-        RemoveMethodInput
-    );
-    no_sign_in_method!(
-        table,
-        deps,
-        "provider.auth.logout",
-        "logout",
-        ProviderSetupInput
-    );
-    {
-        let deps = deps.clone();
-        table.stream(
-            "provider.auth.subscribe",
-            move |_, input: ProviderSetupInput| {
-                let failure = no_sign_in(&deps, input.instance_id, "subscribe");
-                async move { Err(failure) }
-            },
-        );
-    }
+    super::provider_auth::register(table, deps);
 }
 
 /// Tells config streams that a provider entry changed (T3's `ProviderRegistry.streamChanges`),
@@ -196,7 +102,7 @@ impl ProviderStatus {
         self.revision.subscribe()
     }
 
-    fn bump(&self) {
+    pub(crate) fn bump(&self) {
         self.revision.notify();
     }
 

@@ -101,6 +101,25 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// Whether [`Provider::credential_check`] is served: the only in-app sign-in this server
+    /// serves (`provider.auth.start`). Account sign-ins through a browser are not served;
+    /// providers sign in through Orbit's AI router.
+    fn has_credential_check(&self) -> bool {
+        false
+    }
+
+    /// A check of the credentials the instance's settings hold, as T3's Antigravity sign-in
+    /// does without a browser. It reports its steps through `check.on_step`. When
+    /// `check.abort` fires, it stops its process and removes its files before it returns.
+    /// An error's `Failed` detail is shown to the user.
+    fn credential_check(&self, _check: CredentialCheck) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async {
+            Err(ProviderError::Unsupported {
+                operation: "credential_check",
+            })
+        })
+    }
+
     /// The periodic probe (`ManagedServerProvider` `refreshOnInterval` with `deferFailure`):
     /// a disabled instance is not probed, and a failed check over a ready entry keeps that
     /// entry. `true` asks for a recheck after 30 s (`FAILED_CHECK_RECHECK_DELAY`); `defer`
@@ -924,6 +943,29 @@ pub enum TurnStatus {
 pub enum ThreadDisposition {
     Reusable,
     Broken,
+}
+
+/// The controls of one [`Provider::credential_check`].
+pub struct CredentialCheck {
+    /// Fires to end the check early (cancel, timeout, or the instance went away).
+    pub abort: BoxFuture<'static, ()>,
+    /// Called as the check passes each step, in order.
+    pub on_step: Box<dyn Fn(CheckStep) + Send + Sync>,
+}
+
+impl std::fmt::Debug for CredentialCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialCheck").finish_non_exhaustive()
+    }
+}
+
+/// The steps of T3's `runSignIn` that its auth flow shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckStep {
+    /// The agent answered `initialize`.
+    Initialized,
+    /// The agent signed in and opened a session; the models load next.
+    Verifying,
 }
 
 /// A provider failure, condensed from the `ProviderAdapterV2Error` union.
