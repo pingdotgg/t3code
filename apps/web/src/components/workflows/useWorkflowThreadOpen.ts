@@ -19,6 +19,7 @@ export function useWorkflowThreadOpen(
   const connected = useConnectedEnvironmentIds().includes(environmentId);
   const linkedLabel = useLinkedEnvironments(
     connected || environmentId === viaEnvironmentId ? null : viaEnvironmentId,
+    environmentId,
   ).get(environmentId);
   const open = resolveLinkedThreadOpen({
     environmentId,

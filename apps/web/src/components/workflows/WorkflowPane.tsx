@@ -61,14 +61,22 @@ export default function WorkflowPane({
     ) ?? null;
   const activeReference = active === undefined || "thread" in active ? null : referenceOf(active);
   const activeThread = active !== undefined && "thread" in active ? threadOf(active) : null;
-  const activeThreadLinked =
-    useWorkflowThreadOpen(environmentId, activeThread?.environmentId ?? environmentId).open ===
-    "linked";
+  const activeThreadOpen = useWorkflowThreadOpen(
+    environmentId,
+    activeThread?.environmentId ?? environmentId,
+  ).open;
   const openFull =
     active === undefined
       ? null
       : "thread" in active
-        ? () => openThreadPage(threadOf(active), activeThreadLinked ? environmentId : undefined)
+        ? // Nowhere to go while this client neither knows the environment nor reads it through the run's.
+          activeThreadOpen === "unavailable"
+          ? null
+          : () =>
+              openThreadPage(
+                threadOf(active),
+                activeThreadOpen === "linked" ? environmentId : undefined,
+              )
         : activeReference === null
           ? null
           : openReferencePage(activeReference);
