@@ -585,6 +585,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? [gt("Show skills in slash menu")]
       : []),
+    ...(settings.threadTasksEnabled !== DEFAULT_UNIFIED_SETTINGS.threadTasksEnabled
+      ? [gt("Show tasks in thread details")]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? [gt("Rich text composer")]
       : []),
@@ -726,6 +729,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      threadTasksEnabled: DEFAULT_UNIFIED_SETTINGS.threadTasksEnabled,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1318,6 +1322,33 @@ export function ChatSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...setting("thread-tasks")}
+          description={gt(
+            "Show the agent's task list, with its progress, at the top of Thread details.",
+          )}
+          resetAction={
+            settings.threadTasksEnabled !== DEFAULT_UNIFIED_SETTINGS.threadTasksEnabled ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset tasks in thread details to default")}
+                onClick={() =>
+                  updateSettings({
+                    threadTasksEnabled: DEFAULT_UNIFIED_SETTINGS.threadTasksEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.threadTasksEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ threadTasksEnabled: Boolean(checked) })
+              }
+              aria-label={gt("Show tasks in thread details")}
+            />
           }
         />
         <AdvancedSettings targetIds={[setting("skills-in-slash-menu").id]}>

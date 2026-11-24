@@ -7,6 +7,12 @@ import { render } from "../../../test/render";
 import { ThreadDetailsTasks } from "./ThreadDetailsTasks";
 
 const lists = vi.hoisted(() => new Map<string, unknown>());
+const settings = vi.hoisted(() => ({ threadTasksEnabled: true }));
+
+vi.mock(import("~/hooks/useSettings"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useClientSettings: ((select: (value: typeof settings) => unknown) => select(settings)) as never,
+}));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -152,4 +158,17 @@ it("stacks earlier lists above the newest one, folded, and counts every step", a
   await screen.getByText("Earlier list 1").click();
   expect(earlier.open).toBe(true);
   await expect.element(screen.getByText(/Write hello/)).toBeVisible();
+});
+
+it("shows nothing when the tasks setting is off", async () => {
+  lists.set("thread-off", list(["Probe A", "running"]));
+  settings.threadTasksEnabled = false;
+  try {
+    await using screen = await render(
+      <ThreadDetailsTasks environmentId={environmentId} threadId={ThreadId.make("thread-off")} />,
+    );
+    expect(screen.container.querySelector("section")).toBeNull();
+  } finally {
+    settings.threadTasksEnabled = true;
+  }
 });

@@ -4,6 +4,7 @@ import { useGT } from "gt-react";
 import { useEffect, useRef } from "react";
 import { CheckIcon, ChevronRightIcon, CircleDashedIcon } from "lucide-react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { type ThreadTodoListEntry, useThreadTodoLists } from "../../state/entities";
 import { Spinner } from "../ui/spinner";
@@ -17,8 +18,9 @@ import {
 
 /** The agent's task lists for this thread, newest last, live while it runs and kept after. */
 export function ThreadDetailsTasks(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
+  const enabled = useClientSettings((settings) => settings.threadTasksEnabled);
   const lists = useThreadTodoLists(scopeThreadRef(props.environmentId, props.threadId));
-  if (lists.length === 0) return null;
+  if (!enabled || lists.length === 0) return null;
   return <ThreadDetailsTasksLists lists={lists} />;
 }
 

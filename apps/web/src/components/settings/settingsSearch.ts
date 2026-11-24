@@ -815,6 +815,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("command menu dollar $ slash /")],
   },
   {
+    id: "thread-tasks",
+    title: msg("Show tasks in thread details"),
+    to: "/settings/chat",
+    searchTerms: [msg("todo checklist plan steps phases progress right panel")],
+  },
+  {
     id: "composer-rich-text",
     title: msg("Rich text composer"),
     to: "/settings/chat",
