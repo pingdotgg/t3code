@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
 
 import * as BrowserSession from "../BrowserSession.ts";
 import { readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
@@ -21,6 +22,20 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
 const decodeImportSource = Schema.decodeEffect(BrowserImportSource);
+const chromiumKeychainSecret = "fixture-chromium-keychain-secret";
+
+vi.mock("@napi-rs/keyring", () => ({
+  AsyncEntry: class {
+    readonly getPassword: () => Promise<string | undefined>;
+
+    constructor(service: string, account: string) {
+      this.getPassword = async () =>
+        service === "Chromium Safe Storage" && account === "Chromium"
+          ? chromiumKeychainSecret
+          : undefined;
+    }
+  },
+}));
 
 const cookie = {
   url: "https://rejected.example/path",
@@ -75,20 +90,33 @@ const withImporter = Effect.fnUntraced(function* () {
 });
 
 describe("BrowserImport.importCookies", () => {
-  it.effect.each(["Cookies", "Network/Cookies"])(
-    "discovers and imports Linux Chromium cookies from %s",
-    (cookiePath) =>
+  it.effect.each([
+    { platform: "linux", cookiePath: "Cookies" },
+    { platform: "linux", cookiePath: "Network/Cookies" },
+    { platform: "darwin", cookiePath: "Network/Cookies" },
+  ] as const)(
+    "discovers and imports Chromium cookies on $platform from $cookiePath",
+    ({ platform, cookiePath }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-chromium-" });
-        const root = `${home}/.config/chromium`;
+        const root =
+          platform === "darwin"
+            ? `${home}/Library/Application Support/Chromium`
+            : `${home}/.config/chromium`;
         yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
         yield* fileSystem.writeFileString(
           `${root}/Local State`,
           JSON.stringify({ profile: { info_cache: { Default: { name: "Personal" } } } }),
         );
         yield* Effect.sync(() => {
-          const key = NodeCrypto.pbkdf2Sync("peanuts", "saltysalt", 1, 16, "sha1");
+          const key = NodeCrypto.pbkdf2Sync(
+            platform === "darwin" ? chromiumKeychainSecret : "peanuts",
+            "saltysalt",
+            platform === "darwin" ? 1003 : 1,
+            16,
+            "sha1",
+          );
           const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
           const value = Buffer.concat([
             Buffer.from("v10"),
@@ -139,7 +167,7 @@ describe("BrowserImport.importCookies", () => {
               ),
               Layer.provide(DesktopManagedPolicy.layerTest()),
               Layer.provide(Layer.succeed(HostProcess.Environment, { HOME: home })),
-              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+              Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
               Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/fixture/t3code")),
               Layer.provide(NodeServices.layer),
             ),
