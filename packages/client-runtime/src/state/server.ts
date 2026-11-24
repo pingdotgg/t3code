@@ -53,6 +53,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
+import { workflowRunRefreshKey } from "../workflows.ts";
 import {
   currentSession,
   isRpcClientError,
@@ -87,6 +88,8 @@ export type ServerUpdateState =
       readonly stage: ServerUpdateStage;
       readonly fromVersion: string;
       readonly targetVersion: string;
+      /** The service launcher's id for an accepted update, used to find its outcome later. */
+      readonly updateId?: string;
     }
   | {
       readonly status: "failed";
@@ -359,6 +362,9 @@ export function serverUpdateStateForProgressEvent(
           : "resuming",
     fromVersion,
     targetVersion,
+    ...(event.type === "complete" && event.result.updateId !== undefined
+      ? { updateId: event.result.updateId }
+      : {}),
   };
 }
 
@@ -1251,6 +1257,7 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
+              ...(updateResult.updateId === undefined ? {} : { updateId: updateResult.updateId }),
             });
             return updateResult;
           }).pipe(Effect.mapError(localizeServerSelfUpdateError)),
@@ -1461,6 +1468,36 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     );
   });
+  const workflowsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:workflows:live",
+    tag: WS_METHODS.workflowsSubscribe,
+  });
+  const liveWorkflowSnapshot = (environmentId: EnvironmentId) => {
+    const live = workflowsLive({ environmentId, input: {} });
+    return (get: Atom.AtomContext) => Option.getOrUndefined(AsyncResult.value(get(live)));
+  };
+  // Keyed by a JSON array of environment ids, like the compaction notice, to read them as one.
+  const workflowsLiveAcross = Atom.family((environmentIdsKey: string) => {
+    const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
+      environmentId,
+      atom: workflowsLive({ environmentId, input: {} }),
+    }));
+    return Atom.make((get) =>
+      sources.map(({ environmentId, atom }) => ({ environmentId, result: get(atom) })),
+    ).pipe(Atom.withLabel(`environment-data:server:workflows:live-across:${environmentIdsKey}`));
+  });
+  // One change of a run or file at a time per target, so a double click does not act twice.
+  const workflowRunConcurrency = {
+    mode: "singleFlight" as const,
+    key: ({ environmentId, input }: { environmentId: EnvironmentId; input: { runId: string } }) =>
+      JSON.stringify([environmentId, input.runId]),
+  };
+  const workflowDefinitionScheduler = createAtomCommandScheduler();
+  const workflowDefinitionConcurrency = {
+    mode: "serial" as const,
+    key: ({ environmentId, input }: { environmentId: EnvironmentId; input: { name: string } }) =>
+      JSON.stringify([environmentId, input.name]),
+  };
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -1607,6 +1644,26 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
+    workflowsLive,
+    workflowsLiveAcross,
+    workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:run",
+      tag: WS_METHODS.workflowsGet,
+      refreshTrigger: ({ environmentId, input }) => {
+        const snapshot = liveWorkflowSnapshot(environmentId);
+        return Atom.make((get) => workflowRunRefreshKey(snapshot(get), input.runId));
+      },
+      isFinal: (detail) => detail.run.endedAt !== null,
+    }),
+    // Read again whenever the server loads the files or finds them wrong, which `revision` says.
+    workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:definition",
+      tag: WS_METHODS.workflowsGetDefinition,
+      refreshTrigger: ({ environmentId }) => {
+        const snapshot = liveWorkflowSnapshot(environmentId);
+        return Atom.make((get) => snapshot(get)?.definition?.revision);
+      },
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1670,6 +1727,18 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     configProjection,
     welcome,
+    updateOutcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:update-outcome",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "ready" && event.payload.updateOutcome !== undefined
+              ? Result.succeed(event.payload.updateOutcome)
+              : Result.failVoid,
+          ),
+        ),
+    }),
     legacyThreadMigration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:legacy-thread-migration",
       tag: WS_METHODS.subscribeServerLifecycle,
@@ -1903,6 +1972,37 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    answerWorkflowQuestion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:answer",
+      tag: WS_METHODS.workflowsAnswer,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.runId, input.name]),
+      },
+    }),
+    resumeWorkflowRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:resume",
+      tag: WS_METHODS.workflowsResume,
+      concurrency: workflowRunConcurrency,
+    }),
+    cancelWorkflowRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:cancel",
+      tag: WS_METHODS.workflowsCancel,
+      concurrency: workflowRunConcurrency,
+    }),
+    // Saves and deletes of one file go one after another: each carries its own text.
+    saveWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:save-definition",
+      tag: WS_METHODS.workflowsSaveDefinition,
+      scheduler: workflowDefinitionScheduler,
+      concurrency: workflowDefinitionConcurrency,
+    }),
+    deleteWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:delete-definition",
+      tag: WS_METHODS.workflowsDeleteDefinition,
+      scheduler: workflowDefinitionScheduler,
+      concurrency: workflowDefinitionConcurrency,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",

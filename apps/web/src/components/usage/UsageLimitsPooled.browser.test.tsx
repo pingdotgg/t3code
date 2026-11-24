@@ -159,10 +159,22 @@ it("keeps the account label and reset summary on a one-account row of a multi-ac
 
   await screen.rerender(
     <AppAtomRegistryProvider>
-      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-28T04:00:00Z")} />
+      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-28T03:55:00Z")} />
     </AppAtomRegistryProvider>,
   );
   await expect
-    .element(screen.getByText("Next account reset in 1h 0m", { exact: true }))
+    .element(screen.getByText("Next account reset in 1h 5m", { exact: true }))
+    .toBeVisible();
+
+  await screen.rerender(
+    <AppAtomRegistryProvider>
+      <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-28T05:00:00Z")} />
+    </AppAtomRegistryProvider>,
+  );
+  await expect
+    .element(screen.getByText("Next account reset now", { exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(screen.getByText("Next account reset in 29d 13h", { exact: true }))
     .toBeVisible();
 });

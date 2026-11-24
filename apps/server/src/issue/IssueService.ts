@@ -380,6 +380,7 @@ const make = Effect.gen(function* () {
     const nextCursors: Record<string, string> = {};
 
     const involvement = input.involvement ?? "all";
+    const sort = input.sort ?? "updated";
     // Only a narrowed listing compares against the signed-in account; `all` never reads it.
     const viewerRequests = new Map<string, Effect.Effect<string, IssueTrackerError>>();
     for (const project of involvement === "all" ? [] : scopes.values()) {
@@ -454,7 +455,7 @@ const make = Effect.gen(function* () {
                 query: input.query,
                 labels: input.labels,
                 assignee: input.assignee,
-                sort: input.sort ?? "updated",
+                sort,
                 cursor,
                 refresh: input.refresh,
               }),
@@ -509,7 +510,17 @@ const make = Effect.gen(function* () {
         detail: "Issues cannot be browsed for this host yet.",
       });
     }
-    entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const sortField = sort === "created" ? "createdAt" : "updatedAt";
+    const parseSortTime = (iso: string) => {
+      const time = Date.parse(iso);
+      return Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
+    };
+    entries.sort((a, b) => {
+      const aTime = parseSortTime(a[sortField]);
+      const bTime = parseSortTime(b[sortField]);
+      if (aTime !== bTime) return bTime > aTime ? 1 : -1;
+      return b[sortField].localeCompare(a[sortField]);
+    });
     return {
       viewers: Object.fromEntries(viewers),
       trackers: [...trackers.values()],
@@ -824,7 +835,10 @@ const make = Effect.gen(function* () {
       if (standalone === null) {
         const found = serve(onTracker);
         if (found === null) {
-          return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+          return yield* new IssueOperationError({
+            operation: "resolveUrl",
+            detail: `No project in T3 Code is on ${link.host}. Add any ${link.host} project to read its issues.`,
+          });
         }
         return found.resolved;
       }
