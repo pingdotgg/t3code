@@ -526,6 +526,24 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("keeps the user's notify command off", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Quiet title" }),
+        requireArg: "--config notify=[]",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Quiet title");
+        }),
+    ),
+  );
+
   it.effect("identifies codex exec as T3 Code", () =>
     withFakeCodexEnv(
       { output: JSON.stringify({ title: "Live title" }), requireOriginator: "T3 Code" },
