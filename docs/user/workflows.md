@@ -70,6 +70,8 @@ Every start needs a `--key`: starting twice with the same key returns the same r
 
 Open the Workflows page with **Open workflows** in the command palette of the web or desktop app; the entry shows once a connected server has workflows on. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads). The issues and pull requests a run touched show as chips under its title and on the steps that touched them; a chip opens the item beside the run, in a tab next to any agent transcripts you opened.
 
+Top-level skipped runs, such as webhook deliveries a workflow chose to ignore, do not keep the payload they started with. Each workflow keeps its latest 500 of them and deletes older ones about an hour after they end; change the number in **Settings → Labs → Skipped runs kept** (0 keeps none), or set `"workflowSkippedRunsKept"` in `userdata/settings.json`. Runs that did anything else are never deleted. Once a skipped run is deleted, a start with its key or a webhook retry with its delivery header starts a new run.
+
 ### Agent threads
 
 Each `agent` step runs in an ordinary thread, left out of thread lists (including `t3 thread list`). Open it from the run to watch it live, read its transcript, or send follow-up messages; the thread links back to the run.
