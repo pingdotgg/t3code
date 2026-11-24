@@ -16,6 +16,10 @@ it("applies functions and constants", () => {
   assert.closeTo(at("sin(pi/2)", 0), 1, 1e-12);
   assert.closeTo(at("f(x) = ln(e^x)", 3), 3, 1e-12);
   assert.equal(at("sqrt(abs(x))", -9), 3);
+  assert.equal(at("2sqrt(x)^2", 9), 18);
+  assert.equal(at("sqrt(x)(x+1)", 9), 30);
+  assert.closeTo(at("sin(x)^2 + cos(x)^2", 2), 1, 1e-12);
+  assert.closeTo(at("sin x^2", 2), Math.sin(4), 1e-12);
 });
 
 it("rejects what it cannot read", () => {

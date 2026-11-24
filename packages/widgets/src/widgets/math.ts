@@ -2,6 +2,7 @@ import "katex/dist/katex.min.css";
 import katex from "katex";
 
 import { parseExpression } from "../expression.ts";
+import { gridLines } from "../gridLines.ts";
 import { card, cssVar, failure, h, onThemeChange, start, t } from "../runtime.ts";
 
 interface MathData {
@@ -17,13 +18,6 @@ interface MathData {
 const COLORS = ["", "#d97706", "#0d9488", "#9333ea", "#e11d48", "#65a30d", "#0284c7", "#78716c"];
 const SAMPLES = 600;
 const HEIGHT = 320;
-
-const niceStep = (span: number) => {
-  const raw = span / 8;
-  const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const scaled = raw / magnitude;
-  return (scaled < 1.5 ? 1 : scaled < 3.5 ? 2 : scaled < 7.5 ? 5 : 10) * magnitude;
-};
 
 const svg = (tag: string, attributes: Readonly<Record<string, string | number>>) => {
   const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -49,7 +43,7 @@ const plot = (data: MathData, width: number) => {
   // Poles would flatten everything else, so the range ignores the outermost values.
   const low = values[Math.floor(values.length * 0.02)] ?? -1;
   const high = values[Math.ceil(values.length * 0.98) - 1] ?? 1;
-  const pad = Math.max((high - low) * 0.1, 0.5);
+  const pad = Math.max((high - low) * 0.1, Math.abs(high) * 1e-6, 0.5);
   const yMin = data.yMin ?? low - pad;
   const yMax = data.yMax ?? high + pad;
 
@@ -58,18 +52,12 @@ const plot = (data: MathData, width: number) => {
   const root = svg("svg", { width: "100%", height: HEIGHT, viewBox: `0 0 ${width} ${HEIGHT}` });
   const line = cssVar("--line") || "#e6e3dc";
   const soft = cssVar("--soft") || "#66635c";
-  const grid = (from: number, to: number, draw: (value: number) => void) => {
-    const step = niceStep(to - from);
-    for (let value = Math.ceil(from / step) * step; value <= to; value += step) {
-      draw(Number(value.toPrecision(12)));
-    }
-  };
   const label = (text: string, x: number, y: number) => {
     const element = svg("text", { x, y, fill: soft, "font-size": 11 });
     element.textContent = text;
     root.append(element);
   };
-  grid(xMin, xMax, (x) => {
+  gridLines(xMin, xMax).forEach((x) => {
     root.append(
       svg("line", {
         x1: toX(x),
@@ -81,7 +69,7 @@ const plot = (data: MathData, width: number) => {
     );
     if (x !== 0) label(String(x), toX(x) + 3, HEIGHT - 4);
   });
-  grid(yMin, yMax, (y) => {
+  gridLines(yMin, yMax).forEach((y) => {
     root.append(
       svg("line", { x1: 0, x2: width, y1: toY(y), y2: toY(y), stroke: y === 0 ? soft : line }),
     );

@@ -115,7 +115,8 @@ export function parseExpression(source: string): Evaluate {
     if (Object.hasOwn(CONSTANTS, token)) return () => CONSTANTS[token]!;
     if (Object.hasOwn(FUNCTIONS, token)) {
       const apply = FUNCTIONS[token]!;
-      const argument = power();
+      // `sin(x)^2` squares the sine; `sin x^2` squares x.
+      const argument = peek() === "(" ? atom() : power();
       return (x) => apply(argument(x));
     }
     throw new Error(`Unknown name "${token}".`);
