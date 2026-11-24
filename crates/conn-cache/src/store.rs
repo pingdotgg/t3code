@@ -1,5 +1,7 @@
-//! Recent messages fetched by the desktop client, scoped to their owning environment.
+//! Recent messages scoped to the environment and thread that owns them.
 use std::path::Path;
+
+use crate::{MESSAGE_CAP, Message};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{Executor as _, SqlitePool};
@@ -57,6 +59,75 @@ impl MessageCache {
         .await?;
         rows.reverse();
         Ok(rows)
+    }
+
+    /// The preceding 100 cached bodies, oldest first. The anchor is excluded.
+    ///
+    /// # Errors
+    /// Returns the database read error.
+    pub async fn before(
+        &self,
+        env: &str,
+        thread: &str,
+        before_id: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        let mut rows = sqlx::query_scalar(
+            "SELECT body FROM messages WHERE environment=?1 AND thread=?2 AND position <
+                (SELECT position FROM messages WHERE environment=?1 AND thread=?2 AND id=?3)
+             ORDER BY position DESC LIMIT 100",
+        )
+        .bind(env)
+        .bind(thread)
+        .bind(before_id)
+        .fetch_all(&self.0)
+        .await?;
+        rows.reverse();
+        Ok(rows)
+    }
+
+    /// Reconciles the historical prefix preceding a live snapshot. Returned server pages
+    /// own the prefix. Live rows at and after the anchor win any overlap. A removed anchor
+    /// means a concurrent eviction or settlement already invalidated this read.
+    ///
+    /// # Errors
+    /// Returns the database error. Prefix replacement and the cap commit together.
+    pub async fn merge_prefix(
+        &self,
+        env: &str,
+        thread: &str,
+        anchor: &str,
+        prefix: &[Message],
+    ) -> Result<bool, sqlx::Error> {
+        let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
+        let position: Option<i64> = sqlx::query_scalar(
+            "SELECT position FROM messages WHERE environment=? AND thread=? AND id=?",
+        )
+        .bind(env)
+        .bind(thread)
+        .bind(anchor)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(position) = position else {
+            return Ok(false);
+        };
+        sqlx::query("DELETE FROM messages WHERE environment=? AND thread=? AND position < ?")
+            .bind(env)
+            .bind(thread)
+            .bind(position)
+            .execute(&mut *tx)
+            .await?;
+        let prefix = &prefix[prefix.len().saturating_sub(MESSAGE_CAP)..];
+        let rows: Vec<_> = prefix.iter().map(|m| (m.id(), m)).collect();
+        sqlx::query(
+            "WITH floor AS MATERIALIZED (SELECT min(0,coalesce(min(position),0)) AS n FROM messages)
+             INSERT INTO messages(position,environment,thread,id,body)
+             SELECT n - json_array_length(?3) + key, ?1, ?2, value ->> 0, value -> 1 FROM floor, json_each(?3)
+             WHERE true ON CONFLICT(environment,thread,id) DO NOTHING",
+        ).bind(env).bind(thread).bind(sqlx::types::Json(&rows))
+            .execute(&mut *tx).await?;
+        Self::trim(&mut tx, env, thread).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// A bounded chronological window containing the requested prompt, or no rows on a miss.
@@ -135,6 +206,15 @@ impl MessageCache {
         .bind(sqlx::types::Json(messages))
         .execute(&mut *tx)
         .await?;
+        Self::trim(&mut tx, env, thread).await?;
+        tx.commit().await
+    }
+
+    async fn trim(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        env: &str,
+        thread: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "DELETE FROM messages WHERE position IN (
                 SELECT position FROM messages WHERE environment = ? AND thread = ?
@@ -142,9 +222,9 @@ impl MessageCache {
         )
         .bind(env)
         .bind(thread)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        tx.commit().await
+        Ok(())
     }
 
     /// Imports this thread's former JSON preview once. A concurrent importer or live writer

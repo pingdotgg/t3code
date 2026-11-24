@@ -6,13 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use conn_cache::{Message, MessageCache};
 use conn_client::Connection;
-use conn_contract::ChatAttachment;
-use conn_desktop::message_cache::MessageCache;
 use conn_state::environments::LinkedShellSnapshot;
-use conn_state::{ItemStatus, ShellState, ThreadShell, ThreadState, TimelineEntry};
+use conn_state::{ShellState, ThreadShell, ThreadState, TimelineEntry};
 use gpui_kit::Context;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::ConnApp;
@@ -29,97 +27,6 @@ fn expired(thread: &ThreadShell) -> bool {
             .is_some_and(|at| {
                 i128::from(super::now_ms()) - i128::from(at) >= i128::from(RETENTION_MS)
             })
-}
-
-#[derive(Serialize, Deserialize)]
-enum Message {
-    User {
-        id: String,
-        text: String,
-        created_by_agent: bool,
-        created_at: Option<String>,
-        attachments: Vec<ChatAttachment>,
-        is_steer: bool,
-        run_id: Option<String>,
-    },
-    Assistant {
-        id: String,
-        markdown: String,
-        created_at: Option<String>,
-        run_id: Option<String>,
-    },
-}
-
-impl Message {
-    fn capture(entry: &TimelineEntry) -> Option<Self> {
-        match entry {
-            TimelineEntry::User {
-                id,
-                text,
-                created_by_agent,
-                created_at,
-                attachments,
-                is_steer,
-                run_id,
-            } => Some(Self::User {
-                id: id.clone(),
-                text: text.clone(),
-                created_by_agent: *created_by_agent,
-                created_at: created_at.clone(),
-                attachments: attachments.clone(),
-                is_steer: *is_steer,
-                run_id: run_id.clone(),
-            }),
-            TimelineEntry::Assistant {
-                id,
-                markdown,
-                created_at,
-                run_id,
-                ..
-            } => Some(Self::Assistant {
-                id: id.clone(),
-                markdown: markdown.clone(),
-                created_at: created_at.clone(),
-                run_id: run_id.clone(),
-            }),
-            _ => None,
-        }
-    }
-
-    fn entry(self) -> TimelineEntry {
-        match self {
-            Self::User {
-                id,
-                text,
-                created_by_agent,
-                created_at,
-                attachments,
-                is_steer,
-                run_id,
-            } => TimelineEntry::User {
-                id,
-                text,
-                created_by_agent,
-                created_at,
-                attachments,
-                is_steer,
-                run_id,
-            },
-            Self::Assistant {
-                id,
-                markdown,
-                created_at,
-                run_id,
-            } => TimelineEntry::Assistant {
-                id,
-                markdown,
-                created_at,
-                run_id,
-                streaming: false,
-                status: ItemStatus::Completed,
-            },
-        }
-    }
 }
 
 #[derive(Default)]
@@ -225,10 +132,7 @@ fn write_shell(path: &Path, shell: &LinkedShellSnapshot) -> io::Result<()> {
 fn merge_chat(db: &MessageCache, env: &str, id: &str, messages: &[Message]) -> io::Result<()> {
     let rows = messages
         .iter()
-        .map(|message| {
-            let (Message::User { id, .. } | Message::Assistant { id, .. }) = message;
-            (id.as_str(), message)
-        })
+        .map(|message| (message.id(), message))
         .collect::<Vec<_>>();
     crate::live::RT
         .block_on(db.merge(env, id, &rows))
@@ -719,6 +623,7 @@ impl ConnApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conn_state::ItemStatus;
 
     #[test]
     fn cache_retains_latest_thousand_messages_and_opens_latest_hundred_in_order() {

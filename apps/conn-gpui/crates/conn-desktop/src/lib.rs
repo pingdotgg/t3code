@@ -11,7 +11,6 @@ pub mod control;
 pub mod database;
 pub mod laravel_toolbar;
 pub mod mcp;
-pub mod message_cache;
 pub mod operator;
 pub mod orbit;
 pub mod server_store;

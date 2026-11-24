@@ -70,6 +70,20 @@ impl Connection {
         self.get_history_json(url).await
     }
 
+    /// Reads a history page for the native message cache, omitting tool work.
+    ///
+    /// # Errors
+    /// Returns the URL, transport, authentication or decoding error.
+    pub async fn fetch_thread_conversation_page(
+        &self,
+        thread_id: &str,
+        cursor: &str,
+    ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
+        let mut url = build_thread_history_url(&self.http_base_url, thread_id, cursor)?;
+        url.query_pairs_mut().append_pair("view", "conversation");
+        self.get_history_json(url).await
+    }
+
     /// Fetches the ordered prompt index without downloading transcript bodies.
     ///
     /// # Errors

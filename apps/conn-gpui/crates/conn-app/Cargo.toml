@@ -13,6 +13,7 @@ name = "conn-app"
 path = "src/main.rs"
 
 [dependencies]
+conn-cache = { path = "../../../../crates/conn-cache" }
 conn-client.workspace = true
 conn-desktop.workspace = true
 conn-contract.workspace = true

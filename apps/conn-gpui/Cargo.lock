@@ -1231,6 +1231,7 @@ name = "conn-app"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "conn-cache",
  "conn-client",
  "conn-contract",
  "conn-desktop",
@@ -1263,6 +1264,18 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+]
+
+[[package]]
+name = "conn-cache"
+version = "0.1.0"
+dependencies = [
+ "conn-client",
+ "conn-contract",
+ "conn-state",
+ "serde",
+ "serde_json",
+ "sqlx",
 ]
 
 [[package]]
