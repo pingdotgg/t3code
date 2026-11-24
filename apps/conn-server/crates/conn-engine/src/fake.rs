@@ -5,6 +5,9 @@
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `question`: the turn asks the user a question (`user_input`) and waits for the answer.
 //! - `fail`: the turn fails.
+//! - `hook-stop`: the turn completes with a stop reason, as Codex reports a turn a hook
+//!   stopped. `hook-interrupt`: the turn ends interrupted with that reason. `hook-hang`: the
+//!   turn waits for an interrupt, which ends it with that reason.
 //! - `push`: a finished `git push` command row, then the turn completes.
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
@@ -16,6 +19,11 @@
 //!   the same roster, and the turn waits for an interrupt.
 //! - `background-reported`: like `background-hold`, but the work shows only as
 //!   `background_work.updated` (pending), and a running background command row.
+//! - `goal`: the provider thread gets an active goal, as Codex's `thread/goal/updated`
+//!   does, then the turn completes. `/goal <objective>`: the same goal, and the turn waits
+//!   for an interrupt, as a running goal turn. `/goal pause` and `/goal clear` pause or
+//!   clear it and complete, with a row only when the turn's provider thread showed another.
+//! - `goal-continued`: a run of two provider turns, as a goal run Codex continued.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
 //!
 //! A steer into a running turn reports `steer.updated` pending then completed, answers
@@ -41,8 +49,14 @@ use tokio::sync::mpsc;
 
 use conn_support::time::now_iso;
 
+/// The reason the `hook-stop` script's terminal carries.
+pub const HOOK_STOP_REASON: &str =
+    "preCompact hook (project): Save a current task checkpoint before compaction.";
+
 pub struct FakeProvider {
     id: ProviderInstanceId,
+    /// [`Provider::driver`]: `claudeAgent` unless [`Self::with_driver`] changes it.
+    driver: &'static str,
     /// Sessions opened so far.
     pub sessions: Arc<AtomicUsize>,
     /// The MCP servers the newest session was given (at open or later).
@@ -104,6 +118,7 @@ impl FakeProvider {
     pub fn new(instance_id: &str) -> Self {
         Self {
             id: instance_id.into(),
+            driver: "claudeAgent",
             sessions: Arc::new(AtomicUsize::new(0)),
             mcp_servers: Arc::new(Mutex::new(vec![])),
             closed: Arc::new(AtomicUsize::new(0)),
@@ -182,6 +197,12 @@ impl FakeProvider {
     }
 
     /// A provider whose sessions decline every steer, as one without live steering does.
+    /// A provider of another driver, such as `codex`.
+    pub fn with_driver(mut self, driver: &'static str) -> Self {
+        self.driver = driver;
+        self
+    }
+
     pub fn without_steering(mut self) -> Self {
         self.steering = false;
         self
@@ -202,6 +223,8 @@ struct Turn {
     root: String,
     provider_thread_id: String,
     ordinal: u32,
+    /// The provider turn's ordinal on its provider thread.
+    turn_ordinal: u32,
 }
 
 struct FakeSession {
@@ -224,6 +247,8 @@ struct FakeSession {
     roster: Arc<Mutex<Vec<(String, bool)>>>,
     /// The running turn ignores Stop.
     stuck: Arc<AtomicBool>,
+    /// The running turn is `hook-hang`: its interrupt carries [`HOOK_STOP_REASON`].
+    hook_hang: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
@@ -263,7 +288,7 @@ impl Provider for FakeProvider {
         &self.id
     }
     fn driver(&self) -> &str {
-        "claudeAgent"
+        self.driver
     }
     fn plan_selection_transition(
         &self,
@@ -336,6 +361,7 @@ impl Provider for FakeProvider {
                     background_wait: self.background_wait,
                     roster: Arc::default(),
                     stuck: Arc::new(AtomicBool::new(false)),
+                    hook_hang: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
@@ -383,15 +409,32 @@ fn assistant(turn: &Turn, id: &str, text: &str, streaming: bool) -> [ProviderEve
 }
 
 fn provider_turn(turn: &Turn, status: &str) -> ProviderEvent {
+    provider_turn_row(
+        turn,
+        status,
+        &format!("turn:{}", turn.run_id),
+        turn.turn_ordinal,
+    )
+}
+
+fn provider_turn_row(turn: &Turn, status: &str, id: &str, ordinal: u32) -> ProviderEvent {
     let now = now_iso();
     event(
         json!({"type": "provider_turn.updated", "threadId": turn.thread_id, "providerTurn": {
-            "id": format!("turn:{}", turn.run_id), "providerThreadId": turn.provider_thread_id,
+            "id": id, "providerThreadId": turn.provider_thread_id,
             "nodeId": turn.root, "runAttemptId": format!("{}:attempt:1", turn.run_id),
-            "nativeTurnRef": null, "ordinal": turn.ordinal, "status": status,
+            "nativeTurnRef": null, "ordinal": ordinal, "status": status,
             "startedAt": now, "completedAt": if status == "running" { Value::Null } else { json!(now) },
         }}),
     )
+}
+
+/// A terminal that carries [`HOOK_STOP_REASON`], as Codex reports a turn a hook stopped.
+fn hook_stopped(mut event: ProviderEvent) -> ProviderEvent {
+    if let ProviderEvent::TurnTerminal(ended) = &mut event {
+        ended.reason = Some(HOOK_STOP_REASON.into());
+    }
+    event
 }
 
 fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> ProviderEvent {
@@ -403,6 +446,7 @@ fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> Provider
         failure: failure.map(|f| from_json(f).expect("failure")),
         retry: None,
         thread_disposition: ThreadDisposition::Reusable,
+        reason: None,
     })
 }
 
@@ -445,6 +489,7 @@ impl FakeSession {
                 root: input.root_node_id.0.clone(),
                 provider_thread_id,
                 ordinal: input.run_ordinal,
+                turn_ordinal: input.provider_turn_ordinal,
             };
             self.background.store(false, Ordering::SeqCst);
             let mut events = vec![provider_turn(&turn, "running")];
@@ -543,6 +588,7 @@ impl Session for FakeSession {
                 root: input.root_node_id.0.clone(),
                 provider_thread_id,
                 ordinal: input.run_ordinal,
+                turn_ordinal: input.provider_turn_ordinal,
             };
             crate::lock(&self.calls).push(format!("start {}", turn.run_id));
             crate::lock(&self.turn_heads).push(
@@ -622,6 +668,7 @@ impl Session for FakeSession {
             let tx = self.events.clone();
             let mut started = vec![provider_turn(&turn, "running")];
             self.stuck.store(text == "stuck", Ordering::SeqCst);
+            self.hook_hang.store(text == "hook-hang", Ordering::SeqCst);
             match text.as_str() {
                 "mcp-app" => {
                     let item = from_json(json!({"id":"app:item","threadId":turn.thread_id,"runId":turn.run_id,"providerThreadId":turn.provider_thread_id,"providerTurnId":null,"nodeId":null,"parentItemId":null,"ordinal":1,"status":"completed","startedAt":null,"completedAt":null,"updatedAt":now_iso(),"nativeItemRef":null,"title":null,"type":"dynamic_tool","toolName":"stub.show","input":{},"output":{"content":[{"type":"text","text":"Weather"}]}})).map_err(|e|ProviderError::Protocol {detail:e.to_string()})?;
@@ -629,7 +676,7 @@ impl Session for FakeSession {
                     started.push(provider_turn(&turn,"completed"));
                     started.push(terminal(&turn,TurnStatus::Completed,None));
                 }
-                "hang" | "stuck" => {}
+                "hang" | "stuck" | "hook-hang" => {}
                 t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
@@ -732,6 +779,49 @@ impl Session for FakeSession {
                         started.push(terminal(&turn, TurnStatus::Completed, None));
                     }
                 }
+                // As Codex's `emitGoalUpdate`: a row only when the goal differs from the one on
+                // the turn's provider thread.
+                "/goal pause" | "/goal clear" => {
+                    let mut provider_thread = conn_contract::to_json(&input.provider_thread);
+                    let goal = if text == "/goal pause" {
+                        json!({"objective": "Ship the feature", "status": "paused",
+                            "tokensUsed": 12, "tokenBudget": null, "timeUsedSeconds": 3})
+                    } else {
+                        Value::Null
+                    };
+                    if provider_thread["goal"] != goal {
+                        provider_thread["goal"] = goal;
+                        provider_thread["updatedAt"] = json!(now_iso());
+                        started.push(event(json!({"type": "provider_thread.updated",
+                            "providerThread": provider_thread})));
+                    }
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                t if t == "goal" || t.starts_with("/goal ") => {
+                    let mut provider_thread = conn_contract::to_json(&input.provider_thread);
+                    provider_thread["goal"] = json!({"objective": "Ship the feature",
+                        "status": "active", "tokensUsed": 12, "tokenBudget": null,
+                        "timeUsedSeconds": 3});
+                    provider_thread["updatedAt"] = json!(now_iso());
+                    started.push(event(json!({"type": "provider_thread.updated",
+                        "providerThread": provider_thread})));
+                    if t == "goal" {
+                        started.push(provider_turn(&turn, "completed"));
+                        started.push(terminal(&turn, TurnStatus::Completed, None));
+                    }
+                }
+                // A goal run Codex continued: a second provider turn in the same run.
+                "goal-continued" => {
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(provider_turn_row(
+                        &turn,
+                        "completed",
+                        &format!("turn:{}:2", turn.run_id),
+                        turn.turn_ordinal + 1,
+                    ));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
                 "background-hold" => {
                     self.background.store(true, Ordering::SeqCst);
                     started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "holding", false));
@@ -804,6 +894,14 @@ impl Session for FakeSession {
                     });
                     *crate::lock(&self.turn) = Some(turn);
                     return Ok(());
+                }
+                "hook-stop" => {
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(hook_stopped(terminal(&turn, TurnStatus::Completed, None)));
+                }
+                "hook-interrupt" => {
+                    started.push(provider_turn(&turn, "interrupted"));
+                    started.push(hook_stopped(terminal(&turn, TurnStatus::Interrupted, None)));
                 }
                 "fail" => started.push(terminal(
                     &turn,
@@ -879,12 +977,15 @@ impl Session for FakeSession {
             let (run, event) = {
                 let turn = crate::lock(&self.turn);
                 let turn = turn.as_ref().ok_or(ProviderError::SessionStopped)?;
+                let ended = terminal(turn, TurnStatus::Interrupted, None);
+                let ended = if self.hook_hang.load(Ordering::SeqCst) {
+                    hook_stopped(ended)
+                } else {
+                    ended
+                };
                 (
                     turn.run_id.clone(),
-                    vec![
-                        provider_turn(turn, "interrupted"),
-                        terminal(turn, TurnStatus::Interrupted, None),
-                    ],
+                    vec![provider_turn(turn, "interrupted"), ended],
                 )
             };
             crate::lock(&self.calls).push(format!("interrupt {run}"));

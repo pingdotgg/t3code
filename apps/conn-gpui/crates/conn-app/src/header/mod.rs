@@ -26,7 +26,7 @@ pub(crate) mod details_card;
 
 use gpui_kit::TestSupportExt as _;
 
-use conn_state::{LayoutState, RightPanelTab, ShellState};
+use conn_state::{LayoutState, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
@@ -61,6 +61,8 @@ pub(crate) struct ChatHeaderProps<'a> {
     pub(crate) draft_project_id: Option<&'a str>,
     /// Whether the Thread Details card is open (`SquareMenu` pressed).
     pub(crate) details_open: bool,
+    /// Whether the terminal drawer under the chat is open (`PanelBottom` pressed).
+    pub(crate) terminal_open: bool,
     /// The header title is being renamed inline with this input.
     pub(crate) header_rename: Option<&'a Entity<InputState>>,
     pub(crate) tokens: &'a Tokens,
@@ -333,14 +335,16 @@ pub(crate) fn render_chat_header(
                 header_ghost_toggle(
                     "header-toggle-terminal",
                     icons::PANEL_BOTTOM,
-                    false,
+                    props.terminal_open,
                     tokens,
-                    cx.listener(|app, _event, _window, cx| {
-                        app.activate_or_toggle_right_panel_tab(RightPanelTab::Terminal, cx);
+                    cx.listener(|app, _event, window, cx| {
+                        app.toggle_terminal_drawer(window, cx);
                     }),
                 )
                 .a11y_button("header.toggle-terminal", "Toggle terminal")
-                .conn_tooltip("Terminal", tokens),
+                .aria_selected(props.terminal_open)
+                .aria_keyshortcuts("Meta+J")
+                .conn_tooltip("Toggle terminal (⌘J)", tokens),
             )
             .child(
                 header_ghost_toggle(

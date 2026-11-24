@@ -20,15 +20,21 @@ pub fn iso_from_ms(ms: u64) -> String {
     iso_from_millis(i64::try_from(ms).unwrap_or(i64::MAX))
 }
 
-/// `millis` since the epoch in the wire form; a negative value is a time before 1970.
+/// `millis` since the epoch in the wire form; a negative value is a time before 1970. A year
+/// outside 0000 to 9999 gets a sign and six digits (`+010000`, `-000001`), as `toISOString`.
 pub fn iso_from_millis(millis: i64) -> String {
     let secs = millis.div_euclid(1000);
     let ms = millis.rem_euclid(1000);
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
+    let year = if (0..=9999).contains(&y) {
+        format!("{y:04}")
+    } else {
+        format!("{}{:06}", if y < 0 { '-' } else { '+' }, y.unsigned_abs())
+    };
     format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{ms:03}Z",
+        "{year}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{ms:03}Z",
         rem / 3600,
         rem % 3600 / 60,
         rem % 60
@@ -36,9 +42,23 @@ pub fn iso_from_millis(millis: i64) -> String {
 }
 
 /// Milliseconds since the epoch of an RFC 3339 time: `2026-11-13T08:49:41.123Z`, any number of
-/// fraction digits or none, `Z` or a `±HH:MM` offset. `None` when it does not parse or names a
-/// time that does not exist.
+/// fraction digits or none, `Z` or a `±HH:MM` offset. The year may also be `toISOString`'s
+/// signed six digits (`+010000`). `None` when it does not parse or names a time that does not
+/// exist.
 pub fn millis_from_iso(text: &str) -> Option<i64> {
+    // A signed six-digit year: read the rest with a four-digit stand-in year of the same
+    // leap rule, then move it by the whole 400-year cycles between the two.
+    if let Some(sign @ (b'+' | b'-')) = text.as_bytes().first().copied() {
+        let year: i64 = text.get(1..7)?.parse().ok()?;
+        if !text.get(1..7)?.bytes().all(|b| b.is_ascii_digit()) || (sign == b'-' && year == 0) {
+            return None;
+        }
+        let year = if sign == b'-' { -year } else { year };
+        let stand_in = 2000 + year.rem_euclid(400);
+        let cycles = (year - stand_in) / 400;
+        let base = millis_from_iso(&format!("{stand_in}{}", text.get(7..)?))?;
+        return base.checked_add(cycles.checked_mul(146_097 * 86_400_000)?);
+    }
     let bytes = text.as_bytes();
     let digits = |from: usize, len: usize| -> Option<i64> {
         let part = bytes.get(from..from + len)?;
@@ -196,6 +216,20 @@ mod tests {
             assert_eq!(millis_from_iso(text), Some(signed), "round trip {text}");
         }
         assert_eq!(iso_from_millis(-1), "1969-12-31T23:59:59.999Z");
+        // Outside 0000 to 9999 `toISOString` signs the year and gives it six digits.
+        for (ms, text) in [
+            (253_402_300_799_999, "9999-12-31T23:59:59.999Z"),
+            (253_402_302_600_000, "+010000-01-01T00:30:00.000Z"),
+            (-62_167_219_200_000, "0000-01-01T00:00:00.000Z"),
+            (-62_167_219_200_001, "-000001-12-31T23:59:59.999Z"),
+            (8_640_000_000_000_000, "+275760-09-13T00:00:00.000Z"),
+            (-8_640_000_000_000_000, "-271821-04-20T00:00:00.000Z"),
+        ] {
+            assert_eq!(iso_from_millis(ms), text);
+            assert_eq!(millis_from_iso(text), Some(ms), "round trip {text}");
+        }
+        assert_eq!(millis_from_iso("-000000-01-01T00:00:00.000Z"), None);
+        assert_eq!(millis_from_iso("+01000-01-01T00:00:00.000Z"), None);
         assert_eq!(
             millis_from_iso("2026-11-13T08:49:41Z"),
             Some(1_794_559_781_000)

@@ -14,6 +14,7 @@
 
 mod feed;
 mod history;
+mod processes;
 mod pty;
 mod sanitize;
 mod store;
@@ -141,6 +142,9 @@ struct State {
     closed_order: VecDeque<Key>,
     /// The attached viewer that answers terminal queries (DA, DSR, DECRQM), until it detaches.
     query_owner: HashMap<Key, ViewerId>,
+    /// Each attached viewer's grid: its first sized attach, then its resizes. It goes when the
+    /// viewer's last attach stream closes, as T3's `retainViewer` and `releaseViewer`.
+    grids: HashMap<Key, HashMap<ViewerId, (u16, u16)>>,
     poller: bool,
     next_id: u64,
 }
@@ -149,9 +153,8 @@ struct Watcher {
     id: u64,
     feed: Arc<Feed<TerminalAttachStreamEvent>>,
     max_history: Option<usize>,
-    /// Set for attach streams: the client connection and the grid it last asked for.
+    /// Set for attach streams: the client connection.
     viewer: Option<ViewerId>,
-    grid: Option<(u16, u16)>,
 }
 
 struct Session {
@@ -169,10 +172,16 @@ struct Session {
     exit_signal: Option<i64>,
     /// The foreground process group and its command name, while one runs.
     job: Option<(i32, String)>,
+    /// The running shell's executable (`getShell`).
+    shell: Option<String>,
     history: History,
     filter: HistoryFilter,
     utf8: Utf8Stream,
     sequence: i64,
+    /// Writes to the shell (`inputCount`): with `sequence`, the terminal's activity mark.
+    input_count: u64,
+    /// Poller updates that cleared an ended job. They advance `sequence` but are not activity.
+    jobs_ended: i64,
     updated_at: String,
     touched: u64,
     cols: u16,
@@ -242,7 +251,7 @@ impl TerminalManager {
     ) -> Result<Subscription, TerminalOpenError> {
         let mut state = self.inner.lock();
         let key = self.open_in(&mut state, input)?;
-        Ok(self.subscribe(&mut state, key, None, None, None))
+        Ok(self.subscribe(&mut state, key, None, None))
     }
 
     fn open_in(
@@ -273,7 +282,7 @@ impl TerminalManager {
         viewer: ViewerId,
     ) -> Result<Subscription, TerminalOpenError> {
         let key = (input.thread_id.clone(), input.terminal_id.clone());
-        let grid = input
+        let requested = input
             .cols
             .zip(input.rows)
             .map(|(c, r)| (clamp_cols(c), clamp_rows(r)));
@@ -290,6 +299,9 @@ impl TerminalManager {
             stop_on_settle: input.stop_on_settle,
         });
         let mut state = self.inner.lock();
+        // After a viewer's first size, its resizes own it: a client's attach retry resends the
+        // first size, so a viewer still attached keeps the grid it last reported.
+        let grid = state.viewer_grid(&key, viewer).or(requested);
         // The new viewer's grid counts before anything starts or resizes.
         let shared = min_grid(state.shared_grid(&key), grid);
         match (state.sessions.get(&key), launch) {
@@ -311,7 +323,11 @@ impl TerminalManager {
                 }
             }
         }
-        Ok(self.subscribe(&mut state, key, max_history, Some(viewer), grid))
+        if let Some(grid) = requested {
+            let grids = state.grids.entry(key.clone()).or_default();
+            grids.entry(viewer).or_insert(grid);
+        }
+        Ok(self.subscribe(&mut state, key, max_history, Some(viewer)))
     }
 
     /// `terminal.observe`: the stream of an existing terminal, for read-only viewers. Never
@@ -322,7 +338,7 @@ impl TerminalManager {
         if !state.sessions.contains_key(&key) {
             return Err(lookup_error(&key));
         }
-        Ok(self.subscribe(&mut state, key, None, None, None))
+        Ok(self.subscribe(&mut state, key, None, None))
     }
 
     fn subscribe(
@@ -331,7 +347,6 @@ impl TerminalManager {
         key: Key,
         max_history: Option<usize>,
         viewer: Option<ViewerId>,
-        grid: Option<(u16, u16)>,
     ) -> Subscription {
         let id = state.id();
         let feed = Feed::new(self.inner.config.max_queued_bytes);
@@ -347,7 +362,6 @@ impl TerminalManager {
                 feed: feed.clone(),
                 max_history,
                 viewer,
-                grid,
             });
         Subscription {
             inner: self.inner.clone(),
@@ -390,6 +404,9 @@ impl TerminalManager {
             if input.reply == Some(true) && !state.accepts_query_reply(&key, viewer) {
                 return Ok(());
             }
+            if let Some(session) = state.sessions.get_mut(&key) {
+                session.input_count += 1;
+            }
             found
         };
         let bytes = pty_input(&input.data, input.binary == Some(true));
@@ -416,15 +433,13 @@ impl TerminalManager {
         let key = (input.thread_id, input.terminal_id);
         let grid = (clamp_cols(input.cols), clamp_rows(input.rows));
         let mut state = self.inner.lock();
-        let watchers = state.watchers.entry(key.clone()).or_default();
-        let mut mine = false;
-        for watcher in watchers.iter_mut() {
-            if viewer.is_some() && watcher.viewer == viewer {
-                watcher.grid = Some(grid);
-                mine = true;
-            }
-        }
-        let target = if mine {
+        let mine = viewer.filter(|&v| state.is_attached(&key, v));
+        let target = if let Some(viewer) = mine {
+            state
+                .grids
+                .entry(key.clone())
+                .or_default()
+                .insert(viewer, grid);
             state.shared_grid(&key)
         } else if state.shared_grid(&key).is_some() {
             None
@@ -498,8 +513,87 @@ impl TerminalManager {
         }
     }
 
+    /// Holds the manager's lock until the guard drops, so a test can stall a close.
+    #[cfg(feature = "test-util")]
+    #[doc(hidden)]
+    pub fn hold_lock(&self) -> impl Drop + '_ {
+        self.inner.lock()
+    }
+
+    /// `getShell`: the executable of a running terminal's shell.
+    pub fn shell(&self, thread_id: &str, terminal_id: &str) -> Option<String> {
+        let state = self.inner.lock();
+        let session = state
+            .sessions
+            .get(&(thread_id.to_owned(), terminal_id.to_owned()))?;
+        session.proc.as_ref()?;
+        session.shell.clone()
+    }
+
+    /// `closeIdle` (`Manager.ts:3880`): closes the thread's running terminals (or just
+    /// `terminal_id`) whose shell runs nothing, keeping their scrollback. One process table
+    /// read decides: a terminal is kept when its shell has a child (a foreground or background
+    /// job), was replaced by `exec`, or had input or output while it was checked. When the
+    /// table cannot be read, every terminal stays.
+    pub async fn close_idle(&self, thread_id: &str, terminal_id: Option<&str>) {
+        self.close_idle_with(thread_id, terminal_id, processes::process_table())
+            .await;
+    }
+
+    async fn close_idle_with(
+        &self,
+        thread_id: &str,
+        terminal_id: Option<&str>,
+        table: impl std::future::Future<Output = std::io::Result<processes::ProcessTable>>,
+    ) {
+        let marks: Vec<(Key, (u64, i64, u64))> = {
+            let state = self.inner.lock();
+            state
+                .sessions
+                .iter()
+                .filter(|((thread, terminal), s)| {
+                    thread == thread_id
+                        && terminal_id.is_none_or(|t| t == terminal)
+                        && s.proc.is_some()
+                })
+                .map(|(key, s)| (key.clone(), s.activity_mark()))
+                .collect()
+        };
+        if marks.is_empty() {
+            return;
+        }
+        let table = match table.await {
+            Ok(table) => table,
+            Err(error) => {
+                eprintln!("conn-terminal: failed to close idle terminals of {thread_id}: {error}");
+                return;
+            }
+        };
+        let mut state = self.inner.lock();
+        for (key, mark) in marks {
+            let idle = state.sessions.get(&key).is_some_and(|s| {
+                s.activity_mark() == mark
+                    && s.proc.as_ref().is_some_and(|p| {
+                        // A job that started after the table was read holds the terminal now,
+                        // and output not yet read would be lost with it.
+                        pty::shell_in_foreground(&p.control, p.pid)
+                            && !pty::output_pending(&p.control)
+                            && !table.has_running_subprocess(
+                                p.pid,
+                                s.shell.as_deref(),
+                                pty::foreground_group(&p.control),
+                            )
+                    })
+            });
+            if idle {
+                self.inner.close_locked(&mut state, &key, false);
+            }
+        }
+    }
+
     /// Closes the thread's terminals that were opened with `stopOnSettle`, keeping their
-    /// scrollback. For the engine, when a thread settles.
+    /// scrollback. For the engine, when a thread settles; T3's `closeOnSettle` then calls
+    /// [`Self::close_idle`] for the thread.
     pub fn close_on_settle(&self, thread_id: &str) {
         let mut state = self.inner.lock();
         let keys: Vec<Key> = state
@@ -587,10 +681,14 @@ impl Inner {
         grid: Option<(u16, u16)>,
     ) -> Result<(), TerminalOpenError> {
         check_cwd(&launch.cwd)?;
-        let (cols, rows) = grid.unwrap_or((
-            launch.cols.unwrap_or(DEFAULT_COLS),
-            launch.rows.unwrap_or(DEFAULT_ROWS),
-        ));
+        // A reused terminal keeps its grid where the launch leaves a dimension out.
+        let (cols, rows) = grid.unwrap_or_else(|| {
+            let (cols, rows) = state
+                .sessions
+                .get(key)
+                .map_or((DEFAULT_COLS, DEFAULT_ROWS), |s| (s.cols, s.rows));
+            (launch.cols.unwrap_or(cols), launch.rows.unwrap_or(rows))
+        });
         let env = launch.env.unwrap_or_default();
         let grace = self.config.kill_grace;
         if let Some(session) = state.sessions.get_mut(key) {
@@ -652,10 +750,13 @@ impl Inner {
                     exit_code: None,
                     exit_signal: None,
                     job: None,
+                    shell: None,
                     history,
                     filter: HistoryFilter::default(),
                     utf8: Utf8Stream::default(),
                     sequence: 0,
+                    input_count: 0,
+                    jobs_ended: 0,
                     updated_at: conn_support::time::now_iso(),
                     touched,
                     cols,
@@ -709,6 +810,7 @@ impl Inner {
                         }
                     },
                 ));
+                session.shell = Some(spawned.shell);
                 session.proc = Some(Proc {
                     writer: Arc::new(AsyncMutex::new(spawned.writer)),
                     control,
@@ -918,8 +1020,20 @@ impl Inner {
             let Some(session) = state.sessions.get_mut(&key) else {
                 continue;
             };
-            if session.generation != generation || session.proc.is_none() || session.job == job {
+            // The name lookup awaits; a job that changed meanwhile waits for the next poll.
+            let current = session
+                .proc
+                .as_ref()
+                .and_then(|proc| pty::foreground_job(&proc.control, proc.pid));
+            if session.generation != generation
+                || session.proc.is_none()
+                || current != job.as_ref().map(|(group, _)| *group)
+                || session.job == job
+            {
                 continue;
+            }
+            if job.is_none() {
+                session.jobs_ended += 1;
             }
             session.job = job;
             session.advance();
@@ -948,14 +1062,8 @@ impl State {
     /// Whether a query reply from `viewer` goes on to the shell. The first attached viewer to
     /// reply keeps answering until it detaches, as `acceptsQueryReply` in `apps/server`.
     fn accepts_query_reply(&mut self, key: &Key, viewer: Option<ViewerId>) -> bool {
-        let attached = |state: &Self, id: ViewerId| {
-            state
-                .watchers
-                .get(key)
-                .is_some_and(|ws| ws.iter().any(|w| w.viewer == Some(id)))
-        };
         if let Some(id) = viewer
-            && !attached(self, id)
+            && !self.is_attached(key, id)
         {
             return false;
         }
@@ -970,11 +1078,21 @@ impl State {
         }
     }
 
-    fn shared_grid(&self, key: &Key) -> Option<(u16, u16)> {
+    fn is_attached(&self, key: &Key, viewer: ViewerId) -> bool {
         self.watchers
+            .get(key)
+            .is_some_and(|ws| ws.iter().any(|w| w.viewer == Some(viewer)))
+    }
+
+    fn viewer_grid(&self, key: &Key, viewer: ViewerId) -> Option<(u16, u16)> {
+        self.grids.get(key)?.get(&viewer).copied()
+    }
+
+    fn shared_grid(&self, key: &Key) -> Option<(u16, u16)> {
+        self.grids
             .get(key)?
-            .iter()
-            .filter_map(|w| w.grid)
+            .values()
+            .copied()
             .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1)))
     }
 
@@ -1063,6 +1181,16 @@ impl State {
 }
 
 impl Session {
+    /// `terminalActivityMark`: changes with each output, resize, write and restart. A job that
+    /// ended is not activity: the poller may notice it while `close_idle` reads the table.
+    fn activity_mark(&self) -> (u64, i64, u64) {
+        (
+            self.generation,
+            self.sequence - self.jobs_ended,
+            self.input_count,
+        )
+    }
+
     fn advance(&mut self) {
         self.sequence += 1;
         self.touched = tick();
@@ -1253,7 +1381,6 @@ impl Drop for Subscription {
         let Some(watchers) = state.watchers.get_mut(&self.key) else {
             return;
         };
-        let had_grid = watchers.iter().any(|w| w.id == self.id && w.grid.is_some());
         let viewer = watchers
             .iter()
             .find(|w| w.id == self.id)
@@ -1263,8 +1390,19 @@ impl Drop for Subscription {
         if watchers.is_empty() {
             state.watchers.remove(&self.key);
         }
-        if viewer_left && state.query_owner.get(&self.key) == viewer.as_ref() {
+        let Some(viewer) = viewer.filter(|_| viewer_left) else {
+            return;
+        };
+        if state.query_owner.get(&self.key) == Some(&viewer) {
             state.query_owner.remove(&self.key);
+        }
+        let had_grid = state
+            .grids
+            .get_mut(&self.key)
+            .and_then(|grids| grids.remove(&viewer))
+            .is_some();
+        if state.grids.get(&self.key).is_some_and(HashMap::is_empty) {
+            state.grids.remove(&self.key);
         }
         // The grid may grow back now that this viewer left.
         if had_grid && let Some((cols, rows)) = state.shared_grid(&self.key) {

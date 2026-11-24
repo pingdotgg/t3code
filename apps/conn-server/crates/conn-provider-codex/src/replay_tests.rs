@@ -93,7 +93,10 @@ pub(crate) fn replay(name: &str) -> (Replay, Vec<Value>, String) {
                 // itself (`withCodexReplayChildMetadata`) with no model.
                 Out::ChildMetadata(_)
                 | Out::InterruptChild { .. }
-                | Out::InterruptAbandoned { .. } => {}
+                | Out::InterruptAbandoned { .. }
+                | Out::GoalHeld { .. }
+                | Out::PauseGoal { .. }
+                | Out::StopOrphanGoalTurn { .. } => {}
             }
         }
     };
@@ -876,6 +879,37 @@ fn a_subagent_wakes_its_parent_only_after_a_completed_root_turn() {
     }
 }
 
+/// `interruptTurn` stops what settled turns in a Stop's lineage left running, a subagent's
+/// included (`settledTurnContexts.filter(inLineage)`).
+#[test]
+fn a_stops_lineage_reaches_a_settled_subagents_terminal() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    mapper.begin_turn("th", &turn_input(&ts["startTurn"][0]));
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    let _ = feed(
+        &mut mapper,
+        &[
+            json!({"method": "item/started", "params": {"threadId": "th", "turnId": "tu",
+                "item": {"type": "subAgentActivity", "id": "a1", "kind": "started",
+                    "agentThreadId": "child", "agentPath": "/root/helper"}}}),
+            json!({"method": "turn/started", "params": {"threadId": "child",
+                "turn": {"id": "ct", "status": "inProgress", "startedAt": 1}}}),
+            json!({"method": "item/started", "params": {"threadId": "child", "turnId": "ct",
+                "item": {"type": "commandExecution", "id": "c7", "command": "npm run dev",
+                    "processId": "7", "status": "inProgress"}}}),
+            json!({"method": "turn/completed", "params": {"threadId": "child",
+                "turn": {"id": "ct", "status": "completed", "completedAt": 4}}}),
+        ],
+    );
+    let roots = mapper.lineage_roots("tu");
+    assert_eq!(
+        mapper.settled_processes(&roots),
+        [("child".to_owned(), "7".to_owned())]
+    );
+}
+
 #[test]
 fn deferred_mcp_app_uses_t3s_failed_cli_result() {
     let recording: Value = serde_json::from_str(include_str!("../testdata/mcp-app.json")).unwrap();
@@ -916,4 +950,178 @@ fn deferred_mcp_app_uses_t3s_failed_cli_result() {
         item["output"]["structuredContent"],
         recording["result"]["structuredContent"]
     );
+}
+
+/// A Codex goal on `th`.
+fn codex_goal(status: &str) -> Value {
+    json!({"threadId": "th", "objective": "Ship", "status": status, "tokenBudget": null,
+        "tokensUsed": 1, "timeUsedSeconds": 1, "createdAt": 1, "updatedAt": 2})
+}
+
+/// The goal turn `g1` on `th`, started by a `/goal` whose updates are held while the goal
+/// activates (`runGoalCommand`, `activateGoal`), with its goal answered active.
+fn activating_goal_turn(mapper: &mut Mapper<FixedEnv>) {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let _ =
+        mapper.remember_root_thread("th", conn_contract::to_json(&input.provider_thread), false);
+    mapper.hold_goal_updates("th");
+    mapper.begin_goal_activation("th");
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "g1", "startedAt": null}}));
+    let version = mapper.goal_version();
+    assert!(mapper.store_goal_answer("th", &codex_goal("active"), version));
+}
+
+fn event_types(outs: &[Out]) -> Vec<String> {
+    outs.iter()
+        .filter_map(|o| match o {
+            Out::Event(e) => Some(serde_json::to_value(e).unwrap()["type"].clone()),
+            _ => None,
+        })
+        .filter_map(|t| t.as_str().map(str::to_owned))
+        .collect()
+}
+
+/// `emitGoalUpdate` before `settleGoalHold`: a goal that completes while its updates are held
+/// (the `/goal` is still activating) settles the held run only after its row shows.
+#[test]
+fn a_held_goal_row_shows_before_the_run_settles() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    activating_goal_turn(&mut mapper);
+    let mut outs = feed(
+        &mut mapper,
+        &[
+            json!({"method": "turn/completed", "params": {"threadId": "th",
+                "turn": {"id": "g1", "status": "completed", "completedAt": 3}}}),
+            json!({"method": "thread/goal/updated", "params": {"threadId": "th",
+                "turnId": "g1", "goal": codex_goal("complete")}}),
+        ],
+    );
+    outs.extend(mapper.release_goal_updates("th"));
+    outs.extend(mapper.end_goal_activation("th"));
+    let types = event_types(&outs);
+    let row = types.iter().position(|t| t == "provider_thread.updated");
+    let terminal = types.iter().position(|t| t == "turn.terminal");
+    assert!(
+        row.is_some() && terminal.is_some() && row < terminal,
+        "{types:?}"
+    );
+}
+
+/// `goalsByNativeThread` is per native thread: a goal notification on another thread (a
+/// subagent's) does not make an answer for this thread stale.
+#[test]
+fn a_goal_answer_is_stale_only_after_its_own_threads_notification() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    let version = mapper.goal_version();
+    let _ = feed(
+        &mut mapper,
+        &[
+            json!({"method": "thread/goal/updated", "params": {"threadId": "child",
+                "turnId": null, "goal": codex_goal("active")}}),
+        ],
+    );
+    assert!(mapper.store_goal_answer("th", &codex_goal("active"), version));
+    assert_eq!(mapper.goal_status("th").as_deref(), Some("active"));
+    let version = mapper.goal_version();
+    let _ = feed(
+        &mut mapper,
+        &[
+            json!({"method": "thread/goal/updated", "params": {"threadId": "th",
+                "turnId": null, "goal": codex_goal("complete")}}),
+        ],
+    );
+    assert!(!mapper.store_goal_answer("th", &codex_goal("paused"), version));
+    assert_eq!(mapper.goal_status("th").as_deref(), Some("complete"));
+}
+
+/// T3's `hook/completed` cases: a stopped hook's reason rides the matching turn's completed
+/// or interrupted terminal, never a failed one. A hook that completed, a stop naming another
+/// turn or thread, a stop text that JavaScript's `trim` empties, and the next ordinary turn
+/// carry none.
+#[test]
+fn a_hook_that_stops_a_turn_gives_its_terminal_the_reason() {
+    let hook_with = |turn: &str, thread: &str, status: &str, stop: &str| {
+        json!({"method": "hook/completed", "params": {"threadId": thread, "turnId": turn, "run": {
+        "id": "checkpoint-hook", "eventName": "preCompact", "source": "project",
+        "sourcePath": "/fixture/.codex/hooks.json", "scope": "turn", "executionMode": "sync",
+        "handlerType": "command", "displayOrder": 1, "startedAt": 1_782_622_440,
+        "status": status, "entries": [
+            {"kind": "feedback", "text": "ignored"},
+            {"kind": "stop", "text": stop},
+        ]}}})
+    };
+    let hook = |turn: &str, thread: &str, status: &str| {
+        hook_with(
+            turn,
+            thread,
+            status,
+            " Save a current task checkpoint before compaction. ",
+        )
+    };
+    let ended = |turn: &str, status: &str| {
+        json!({"method": "turn/completed", "params": {"threadId": "th",
+            "turn": {"id": turn, "status": status, "completedAt": 3}}})
+    };
+    let terminal = |outs: &[Out]| {
+        outs.iter()
+            .filter_map(|o| match o {
+                Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+                _ => None,
+            })
+            .find(|e| e["type"] == "turn.terminal")
+            .expect("a terminal")
+    };
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let run = |mapper: &mut Mapper<FixedEnv>, turn: &str, status: &str, frames: &[Value]| {
+        mapper.begin_turn("th", &input);
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": turn, "startedAt": null}}));
+        let mut frames = frames.to_vec();
+        frames.push(ended(turn, status));
+        terminal(&feed(mapper, &frames))
+    };
+    let reason = "preCompact hook (project): Save a current task checkpoint before compaction.";
+
+    let mut mapper = Mapper::new(FixedEnv::default());
+    let stopped = run(
+        &mut mapper,
+        "tu1",
+        "completed",
+        &[hook("tu1", "th", "stopped")],
+    );
+    assert_eq!(stopped["status"], "completed");
+    assert_eq!(stopped["reason"], reason);
+    let next = run(&mut mapper, "tu-next", "completed", &[]);
+    assert!(next.get("reason").is_none(), "the next turn: {next}");
+    let interrupted = run(
+        &mut mapper,
+        "tu-int",
+        "interrupted",
+        &[hook("tu-int", "th", "stopped")],
+    );
+    assert_eq!(interrupted["status"], "interrupted");
+    assert_eq!(interrupted["reason"], reason);
+    let failed = run(
+        &mut mapper,
+        "tu-fail",
+        "failed",
+        &[hook("tu-fail", "th", "stopped")],
+    );
+    assert_eq!(failed["status"], "failed");
+    assert!(failed.get("reason").is_none(), "a failed turn: {failed}");
+    for frames in [
+        vec![hook("tu2", "th", "completed")],
+        vec![hook("other-turn", "th", "stopped")],
+        vec![hook("tu2", "other-thread", "stopped")],
+        vec![hook_with("tu2", "th", "stopped", "\u{feff}")],
+    ] {
+        // A fresh mapper per case: an ended turn id is remembered and never reused.
+        mapper = Mapper::new(FixedEnv::default());
+        let ended = run(&mut mapper, "tu2", "completed", &frames);
+        assert!(ended.get("reason").is_none(), "{frames:?}: {ended}");
+    }
 }

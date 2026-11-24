@@ -6,11 +6,12 @@ use conn_support::{hex::hex, hmac::hmac_sha256, secret_store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, PoisonError},
     time::Duration,
 };
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore};
 
 use crate::clock::Clock;
 
@@ -64,10 +65,71 @@ struct Inner {
     clock: Arc<dyn Clock>,
     lock: Mutex<()>,
     waits: Arc<Semaphore>,
+    /// A lock per reference in use, so a save that reads a reference and deletes it only
+    /// after its own write holds it against an answer or a consume of the same id. An entry
+    /// lives while a claim holds it or waits for it.
+    claims: std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 #[derive(Clone)]
 pub struct SecretRequests(Arc<Inner>);
+
+/// Holds one reference against other answers and consumes until it drops. Reading does not
+/// spend it; [`Claim::spend`] does, so a caller spends only after its own work succeeded.
+pub struct Claim {
+    service: SecretRequests,
+    reference: String,
+    guard: Option<OwnedMutexGuard<()>>,
+}
+
+impl std::fmt::Debug for Claim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Claim")
+            .field("reference", &self.reference)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Claim {
+    /// The saved value, left in the store.
+    pub async fn read(&self, project: &str) -> Result<String, SecretError> {
+        let (reference, project) = (self.reference.clone(), project.to_owned());
+        self.service
+            .disk(move |dir, now| read_ref(dir, &reference, &project, now))
+            .await
+    }
+
+    /// Deletes the reference. A failed delete leaves it usable and is logged.
+    pub async fn spend(self) -> Result<(), SecretError> {
+        let name = store_name(&self.reference);
+        self.service
+            .disk(move |dir, _| {
+                secret_store::remove(dir, &name).map_err(|error| {
+                    eprintln!("Could not delete a used secret reference: {error}");
+                    SecretError("consume_failed")
+                })
+            })
+            .await
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        drop(self.guard.take());
+        let mut claims = self
+            .service
+            .0
+            .claims
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if claims
+            .get(&self.reference)
+            .is_some_and(|lock| Arc::strong_count(lock) == 1)
+        {
+            claims.remove(&self.reference);
+        }
+    }
+}
 
 impl std::fmt::Debug for SecretRequests {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -85,6 +147,7 @@ impl SecretRequests {
             clock,
             lock: Mutex::new(()),
             waits: Arc::new(Semaphore::new(MAX_REQUESTS)),
+            claims: std::sync::Mutex::new(HashMap::new()),
         }));
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let weak = Arc::downgrade(&service.0);
@@ -109,6 +172,27 @@ impl SecretRequests {
             .clone()
             .try_acquire_owned()
             .map_err(|_| SecretError("store_failed"))
+    }
+
+    /// Waits until no other claim holds `reference`, then holds it.
+    pub async fn claim(&self, reference: &str) -> Result<Claim, SecretError> {
+        suffix(reference)?;
+        let lock = self
+            .0
+            .claims
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(reference.to_owned())
+            .or_default()
+            .clone();
+        // Built before the wait, so a caller that stops waiting still releases the entry.
+        let mut claim = Claim {
+            service: self.clone(),
+            reference: reference.to_owned(),
+            guard: None,
+        };
+        claim.guard = Some(lock.lock_owned().await);
+        Ok(claim)
     }
 
     async fn disk<T: Send + 'static>(
@@ -166,6 +250,14 @@ impl SecretRequests {
             .unwrap_or_default()
             .to_owned();
         let saved = secret.is_some();
+        // A save that holds this reference finishes first, so its delete never hits this value.
+        let _claim = if saved {
+            let (thread, id) = (thread.clone(), id.clone());
+            let reference = self.disk(move |dir, _| ref_for(dir, &thread, &id)).await?;
+            Some(self.claim(&reference).await?)
+        } else {
+            None
+        };
         if let Some(value) = secret {
             self.disk(move |dir, now| {
                 sweep(dir, now)?;
@@ -248,15 +340,10 @@ impl SecretRequests {
     }
 
     pub async fn consume(&self, reference: &str, project: &str) -> Result<String, SecretError> {
-        let _lock = self.0.lock.lock().await;
-        let (reference, project) = (reference.to_owned(), project.to_owned());
-        self.disk(move |dir, now| {
-            let value = read_ref(dir, &reference, &project, now)?;
-            secret_store::remove(dir, &store_name(&reference))
-                .map_err(|_| SecretError("consume_failed"))?;
-            Ok(value)
-        })
-        .await
+        let claim = self.claim(reference).await?;
+        let value = claim.read(project).await?;
+        claim.spend().await?;
+        Ok(value)
     }
 
     pub async fn save_to_file(&self, thread: &str, item: &str) -> Result<String, SecretError> {
@@ -276,9 +363,12 @@ impl SecretRequests {
             .unwrap_or_default()
             .to_owned();
         let (thread, item) = (thread.to_owned(), item.to_owned());
+        let reference = self
+            .disk(move |dir, _| ref_for(dir, &thread, &item))
+            .await?;
+        let _claim = self.claim(&reference).await?;
         let _lock = self.0.lock.lock().await;
         self.disk(move |dir, now| {
-            let reference = ref_for(dir, &thread, &item)?;
             let file = file_path(dir, &reference)?;
             if !file.try_exists().map_err(|_| SecretError("store_failed"))? {
                 let value = read_ref(dir, &reference, &project, now)?;
@@ -504,12 +594,12 @@ fn sweep(dir: &Path, now: i64) -> Result<(), SecretError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fs;
 
     struct TestEngine {
-        records: Value,
+        records: std::sync::Mutex<Value>,
         fail_record_in: Option<PathBuf>,
     }
     impl Engine for TestEngine {
@@ -562,11 +652,12 @@ mod tests {
             '_,
             Result<Value, conn_engine::EngineError<conn_contract::GetThreadProjectionError>>,
         > {
-            Box::pin(std::future::ready(Ok(self.records.clone())))
+            let records = self.records.lock().expect("lock").clone();
+            Box::pin(std::future::ready(Ok(records)))
         }
         fn record_secret_request(
             &self,
-            _: Value,
+            command: Value,
         ) -> conn_engine::BoxFuture<'_, Result<(), String>> {
             Box::pin(async move {
                 if let Some(dir) = &self.fail_record_in {
@@ -583,13 +674,72 @@ mod tests {
                     .unwrap();
                     Err("record failed".into())
                 } else {
+                    let mut records = self.records.lock().expect("lock");
+                    records["turnItems"][0]["secretStatus"] = command["secretStatus"].clone();
                     Ok(())
                 }
             })
         }
     }
-    fn pending_records() -> Value {
-        json!({"thread":{"projectId":"p"},"runs":[{"id":"run","status":"running"}],"turnItems":[{"id":"item","type":"secret_request","threadId":"thread","runId":"run","nodeId":"node","secretStatus":"pending","label":"Key","reason":"Fixture"}]})
+    fn pending_records() -> std::sync::Mutex<Value> {
+        pending_in("p")
+    }
+    fn pending_in(project: &str) -> std::sync::Mutex<Value> {
+        std::sync::Mutex::new(
+            json!({"thread":{"projectId":project},"runs":[{"id":"run","status":"running"}],"turnItems":[{"id":"item","type":"secret_request","threadId":"thread","runId":"run","nodeId":"node","secretStatus":"pending","label":"Key","reason":"Fixture"}]}),
+        )
+    }
+
+    /// A store where the user saved a value for one card, and the reference the agent got.
+    pub(crate) struct Answered {
+        pub service: SecretRequests,
+        pub reference: String,
+        engine: Arc<TestEngine>,
+    }
+
+    impl Answered {
+        /// Opens the card again and saves `value` for it: a second answer for the same id.
+        pub(crate) async fn answer_again(&self, value: &str) -> Result<(), SecretError> {
+            self.engine.records.lock().expect("lock")["turnItems"][0]["secretStatus"] =
+                json!("pending");
+            self.service.answer(save_answer(value)).await
+        }
+    }
+
+    fn save_answer(value: &str) -> SecretRequestAnswerInput {
+        conn_contract::from_json(
+            json!({"threadId":"thread","turnItemId":"item","answer":{"type":"save","secret":value}}),
+        )
+        .expect("answer")
+    }
+
+    /// A store under `state_dir` where the user saved `value` for a card in `project`, and
+    /// the one-use reference the agent got for it.
+    pub(crate) async fn answered_reference(
+        state_dir: &Path,
+        project: &str,
+        value: &str,
+    ) -> Answered {
+        let engine = Arc::new(TestEngine {
+            records: pending_in(project),
+            fail_record_in: None,
+        });
+        let service = SecretRequests::new(
+            state_dir,
+            engine.clone(),
+            Arc::new(crate::clock::SystemClock),
+        );
+        service.answer(save_answer(value)).await.expect("saved");
+        let reference = service
+            .saved_ref("thread", "item")
+            .await
+            .expect("read")
+            .expect("reference");
+        Answered {
+            service,
+            reference,
+            engine,
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

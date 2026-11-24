@@ -147,6 +147,11 @@ fn probe_timeout(default: Duration, environment: &[(String, String)]) -> Duratio
 // ---- Versions ----
 
 /// `parseSemver` → (major, minor, patch, prerelease).
+/// `parseSemver(value) !== null`.
+pub(crate) fn is_semver(value: &str) -> bool {
+    parse_semver(value).is_some()
+}
+
 fn parse_semver(value: &str) -> Option<(u64, u64, u64, Vec<String>)> {
     let without_build = value.trim().split('+').next().unwrap_or("");
     let (main, pre) = match without_build.split_once('-') {
@@ -180,7 +185,7 @@ fn parse_semver(value: &str) -> Option<(u64, u64, u64, Vec<String>)> {
 }
 
 /// `compareSemverVersions`.
-fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+pub(crate) fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let (Some(l), Some(r)) = (parse_semver(left), parse_semver(right)) else {
         return left.cmp(right);
@@ -268,8 +273,8 @@ struct CatalogModel {
     max_version_exclusive: Option<String>,
 }
 
-fn catalog_models() -> Vec<CatalogModel> {
-    let catalog = crate::catalog::catalog_json();
+fn catalog_models(manifest: &conn_provider::LiveManifest, now_ms: i64) -> Vec<CatalogModel> {
+    let catalog = crate::catalog::current(manifest, now_ms);
     let models = catalog["providerModels"]
         .as_array()
         .cloned()
@@ -914,6 +919,8 @@ pub struct ProbeInput<'a> {
     /// The folder probes run in (T3: its state folder).
     pub cwd: Option<PathBuf>,
     pub checked_at: String,
+    /// The manifest the server accepted last (T3's `ModelCatalog.current`).
+    pub manifest: &'a conn_provider::LiveManifest,
 }
 
 /// `checkClaudeProviderStatus`. `capabilities` runs the host probe with the option object.
@@ -926,7 +933,8 @@ where
     let env = process_environment(settings, input.host_env, input.settings_entrypoint);
     let home = settings.resolved_home(&env);
     let group_key = format!("claude:home:{}", home.to_string_lossy());
-    let catalog = catalog_models();
+    let now = conn_support::time::millis_from_iso(&input.checked_at).unwrap_or(0);
+    let catalog = catalog_models(input.manifest, now);
     let all_models: Vec<Value> = catalog.iter().map(|c| c.model.clone()).collect();
     let entry = |models, update_required, slash_commands, probe| {
         build_entry(
@@ -1285,7 +1293,7 @@ mod tests {
 
     #[test]
     fn an_old_cli_drops_newer_models_and_says_why() {
-        let catalog = catalog_models();
+        let catalog = catalog_models(&Default::default(), 0);
         let models: Vec<&str> = catalog
             .iter()
             .filter(|m| supported(m, Some("2.1.200")))

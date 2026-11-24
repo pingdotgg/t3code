@@ -4,7 +4,6 @@
 # Theme colors reload without any of this: run with CONN_GPUI_THEME_FILE=<theme.json>.
 #
 #   scripts/dev-watch.sh                 # uses scripts/run-app.sh (Mac) to launch
-#   CARGO_FLAGS="--features cef" scripts/dev-watch.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV="${CONN_GPUI_DEV:-/tmp/conn-gpui-dev}"

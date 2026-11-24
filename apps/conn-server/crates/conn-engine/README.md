@@ -143,12 +143,16 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   (a rollback's own resume does not count). An `error` thread update forgets the key.
 - **Session release.** A closed session (idle, provider switch, fresh start) writes its row as
   `stopped` and expires the requests only it could answer (`writeReleasedSessionEvents`).
-- **Effect order.** A thread's effects (turn start, Stop, steer, answer, rollback, capture,
-  close) run one at a time, in the order they were made, as T3's effect outbox claims them
-  (`EffectOutbox.ts`); title generation runs outside, as T3 gives it its own lane. A lane
-  entry exists only while its thread has an effect waiting or running. `dispatch` and the
-  run's end take the lane slot under the store lock (`reserve_effect`), so lane order is
-  commit order; the end-of-run capture is such an effect, as T3's `checkpoint.capture`.
+- **Effect outbox.** A command's effects are rows in `effect_outbox`, written in the
+  transaction that commits the command, as T3's `EventSink` and `EffectOutbox.ts` do; the
+  run's end, the checkpoint capture, project writes and the restart write theirs the same
+  way. A caller that goes away after the commit (a closed socket aborts its handler) cannot
+  lose them. One worker (`effect_worker.rs`, T3's `EffectWorker.ts`) claims and runs them. A
+  thread's effects run one at a time in commit order; titles have their own lane, as in T3;
+  `AbandonStart` and `RemoteTaskChanged` run at once. What a stopped process left unsettled
+  is cancelled at the next start, and the restart decides again from the stored runs.
+  Settled rows are pruned after 7 days. Deviations from T3: one claim loop instead of 4 slots
+  (one runtime thread), and no worker retries (a planned follow-up).
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the
   provider turn runs waits as a queued run with `steerWhenReadyRunId`; a steer the provider
@@ -175,9 +179,24 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   question's answer as `questionAnswer`, as T3's `Orchestrator` does.
 - **Search.** `searchThreads` reads a trigram FTS5 index of final message texts
   (`message_search`) with `MATCH` and quoted words, as `ThreadSearch.ts`; SQLite's bundled
-  build already has FTS5. Every word of three characters or more must match; shorter words
-  only narrow, and a query without a long word searches no messages (two CJK characters count
-  as long). Hidden threads drop out in SQL before the limit. Titles are the client's to match.
+  build already has FTS5. The index holds text folded as T3's `trigram remove_diacritics 1`
+  tokenizer folds it (`src/fold.rs`), from a table generated from the bundled SQLite
+  (`src/sqlite-fold.txt`; a test fails when SQLite folds differently): case, and a single
+  diacritic of a Latin letter, so "ecole" finds "École" but "aard" does not find "ǡard" and
+  "かかく" does not find "かがく". Queries are NFC and lowercased, then fold the same way. A `meta` mark
+  (`message_search_folded`, now 3) folds an older index again from the message texts, once,
+  inside the engine's open, a byte-bounded batch at a time; it prints T3's migration lines
+  (`databaseMigrationLog.ts`), so a desktop waiting for readiness keeps waiting.
+  Every word of three characters or more must match; shorter words only narrow, and a query
+  without a long word searches no messages (two CJK characters count as long). Word lengths
+  count before the index folds a word. As `messageMatcher`, each word is looked for lowercased,
+  then with accents folded when that finds no whole word. A word shorter than four characters
+  must start a word in the message (a symbol starts one only where a letter would), and a hit
+  inside a hex id does not count. The snippet shows the original text from where the words sit
+  side by side as typed, else from the shortest stretch that holds every word, in UTF-16 units,
+  and is cut as `buildSearchSnippet` cuts it: from a word start up to 24 units before, emphasis
+  and code marks dropped, whitespace collapsed, with ellipses.
+  Hidden threads drop out in SQL before the limit. Titles are the client's to match.
 - **Background work.** A run that completes leaves its open command, dynamic tool and
   subagent rows running, as T3 does. The shell row's `pendingBackgroundTasks` is
   `derivePendingBackgroundWork` (`src/background.rs`): provider thread rosters, then those

@@ -11,7 +11,7 @@ use std::{path::Path, time::Duration};
 use serde_json::{Value, json};
 
 use super::{
-    Args, Cx, ToolError, ToolResult, fail, projects, str_arg,
+    Args, Cx, ToolError, ToolResult, fail, str_arg,
     threads::{self, MAX_WAIT_MS},
 };
 use crate::{Caller, view};
@@ -39,18 +39,6 @@ fn task_status(run: Option<&Value>) -> &'static str {
         Some("cancelled" | "rolled_back") => "cancelled",
         Some("interrupted") => "interrupted",
         _ => "running",
-    }
-}
-
-fn options_array(options: Option<&Value>) -> Option<Value> {
-    match options? {
-        Value::Array(items) => Some(Value::Array(items.clone())),
-        Value::Object(map) => Some(Value::Array(
-            map.iter()
-                .map(|(id, value)| json!({"id": id, "value": value}))
-                .collect(),
-        )),
-        _ => None,
     }
 }
 
@@ -132,50 +120,25 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "Delegated tasks require an active run owned by this MCP provider session.",
         ));
     }
-    let inherited = &parent_thread["modelSelection"];
-    let instance = target["providerInstanceId"]
-        .as_str()
-        .map(str::to_owned)
-        .or_else(|| {
-            let driver = target["driverKind"].as_str()?;
-            (cx.config().providers)()
-                .into_iter()
-                .find(|p| p["driver"] == driver)
-                .and_then(|p| p["instanceId"].as_str().map(str::to_owned))
-        })
-        .or_else(|| inherited["instanceId"].as_str().map(str::to_owned))
-        .unwrap_or_default();
-    let provider = projects::provider(cx, &instance).ok_or_else(|| {
-        fail(
-            "provider_unavailable",
-            format!("Provider {instance} is not available here. orchestrator_capabilities lists providers."),
-        )
-    })?;
-    let model = target["model"]
-        .as_str()
-        .map(str::to_owned)
-        .or_else(|| {
-            (inherited["instanceId"] == instance.as_str())
-                .then(|| inherited["model"].as_str().map(str::to_owned))
-                .flatten()
-        })
-        .or_else(|| provider["models"][0]["slug"].as_str().map(str::to_owned))
-        .ok_or_else(|| {
-            fail(
-                "model_unavailable",
-                format!("Provider {instance} lists no model."),
-            )
-        })?;
-    let mut selection = json!({"instanceId": instance, "model": model});
-    if let Some(options) = options_array(target.get("options")) {
-        selection["options"] = options;
-    } else if inherited["instanceId"] == instance.as_str() && inherited["options"].is_array() {
-        selection["options"] = inherited["options"].clone();
-    }
-    let runtime_mode = threads::resolve_runtime_mode(
-        parent_thread["runtimeMode"]
-            .as_str()
-            .unwrap_or("approval-required"),
+    let key = Cx::request_key(args);
+    let command_id = cx.stable_id("command", "delegate-task", &key);
+    // TS `isRetryOfAcceptedDelegation`: a retry keeps the checkout and the provider the first
+    // call was accepted with, so it skips the project enablement filter, as T3's receipt replay.
+    let retried = cx
+        .engine()
+        .created_run_status(&command_id)
+        .await
+        .map_err(super::internal)?
+        .is_some();
+    // T3 `resolveTargetRechecking`, shared with `create_threads`: driver and instance
+    // resolution, project enablement, the health check, the model and its options.
+    let selection =
+        super::create_threads::resolve_target_rechecking(cx, parent_thread, &target, retried)
+            .await?;
+    let runtime_mode = super::create_threads::runtime_mode_for(
+        cx,
+        parent_thread,
+        &selection,
         str_arg(args, "runtimeMode"),
     )?;
     let interaction_mode = threads::resolve_interaction_mode(
@@ -186,17 +149,8 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     )?;
 
     let parent_run = active.cloned().unwrap_or_default();
-    let key = Cx::request_key(args);
-    let command_id = cx.stable_id("command", "delegate-task", &key);
     let task_id = format!("{TASK_PREFIX}{command_id}");
     let child = format!("thread:delegated-task:{command_id}");
-    // TS `isRetryOfAcceptedDelegation`: a retry keeps the checkout the first call made.
-    let retried = cx
-        .engine()
-        .created_run_status(&command_id)
-        .await
-        .map_err(super::internal)?
-        .is_some();
     let isolated = if str_arg(args, "isolation") == Some("worktree") && !retried {
         Some(worktree_base(cx, parent_thread).await?)
     } else {
@@ -399,7 +353,7 @@ async fn read_task(cx: &Cx<'_>, parent: &str, task_id: &str, wait_timed_out: boo
     let terminal = TERMINAL.contains(&status);
     let terminal_run = runs.iter().rev().find(|run| !view::is_live(run)).copied();
     let summary = terminal
-        .then(|| latest.and_then(|r| view::run_result_text(&child, r["id"].as_str()?)))
+        .then(|| latest.and_then(|r| view::run_result_text(&child, r)))
         .flatten();
     let requests: Vec<&Value> = child["runtimeRequests"]
         .as_array()

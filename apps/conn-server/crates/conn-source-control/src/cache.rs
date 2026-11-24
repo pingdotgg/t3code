@@ -135,6 +135,31 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
         self.lock().entries.retain(|key, _| !matches(key));
     }
 
+    /// Keeps the newest held answers whose weights fit in `budget` and evicts the rest, as
+    /// T3's `diffCacheEvictions`. An answer heavier than the budget is never kept.
+    pub fn evict_beyond(&self, budget: usize, weight: impl Fn(&V) -> usize) {
+        let mut inner = self.lock();
+        let mut held: Vec<(u64, usize)> = inner
+            .entries
+            .values()
+            .filter_map(|entry| entry.cell.get().map(|value| (entry.stamp, weight(value))))
+            .collect();
+        held.sort_unstable_by_key(|(stamp, _)| std::cmp::Reverse(*stamp));
+        let mut kept = 0usize;
+        let mut evicted = Vec::new();
+        for (stamp, size) in held {
+            match kept.checked_add(size).filter(|total| *total <= budget) {
+                Some(total) => kept = total,
+                None => evicted.push(stamp),
+            }
+        }
+        if !evicted.is_empty() {
+            inner
+                .entries
+                .retain(|_, entry| !evicted.contains(&entry.stamp));
+        }
+    }
+
     /// How many keys are held, for tests.
     pub fn len(&self) -> usize {
         self.lock().entries.len()

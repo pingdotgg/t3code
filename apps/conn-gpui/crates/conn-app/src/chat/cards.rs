@@ -24,8 +24,9 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, ClipboardItem, Context, Entity, FontWeight, Hsla,
-    InteractiveElement, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, div, px,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, linear_color_stop,
+    linear_gradient, px,
 };
 
 use super::color::{hsla, hsla_alpha, muted_icon, prose_foreground};
@@ -36,6 +37,55 @@ use super::{
 };
 use crate::a11y::ConnA11yExt as _;
 use crate::panels::chrome::ConnTooltipExt as _;
+
+/// Subagent summary: four body lines (`BODY_LINE_HEIGHT_PX`, 1.625 relative) before the fade.
+const SUMMARY_CLAMP_PX: f32 = 4.0 * BODY_LINE_HEIGHT_PX;
+const SUMMARY_FADE_PX: f32 = 32.0;
+/// Where a card's second and third lines start: icon (16) + gap (10).
+const SUBAGENT_TEXT_INDENT_PX: f32 = 26.0;
+
+/// The `expanded_ids` key of a subagent card's summary.
+pub(super) fn subagent_summary_key(entry_id: &str) -> String {
+    format!("subagent-summary-{entry_id}")
+}
+
+/// Whether a summary is long enough to clamp: over about four lines of card width, or more than
+/// four lines of its own.
+fn summary_needs_clamp(text: &str) -> bool {
+    text.chars().count() > 200 || text.lines().filter(|line| !line.trim().is_empty()).count() > 4
+}
+
+/// The proposed-plan card's own fill (`bg-card/70`), translucent over the chat page.
+fn plan_card_fill(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
+    tokens.card.with_alpha(0.70)
+}
+
+/// What the plan card looks like over the page: the colour its collapse fade must end in.
+fn plan_card_surface(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
+    super::color::composite_over(plan_card_fill(tokens), super::color::chat_page(tokens))
+}
+
+/// A subagent card's fill: translucent glass in dark, the opaque card in light.
+fn subagent_card_fill(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
+    match tokens.appearance {
+        Appearance::Dark => tokens
+            .shell_highlight
+            .with_alpha(tokens.shell_highlight.a * 0.70),
+        Appearance::Light => tokens.shell_card,
+    }
+}
+
+/// What the subagent card looks like over the page: the colour its summary fade must end in.
+fn subagent_card_surface(tokens: &conn_theme::Tokens) -> conn_theme::Rgba {
+    super::color::composite_over(subagent_card_fill(tokens), super::color::chat_page(tokens))
+}
+
+/// Message action buttons are 24px boxes around 12px glyphs, so each glyph sits 6px inside its
+/// box. Text beside the buttons gets the same 6px, so the glyph-to-glyph and glyph-to-text gaps
+/// match.
+const ACTION_BOX_PX: f32 = 24.0;
+const ACTION_GLYPH_PX: f32 = 12.0;
+const ACTION_ICON_INSET_PX: f32 = (ACTION_BOX_PX - ACTION_GLYPH_PX) / 2.0;
 
 /// Conn's single-select auto-advance delay after picking an option.
 const AUTO_ADVANCE_DELAY: Duration = Duration::from_millis(200);
@@ -203,34 +253,94 @@ impl ChatView {
         )
     }
 
-    /// Attachment chips/thumbnails shown in user and queued bubbles.
+    /// The downloaded image of a sent attachment, once it arrived. The first call starts the
+    /// download; the chat repaints when it ends.
+    fn attachment_image(
+        &self,
+        image: &conn_contract::ChatImageAttachment,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<(std::sync::Arc<gpui_kit::Image>, Option<f32>)> {
+        let connection = self.connection.clone()?;
+        let mut images = self.attachment_images.borrow_mut();
+        let (state, _) = images.entry(image.id.clone()).or_insert_with(|| {
+            let state = cx.new(|cx| {
+                super::attachment_thumb::AttachmentImageState::fetch(
+                    connection,
+                    image.id.clone(),
+                    image.mime_type.clone(),
+                    cx,
+                )
+            });
+            let subscription = cx.observe(&state, |_, _, cx| cx.notify());
+            (state, subscription)
+        });
+        match &state.read(cx).load {
+            super::attachment_thumb::AttachmentImageLoad::Ready(image, aspect) => {
+                Some((image.clone(), *aspect))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attachment chips/thumbnails shown in user and queued bubbles. Images are `4:3` cells with
+    /// `object-cover`, `rounded-lg` and a `border-border/80` edge, `20rem` wide for one image
+    /// and two columns for several (`TimelineUserMessageRow.tsx`).
     pub(super) fn render_attachment_chips(
         &self,
         key: &str,
         attachments: &[conn_contract::ChatAttachment],
+        cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let muted = hsla(self.tokens.muted_foreground);
+        let image_count = attachments
+            .iter()
+            .filter(|att| matches!(att, conn_contract::ChatAttachment::Image(_)))
+            .count();
+        let (image_w, image_h) = if image_count == 1 {
+            (320.0, 240.0)
+        } else {
+            (156.0, 117.0)
+        };
         let mut row = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .items_center()
-            .gap(px(6.0));
+            .gap(px(8.0));
         for (idx, att) in attachments.iter().enumerate() {
             let chip_id = (SharedString::from(format!("att-{key}")), idx);
             let chip = match att {
-                conn_contract::ChatAttachment::Image(img) => div()
-                    .id(chip_id)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(32.0))
-                    .rounded(px(6.0))
-                    .bg(hsla_alpha(self.tokens.muted, 0.60))
-                    .border_1()
-                    .border_color(hsla_alpha(self.tokens.border, 0.70))
-                    .conn_tooltip(img.name.clone(), &self.tokens)
-                    .child(icons::icon(icons::IMAGE, 14.0, muted)),
+                conn_contract::ChatAttachment::Image(img) => {
+                    use super::attachment_thumb::{ThumbFit, thumbnail};
+                    let (loaded, aspect) = match self.attachment_image(img, cx) {
+                        Some((image, aspect)) => (Some(image), aspect),
+                        None => (None, None),
+                    };
+                    let cell = div()
+                        .id(chip_id)
+                        .overflow_hidden()
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(hsla_alpha(self.tokens.border, 0.80))
+                        .conn_tooltip(img.name.clone(), &self.tokens);
+                    // One image takes the bubble's full width at its own aspect ratio (Nick,
+                    // #343); several keep web's two-column 4:3 cells. The picture inside the
+                    // 1px border paints a 7px radius (#342).
+                    if image_count == 1 {
+                        cell.w_full().child(thumbnail(
+                            loaded,
+                            &self.tokens,
+                            7.0,
+                            ThumbFit::FullWidth(aspect),
+                        ))
+                    } else {
+                        cell.flex_none()
+                            .w(px(image_w))
+                            .max_w_full()
+                            .h(px(image_h))
+                            .child(thumbnail(loaded, &self.tokens, 7.0, ThumbFit::Cover))
+                    }
+                }
                 conn_contract::ChatAttachment::File(file) => {
                     let file_icon = crate::file_icons::file_icon(&file.name);
                     let icon_color = file_icon
@@ -324,7 +434,9 @@ impl ChatView {
             .opacity(0.0)
             .group_hover(group.clone(), |s| s.opacity(1.0));
         if let Some(ts) = self.render_timestamp(&format!("user-{id}"), created_at) {
-            actions = actions.child(ts);
+            // The icon buttons pad their glyph, the text does not: add that padding to the text's
+            // side facing an icon so every visual gap in the row is the same (#309).
+            actions = actions.child(div().mr(px(ACTION_ICON_INSET_PX)).child(ts));
         }
         if !text.trim().is_empty() {
             actions = actions.child(self.render_copy_button(
@@ -363,7 +475,7 @@ impl ChatView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(4.0))
             .opacity(0.0)
             .group_hover(group.clone(), |s| s.opacity(1.0));
         if status != conn_state::ItemStatus::Completed {
@@ -429,7 +541,8 @@ impl ChatView {
             );
         }
         if let Some(ts) = self.render_timestamp(&format!("assistant-{id}"), created_at) {
-            meta = meta.child(ts);
+            // See `ACTION_ICON_INSET_PX`: the timestamp has no glyph padding of its own (#309).
+            meta = meta.child(div().ml(px(ACTION_ICON_INSET_PX)).child(ts));
         }
         meta.into_any_element()
     }
@@ -1143,7 +1256,7 @@ impl ChatView {
             strip_displayed_plan_markdown(plan_markdown)
         };
         let fg = hsla(self.tokens.foreground);
-        let card_bg = hsla_alpha(self.tokens.card, 0.70);
+        let card_bg = hsla(plan_card_fill(&self.tokens));
 
         let options = self.markdown_options(cx);
         let mut body =
@@ -1159,6 +1272,8 @@ impl ChatView {
                     &options,
                 ));
         if is_collapsed {
+            // Ends in the colour the card shows over the page, opaque, so no band is visible.
+            let (hidden, shown) = super::color::fade_ends(plan_card_surface(&self.tokens));
             body = body.max_h(px(416.0)).overflow_hidden().child(
                 div()
                     .absolute()
@@ -1168,8 +1283,8 @@ impl ChatView {
                     .h(px(96.0))
                     .bg(gpui_kit::linear_gradient(
                         0.0,
-                        gpui_kit::linear_color_stop(hsla_alpha(self.tokens.card, 0.95), 0.0),
-                        gpui_kit::linear_color_stop(hsla_alpha(self.tokens.card, 0.0), 1.0),
+                        gpui_kit::linear_color_stop(hidden, 0.0),
+                        gpui_kit::linear_color_stop(shown, 1.0),
                     )),
             );
         }
@@ -1315,11 +1430,7 @@ impl ChatView {
 
         let (card_fill, card_hover, ring_fill) = match self.tokens.appearance {
             Appearance::Dark => (
-                hsla(
-                    self.tokens
-                        .shell_highlight
-                        .with_alpha(self.tokens.shell_highlight.a * 0.70),
-                ),
+                hsla(subagent_card_fill(&self.tokens)),
                 hsla(self.tokens.shell_highlight),
                 hsla(conn_theme::color_mix_srgb(
                     self.tokens.foreground,
@@ -1328,7 +1439,7 @@ impl ChatView {
                 )),
             ),
             Appearance::Light => (
-                hsla(self.tokens.shell_card),
+                hsla(subagent_card_fill(&self.tokens)),
                 hsla(
                     self.tokens
                         .shell_card
@@ -1338,13 +1449,18 @@ impl ChatView {
             ),
         };
 
-        // Line 1 (`gap-1.5 text-ui leading-5`): `StatusDotBadge` over `BotIcon` (`size-4`) + title.
+        // Nick (#290): the text block sits 4px further from the robot icon than Conn's `gap-1.5`
+        // (6px). Lines 2 and the summary indent by icon (16) + this gap so all three stay aligned.
+        const ICON_TEXT_GAP_PX: f32 = 10.0;
+        const TEXT_INDENT_PX: f32 = 16.0 + ICON_TEXT_GAP_PX;
+
+        // Line 1 (`text-ui leading-5`): `StatusDotBadge` over `BotIcon` (`size-4`) + title.
         let mut lead_icon = div()
             .relative()
             .flex()
             .items_center()
             .flex_none()
-            .child(icons::icon(icons::ROBOT, 16.0, muted));
+            .child(crate::icons::provider_mark(role, 16.0, muted));
         if let Some(dot_color) = dot {
             lead_icon = lead_icon.child(crate::panels::chrome::status_dot_cutout(
                 dot_color, ring_fill, None, false,
@@ -1354,7 +1470,7 @@ impl ChatView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0))
+            .gap(px(ICON_TEXT_GAP_PX))
             .w_full()
             .min_w_0()
             .child(lead_icon)
@@ -1376,39 +1492,30 @@ impl ChatView {
 
         // Line 2 (`ps-5.5 gap-1.5 text-ui leading-4 text-muted-foreground tabular-nums`):
         // plain `12px` provider mark + optional `on <remote>` + `<provider> · <elapsed/status>`.
-        let provider_label = match role {
-            "claudeAgent" | "claude" => "Claude",
-            "codex" => "Codex",
-            "antigravity" => "Antigravity",
-            "opencode" => "OpenCode",
-            other if !other.is_empty() => other,
-            _ => "Subagent",
-        };
+        // Nick (#296): the provider mark leads line 1; line 2 shows `<model> · <effort>` instead of
+        // the provider name, then the elapsed time.
         let time_text = elapsed.unwrap_or_else(|| status_label.to_owned());
+        let model_text = self
+            .subagent_models
+            .get(id)
+            .and_then(|model| subagent_model_text(self.server_config.catalog(), model));
         let mut line2 = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(6.0))
-            .pl(px(22.0))
+            .pl(px(TEXT_INDENT_PX))
             .min_w_0()
             .text_size(px(UI_FONT_PX))
             .line_height(px(16.0))
-            .text_color(muted)
-            .child(
-                div()
-                    .flex_none()
-                    .child(crate::icons::provider_mark(role, 12.0, muted)),
-            );
+            .text_color(muted);
         if let Some(remote) = remote_label {
             line2 = line2.child(div().flex_none().child(format!("on {remote}")));
         }
-        line2 = line2.child(
-            div()
-                .min_w_0()
-                .truncate()
-                .child(format!("{provider_label} · {time_text}")),
-        );
+        line2 = line2.child(div().min_w_0().truncate().child(match model_text {
+            Some(model) => format!("{model} · {time_text}"),
+            None => time_text,
+        }));
 
         let mut card = div()
             .id(SharedString::from(format!("subagent-{id}")))
@@ -1432,14 +1539,7 @@ impl ChatView {
             .child(line2);
 
         if let Some(detail) = summary.map(str::trim).filter(|s| !s.is_empty()) {
-            card = card.child(
-                div()
-                    .pl(px(22.0))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(16.0))
-                    .text_color(detail_color)
-                    .child(detail.to_owned()),
-            );
+            card = card.child(self.render_subagent_summary(id, detail, detail_color, cx));
         }
 
         if let Some(child) = child_thread_id {
@@ -1462,6 +1562,88 @@ impl ChatView {
             .pb(px(8.0))
             .child(card)
             .into_any_element()
+    }
+
+    /// A subagent card's summary (Nick, #340): the agent's Markdown through the thread's renderer, in
+    /// the thread body's size and 1.625 line height, clamped to a few lines under a fade with a
+    /// Show more / Show less toggle when it is long. The toggle does not open the thread.
+    fn render_subagent_summary(
+        &self,
+        id: &str,
+        detail: &str,
+        color: Hsla,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let clampable = summary_needs_clamp(detail);
+        let expanded = self.expanded_ids.contains(&subagent_summary_key(id));
+        let mut options = self.markdown_options(cx);
+        options.prose = Some(markdown::ProseStyle { color, size: None });
+        let body =
+            markdown::render_markdown(&format!("subagent-{id}"), detail, &self.tokens, &options);
+
+        let mut clipped = div()
+            .relative()
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .child(body);
+        if clampable && !expanded {
+            // The card's glass fill is translucent: the fade ends in what it looks like over the
+            // page, opaque. Ending in the fill itself would stack a second layer on the first.
+            let (hidden, shown) = super::color::fade_ends(subagent_card_surface(&self.tokens));
+            clipped = clipped.max_h(px(SUMMARY_CLAMP_PX)).child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(SUMMARY_FADE_PX))
+                    .bg(linear_gradient(
+                        180.0,
+                        linear_color_stop(shown, 0.0),
+                        linear_color_stop(hidden, 1.0),
+                    )),
+            );
+        }
+
+        let mut block = div()
+            .id(SharedString::from(format!("subagent-summary-{id}")))
+            .a11y_group(
+                format!("chat.subagent.{id}.summary"),
+                "Subagent summary",
+            )
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .pl(px(SUBAGENT_TEXT_INDENT_PX))
+            // Nick (#296): more room between the model line and the text below it.
+            .pt(px(6.0))
+            .min_w_0()
+            .child(clipped);
+        if clampable {
+            let entry_id = id.to_owned();
+            let label = if expanded { "Show less" } else { "Show more" };
+            let muted = hsla(self.tokens.muted_foreground);
+            let fg = hsla(self.tokens.foreground);
+            block = block.child(
+                div()
+                    .id(SharedString::from(format!("subagent-toggle-{id}")))
+                    .a11y_button(format!("chat.subagent.{id}.toggle"), label)
+                    .self_start()
+                    .cursor_pointer()
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .hover(move |s| s.text_color(fg))
+                    // Not a click on the card: pressing here must not open the thread.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        view.toggle_subagent_summary(&entry_id, cx);
+                    }))
+                    .child(label),
+            );
+        }
+        block.into_any_element()
     }
 
     // -----------------------------------------------------------------------------------------
@@ -2004,4 +2186,165 @@ pub(super) fn outline_button_surface(
         .font_weight(FontWeight::MEDIUM)
         .text_color(hsla(tokens.foreground))
         .hover(move |s| s.bg(hover_bg))
+}
+
+/// `<model> · <effort>` for a subagent card, for example `Opus 5.5 · medium`. The model name is the
+/// composer's trigger label; the effort is the composer's effort label, lowercased. A model the
+/// catalog does not list shows its slug and the raw reasoning option.
+fn subagent_model_text(
+    catalog: &conn_state::providers::ModelCatalog,
+    model: &conn_state::SubagentModel,
+) -> Option<String> {
+    let slug = model.model.as_deref()?;
+    let found = catalog.find_model(model.instance_id.as_deref(), slug);
+    let name = found.map_or_else(
+        || slug.to_owned(),
+        conn_state::providers::ModelOption::trigger_label,
+    );
+    let options: conn_state::providers::OptionMap = model
+        .options
+        .iter()
+        .map(|(id, value)| {
+            let value = match value.as_str() {
+                "true" => serde_json::Value::Bool(true),
+                "false" => serde_json::Value::Bool(false),
+                other => serde_json::Value::String(other.to_owned()),
+            };
+            (id.clone(), value)
+        })
+        .collect();
+    let effort = found
+        .and_then(|found| found.effort_summary(Some(&options)).word)
+        .or_else(|| {
+            ["reasoningEffort", "effort", "reasoning"]
+                .iter()
+                .find_map(|key| model.options.get(*key).cloned())
+        })
+        .map(|word| word.to_lowercase());
+    Some(match effort {
+        Some(effort) if !effort.is_empty() => format!("{name} · {effort}"),
+        _ => name,
+    })
+}
+
+#[cfg(test)]
+mod subagent_model_tests {
+    use super::subagent_model_text;
+    use conn_state::SubagentModel;
+    use conn_state::providers::ModelCatalog;
+    use std::collections::HashMap;
+
+    #[test]
+    fn a_model_the_catalog_lacks_shows_its_slug_and_raw_effort() {
+        let catalog = ModelCatalog::default();
+        let model = SubagentModel {
+            model: Some("claude-opus-5-5".to_owned()),
+            instance_id: Some("claudeAgent".to_owned()),
+            options: HashMap::from([("reasoningEffort".to_owned(), "Medium".to_owned())]),
+        };
+        assert_eq!(
+            subagent_model_text(&catalog, &model).as_deref(),
+            Some("claude-opus-5-5 · medium")
+        );
+        let bare = SubagentModel {
+            options: HashMap::new(),
+            ..model
+        };
+        assert_eq!(
+            subagent_model_text(&catalog, &bare).as_deref(),
+            Some("claude-opus-5-5")
+        );
+        assert_eq!(
+            subagent_model_text(&catalog, &SubagentModel::default()),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod action_row_spacing_tests {
+    use super::{ACTION_BOX_PX, ACTION_GLYPH_PX, ACTION_ICON_INSET_PX};
+
+    /// Row gap 4px: glyph to glyph is gap + both insets; glyph to text must equal it.
+    #[test]
+    fn glyph_to_glyph_and_glyph_to_text_gaps_are_equal() {
+        let gap = 4.0;
+        let glyph_to_glyph = gap + 2.0 * ACTION_ICON_INSET_PX;
+        let glyph_to_text = gap + ACTION_ICON_INSET_PX + ACTION_ICON_INSET_PX;
+        assert_eq!(glyph_to_glyph, glyph_to_text);
+        assert_eq!(ACTION_ICON_INSET_PX * 2.0 + ACTION_GLYPH_PX, ACTION_BOX_PX);
+    }
+}
+
+#[cfg(test)]
+mod subagent_summary_tests {
+    use super::{SUMMARY_CLAMP_PX, summary_needs_clamp};
+    use crate::chat::BODY_LINE_HEIGHT_PX;
+
+    #[test]
+    fn long_or_many_lined_summaries_clamp_and_short_ones_do_not() {
+        assert!(!summary_needs_clamp("All clear."));
+        assert!(!summary_needs_clamp("one\ntwo\nthree\nfour"));
+        assert!(summary_needs_clamp("one\ntwo\nthree\nfour\nfive"));
+        assert!(summary_needs_clamp(&"word ".repeat(60)));
+        assert!(
+            !summary_needs_clamp("one\n\n\ntwo"),
+            "blank lines do not count"
+        );
+    }
+
+    /// A collapse fade ends in exactly the colour the text sits on: the card's fill over the chat
+    /// page, opaque. The fade's other end is the same colour at zero alpha, so nothing tints the
+    /// middle. Holds for the plan card and the subagent summary in every built-in theme.
+    #[test]
+    fn collapse_fades_end_in_the_card_surface_in_every_theme() {
+        use super::{plan_card_fill, plan_card_surface, subagent_card_fill, subagent_card_surface};
+        use crate::chat::color::{chat_page, composite_over, fade_ends};
+        use conn_theme::{Rgba, Tokens, builtin_themes};
+
+        let near = |a: Rgba, b: Rgba| {
+            (a.r - b.r).abs() < 1e-4 && (a.g - b.g).abs() < 1e-4 && (a.b - b.b).abs() < 1e-4
+        };
+        for theme in builtin_themes() {
+            let tokens = Tokens::derive(&theme);
+            let page = chat_page(&tokens);
+            assert!(
+                (page.a - 1.0).abs() < 1e-6,
+                "{} chat page is opaque",
+                theme.id
+            );
+            for (name, fill, surface) in [
+                ("plan", plan_card_fill(&tokens), plan_card_surface(&tokens)),
+                (
+                    "subagent",
+                    subagent_card_fill(&tokens),
+                    subagent_card_surface(&tokens),
+                ),
+            ] {
+                let (hidden, shown) = fade_ends(surface);
+                let seen = composite_over(fill, page);
+                assert!(near(seen, surface), "{} {name} surface", theme.id);
+                assert!(
+                    (hidden.a - 1.0).abs() < 1e-6,
+                    "{} {name} fade is opaque",
+                    theme.id
+                );
+                assert!(shown.a.abs() < 1e-6, "{} {name} fade is clear", theme.id);
+                assert!(
+                    (hidden.h - shown.h).abs() < 1e-6
+                        && (hidden.s - shown.s).abs() < 1e-6
+                        && (hidden.l - shown.l).abs() < 1e-6,
+                    "{} {name} fade ends share one colour",
+                    theme.id
+                );
+            }
+        }
+    }
+
+    /// The clamp is four lines of the thread body's 1.625 relative line height (14px, 22.75px).
+    #[test]
+    fn the_clamp_is_four_body_lines() {
+        assert!((BODY_LINE_HEIGHT_PX / 14.0 - 1.625).abs() < 1e-4);
+        assert!((SUMMARY_CLAMP_PX - 91.0).abs() < 1e-3);
+    }
 }

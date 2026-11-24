@@ -16,8 +16,9 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 # The CLI's per-user task folder is named after the uid (`claude-<uid>`); rustix is already in
-# the build through conn-provider-support.
-rustix = { workspace = true, features = ["process"] }
+# the build through conn-provider-support. `fs` (already built for conn-server) gives the open
+# flags of the member transcript read.
+rustix = { workspace = true, features = ["process", "fs"] }
 tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros"] }
 
 [dev-dependencies]

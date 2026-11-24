@@ -24,6 +24,8 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// Commands with live output held at once; the least recently written goes first. Upstream
 /// keeps 64; 8 caps the hub near 1 MiB.
 const MAX_LIVE_COMMANDS: usize = 8;
+/// `MAX_FINISHED_COMMANDS`: finished tails kept for a settled item that omits its output.
+const MAX_FINISHED_COMMANDS: usize = 16;
 /// `COMMAND_OUTPUT_MAX_APPEND_CHARS`: a subscriber further behind gets the tail again.
 const MAX_APPEND_BYTES: usize = 16 * 1024;
 /// `COMMAND_OUTPUT_FRAME_INTERVAL_MS`: the fastest a subscriber gets frames while output flows.
@@ -66,6 +68,8 @@ pub(crate) struct LiveTail {
 /// ends or its session closes. Nothing is stored.
 pub(crate) struct CommandOutputHub {
     commands: Mutex<VecDeque<LiveCommand>>,
+    /// Tails of commands that stopped running, newest last.
+    finished: Mutex<VecDeque<LiveCommand>>,
     next_generation: Mutex<u64>,
     /// Bumped on every chunk; subscribers wake on it.
     changed: watch::Sender<u64>,
@@ -75,6 +79,7 @@ impl Default for CommandOutputHub {
     fn default() -> Self {
         Self {
             commands: Mutex::new(VecDeque::new()),
+            finished: Mutex::new(VecDeque::new()),
             next_generation: Mutex::new(0),
             changed: watch::Sender::new(0),
         }
@@ -127,12 +132,37 @@ impl CommandOutputHub {
 
     /// The command settled: its stored item has the output now.
     pub(crate) fn finish(&self, thread_id: &str, item_id: &str) {
-        lock(&self.commands).retain(|c| c.thread_id != thread_id || c.item_id != item_id);
+        self.retire(|c| c.thread_id == thread_id && c.item_id == item_id);
     }
 
     /// The thread's run ended or its session closed.
     pub(crate) fn finish_thread(&self, thread_id: &str) {
-        lock(&self.commands).retain(|c| c.thread_id != thread_id);
+        self.retire(|c| c.thread_id == thread_id);
+    }
+
+    fn retire(&self, done: impl Fn(&LiveCommand) -> bool) {
+        let mut commands = lock(&self.commands);
+        let (retired, kept): (VecDeque<_>, VecDeque<_>) = std::mem::take(&mut *commands)
+            .into_iter()
+            .partition(|c| done(c));
+        *commands = kept;
+        drop(commands);
+        let mut finished = lock(&self.finished);
+        for entry in retired {
+            finished.retain(|c| c.thread_id != entry.thread_id || c.item_id != entry.item_id);
+            finished.push_back(entry);
+        }
+        while finished.len() > MAX_FINISHED_COMMANDS {
+            finished.pop_front();
+        }
+    }
+
+    /// The tail of a command that stopped running, for a settled item without `output`.
+    fn finished_tail(&self, thread_id: &str, item_id: &str) -> Option<(String, bool)> {
+        lock(&self.finished)
+            .iter()
+            .find(|c| c.thread_id == thread_id && c.item_id == item_id)
+            .map(|c| (c.tail.clone(), c.truncated))
     }
 
     pub(crate) fn get(&self, thread_id: &str, item_id: &str) -> Option<LiveTail> {
@@ -225,7 +255,14 @@ pub(crate) async fn spawn(
             let live = running
                 .then(|| inner.command_output.get(&thread_id, &item_id))
                 .flatten();
-            let frame = if let Some(live) = &live {
+            let printed = (!running && item["output"].is_null())
+                .then(|| inner.command_output.finished_tail(&thread_id, &item_id))
+                .flatten();
+            let frame = if let Some((text, truncated)) = printed {
+                Some(
+                    json!({"kind": "replace", "text": text, "truncated": truncated, "running": false}),
+                )
+            } else if let Some(live) = &live {
                 let frame = live_frame(seen_live, live);
                 seen_live = Some((live.generation, live.total));
                 frame

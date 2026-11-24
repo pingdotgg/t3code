@@ -2,6 +2,7 @@
 //!
 //! Port of `apps/web/src/orbit/tasks/InsightCharts.tsx`.
 
+use crate::a11y::ConnA11yExt as _;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -362,6 +363,7 @@ pub(super) fn render_trend_chart(
 
     div()
         .id("tasks-insight-trend-chart")
+        .a11y_group("panel.tasks.insight-chart", "Insight trend chart")
         .relative()
         .size_full()
         .min_h_0()

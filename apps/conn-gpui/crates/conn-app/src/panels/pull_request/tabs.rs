@@ -392,6 +392,7 @@ pub(super) fn render_timeline_tab_trailing(
 
         let menu = v_flex()
             .id("pr-timeline-filter-popup")
+            .a11y_group("panel.pull-request.timeline-filter", "Timeline filter")
             .min_w(px(190.0))
             .p(px(4.0))
             .rounded(px(12.0))
@@ -669,6 +670,7 @@ pub(super) fn render_description_tab(
     let group = SharedString::from("pr-description-group");
     let mut row = h_flex()
         .id("pr-description-section")
+        .a11y_group("panel.pull-request.description", "Pull request description")
         .group(group.clone())
         .w_full()
         .min_w_0()
@@ -759,6 +761,7 @@ pub(super) fn render_checks_tab(
         );
         let mut row = h_flex()
             .id(SharedString::from(format!("pr-check-row-{idx}")))
+            .a11y_group(format!("panel.pull-request.check.{idx}"), "Check")
             .w_full()
             .min_w_0()
             .items_center()
@@ -785,6 +788,7 @@ pub(super) fn render_checks_tab(
             row = row.child(
                 h_flex()
                     .id(SharedString::from(format!("pr-check-fix-{idx}")))
+                    .a11y_button(format!("panel.pull-request.check-fix.{idx}"), "Fix check")
                     .flex_shrink_0()
                     .h(px(22.0))
                     .px(px(7.0))
@@ -1120,6 +1124,7 @@ fn render_commit_event(
     let on_select_code = cb.on_select_tab.clone();
     div()
         .id(SharedString::from(format!("pr-commit-{}", event.id)))
+        .a11y_group(format!("panel.pull-request.commit.{}", event.id), "Commit")
         .relative()
         .w_full()
         .py(px(12.0))
@@ -1541,6 +1546,10 @@ fn render_review_thread_event(
             Some(
                 h_flex()
                     .id(SharedString::from(format!("pr-thread-fix-{}", thread.id)))
+                    .a11y_button(
+                        format!("panel.pull-request.thread-fix.{}", thread.id),
+                        "Fix review thread",
+                    )
                     .flex_shrink_0()
                     .h(px(24.0))
                     .px(px(7.0))
@@ -1996,6 +2005,10 @@ pub(super) fn render_code_tab(
             let on_select = cb.on_select_code_file.clone();
             let row = h_flex()
                 .id(SharedString::from(format!("pr-code-file-{idx}")))
+                .a11y_button(
+                    format!("panel.pull-request.code-file.{idx}"),
+                    file.path.clone(),
+                )
                 .w_full()
                 .h(px(28.0))
                 .px(px(8.0))
@@ -2527,6 +2540,7 @@ pub(super) fn render_floating_composer(
 
         let mut popover = v_flex()
             .id("pr-composer-popover")
+            .a11y_group("panel.pull-request.composer", "Pull request comment")
             .w(px(380.0))
             .p(px(12.0))
             .gap(px(10.0))
