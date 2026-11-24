@@ -42,8 +42,16 @@ test("deep-link invite with prefilled pseudo, pseudo prefixing, and colleagues t
     .getByTestId("team-invite-generated")
     .waitFor({ state: "visible", timeout: 15_000 });
 
+  const aliceDeepLink = await alice.page.getByTestId("team-invite-deeplink").inputValue();
+  expect(aliceDeepLink.startsWith("t3code://team/join?")).toBe(true);
+
   const aliceWebJoinLink = await alice.page.getByTestId("team-invite-weblink").inputValue();
   const parsedWebJoinUrl = new URL(aliceWebJoinLink);
+  // Generated shareable web links point to the hosted app origin, never the sender's loopback or t3code://app.
+  expect(parsedWebJoinUrl.protocol).toBe("https:");
+  expect(parsedWebJoinUrl.pathname).toBe("/team/join");
+
+  // Test Bob redeeming the web-fragment join route served by Bob's local app origin.
   const bobJoinUrl = `${bob.origin}${parsedWebJoinUrl.pathname}${parsedWebJoinUrl.search}${parsedWebJoinUrl.hash}`;
 
   // 3. Bob redeems the web join link in his isolated browser + local app.
@@ -69,50 +77,69 @@ test("deep-link invite with prefilled pseudo, pseudo prefixing, and colleagues t
     .waitFor({ state: "visible", timeout: 15_000 });
   await alice.page.getByRole("button", { name: "New thread" }).first().click();
 
-  const composer = alice.page.locator('[contenteditable="true"]').first();
-  await composer.waitFor({ state: "visible", timeout: 15_000 });
-  await composer.click();
-  await composer.fill("Fix login bug");
-  await composer.press("Enter");
+  const aliceComposer = alice.page.locator('[contenteditable="true"]').first();
+  await aliceComposer.waitFor({ state: "visible", timeout: 15_000 });
+  await aliceComposer.click();
+  await aliceComposer.fill("Fix login bug");
+  await aliceComposer.press("Enter");
 
   // 5. Alice sees her thread dynamically prefixed as "alice: Fix login bug".
   await expect
     .poll(
-      async () => alice.page.locator("aside, [data-sidebar='sidebar']").first().textContent() ?? "",
+      async () =>
+        (await alice.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
       { timeout: 20_000 },
     )
     .toContain("alice: Fix login bug");
 
-  // 6. Bob's sidebar hides Alice's thread by default ("My threads" filter) and triggers no notifications.
+  // 6. Bob starts his own thread on the Team Server to prove his live WS sync is caught up,
+  //    then verifies his sidebar shows his own thread while hiding Alice's thread by default.
+  await bob.page.getByRole("button", { name: "New thread" }).first().click();
+  const bobComposer = bob.page.locator('[contenteditable="true"]').first();
+  await bobComposer.waitFor({ state: "visible", timeout: 15_000 });
+  await bobComposer.click();
+  await bobComposer.fill("Bob personal task");
+  await bobComposer.press("Enter");
+
   await expect
     .poll(
-      async () => bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent() ?? "",
-      { timeout: 10_000 },
+      async () =>
+        (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
+      { timeout: 20_000 },
     )
-    .not.toContain("Fix login bug");
+    .toContain("bob: Bob personal task");
+
+  const bobSidebarWhileFiltered =
+    (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "";
+  expect(bobSidebarWhileFiltered).not.toContain("Fix login bug");
   expect(await bob.notifications()).toEqual([]);
 
-  // 7. Bob toggles colleagues' threads on -> Alice's prefixed thread appears live.
+  // 7. Bob toggles colleagues' threads on -> Alice's prefixed thread appears live alongside Bob's.
   await bob.page.getByTestId("team-colleagues-toggle").click();
   expect(await bob.page.getByTestId("team-colleagues-toggle").getAttribute("aria-pressed")).toBe(
     "true",
   );
   await expect
     .poll(
-      async () => bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent() ?? "",
+      async () =>
+        (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
       { timeout: 15_000 },
     )
     .toContain("alice: Fix login bug");
 
-  // 8. Bob toggles colleagues' threads off -> Alice's thread hides again.
+  // 8. Bob toggles colleagues' threads off -> Alice's thread hides again while Bob's remains visible.
   await bob.page.getByTestId("team-colleagues-toggle").click();
   expect(await bob.page.getByTestId("team-colleagues-toggle").getAttribute("aria-pressed")).toBe(
     "false",
   );
   await expect
     .poll(
-      async () => bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent() ?? "",
+      async () =>
+        (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
       { timeout: 15_000 },
     )
     .not.toContain("Fix login bug");
+  expect(
+    (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
+  ).toContain("bob: Bob personal task");
 });

@@ -67,6 +67,39 @@ const teamStatesByEnvironmentAtom = environmentAtomList("team:states", (environm
   teamEnvironment.state(environmentId),
 );
 
+const teamStatesMapAtom = Atom.family((idsKey: string) =>
+  Atom.make((get): ReadonlyMap<EnvironmentId, TeamEnvironmentState> => {
+    const map = new Map<EnvironmentId, TeamEnvironmentState>();
+    if (idsKey.length === 0) return map;
+    const ids = idsKey.split("\n") as Array<EnvironmentId>;
+    const results = get(teamStatesByEnvironmentAtom(idsKey));
+    for (let index = 0; index < ids.length; index += 1) {
+      const environmentId = ids[index]!;
+      const result = results[index];
+      if (result?._tag === "Success") {
+        map.set(environmentId, result.value);
+      }
+    }
+    return map;
+  }).pipe(Atom.withLabel(`team:states-map:${idsKey}`)),
+);
+
+const teamThreadCreatorPseudoAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): string | null => {
+    const separatorIndex = threadKey.indexOf("\0");
+    if (separatorIndex === -1) return null;
+    const environmentId = threadKey.slice(0, separatorIndex) as EnvironmentId;
+    const threadId = threadKey.slice(separatorIndex + 1) as ThreadId;
+    const result = get(teamEnvironment.state(environmentId));
+    if (result._tag !== "Success" || result.value.team === null) return null;
+    const attribution = result.value.attributionByThreadId.get(threadId);
+    if (!attribution) return null;
+    return (
+      result.value.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo
+    );
+  }).pipe(Atom.withLabel(`team:thread-creator-pseudo:${threadKey}`)),
+);
+
 export function useTeamEnvironmentState(environmentId: EnvironmentId | null): TeamEnvironmentState {
   const result = useAtomValue(
     environmentId === null ? emptyTeamResultAtom : teamEnvironment.state(environmentId),
@@ -79,27 +112,14 @@ export function useTeamStatesByEnvironment(): ReadonlyMap<EnvironmentId, TeamEnv
   const connectedIds = environments
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
-  const results = useAtomValue(teamStatesByEnvironmentAtom(environmentIdsKey(connectedIds)));
-  const map = new Map<EnvironmentId, TeamEnvironmentState>();
-  for (let index = 0; index < connectedIds.length; index += 1) {
-    const environmentId = connectedIds[index]!;
-    const result = results[index];
-    if (result?._tag === "Success") {
-      map.set(environmentId, result.value);
-    }
-  }
-  return map;
+  return useAtomValue(teamStatesMapAtom(environmentIdsKey(connectedIds)));
 }
 
 export function useTeamThreadCreatorPseudo(
   environmentId: EnvironmentId,
   threadId: ThreadId,
 ): string | null {
-  const state = useTeamEnvironmentState(environmentId);
-  if (state.team === null) return null;
-  const attribution = state.attributionByThreadId.get(threadId);
-  if (!attribution) return null;
-  return state.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo;
+  return useAtomValue(teamThreadCreatorPseudoAtom(`${environmentId}\0${threadId}`));
 }
 
 export const previewTeamInvite = createRuntimeCommand(connectionAtomRuntime, {

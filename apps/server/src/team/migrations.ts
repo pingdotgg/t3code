@@ -17,6 +17,7 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
       yield* sql`
           CREATE TABLE IF NOT EXISTS team_workspaces (
             id TEXT PRIMARY KEY,
+            singleton INTEGER NOT NULL UNIQUE DEFAULT 1 CHECK (singleton = 1),
             name TEXT NOT NULL,
             default_view_id TEXT NOT NULL,
             created_at TEXT NOT NULL,

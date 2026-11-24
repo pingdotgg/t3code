@@ -2,9 +2,10 @@ import {
   TEAM_WS_METHODS,
   type AuthSessionId,
   type OrchestrationV2DomainEvent,
-  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+
+import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as TeamService from "./TeamService.ts";
 
 export function makeTeamWsRpcHandlers(
@@ -33,7 +34,9 @@ export function makeTeamWsRpcHandlers(
 
 /**
  * Stamps server-authoritative `creatorMemberId` and `authorMemberId` from stored orchestration
- * events after a WebSocket command commits. Short-circuits as a no-op in personal mode.
+ * events after a WebSocket command commits. Records both run-level (`run.created`) and prompt-level
+ * (`message.updated` for user messages, covering steering prompts within an active run) attribution.
+ * Short-circuits as a no-op in personal mode.
  */
 export const recordTeamDispatchEvents = (
   teamService: TeamService.TeamService["Service"],
@@ -53,34 +56,45 @@ export const recordTeamDispatchEvents = (
           turnId: event.payload.id,
         });
       }
+      if (event.type === "message.updated" && event.payload.role === "user") {
+        return teamService.recordTurnAuthored({
+          sessionId,
+          threadId: event.payload.threadId,
+          turnId: `msg:${event.payload.id}`,
+        });
+      }
       return Effect.void;
     },
     { discard: true },
   );
 
 /**
- * Stamps server-authoritative `creatorMemberId` and optional initial `authorMemberId` after
+ * Stamps server-authoritative `creatorMemberId` and initial run/prompt `authorMemberId` after
  * `orchestration.launchThread` commits. Short-circuits as a no-op in personal mode.
  */
 export const recordTeamThreadLaunch = (
   teamService: TeamService.TeamService["Service"],
   sessionId: AuthSessionId,
-  result: {
-    readonly threadId: ThreadId;
-    readonly runId?: string | null | undefined;
-    readonly resumed: boolean;
-  },
-) =>
-  result.resumed
-    ? Effect.void
-    : teamService.recordThreadCreated({ sessionId, threadId: result.threadId }).pipe(
-        Effect.andThen(
-          result.runId
-            ? teamService.recordTurnAuthored({
-                sessionId,
-                threadId: result.threadId,
-                turnId: result.runId,
-              })
-            : Effect.void,
-        ),
-      );
+  result: Pick<ThreadLaunchResult, "threadId" | "projection" | "resumed">,
+) => {
+  if (result.resumed) return Effect.void;
+  const runIds = result.projection.runs.map((run) => run.id);
+  const userMessageTurnIds = result.projection.messages
+    .filter((message) => message.role === "user")
+    .map((message) => `msg:${message.id}`);
+  const turnIds = [...runIds, ...userMessageTurnIds];
+  return teamService.recordThreadCreated({ sessionId, threadId: result.threadId }).pipe(
+    Effect.andThen(
+      Effect.forEach(
+        turnIds,
+        (turnId) =>
+          teamService.recordTurnAuthored({
+            sessionId,
+            threadId: result.threadId,
+            turnId,
+          }),
+        { discard: true },
+      ),
+    ),
+  );
+};

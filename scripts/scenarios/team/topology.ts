@@ -76,12 +76,22 @@ function shouldProxyToLocalServer(urlPath: string | undefined): boolean {
   return PROXY_TO_LOCAL_PREFIXES.some((prefix) => urlPath.startsWith(prefix));
 }
 
+interface ProxyServerHandle {
+  readonly close: () => Promise<void>;
+}
+
 function startMemberOriginProxy(input: {
   readonly proxyPort: number;
   readonly localServerPort: number;
   readonly vitePort: number;
-}): Promise<NodeHttp.Server> {
+}): Promise<ProxyServerHandle> {
   return new Promise((resolve, reject) => {
+    const activeSockets = new Set<NodeNet.Socket>();
+    const trackSocket = (socket: NodeNet.Socket) => {
+      activeSockets.add(socket);
+      socket.once("close", () => activeSockets.delete(socket));
+    };
+
     const server = NodeHttp.createServer((req, res) => {
       const targetPort = shouldProxyToLocalServer(req.url) ? input.localServerPort : input.vitePort;
       const headers: NodeHttp.OutgoingHttpHeaders = {
@@ -111,6 +121,7 @@ function startMemberOriginProxy(input: {
     });
 
     server.on("upgrade", (req, socket, head) => {
+      if (socket instanceof NodeNet.Socket) trackSocket(socket);
       const targetPort = shouldProxyToLocalServer(req.url) ? input.localServerPort : input.vitePort;
       const upstream = NodeNet.connect(targetPort, "127.0.0.1", () => {
         const rawHeaderLines: Array<string> = [];
@@ -129,6 +140,7 @@ function startMemberOriginProxy(input: {
         upstream.pipe(socket);
         socket.pipe(upstream);
       });
+      trackSocket(upstream);
       upstream.on("error", () => {
         socket.destroy();
       });
@@ -138,14 +150,17 @@ function startMemberOriginProxy(input: {
     });
 
     server.on("error", reject);
-    server.listen(input.proxyPort, "127.0.0.1", () => resolve(server));
-  });
-}
-
-function closeHttpServer(server: NodeHttp.Server): Promise<void> {
-  return new Promise((resolve) => {
-    server.closeAllConnections?.();
-    server.close(() => resolve());
+    server.listen(input.proxyPort, "127.0.0.1", () =>
+      resolve({
+        close: () =>
+          new Promise<void>((done) => {
+            for (const socket of activeSockets) socket.destroy();
+            activeSockets.clear();
+            server.closeAllConnections?.();
+            server.close(() => done());
+          }),
+      }),
+    );
   });
 }
 
@@ -180,6 +195,7 @@ function startT3ServerProcess(input: {
     const hostEnvironment = yield* HostProcess.Environment;
     yield* prepareHome(input.home);
     const tokenDeferred = yield* Deferred.make<string>();
+    const recentStdout: Array<string> = [];
     const server = yield* start({
       cwd: TEAM_APP_DIR,
       command: node,
@@ -205,6 +221,8 @@ function startT3ServerProcess(input: {
         T3CODE_ENVIRONMENT_LABEL: input.environmentLabel,
       },
       onLine: (line) => {
+        recentStdout.push(line);
+        if (recentStdout.length > 50) recentStdout.shift();
         const value = /^Token:\s*(\S+)/.exec(line)?.[1];
         return value === undefined
           ? Effect.void
@@ -215,7 +233,7 @@ function startT3ServerProcess(input: {
       Effect.flatMap(
         (code) =>
           new ScenarioError({
-            message: `Server "${input.environmentLabel}" exited early with code ${code}.`,
+            message: `Server "${input.environmentLabel}" exited early with code ${code}.\nRecent output:\n${recentStdout.join("\n")}`,
           }),
       ),
     );
@@ -362,7 +380,7 @@ export async function startTeamTopology(input: {
         localServerPort: allocation.localServerPort,
         vitePort,
       });
-      stack.defer(() => closeHttpServer(proxy));
+      stack.defer(() => proxy.close());
 
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
       stack.defer(() => context.close());

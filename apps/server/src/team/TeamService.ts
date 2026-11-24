@@ -1,6 +1,10 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous SHA-256 digest for invite token hashing.
 import * as NodeCrypto from "node:crypto";
 import {
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
+  AuthRelayWriteScope,
   AuthStandardClientScopes,
   canAssignTeamRole,
   canManageTeamInvites,
@@ -13,6 +17,7 @@ import {
   TeamOperationError,
   TeamViewId,
   type AuthClientMetadata,
+  type AuthEnvironmentScope,
   type AuthSessionId,
   type TeamCreateInviteInput,
   type TeamInitializeInput,
@@ -25,6 +30,7 @@ import {
   type TeamRedeemInviteResponse,
   type TeamRevokeInviteInput,
   type TeamRevokeInviteResult,
+  type TeamRole,
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
@@ -40,7 +46,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import * as SessionStore from "../auth/SessionStore.ts";
@@ -56,11 +61,33 @@ const RENEWABLE_SESSION_WINDOW = Duration.days(30);
 const hashInviteToken = (token: string): string =>
   NodeCrypto.createHash("sha256").update(token.trim()).digest("hex");
 
-const toInternalError = (cause: unknown) =>
+const ADMIN_ONLY_SESSION_SCOPES: ReadonlySet<AuthEnvironmentScope> = new Set([
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthRelayWriteScope,
+  AuthEnvironmentMaintainScope,
+]);
+
+function scopesForTeamRole(role: TeamRole): ReadonlyArray<AuthEnvironmentScope> {
+  if (role === "owner" || role === "admin") {
+    return AuthStandardClientScopes;
+  }
+  return AuthStandardClientScopes.filter((scope) => !ADMIN_ONLY_SESSION_SCOPES.has(scope));
+}
+
+const toInternalError = (_cause: unknown) =>
   new TeamOperationError({
     code: "internal",
-    message: cause instanceof Error ? cause.message : "An internal team error occurred.",
+    message: "An internal team service error occurred.",
   });
+
+const logAndMapInternalError =
+  (operation: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.tapError((cause) => Effect.logWarning(`TeamService.${operation} failed`, { cause })),
+      Effect.mapError(toInternalError),
+    );
 
 const stripInviteHash = (invite: TeamRepository.StoredTeamInviteRecord): TeamInvite => ({
   id: invite.id,
@@ -121,6 +148,11 @@ export class TeamService extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
       readonly turnId: string;
+    }) => Effect.Effect<void>;
+    readonly recordThreadInheritedFromParent: (input: {
+      readonly parentThreadId: ThreadId;
+      readonly threadId: ThreadId;
+      readonly turnId?: string;
     }) => Effect.Effect<void>;
   }
 >()("t3/team/TeamService") {}
@@ -235,16 +267,11 @@ const make = Effect.gen(function* () {
   const streamState = (sessionId: AuthSessionId) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const buffer = yield* Queue.unbounded<TeamStateStreamEvent>();
-        yield* Effect.forkScoped(
-          Stream.fromPubSub(eventsPubSub).pipe(
-            Stream.runForEach((event) => Queue.offer(buffer, event)),
-          ),
-          { startImmediately: true },
-        );
+        // Subscribe before reading the snapshot so live events during bootstrap are never missed.
+        const subscription = yield* PubSub.subscribe(eventsPubSub);
         const snapshot = yield* getState(sessionId);
         let currentMember = snapshot.currentMember;
-        const liveEvents = Stream.fromQueue(buffer).pipe(
+        const liveEvents = Stream.fromSubscription(subscription).pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
               if (event.type === "teamUpdated") {
@@ -263,8 +290,10 @@ const make = Effect.gen(function* () {
                 return Option.some<TeamStateStreamEvent>(event);
               }
               if (event.type === "inviteUpserted") {
-                // Only modo+ sessions observe invite metadata.
-                return currentMember !== null && canManageTeamInvites(currentMember.role)
+                // Only active modo+ sessions observe invite metadata.
+                return currentMember !== null &&
+                  currentMember.status === "active" &&
+                  canManageTeamInvites(currentMember.role)
                   ? Option.some<TeamStateStreamEvent>(event)
                   : Option.none<TeamStateStreamEvent>();
               }
@@ -333,6 +362,13 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.catchTags({
+          TeamAlreadyConfiguredError: (error) =>
+            Effect.fail(
+              new TeamOperationError({
+                code: "already_configured",
+                message: error.message,
+              }),
+            ),
           TeamPseudoAlreadyTakenError: (error) =>
             Effect.fail(
               new TeamOperationError({
@@ -340,7 +376,10 @@ const make = Effect.gen(function* () {
                 message: error.message,
               }),
             ),
-          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+          TeamRepositoryError: (error) =>
+            Effect.logWarning("TeamService.initializeTeam failed", { cause: error }).pipe(
+              Effect.andThen(Effect.fail(toInternalError(error))),
+            ),
         }),
       );
 
@@ -542,6 +581,7 @@ const make = Effect.gen(function* () {
       .consumeInviteAndCreateMember({
         inviteId: invite.id,
         member,
+        nowIso,
       })
       .pipe(
         Effect.catchTags({
@@ -552,23 +592,39 @@ const make = Effect.gen(function* () {
                 message: error.message,
               }),
             ),
-          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+          TeamRepositoryError: (error) =>
+            Effect.logWarning("TeamService.redeemInvite consume failed", { cause: error }).pipe(
+              Effect.andThen(Effect.fail(toInternalError(error))),
+            ),
         }),
       );
 
     if (!consumed) {
       return yield* new TeamOperationError({
         code: "invite_exhausted",
-        message: "This team invite has already been used or revoked.",
+        message: "This team invite has expired, been revoked, or reached its maximum uses.",
       });
     }
+
+    const rollbackConsumedInvite = repository
+      .rollbackInviteConsumption({ inviteId: invite.id, memberId: member.id })
+      .pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.redeemInvite rollback failed", {
+            inviteId: invite.id,
+            memberId: member.id,
+            cause,
+          }),
+        ),
+        Effect.ignore,
+      );
 
     const useDpop = input.proofKeyThumbprint !== undefined;
     const issued = yield* sessionStore
       .issue({
         subject: `team-member:${member.id}`,
         method: useDpop ? "dpop-access-token" : "bearer-access-token",
-        scopes: AuthStandardClientScopes,
+        scopes: scopesForTeamRole(member.role),
         client: {
           ...input.client,
           label: input.client.label ?? `${member.pseudo} (Team)`,
@@ -581,7 +637,10 @@ const make = Effect.gen(function* () {
             }
           : {}),
       })
-      .pipe(Effect.mapError(toInternalError));
+      .pipe(
+        Effect.onError(() => rollbackConsumedInvite),
+        logAndMapInternalError("redeemInvite.issueSession"),
+      );
 
     yield* repository
       .bindSession({
@@ -590,7 +649,14 @@ const make = Effect.gen(function* () {
         memberId: member.id,
         boundAt: nowIso,
       })
-      .pipe(Effect.mapError(toInternalError));
+      .pipe(
+        Effect.onError(() =>
+          sessionStore
+            .revoke(issued.sessionId)
+            .pipe(Effect.ignore, Effect.andThen(rollbackConsumedInvite)),
+        ),
+        logAndMapInternalError("redeemInvite.bindSession"),
+      );
 
     const updatedInvite = yield* repository
       .getInviteById(invite.id)
@@ -630,13 +696,19 @@ const make = Effect.gen(function* () {
     readonly sessionId: AuthSessionId;
     readonly threadId: ThreadId;
   }) {
-    const workspaceOption = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.recordThreadCreated workspace lookup failed", { cause }),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+    );
     if (Option.isNone(workspaceOption)) return;
-    const memberOption = yield* repository
-      .getMemberForSession(input.sessionId)
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+    const memberOption = yield* repository.getMemberForSession(input.sessionId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.recordThreadCreated member lookup failed", { cause }),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamMember>()),
+    );
     if (Option.isNone(memberOption)) return;
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const attribution = yield* repository
@@ -647,7 +719,15 @@ const make = Effect.gen(function* () {
         viewId: workspaceOption.value.defaultViewId,
         createdAt: nowIso,
       })
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
+      .pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordThreadCreated attribution write failed", {
+            threadId: input.threadId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+      );
     if (Option.isSome(attribution)) {
       yield* publish({
         version: 1,
@@ -662,13 +742,19 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly turnId: string;
   }) {
-    const workspaceOption = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.recordTurnAuthored workspace lookup failed", { cause }),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+    );
     if (Option.isNone(workspaceOption)) return;
-    const memberOption = yield* repository
-      .getMemberForSession(input.sessionId)
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+    const memberOption = yield* repository.getMemberForSession(input.sessionId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.recordTurnAuthored member lookup failed", { cause }),
+      ),
+      Effect.orElseSucceed(() => Option.none<TeamMember>()),
+    );
     if (Option.isNone(memberOption)) return;
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     yield* repository
@@ -678,8 +764,89 @@ const make = Effect.gen(function* () {
         authorMemberId: memberOption.value.id,
         createdAt: nowIso,
       })
-      .pipe(Effect.ignore);
+      .pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordTurnAuthored attribution write failed", {
+            threadId: input.threadId,
+            turnId: input.turnId,
+            cause,
+          }),
+        ),
+        Effect.ignore,
+      );
   });
+
+  const recordThreadInheritedFromParent = Effect.fn("TeamService.recordThreadInheritedFromParent")(
+    function* (input: {
+      readonly parentThreadId: ThreadId;
+      readonly threadId: ThreadId;
+      readonly turnId?: string;
+    }) {
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordThreadInheritedFromParent workspace lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamWorkspace>()),
+      );
+      if (Option.isNone(workspaceOption)) return;
+      const parentAttribution = yield* repository.getThreadAttribution(input.parentThreadId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.recordThreadInheritedFromParent parent lookup failed", {
+            parentThreadId: input.parentThreadId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+      );
+      if (Option.isNone(parentAttribution)) return;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const attribution = yield* repository
+        .recordThreadAttribution({
+          threadId: input.threadId,
+          teamId: workspaceOption.value.id,
+          creatorMemberId: parentAttribution.value.creatorMemberId,
+          viewId: parentAttribution.value.viewId,
+          createdAt: nowIso,
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("TeamService.recordThreadInheritedFromParent write failed", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+          Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()),
+        );
+      if (Option.isSome(attribution)) {
+        yield* publish({
+          version: 1,
+          type: "threadAttributed",
+          payload: attribution.value,
+        });
+      }
+      if (input.turnId) {
+        yield* repository
+          .recordTurnAttribution({
+            turnId: input.turnId,
+            threadId: input.threadId,
+            authorMemberId: parentAttribution.value.creatorMemberId,
+            createdAt: nowIso,
+          })
+          .pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("TeamService.recordThreadInheritedFromParent turn write failed", {
+                threadId: input.threadId,
+                turnId: input.turnId,
+                cause,
+              }),
+            ),
+            Effect.ignore,
+          );
+      }
+    },
+  );
 
   return TeamService.of({
     getState,
@@ -693,6 +860,7 @@ const make = Effect.gen(function* () {
     listThreadAttributions,
     recordThreadCreated,
     recordTurnAuthored,
+    recordThreadInheritedFromParent,
   });
 });
 

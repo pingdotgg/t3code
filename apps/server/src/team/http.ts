@@ -77,6 +77,25 @@ export const layer = HttpApiBuilder.group(
                 ),
               )
             : undefined;
+          if (proof) {
+            // Verify invite before consuming the DPoP proof so malformed tokens do not burn replay markers.
+            yield* teamService
+              .previewInvite(args.payload.token)
+              .pipe(Effect.mapError(mapTeamHttpError));
+            yield* proof.consume.pipe(
+              Effect.mapError((error) =>
+                error._tag === "ServerAuthInvalidCredentialError"
+                  ? new TeamHttpBadRequestError({
+                      code: "invite_invalid",
+                      message: "DPoP proof has already been used.",
+                    })
+                  : new TeamHttpInternalError({
+                      code: "internal",
+                      message: "An internal team service error occurred.",
+                    }),
+              ),
+            );
+          }
           yield* appendCredentialResponseHeaders;
           return yield* teamService
             .redeemInvite({

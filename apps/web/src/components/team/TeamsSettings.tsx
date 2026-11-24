@@ -8,6 +8,7 @@ import {
   assignableTeamRoles,
   buildTeamJoinDeepLink,
   buildTeamJoinWebUrl,
+  canAssignTeamRole,
   canManageTeamInvites,
   normalizeTeamPseudo,
   parseTeamJoinLink,
@@ -19,7 +20,10 @@ import { msg, T, useGT, Var } from "gt-react";
 import { CheckIcon, CopyIcon, LinkIcon, ShieldIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
+import { isElectron } from "~/env";
+import { configuredHostedAppUrl } from "~/hostedPairing";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { m } from "~/i18n/messages";
 import {
   useEnvironmentHttpBaseUrl,
@@ -79,19 +83,33 @@ function CopyableLinkRow({
   );
 }
 
+function resolveShareableWebAppBaseUrl(): string {
+  if (typeof window === "undefined" || isElectron) {
+    return configuredHostedAppUrl();
+  }
+  const { protocol, hostname, origin } = window.location;
+  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if ((protocol === "https:" || protocol === "http:") && !isLoopback) {
+    return origin;
+  }
+  return configuredHostedAppUrl();
+}
+
 export function TeamsSettings() {
   const gt = useGT();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const teamStates = useTeamStatesByEnvironment();
   const showColleagues = useShowColleaguesThreads();
+  const nowMinute = useNowMinute();
+  const nowMs = Date.parse(`${nowMinute}:00.000Z`);
 
   const connectedEnvironments = environments.filter(
     (environment) => environment.connection.phase === "connected",
   );
   const firstTeamEnvironment =
     connectedEnvironments.find(
-      (environment) => teamStates.get(environment.environmentId)?.team !== null,
+      (environment) => teamStates.get(environment.environmentId)?.team != null,
     ) ?? null;
 
   const [selectedEnvironmentIdOverride, setSelectedEnvironmentIdOverride] =
@@ -324,9 +342,9 @@ export function TeamsSettings() {
       : null;
 
   const latestWebLink =
-    latestInvite && serverBaseUrl && typeof window !== "undefined"
+    latestInvite && serverBaseUrl
       ? buildTeamJoinWebUrl({
-          appBaseUrl: window.location.origin,
+          appBaseUrl: resolveShareableWebAppBaseUrl(),
           serverUrl: serverBaseUrl,
           token: latestInvite.token,
           ...(latestInvite.invite.prefilledPseudo
@@ -643,6 +661,10 @@ export function TeamsSettings() {
                     {teamState.invites.map((invite) => {
                       const isRevoked = invite.revokedAt !== null;
                       const isExhausted = invite.uses >= invite.maxUses;
+                      const expiresMs = Date.parse(invite.expiresAt);
+                      const isExpired = !Number.isNaN(expiresMs) && expiresMs <= nowMs;
+                      const canRevokeThisInvite =
+                        canRevokeInviteScope && canAssignTeamRole(currentMember.role, invite.role);
                       return (
                         <div
                           key={invite.id}
@@ -674,13 +696,17 @@ export function TeamsSettings() {
                               <Badge variant="outline" size="sm">
                                 <T>Redeemed</T>
                               </Badge>
+                            ) : isExpired ? (
+                              <Badge variant="outline" size="sm">
+                                <T>Expired</T>
+                              </Badge>
                             ) : (
                               <Badge variant="success" size="sm">
                                 <T>Active</T>
                               </Badge>
                             )}
                           </div>
-                          {!isRevoked && !isExhausted && canRevokeInviteScope ? (
+                          {!isRevoked && !isExhausted && !isExpired && canRevokeThisInvite ? (
                             <Button
                               type="button"
                               size="xs"

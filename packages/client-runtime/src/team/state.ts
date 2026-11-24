@@ -231,6 +231,28 @@ export const redeemTeamInviteAndConnectEffect = Effect.fn("clientRuntime.team.re
       httpBaseUrl,
     }).pipe(Effect.mapError(mapRemoteEnvironmentError));
 
+    const connectionId = teamBearerConnectionId(descriptor.environmentId, httpBaseUrl);
+    const provisionalRoute = {
+      target: new BearerConnectionTarget({
+        environmentId: descriptor.environmentId,
+        label: descriptor.label,
+        connectionId,
+      }),
+      profile: new BearerConnectionProfile({
+        connectionId,
+        environmentId: descriptor.environmentId,
+        label: descriptor.label,
+        httpBaseUrl,
+        wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      }),
+    };
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+    // Reject spoofed addresses before spending a one-time team invite token.
+    yield* registry.assertKnownAddress({
+      ...provisionalRoute,
+      profile: Option.some(provisionalRoute.profile),
+    });
+
     const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
     const dpopProof =
       descriptor.capabilities.accessTokenRenewal === true && Option.isSome(signer)
@@ -256,7 +278,6 @@ export const redeemTeamInviteAndConnectEffect = Effect.fn("clientRuntime.team.re
       },
     });
 
-    const connectionId = teamBearerConnectionId(descriptor.environmentId, httpBaseUrl);
     const label = redeemed.team.name || descriptor.label;
     const route = {
       target: new BearerConnectionTarget({
@@ -282,10 +303,17 @@ export const redeemTeamInviteAndConnectEffect = Effect.fn("clientRuntime.team.re
             token: redeemed.accessToken,
           });
 
-    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    yield* registry.register(new BearerConnectionRegistration({ ...route, credential }), {
-      knownAddressOnly: false,
-    });
+    const registered = yield* registry.register(
+      new BearerConnectionRegistration({ ...route, credential }),
+      { knownAddressOnly: true },
+    );
+    if (!registered) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail:
+          "This team server is already managed locally by this app and cannot be overwritten with a team invite.",
+      });
+    }
     yield* registry.setCompatibility(descriptor.environmentId, null);
     yield* registry
       .setEnabled(descriptor.environmentId, true)

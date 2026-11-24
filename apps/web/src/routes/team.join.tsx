@@ -1,6 +1,7 @@
 import { parseTeamJoinLink } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useGT } from "gt-react";
+import { useEffect } from "react";
 
 import { TeamJoinForm } from "../components/team/TeamJoinForm";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
@@ -26,11 +27,15 @@ function consumeTeamJoinParamsFromLocation(): TeamJoinRouteParams {
       pseudo: parsed.prefilledPseudo,
     };
     lastParsedTeamJoinParams = resolved;
-    // Strip the invite secret from the URL bar once captured in route context.
+    // Strip the invite secret from the URL bar once captured in route context, preserving router state.
     const cleaned = new URL(window.location.href);
     cleaned.searchParams.delete("token");
     cleaned.hash = "";
-    window.history.replaceState(null, "", `${cleaned.pathname}${cleaned.search}`);
+    window.history.replaceState(
+      window.history.state,
+      document.title,
+      `${cleaned.pathname}${cleaned.search}`,
+    );
     return resolved;
   }
   const url = new URL(window.location.href);
@@ -52,6 +57,16 @@ function TeamJoinRouteView() {
   const gt = useGT();
   const navigate = useNavigate();
   const { teamJoinParams } = Route.useRouteContext();
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the cached invite secret when leaving /team/join via browser navigation
+  useEffect(
+    () => () => {
+      if (typeof window !== "undefined" && window.location.pathname !== "/team/join") {
+        lastParsedTeamJoinParams = null;
+      }
+    },
+    [],
+  );
 
   return (
     <StandalonePage>

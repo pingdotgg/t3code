@@ -46,6 +46,17 @@ export class TeamPseudoAlreadyTakenError extends Schema.TaggedError<TeamPseudoAl
   }
 }
 
+export class TeamAlreadyConfiguredError extends Schema.TaggedError<TeamAlreadyConfiguredError>()(
+  "TeamAlreadyConfiguredError",
+  {},
+) {
+  override get message(): string {
+    return "A team is already configured on this server.";
+  }
+}
+
+const isTeamAlreadyConfiguredError = Schema.is(TeamAlreadyConfiguredError);
+
 export interface StoredTeamInviteRecord extends TeamInvite {
   readonly tokenHash: string;
 }
@@ -178,7 +189,10 @@ export class TeamRepository extends Context.Service<
       readonly team: TeamWorkspace;
       readonly owner: TeamMember;
       readonly ownerSessionId: AuthSessionId;
-    }) => Effect.Effect<void, TeamRepositoryError | TeamPseudoAlreadyTakenError>;
+    }) => Effect.Effect<
+      void,
+      TeamRepositoryError | TeamPseudoAlreadyTakenError | TeamAlreadyConfiguredError
+    >;
     readonly listMembers: (
       teamId: TeamId,
     ) => Effect.Effect<ReadonlyArray<TeamMember>, TeamRepositoryError>;
@@ -220,7 +234,12 @@ export class TeamRepository extends Context.Service<
     readonly consumeInviteAndCreateMember: (input: {
       readonly inviteId: TeamInviteId;
       readonly member: TeamMember;
+      readonly nowIso: string;
     }) => Effect.Effect<boolean, TeamRepositoryError | TeamPseudoAlreadyTakenError>;
+    readonly rollbackInviteConsumption: (input: {
+      readonly inviteId: TeamInviteId;
+      readonly memberId: TeamMemberId;
+    }) => Effect.Effect<void, TeamRepositoryError>;
     readonly recordThreadAttribution: (input: {
       readonly threadId: ThreadId;
       readonly teamId: TeamId;
@@ -273,10 +292,17 @@ const make = Effect.gen(function* () {
       yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            const existing = yield* sql<{ readonly id: string }>`
+              SELECT id FROM team_workspaces LIMIT 1
+            `;
+            if (existing.length > 0) {
+              return yield* new TeamAlreadyConfiguredError({});
+            }
             yield* sql`
-              INSERT INTO team_workspaces (id, name, default_view_id, created_at, updated_at)
+              INSERT INTO team_workspaces (id, singleton, name, default_view_id, created_at, updated_at)
               VALUES (
                 ${input.team.id},
+                1,
                 ${input.team.name},
                 ${input.team.defaultViewId},
                 ${input.team.createdAt},
@@ -307,11 +333,17 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(
-          Effect.mapError((cause) =>
-            isUniqueConstraintError(cause)
-              ? new TeamPseudoAlreadyTakenError({ pseudo: input.owner.pseudo })
-              : new TeamRepositoryError({ operation: "initializeWorkspace", cause }),
-          ),
+          Effect.mapError((cause) => {
+            if (isTeamAlreadyConfiguredError(cause)) return cause;
+            if (isUniqueConstraintError(cause)) {
+              const message = String(cause);
+              if (message.includes("team_workspaces")) {
+                return new TeamAlreadyConfiguredError({});
+              }
+              return new TeamPseudoAlreadyTakenError({ pseudo: input.owner.pseudo });
+            }
+            return new TeamRepositoryError({ operation: "initializeWorkspace", cause });
+          }),
         );
     }),
 
@@ -496,6 +528,7 @@ const make = Effect.gen(function* () {
                 WHERE id = ${input.inviteId}
                   AND revoked_at IS NULL
                   AND uses < max_uses
+                  AND expires_at > ${input.nowIso}
                 RETURNING id
               `;
               if (updated.length === 0) return false;
@@ -521,6 +554,27 @@ const make = Effect.gen(function* () {
                 : new TeamRepositoryError({ operation: "consumeInviteAndCreateMember", cause }),
             ),
           );
+      },
+    ),
+
+    rollbackInviteConsumption: Effect.fn("TeamRepository.rollbackInviteConsumption")(
+      function* (input) {
+        yield* runSql(
+          "rollbackInviteConsumption",
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                DELETE FROM team_members
+                WHERE id = ${input.memberId}
+              `;
+              yield* sql`
+                UPDATE team_invites
+                SET uses = CASE WHEN uses > 0 THEN uses - 1 ELSE 0 END
+                WHERE id = ${input.inviteId}
+              `;
+            }),
+          ),
+        );
       },
     ),
 
