@@ -2,10 +2,31 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_TERMINAL_ID, TerminalOpenInput } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { getTerminalLabel, nextTerminalId } from "./terminalLabels.ts";
+import { resolveTerminalSessionLabel } from "./terminalLabelsCopy.ts";
 
 const decodeTerminalOpen = Schema.decodeUnknownSync(TerminalOpenInput);
+
+const japanese: MFunctionType = (encodedMsg, options) => {
+  const english = mFallback(encodedMsg, options);
+  return (
+    typeof english === "string" ? english.replace("Terminal", "ターミナル") : english
+  ) as typeof english;
+};
+
+describe("resolveTerminalSessionLabel", () => {
+  it("translates the idle default and keeps process names", () => {
+    const resolve = (label: string, hasRunningSubprocess: boolean) =>
+      resolveTerminalSessionLabel("term-2", { label, hasRunningSubprocess }, japanese);
+    expect(resolve("Terminal 2", false)).toBe("ターミナル 2");
+    expect(resolve(" ", false)).toBe("ターミナル 2");
+    expect(resolve("sleep", true)).toBe("sleep");
+    expect(resolve("Terminal 2", true)).toBe("Terminal 2");
+  });
+});
 
 describe("nextTerminalId", () => {
   it("skips over taken term-N slots", () => {

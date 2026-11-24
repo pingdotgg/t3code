@@ -32,7 +32,7 @@ const { StackRouter } = NodeModule.createRequire(
 )("@react-navigation/routers") as {
   readonly StackRouter: typeof import("@react-navigation/native").StackRouter;
 };
-const available = { thread: () => true, pullRequest: () => true };
+const available = { thread: () => true, pullRequest: () => true, issue: () => true };
 const names = (state: { routes: readonly { name: string }[] }) =>
   state.routes.map((route) => route.name);
 
@@ -179,7 +179,7 @@ describe("opening a workspace tab", () => {
   });
 
   it("falls back to the list for a chat that no longer exists, or an unknown Settings page", () => {
-    const missing = { thread: () => false, pullRequest: () => true };
+    const missing = { thread: () => false, pullRequest: () => true, issue: () => true };
     expect(
       names(
         workspaceTabNavigationState(

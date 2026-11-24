@@ -34,7 +34,7 @@ export const es: Messages = {
     alsoOnPhone: "También en tu teléfono:",
     screenshotAlt: "T3 Code ejecutando subagentes de Claude, Codex, Muse y Gemini en un mismo hilo",
     endorsementsTitle: "Tolerado por más de {users} desarrolladores",
-    endorsementsSub: "Algunos hasta tuitearon al respecto.",
+    endorsementsSub: "Algunos hasta tuitearon cosas buenas.",
     endorsementsLabel: "Opiniones de desarrolladores",
     readPost: "Leer la publicación de {handle} en X",
     harnessTitle: "Trae tu propia suscripción",
@@ -42,7 +42,7 @@ export const es: Messages = {
       "T3 Code no revende tokens. Conecta Claude Code, Codex, Antigravity, OpenCode, Cursor o Grok con las credenciales que ya tienes. Nosotros los orquestamos, tú conservas tu plan.",
     googleSignIn: "Inicio de sesión con Google",
     harnessPoints: [
-      "Sin reventa de claves. Sin límites de cuota.",
+      "Sin venta de claves. Sin límites de cuota.",
       "Cambia de modelo a mitad del hilo.",
       "Nuevas integraciones cada semana.",
     ],
