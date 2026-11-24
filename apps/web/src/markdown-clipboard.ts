@@ -246,13 +246,8 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
   const fragment = template.content;
   const destinations = new Map<Node, string>();
   for (const element of fragment.querySelectorAll("script, style, [hidden]")) element.remove();
-  for (const element of fragment.querySelectorAll("[style]")) {
-    if (
-      (element instanceof HTMLElement || element instanceof SVGElement) &&
-      element.style.display === "none"
-    ) {
-      element.remove();
-    }
+  for (const element of fragment.querySelectorAll<HTMLElement | SVGElement>("[style]")) {
+    if (element.style.display === "none") element.remove();
   }
   // Visibility inherits, but a visible descendant can override a hidden ancestor.
   const invisible = new WeakSet<Element>();
