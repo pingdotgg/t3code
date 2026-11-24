@@ -25,6 +25,7 @@ mod calls;
 mod checkpoint;
 mod clock;
 mod commands;
+mod effect_worker;
 pub use commands::{completed_without_result, provider_stop_reason_id};
 mod engine;
 mod feedback;
@@ -50,6 +51,7 @@ mod fork;
 mod fresh;
 mod html_cleanup;
 mod link_requests;
+mod outbox;
 mod output;
 mod projects;
 mod pull_requests;
@@ -75,7 +77,7 @@ pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
-    SqliteEngine,
+    STORE_IN_USE, SqliteEngine,
 };
 pub use fold::{SearchField, field_holds_words, fold, fold_field, fold_search_query, match_fields};
 pub use guard::{
@@ -303,7 +305,8 @@ pub struct HttpShellQuery {
     pub resume_from: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThreadClose {
     Archived,
     Deleted,

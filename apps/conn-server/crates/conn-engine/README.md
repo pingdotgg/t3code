@@ -143,12 +143,16 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   (a rollback's own resume does not count). An `error` thread update forgets the key.
 - **Session release.** A closed session (idle, provider switch, fresh start) writes its row as
   `stopped` and expires the requests only it could answer (`writeReleasedSessionEvents`).
-- **Effect order.** A thread's effects (turn start, Stop, steer, answer, rollback, capture,
-  close) run one at a time, in the order they were made, as T3's effect outbox claims them
-  (`EffectOutbox.ts`); title generation runs outside, as T3 gives it its own lane. A lane
-  entry exists only while its thread has an effect waiting or running. `dispatch` and the
-  run's end take the lane slot under the store lock (`reserve_effect`), so lane order is
-  commit order; the end-of-run capture is such an effect, as T3's `checkpoint.capture`.
+- **Effect outbox.** A command's effects are rows in `effect_outbox`, written in the
+  transaction that commits the command, as T3's `EventSink` and `EffectOutbox.ts` do; the
+  run's end, the checkpoint capture, project writes and the restart write theirs the same
+  way. A caller that goes away after the commit (a closed socket aborts its handler) cannot
+  lose them. One worker (`effect_worker.rs`, T3's `EffectWorker.ts`) claims and runs them. A
+  thread's effects run one at a time in commit order; titles have their own lane, as in T3;
+  `AbandonStart` and `RemoteTaskChanged` run at once. What a stopped process left unsettled
+  is cancelled at the next start, and the restart decides again from the stored runs.
+  Settled rows are pruned after 7 days. Deviations from T3: one claim loop instead of 4 slots
+  (one runtime thread), and no worker retries (a planned follow-up).
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)
   or steers (`steer_active`, or the client's `deliveryIntent` steer). A steer before the
   provider turn runs waits as a queued run with `steerWhenReadyRunId`; a steer the provider
