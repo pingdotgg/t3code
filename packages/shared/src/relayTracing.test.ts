@@ -94,6 +94,47 @@ describe("nonInterferingTracer", () => {
     }),
   );
 
+  it.effect("keeps a frame's function, file and position in every engine's format", () =>
+    Effect.gen(function* () {
+      const exits: Array<Exit.Exit<unknown, unknown>> = [];
+      const delegate = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            exits.push(exit);
+          };
+          return span;
+        },
+      });
+      const failure = new Error("failed");
+      failure.stack = [
+        // Set before the message changed, so it is not recognised as the header.
+        "Error: studio-mac refused the connection",
+        "    at connect (C:\\Users\\John Smith\\T3 Code (x86)\\index.js:12:34)",
+        "    at /Users/John Smith/t3/server.mjs:5:6",
+        "    at async Promise.all (index 0)",
+        "connect@http://studio-mac:3773/assets/index.js?next=/private/value:12:34",
+      ].join("\n");
+
+      yield* Effect.fail(failure).pipe(
+        Effect.withSpan("relay.connection.attempt"),
+        Effect.withTracer(nonInterferingTracer(delegate)),
+        Effect.ignore,
+      );
+
+      const exit = exits[0];
+      if (exit === undefined || !Exit.isFailure(exit)) throw new Error("expected a failed span");
+      expect(Cause.prettyErrors(exit.cause)[0]?.stack?.split("\n").slice(1)).toEqual([
+        "    at connect (index.js:12:34)",
+        "    at server.mjs:5:6",
+        "    at async Promise.all (index 0)",
+        "connect@index.js:12:34",
+      ]);
+    }),
+  );
+
   it.effect("exports a request without the machine it went to, and no log lines", () =>
     Effect.gen(function* () {
       const exported: Array<Tracer.NativeSpan> = [];
@@ -158,6 +199,30 @@ describe("layer", () => {
           expect(sent).not.toContain("studio-mac");
         }),
       ),
+    );
+  });
+
+  it.effect("drops a span queued before the opt-out instead of sending it", () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
+    let enabled = true;
+    return Effect.void.pipe(
+      Effect.withSpan("relay.operation"),
+      withRelayClientTracing,
+      // The exporter sends what it holds when its scope closes, after the opt-out here.
+      Effect.andThen(Effect.sync(() => (enabled = false))),
+      Layer.effectDiscard,
+      Layer.provide(
+        layer(
+          { tracesUrl: "https://traces.example.com", tracesDataset: "relay", tracesToken: "token" },
+          { serviceName: "t3code-mobile", runtime: "node", serviceInstanceId: "id", client: "app" },
+          { isEnabled: () => enabled },
+        ),
+      ),
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
+      Layer.build,
+      Effect.scoped,
+      Effect.andThen(Effect.sync(() => expect(fetchFn).not.toHaveBeenCalled())),
     );
   });
 });

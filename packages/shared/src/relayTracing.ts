@@ -3,10 +3,11 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import type { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
 export interface RelayClientTracingConfig {
@@ -69,9 +70,17 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
   );
 
 // A frame's location is a path under the user's home directory, or in a browser the address
-// of the machine that served the page, so only the file name and position are kept.
-const frameWithoutDirectory = (frame: string) =>
-  frame.replace(/[^\s()]+/g, (token) => token.replace(/^([^\\/]*@)?.*[\\/]/, "$1"));
+// of the machine that served the page, so a frame keeps its function, file name and position.
+// Directories can hold spaces and parentheses, so the location runs to the trailing position.
+const FRAME =
+  /^(\s*at (?:(?:async |new )?[\w$.<>]+(?: \[as [\w$]+\])? \()?|[\w$.<>/*]*@)?(.*?)((?::\d+){1,2})?\)?\s*$/;
+
+function frameWithoutDirectory(frame: string): string {
+  const [, prefix = "", location = "", position = ""] = FRAME.exec(frame) ?? [];
+  const path = location.includes("://") ? location.replace(/[?#].*$/, "") : location;
+  const file = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+  return `${prefix}${file}${position}${prefix.endsWith("(") ? ")" : ""}`;
+}
 
 // Error messages can carry machine names (environment labels) and paths, so
 // relay spans export only the error name and its stack frames.
@@ -84,9 +93,10 @@ function traceFrames(error: Error): Array<string> {
   const effectFrameIndex = frames.findIndex((line) =>
     /(?:Generator\.next|~effect\/Effect)/.test(line),
   );
-  return (effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex)).map(
-    frameWithoutDirectory,
-  );
+  // A header that no longer matches the message is still message text, so only frames pass.
+  return (effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex))
+    .filter((line) => /^\s*at |^[\w$.<>/*]*@(?:\[native code\]|.*:\d+)$/.test(line))
+    .map(frameWithoutDirectory);
 }
 
 function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
@@ -164,6 +174,22 @@ export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
+/** A batch queued before an opt-out is dropped when its turn to be sent comes. */
+const layerSendWhile = (isEnabled: () => boolean) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.map(
+      HttpClient.HttpClient,
+      HttpClient.transform((send, request) =>
+        isEnabled()
+          ? send
+          : Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 202 })),
+            ),
+      ),
+    ),
+  );
+
 /** Spans started while `isEnabled` says no stay local instead of being exported. */
 function gatedTracer(delegate: Tracer.Tracer, isEnabled: () => boolean): Tracer.Tracer {
   return Tracer.make({
@@ -203,6 +229,7 @@ export function layer(
     Layer.provide(OtlpSerialization.layerJson),
     // An operator's OTEL_RESOURCE_ATTRIBUTES describe their machines for their own receiver.
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+    options?.isEnabled ? Layer.provide(layerSendWhile(options.isEnabled)) : identity,
   );
 
   return Layer.effect(

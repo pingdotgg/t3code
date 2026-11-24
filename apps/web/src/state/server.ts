@@ -83,6 +83,35 @@ export const primaryServerConfigAtom = Atom.make(
   (get): ServerConfig | null => get(primaryServerStateAtom).config,
 ).pipe(Atom.withLabel("web-primary-server-config"));
 
+type RelayTracingAnswer = Pick<ServerConfig, "observability">;
+
+/**
+ * Whether a server allows relay tracing, as told in this session. A cached config is left out:
+ * it holds the answer of a server that may have opted out since. Null until the server answers.
+ */
+export function relayTracingAllowedBy(
+  projection: { readonly source: "cache" | "live"; readonly config: RelayTracingAnswer } | null,
+  initialConfig: RelayTracingAnswer | null,
+): boolean | null {
+  const answers = [projection?.source === "live" ? projection.config : null, initialConfig].flatMap(
+    (config) => (config === null ? [] : [config.observability.relayTracingAllowed]),
+  );
+  // A reconnect to a restarted server can leave the two a session apart, so either one's no wins.
+  return answers.length === 0 ? null : !answers.includes(false);
+}
+
+export const primaryRelayTracingAllowedAtom = Atom.make((get): boolean | null => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  if (environmentId === null) return null;
+  return relayTracingAllowedBy(
+    AsyncResult.getOrElse(
+      get(serverEnvironment.configProjection({ environmentId, input: {} })),
+      () => null,
+    ),
+    get(environmentSession.initialConfigValueAtom(environmentId)),
+  );
+}).pipe(Atom.withLabel("web-primary-relay-tracing-allowed"));
+
 export const primaryServerConfigEventAtom = Atom.make(
   (get): ServerConfigStreamEvent | null => get(primaryServerStateAtom).latestEvent,
 ).pipe(Atom.withLabel("web-primary-server-config-event"));

@@ -57,7 +57,7 @@ import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentProjects } from "./state/projects";
-import { primaryServerConfigAtom } from "./state/server";
+import { primaryRelayTracingAllowedAtom, primaryServerConfigAtom } from "./state/server";
 import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
@@ -258,12 +258,10 @@ function startThreadOverlayRetention(router: AppRouter): void {
 /** A browser follows the relay tracing opt-out of the server it was opened from. */
 function startRelayTelemetrySync(): void {
   appAtomRegistry.subscribe(
-    primaryServerConfigAtom,
-    (config) => {
+    primaryRelayTracingAllowedAtom,
+    (allowed) => {
       // A dropped connection keeps the last answer, so an opt-out outlives it.
-      if (config !== null) {
-        setServerRelayTelemetry(config.observability.relayTracingAllowed !== false);
-      }
+      if (allowed !== null) setServerRelayTelemetry(allowed);
     },
     { immediate: true },
   );

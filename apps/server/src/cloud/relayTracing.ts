@@ -8,7 +8,6 @@ import * as RelayTracing from "@t3tools/shared/relayTracing";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { resolveRelayClientTracingConfig } from "./publicConfig.ts";
 
@@ -27,14 +26,11 @@ export const relayLayer = (
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
       const policy = yield* ManagedPolicy.ManagedPolicy;
       return RelayTracing.layer(
         ManagedPolicy.deniedBy(policy, "telemetry") === undefined ? tracingConfig : null,
-        {
-          ...resource,
-          serviceInstanceId: processServiceInstanceId(config.otelEnvironment.resourceAttributes),
-        },
+        // Never the operator's own `service.instance.id`: it names their machine for their receiver.
+        { ...resource, serviceInstanceId: processServiceInstanceId() },
       );
     }),
   );
