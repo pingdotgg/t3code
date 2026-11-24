@@ -6,7 +6,6 @@ import * as NodePath from "node:path";
 import { ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { RotatingFileSinkError } from "@t3tools/shared/logging";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
@@ -15,11 +14,7 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import {
-  makeEventNdjsonLogStore,
-  type PendingRecord,
-  writeBatchedMessages,
-} from "./EventNdjsonLogger.ts";
+import { makeEventNdjsonLogStore } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -512,49 +507,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
-    }),
-  );
-
-  it.effect("attributes batches that were written before a later chunk fails", () =>
-    Effect.gen(function* () {
-      const records: ReadonlyArray<PendingRecord> = [
-        {
-          stream: "native",
-          threadSegment: "thread",
-          line: "first",
-          bytes: 5,
-        },
-        {
-          stream: "canonical",
-          threadSegment: "thread",
-          line: "second",
-          bytes: 6,
-        },
-      ];
-      const attributed: Array<PendingRecord> = [];
-      let writes = 0;
-
-      const result = yield* writeBatchedMessages(
-        {
-          write: () => {
-            writes += 1;
-            return writes === 2
-              ? Effect.fail(
-                  new RotatingFileSinkError({
-                    operation: "write",
-                    filePath: "test.log",
-                    cause: "simulated disk exhaustion",
-                  }),
-                )
-              : Effect.void;
-          },
-        },
-        records,
-        5,
-        (written) => attributed.push(...written),
-      ).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      assert.deepEqual(attributed, [records[0]]);
     }),
   );
 

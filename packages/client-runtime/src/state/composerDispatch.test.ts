@@ -53,14 +53,12 @@ it("treats only the commands the composer runs itself as local", () => {
     holdsOnlyText: true,
     sideChat: false,
     usageLimits: false,
-    codexFeedback: false,
     freshSession: false,
   };
   const all = {
     ...none,
     sideChat: true,
     usageLimits: true,
-    codexFeedback: true,
     freshSession: true,
   };
   for (const text of ["/btw why?", "/usage-limits", "/feedback slow", "/clear"]) {

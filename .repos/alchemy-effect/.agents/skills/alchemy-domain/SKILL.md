@@ -1,1 +1,0 @@
-../../../packages/domain/skills/alchemy-domain/SKILL.md

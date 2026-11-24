@@ -1,17 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makePathDirectoryListings, PathDirectoryListings } from "@t3tools/shared/shell";
-import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
@@ -29,16 +26,11 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
-import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
-import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import * as IpcChannels from "../channels.ts";
-import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
-  installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -231,85 +223,6 @@ describe("toLocalBackendPath", () => {
         ),
       ),
     ),
-  );
-});
-
-describe("installRelayTelemetryEnabled", () => {
-  // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
-  const relayTelemetryEnabled = (
-    env: NodeJS.ProcessEnv,
-    policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
-    loginShellEnv: NodeJS.ProcessEnv = {},
-  ) =>
-    Effect.gen(function* () {
-      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
-      const ipcMain: DesktopIpc.DesktopIpcMain = {
-        removeHandler: () => undefined,
-        handle: () => undefined,
-        removeAllListeners: (channel) => void listeners.delete(channel),
-        on: (channel, listener) => void listeners.set(channel, listener),
-      };
-      let discoveryFinished = false;
-      const ask = () => {
-        const event = { returnValue: undefined as unknown };
-        listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
-        return event.returnValue;
-      };
-      yield* installRelayTelemetryEnabled().pipe(
-        Effect.provideService(HostProcess.Environment, env),
-        Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
-          installIntoProcess: Effect.succeed(true),
-          awaitDiscovery: Effect.succeed(true),
-          awaitUserShellDiscovery: Effect.succeed(true),
-          discoveryFinished: Effect.sync(() => discoveryFinished),
-          updates: Stream.empty,
-        }),
-        Effect.provide(
-          Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
-        ),
-      );
-      const beforeDiscovery = ask();
-      // The login shell's values land in the process env after startup has installed handlers.
-      Object.assign(env, loginShellEnv);
-      discoveryFinished = true;
-      return { beforeDiscovery, afterDiscovery: ask() };
-    }).pipe(Effect.scoped);
-
-  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
-    Effect.gen(function* () {
-      assert.deepEqual(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }), {
-        beforeDiscovery: false,
-        afterDiscovery: false,
-      });
-      // Undecided until the login shell is read, so the renderer asks again instead of opting out.
-      assert.deepEqual(yield* relayTelemetryEnabled({}), {
-        beforeDiscovery: null,
-        afterDiscovery: true,
-      });
-      assert.deepEqual(
-        yield* relayTelemetryEnabled({}, undefined, { T3CODE_TELEMETRY_ENABLED: "false" }),
-        { beforeDiscovery: null, afterDiscovery: false },
-      );
-    }),
-  );
-
-  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
-    Effect.gen(function* () {
-      const policy = (limits: ManagedPolicyLimits) => ({
-        schemaVersion: 1 as const,
-        organization: "Example Corp",
-        limits,
-      });
-      const after = function* (...args: Parameters<typeof relayTelemetryEnabled>) {
-        return (yield* relayTelemetryEnabled(...args)).afterDiscovery;
-      };
-      assert.isFalse(yield* after({}, policy({ telemetry: false })));
-      assert.isTrue(yield* after({}, policy({ webhookTasks: false })));
-      // A policy that cannot be read fails closed.
-      assert.isFalse(
-        yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
-      );
-    }),
   );
 });
 

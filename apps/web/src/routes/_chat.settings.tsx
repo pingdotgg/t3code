@@ -52,28 +52,9 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   const m = useMessages();
   const hash = useLocation({ select: (location) => location.hash });
   const searchTarget = getSettingsSearchTargetScope(hash);
-  const agentFeedbackAvailability = searchTarget?.agentFeedbackOnly
-    ? {
-        eligibleEnvironmentIds: environments
-          .filter(
-            (environment) =>
-              environment.connection.phase === "connected" &&
-              environment.serverConfig?.environment.capabilities.agentFeedback === true,
-          )
-          .map((environment) => environment.environmentId),
-        isTargetAvailable:
-          connectedEnvironments.length > 0 &&
-          connectedEnvironments.every(
-            (environment) =>
-              environment.serverConfig?.environment.capabilities.agentFeedback === true,
-          ),
-      }
+  const targetAvailability = searchTarget?.requiresThreadAutoSettlement
+    ? getThreadAutoSettlementSearchAvailability(environments, scope)
     : null;
-  const targetAvailability =
-    agentFeedbackAvailability ??
-    (searchTarget?.requiresThreadAutoSettlement
-      ? getThreadAutoSettlementSearchAvailability(environments, scope)
-      : null);
   if (
     scope.kind !== "unavailable" &&
     searchTarget &&
@@ -146,7 +127,7 @@ function SettingsContentLayout() {
   const location = useLocation();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+    location.pathname === "/settings/providers"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);

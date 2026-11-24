@@ -1,9 +1,0 @@
-{
-  "name": "prisma-website-vite-fixture",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@alchemy.run/frontend-frameworks": "workspace:*",
-    "vite": "catalog:"
-  }
-}

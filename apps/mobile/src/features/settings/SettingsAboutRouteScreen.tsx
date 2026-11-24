@@ -134,7 +134,7 @@ function AppSettingsSection() {
         label={gt("Client Storage")}
         target="SettingsClientStorage"
       />
-      <SettingsRow icon="stethoscope" label={gt("Diagnostics")} target="SettingsDiagnostics" />
+      <SettingsRow icon="stethoscope" label={gt("Diagnostics")} />
       <SettingsRow
         icon="doc.on.doc"
         label={gt("Open source licenses")}

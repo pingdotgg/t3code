@@ -60,7 +60,6 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
-import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { dispatchFailure } from "../threadAccess.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
@@ -454,17 +453,6 @@ it.effect("records only failed calls of tools that hand off no work", () => {
             dispatch: () => Effect.succeed({ sequence: 1 } as never),
           }),
         ),
-        Layer.provide(
-          Layer.succeed(
-            AnalyticsService.AnalyticsService,
-            AnalyticsService.AnalyticsService.of({
-              record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }),
-              flush: Effect.void,
-              recordOwners: () => Effect.void,
-            }),
-          ),
-        ),
       ),
     ),
   );
@@ -579,16 +567,6 @@ it.effect("handoff analytics read only the caller's active run and its message",
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(historyReads(reads, { attachments, dispatched })),
-        Layer.provide(
-          Layer.succeed(
-            AnalyticsService.AnalyticsService,
-            AnalyticsService.AnalyticsService.of({
-              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.as(true)),
-              flush: Effect.void,
-              recordOwners: () => Effect.void,
-            }),
-          ),
-        ),
       ),
     ),
   );

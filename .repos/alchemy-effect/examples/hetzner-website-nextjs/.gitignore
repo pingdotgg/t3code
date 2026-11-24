@@ -1,6 +1,0 @@
-node_modules
-.next
-dist
-.alchemy
-next-env.d.ts
-tsconfig.tsbuildinfo

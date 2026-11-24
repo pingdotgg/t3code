@@ -1,3 +1,4 @@
+import { HostResourcesSnapshot } from "./hostResources.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -369,11 +370,9 @@ import {
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
-  OtlpEndpointCheckInput,
   ServerPrepareTriageError,
   ServerPrepareTriageInput,
   ServerPrepareTriageResult,
-  OtlpEndpointCheckResult,
   ServerConfig,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
@@ -388,22 +387,9 @@ import {
   ServerSelfUpdateInput,
   ServerSelfUpdateProgressEvent,
   ServerSelfUpdateResult,
-  ServerTraceDiagnosticsResult,
-  ServerProcessDiagnosticsResult,
-  ServerProcessResourceHistoryInput,
-  ServerProcessResourceHistoryResult,
-  ServerSignalProcessInput,
-  ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
-import {
-  HostResourcesSnapshot,
-  ResourceTelemetryHistory,
-  ResourceTelemetryHistoryInput,
-  ResourceTelemetryRetryResult,
-  ResourceTelemetrySnapshot,
-} from "./resourceTelemetry.ts";
 import {
   UsageLimitSourceError,
   ProviderConsumeResetCreditInput,
@@ -455,7 +441,6 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
-import { AgentFeedbackAnswerInput, AgentFeedbackRequestError } from "./agentFeedback.ts";
 import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
@@ -620,16 +605,9 @@ export const WS_METHODS = {
   serverSetAcpRegistryProvider: "server.setAcpRegistryProvider",
   serverDisableAcpRegistryProvider: "server.disableAcpRegistryProvider",
   serverLogoutAcpRegistry: "server.logoutAcpRegistry",
-  serverGetTraceDiagnostics: "server.getTraceDiagnostics",
-  serverGetProcessDiagnostics: "server.getProcessDiagnostics",
-  serverGetHostResources: "server.getHostResources",
-  serverGetProcessResourceHistory: "server.getProcessResourceHistory",
-  serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
-  serverRetryResourceTelemetry: "server.retryResourceTelemetry",
-  serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
   serverListTextGeneratorModels: "server.listTextGeneratorModels",
   serverPrepareTriage: "server.prepareTriage",
-  serverSignalProcess: "server.signalProcess",
+  serverGetHostResources: "server.getHostResources",
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
@@ -651,7 +629,6 @@ export const WS_METHODS = {
   scheduledTasksRunNow: "scheduledTasks.runNow",
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
   secretsAnswerRequest: "secrets.answerRequest",
-  agentFeedbackAnswerRequest: "agentFeedback.answerRequest",
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
@@ -737,7 +714,6 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
-  subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1115,51 +1091,6 @@ const WsServerLogoutAcpRegistryRpc = Rpc.make(WS_METHODS.serverLogoutAcpRegistry
   error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
 });
 
-const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
-  payload: Schema.Struct({}),
-  success: ServerTraceDiagnosticsResult,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDiagnostics, {
-  payload: Schema.Struct({}),
-  success: ServerProcessDiagnosticsResult,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
-  payload: Schema.Struct({}),
-  success: HostResourcesSnapshot,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetProcessResourceHistoryRpc = Rpc.make(WS_METHODS.serverGetProcessResourceHistory, {
-  payload: ServerProcessResourceHistoryInput,
-  success: ServerProcessResourceHistoryResult,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerGetResourceTelemetryHistoryRpc = Rpc.make(
-  WS_METHODS.serverGetResourceTelemetryHistory,
-  {
-    payload: ResourceTelemetryHistoryInput,
-    success: ResourceTelemetryHistory,
-    error: EnvironmentAuthorizationError,
-  },
-);
-
-const WsServerRetryResourceTelemetryRpc = Rpc.make(WS_METHODS.serverRetryResourceTelemetry, {
-  payload: Schema.Struct({}),
-  success: ResourceTelemetryRetryResult,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerCheckOtlpEndpointRpc = Rpc.make(WS_METHODS.serverCheckOtlpEndpoint, {
-  payload: OtlpEndpointCheckInput,
-  success: OtlpEndpointCheckResult,
-  error: EnvironmentAuthorizationError,
-});
-
 const WsServerListTextGeneratorModelsRpc = Rpc.make(WS_METHODS.serverListTextGeneratorModels, {
   payload: ListTextGeneratorModelsInput,
   success: ListTextGeneratorModelsResult,
@@ -1181,12 +1112,6 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
 const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates, {
   payload: Schema.Struct({}),
   success: UsagePricing,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
-  payload: ServerSignalProcessInput,
-  success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2417,11 +2342,6 @@ const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
 });
 
-const WsAgentFeedbackAnswerRequestRpc = Rpc.make(WS_METHODS.agentFeedbackAnswerRequest, {
-  payload: AgentFeedbackAnswerInput,
-  error: Schema.Union([AgentFeedbackRequestError, EnvironmentAuthorizationError]),
-});
-
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2447,19 +2367,19 @@ const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   stream: true,
 });
 
-const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTelemetry, {
-  payload: Schema.Struct({}),
-  success: ResourceTelemetrySnapshot,
-  error: EnvironmentAuthorizationError,
-  stream: true,
-});
-
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
+  payload: Schema.Struct({}),
+  success: HostResourcesSnapshot,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsServerGetHostResourcesRpc,
   WsIssuesListRpc,
   WsIssuesDetailRpc,
   WsIssuesCommentsRpc,
@@ -2529,18 +2449,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerSetAcpRegistryProviderRpc,
   WsServerDisableAcpRegistryProviderRpc,
   WsServerLogoutAcpRegistryRpc,
-  WsServerGetTraceDiagnosticsRpc,
-  WsServerGetProcessDiagnosticsRpc,
-  WsServerGetHostResourcesRpc,
-  WsServerGetProcessResourceHistoryRpc,
-  WsServerGetResourceTelemetryHistoryRpc,
-  WsServerRetryResourceTelemetryRpc,
-  WsServerCheckOtlpEndpointRpc,
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
-  WsServerSignalProcessRpc,
   WsWorkflowsSubscribeRpc,
   WsWorkflowsCountsRpc,
   WsWorkflowsGetRpc,
@@ -2557,7 +2469,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksRunNowRpc,
   WsScheduledTasksRotateWebhookTokenRpc,
   WsSecretsAnswerRequestRpc,
-  WsAgentFeedbackAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerReportClientActivityRpc,
@@ -2693,7 +2604,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
-  WsSubscribeResourceTelemetryRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,

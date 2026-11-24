@@ -1,1 +1,0 @@
-../../../.agents/skills/harden/SKILL.md

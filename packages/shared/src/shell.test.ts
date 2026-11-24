@@ -2,7 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
+import { DesktopLinkMessage } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -45,7 +45,7 @@ import {
   XcodeGitLocation,
 } from "./shell.ts";
 
-const decodeDesktopHostMessage = Schema.decodeUnknownSync(DesktopHostTelemetryMessage);
+const decodeDesktopHostMessage = Schema.decodeUnknownSync(DesktopLinkMessage);
 
 const nativeProbe = vi.hoisted(() => ({
   execFile: vi.fn<typeof import("node:child_process").execFile>(),

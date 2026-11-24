@@ -37,7 +37,6 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { SECRET_REDACTED } from "./settingsSecrets.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
@@ -407,91 +406,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
   );
 
-  it.effect("deep merges nested settings updates without dropping siblings", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-
-      yield* serverSettings.updateSettings({
-        observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
-        textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-          options: createModelSelection(
-            ProviderInstanceId.make("codex"),
-            DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-            [
-              { id: "reasoningEffort", value: "high" },
-              { id: "fastMode", value: true },
-            ],
-          ).options!,
-        },
-      });
-
-      const next = yield* serverSettings.updateSettings({
-        observability: { otlpMetricsUrl: "http://localhost:4318/v1/metrics" },
-        textGenerationModelSelection: {
-          options: [{ id: "fastMode", value: false }],
-        },
-      });
-
-      assert.equal(next.observability.otlpTracesUrl, "http://localhost:4318/v1/traces");
-      assert.equal(next.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
-      assert.deepEqual(
-        next.textGenerationModelSelection,
-        createModelSelection(
-          ProviderInstanceId.make("codex"),
-          DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-          [
-            { id: "reasoningEffort", value: "high" },
-            { id: "fastMode", value: false },
-          ],
-        ),
-      );
-    }).pipe(Effect.provide(layerServerSettings())),
-  );
-
-  it.effect("keeps an external settings edit that the watcher has not reloaded yet", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      yield* serverSettings.getSettings;
-
-      yield* writeFileStringAtomically({
-        filePath: config.settingsPath,
-        contents: `{ "responseStreamingMode": "turn" }`,
-      });
-      yield* serverSettings.updateSettings({
-        observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
-      });
-
-      const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
-      assert.equal(saved.responseStreamingMode, "turn");
-      assert.equal(saved.observability.otlpTracesUrl, "http://localhost:4318/v1/traces");
-
-      yield* writeFileStringAtomically({
-        filePath: config.settingsPath,
-        contents: `{ "responseStreamingMode": "paragraph" }`,
-      });
-      const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
-      yield* serverSettings.updateProviderInstance({
-        operation: "upsert",
-        instanceId,
-        instance: {
-          driver: ProviderDriverKind.make("acpRegistry"),
-          displayName: "Kilo",
-          config: { agentId: "kilo", distribution: "auto" },
-        },
-      });
-
-      const afterProviderSave = yield* decodeServerSettingsJson(
-        yield* fs.readFileString(config.settingsPath),
-      );
-      assert.equal(afterProviderSave.responseStreamingMode, "paragraph");
-      assert.equal(afterProviderSave.providerInstances[instanceId]?.displayName, "Kilo");
-    }).pipe(Effect.provide(layerServerSettings())),
-  );
-
   it.effect("refuses to save over a settings file it cannot parse", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -503,7 +417,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
       const error = yield* Effect.flip(
         serverSettings.updateSettings({
-          observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
+          observability: {},
         }),
       );
 
@@ -1070,12 +984,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const raw = '{"agentFeedback":{"mode":"auto"},"providers":1}';
+      const raw = '{"providers":1}';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.equal(settings.agentFeedback.mode, "off");
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),

@@ -1,1 +1,0 @@
-../../../.agents/skills/release-blog/SKILL.md

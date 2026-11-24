@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   exchangeRemoteDpopAccessToken,
   type RemoteEnvironmentAuthError,
@@ -260,7 +259,6 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: input.httpBaseUrl,
         bearerToken: input.bearerToken,
         clientMetadata: presentation.metadata,
-        connectionMethod: input.connectionMethod,
       }).pipe(
         Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -300,7 +298,6 @@ export const make = Effect.gen(function* () {
             ),
           ),
         clientMetadata: presentation.metadata,
-        connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       });
     },
@@ -640,7 +637,6 @@ export const make = Effect.gen(function* () {
                 ),
               ),
           clientMetadata: presentation.metadata,
-          connectionMethod: "direct",
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.result);
       let credential = yield* directDpopToken(connection);
       let socket = yield* openSocket(credential);
@@ -778,7 +774,6 @@ export const make = Effect.gen(function* () {
       return yield* getDpopToken(input).pipe(
         Effect.map(({ token }) => httpAuthorization(token)),
         Effect.withSpan("environment.authorization.http"),
-        withRelayClientTracing,
       );
     }),
     // Untraced: a span here would stay open for the socket's lifetime. Each renewal has its own.
@@ -803,7 +798,6 @@ export const make = Effect.gen(function* () {
             : directDpopToken(direct).pipe(Effect.map((credential) => credential.expiresAtEpochMs))
         ).pipe(
           Effect.withSpan("environment.authorization.renewSocket"),
-          withRelayClientTracing,
           // A relay blip retries until expiry; a blocked credential ends the loop.
           Effect.catchTags({ ConnectionTransientError: () => Effect.succeed(expiresAtEpochMs) }),
         );

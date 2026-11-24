@@ -1,5 +1,0 @@
-dist/
-*.map
-.env
-node_modules/
-.alchemy/

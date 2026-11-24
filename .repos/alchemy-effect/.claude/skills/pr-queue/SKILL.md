@@ -1,1 +1,0 @@
-../../../.agents/skills/pr-queue/SKILL.md

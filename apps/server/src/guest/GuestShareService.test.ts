@@ -55,7 +55,6 @@ import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderRepl
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GuestShareService from "./GuestShareService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -126,19 +125,7 @@ class RecordedAnalytics extends Context.Service<
 const layerAnalytics = Layer.effectContext(
   Effect.gen(function* () {
     const recorded = yield* Ref.make<ReadonlyArray<Readonly<Record<string, unknown>>>>([]);
-    return Context.make(RecordedAnalytics, recorded).pipe(
-      Context.add(
-        AnalyticsService.AnalyticsService,
-        AnalyticsService.AnalyticsService.of({
-          record: (event, properties) =>
-            Ref.update(recorded, (events) => [...events, { event, ...properties }]).pipe(
-              Effect.as(true),
-            ),
-          flush: Effect.void,
-          recordOwners: () => Effect.void,
-        }),
-      ),
-    );
+    return Context.make(RecordedAnalytics, recorded);
   }),
 );
 const layerTest = GuestShareService.layer.pipe(

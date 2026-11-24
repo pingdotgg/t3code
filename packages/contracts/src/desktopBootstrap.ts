@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { PortSchema, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PortSchema, PositiveInt } from "./baseSchemas.ts";
 
 // A supervisor must not restart a server refused by the state-directory owner.
 export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
@@ -21,16 +21,12 @@ export const DesktopBackendBootstrap = Schema.Struct({
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: PortSchema,
-  otlpTracesUrl: Schema.optional(Schema.String),
-  otlpMetricsUrl: Schema.optional(Schema.String),
-  otlpLogsUrl: Schema.optional(Schema.String),
-  desktopTelemetryFd: Schema.optionalKey(PositiveInt),
-  desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
+  desktopLinkFd: Schema.optionalKey(PositiveInt),
+  desktopLinkControlFd: Schema.optionalKey(PositiveInt),
   // Whether the spawning desktop app can install updates when the server requests one.
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
-  resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

@@ -20,7 +20,6 @@ import type { ResolvedSettingsScope } from "./settingsScope";
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
-  | "/settings/diagnostics"
   | "/settings/voice"
   | "/settings/appearance"
   | "/settings/chat"
@@ -72,7 +71,6 @@ export interface SettingsSearchItem {
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
-  readonly agentFeedbackOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
@@ -89,7 +87,6 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
-  readonly hasAgentFeedbackEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
@@ -97,7 +94,6 @@ export interface SettingsSearchAvailability {
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
-  "/settings/diagnostics": msg("Diagnostics"),
   "/settings/projects": msg("Projects"),
   "/settings/general": msg("General"),
   "/settings/appearance": msg("Appearance"),
@@ -994,31 +990,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("onboarding setup first run getting started agents import projects")],
   },
   {
-    id: "privacy-policy",
-    title: msg("Privacy policy"),
-    to: "/settings/about",
-    searchTerms: [msg("telemetry analytics usage data tracking legal opt out")],
-  },
-  {
-    id: "telemetry-export",
-    title: msg("OpenTelemetry export"),
-    to: "/settings/diagnostics",
-    targetId: "telemetry-export",
-    scope: "environment",
-    searchTerms: [msg("OTel OTLP telemetry export endpoints logs traces metrics Grafana")],
-  },
-  {
-    id: "diagnostics",
-    title: msg("Diagnostics"),
-    to: "/settings/maintenance",
-    searchTerms: [msg("logs traces processes resource history failures spans cpu memory")],
-  },
-  {
     id: "agent-feedback",
     title: msg("Agent feedback"),
     to: "/settings/labs",
     scope: "environment-defaults",
-    agentFeedbackOnly: true,
     searchTerms: [
       msg("report bug problem t3 team send feedback agents tools automatic when i ask"),
     ],
@@ -1523,7 +1498,6 @@ export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
-  "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
   "/settings/voice": null,
@@ -1589,7 +1563,6 @@ export function getSettingsSearchTargetScope(targetId: string) {
         title: item.title,
         scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
-        ...(item.agentFeedbackOnly ? { agentFeedbackOnly: true } : {}),
       }
     : null;
 }
@@ -1682,7 +1655,6 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.agentFeedbackOnly || availability.hasAgentFeedbackEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
       (!item.secretProvidersOnly || availability.hasSecretProvidersEnvironment === true),
   );

@@ -1,5 +1,3 @@
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -64,13 +62,6 @@ const makeConfig = (baseDir: string) =>
       traceBatchWindowMs: 200,
       traceMaxBytes: 10 * 1024 * 1024,
       traceMaxFiles: 10,
-      otelEnvironment: OtelEnvironment.none,
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
       mode: "web",
       port: 0,
       host: "127.0.0.1",

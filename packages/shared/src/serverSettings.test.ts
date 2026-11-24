@@ -22,7 +22,6 @@ import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
   isModelSelectionProviderEnabled,
-  parsePersistedServerObservabilitySettings,
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
   resolveSpeechPostProcessingModelSelection,
@@ -261,41 +260,6 @@ describe("serverSettings helpers", () => {
     expect(reset.projectAgentBrowserAccessOverrides[secondProjectId]).toBe(false);
     expect(secondUpdate.projectAutoPullOverrides[firstProjectId]).toBe(false);
     expect(secondUpdate.projectAgentBrowserAccessOverrides[firstProjectId]).toBe(false);
-  });
-
-  it("parses lenient persisted settings JSON and trims observability URLs", () => {
-    expect(
-      parsePersistedServerObservabilitySettings(
-        JSON.stringify({
-          observability: {
-            otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
-            otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
-            otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
-          },
-        }),
-      ),
-    ).toEqual({
-      otlpTracesUrl: "http://localhost:4318/v1/traces",
-      otlpMetricsUrl: "http://localhost:4318/v1/metrics",
-      otlpLogsUrl: "http://localhost:4318/v1/logs",
-    });
-    // The server still loads a file holding the retired token streaming mode.
-    expect(
-      parsePersistedServerObservabilitySettings(
-        JSON.stringify({
-          responseStreamingMode: "token",
-          observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
-        }),
-      ).otlpTracesUrl,
-    ).toBe("http://localhost:4318/v1/traces");
-  });
-
-  it("falls back cleanly when persisted settings are invalid", () => {
-    expect(parsePersistedServerObservabilitySettings("{")).toEqual({
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-    });
   });
 
   it("still deep merges text generation selection when only options are provided", () => {

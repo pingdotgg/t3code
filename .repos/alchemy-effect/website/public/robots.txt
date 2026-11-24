@@ -1,5 +1,0 @@
-# https://alchemy.run — full site is crawlable.
-User-agent: *
-Allow: /
-
-Sitemap: https://alchemy.run/sitemap-index.xml

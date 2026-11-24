@@ -1,6 +1,0 @@
-CREATE TABLE notes (
-  id TEXT PRIMARY KEY NOT NULL,
-  title TEXT NOT NULL,
-  source TEXT NOT NULL DEFAULT 'api',
-  created_at INTEGER NOT NULL
-);

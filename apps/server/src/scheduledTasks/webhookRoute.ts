@@ -8,7 +8,6 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpTraceContext from "effect/http/HttpTraceContext";
-import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as Metrics from "../observability/Metrics.ts";
@@ -148,8 +147,7 @@ export const layer = HttpApiBuilder.group(
         })
         .pipe(
           Option.isSome(relayParent)
-            ? (effect) =>
-                effect.pipe(Effect.withParentSpan(relayParent.value), withRelayClientTracing)
+            ? (effect) => effect.pipe(Effect.withParentSpan(relayParent.value))
             : (effect) => effect,
           Effect.catchCause((cause) =>
             Effect.logWarning("Webhook delivery failed").pipe(

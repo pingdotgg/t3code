@@ -100,7 +100,6 @@ import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
-import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
@@ -204,7 +203,6 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsScheduledTaskBranch: msg("Base branch"),
   SettingsScheduledTaskThread: msg("Destination"),
   SettingsClientStorage: msg("Client Storage"),
-  SettingsDiagnostics: msg("Diagnostics"),
   SettingsUsageAccount: msg("Account"),
   SettingsOpenSourceLicenses: msg("Open source licenses"),
   SettingsOpenSourceLicense: msg("License notice"),
@@ -415,11 +413,6 @@ const SETTINGS_SCREENS = {
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,
     linking: "settings/client-storage",
-    options: settingsPage(),
-  }),
-  SettingsDiagnostics: createNativeStackScreen({
-    screen: SettingsDiagnosticsRouteScreen,
-    linking: "settings/diagnostics",
     options: settingsPage(),
   }),
   // These params snapshot the tap time, local filters, and freshly aggregated pools.

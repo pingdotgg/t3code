@@ -1,1 +1,0 @@
-../../../.agents/skills/audit/procedure.md

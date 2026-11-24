@@ -58,7 +58,6 @@ import {
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
   classifyGuestUploads,
@@ -227,7 +226,6 @@ const make = Effect.gen(function* () {
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
-  const analytics = yield* AnalyticsService.AnalyticsService;
   const documents = yield* DocumentText.DocumentText;
   const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
   /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
@@ -377,8 +375,6 @@ const make = Effect.gen(function* () {
       shareId: share.id,
       guestName: request.name,
     });
-    // Guests have no client connection, so their events carry no surface.
-    yield* analytics.record("feature.used", { feature: "guest_share.join" });
     const token = yield* signSession({ kind: "session", threadId: thread.id, shareId: share.id });
     return { token, shareId: share.id };
   });
@@ -475,10 +471,6 @@ const make = Effect.gen(function* () {
       text: request.text,
       ...(attachments.length === 0 ? {} : { attachments }),
     }).pipe(Effect.onError(() => removeStored(attachments)));
-    yield* analytics.record("feature.used", {
-      feature: "guest_message.submit",
-      variant: attachments.length === 0 ? "text_only" : "with_files",
-    });
   });
 
   /** Completes once the session no longer opens its share, so open reads end with it. */

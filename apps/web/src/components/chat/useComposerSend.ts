@@ -40,11 +40,6 @@ import {
   sendApprovalFeedback,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
-  parseCodexFeedbackCommand,
-  submitCodexFeedback,
-  type CodexFeedbackSubmission,
-} from "@t3tools/client-runtime/state/threads";
-import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
@@ -270,9 +265,6 @@ interface ComposerSendInput {
     readonly track: (message: ChatMessage) => void;
     readonly release: (message: ChatMessage) => void;
   };
-  readonly setFeedbackSubmissionsByThreadKey: Dispatch<
-    SetStateAction<Record<string, ReadonlyArray<CodexFeedbackSubmission>>>
-  >;
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
   readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
@@ -364,7 +356,6 @@ export function useComposerSend(input: ComposerSendInput) {
     setSetupQueueSendThreadKey,
     setOptimisticUserMessages,
     optimisticBlobPreviews,
-    setFeedbackSubmissionsByThreadKey,
     setThreadError,
     setKeepFullHistory,
     anchorNewTurn,
@@ -380,9 +371,6 @@ export function useComposerSend(input: ComposerSendInput) {
   const navigate = useNavigate();
   const clientSettingsHydrated = useClientSettingsHydrated();
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
-    reportFailure: false,
-  });
-  const uploadThreadFeedback = useOrchestrationCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -874,17 +862,7 @@ export function useComposerSend(input: ComposerSendInput) {
         composerThreadContexts.length +
         composerEnvironmentContexts.length,
     });
-    const feedbackCommand =
-      ctxSelectedProvider === "codex" &&
-      composerImages.length === 0 &&
-      composerFiles.length === 0 &&
-      sendableComposerTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0
-        ? parseCodexFeedbackCommand(trimmed)
-        : null;
+    const feedbackCommand = null;
     if (feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
         toastManager.add(
@@ -897,42 +875,6 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
       feedbackUploadsInFlightRef.current.add(routeThreadKey);
-      await submitCodexFeedback(
-        {
-          submission: {
-            id: newMessageId(),
-            command: trimmed,
-            createdAt: new Date().toISOString(),
-          },
-          clearDraft: () => {
-            clearComposerDraftContent(composerDraftTarget);
-            if (currentRouteThreadKeyRef.current === routeThreadKey) {
-              promptRef.current = "";
-              composerRef.current?.resetCursorState();
-            }
-          },
-          onUpdate: (submission) => {
-            setFeedbackSubmissionsByThreadKey((current) => {
-              const existing = current[routeThreadKey] ?? [];
-              const found = existing.some((entry) => entry.id === submission.id);
-              return {
-                ...current,
-                [routeThreadKey]: found
-                  ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                  : [...existing, submission],
-              };
-            });
-          },
-          upload: () =>
-            uploadThreadFeedback({
-              environmentId: activeThread.environmentId,
-              input: { threadId: activeThread.id, ...feedbackCommand },
-            }),
-        },
-        m,
-      ).finally(() => {
-        feedbackUploadsInFlightRef.current.delete(routeThreadKey);
-      });
 
       return;
     }

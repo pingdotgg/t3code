@@ -1,8 +1,6 @@
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 
-import { parseCodexFeedbackCommand } from "./threadFeedback.ts";
-
 export type ComposerDispatchMode = "auto" | "queue" | "steer" | "restart";
 export type ActiveTurnComposerAction = Exclude<ComposerDispatchMode, "auto">;
 
@@ -61,14 +59,12 @@ export function composerRunsDraftLocally(input: {
   readonly holdsOnlyText: boolean;
   readonly sideChat: boolean;
   readonly usageLimits: boolean;
-  readonly codexFeedback: boolean;
   readonly freshSession: boolean;
 }): boolean {
   if (input.sideChat && parseSideChatCommand(input.text) !== null) return true;
   if (!input.holdsOnlyText) return false;
   return (
     (input.usageLimits && isUsageLimitsCommand(input.text)) ||
-    (input.codexFeedback && parseCodexFeedbackCommand(input.text) !== null) ||
     (input.freshSession && isClearComposerCommand(input.text))
   );
 }

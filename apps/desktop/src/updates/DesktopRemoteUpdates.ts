@@ -1,5 +1,5 @@
 import type {
-  DesktopTelemetryRequestDesktopUpdate,
+  DesktopLinkRequestDesktopUpdate,
   DesktopUpdateRemoteOutcome,
   DesktopUpdateState,
 } from "@t3tools/contracts";
@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
-import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopLinkPublisher from "../desktopLink/DesktopLinkPublisher.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import {
   nextRemoteDesktopUpdateStep,
@@ -32,8 +32,8 @@ const PREPARED_UPDATE_TTL = Duration.minutes(5);
 
 interface PreparedUpdate {
   readonly requestId: string;
-  readonly channel: DesktopTelemetryRequestDesktopUpdate["channel"];
-  readonly targetVersion: DesktopTelemetryRequestDesktopUpdate["targetVersion"];
+  readonly channel: DesktopLinkRequestDesktopUpdate["channel"];
+  readonly targetVersion: DesktopLinkRequestDesktopUpdate["targetVersion"];
   readonly downloadedVersion: string;
   readonly status: "prepared" | "committing" | "failed";
   readonly failureReason?: string;
@@ -50,13 +50,13 @@ export const listen: Effect.Effect<
   void,
   never,
   | DesktopUpdates.DesktopUpdates
-  | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopLinkPublisher.DesktopLinkPublisher
   | DesktopBackendPool.DesktopBackendPool
   | Scope.Scope
 > = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const backends = yield* DesktopBackendPool.DesktopBackendPool;
-  const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+  const publisher = yield* DesktopLinkPublisher.DesktopLinkPublisher;
   const activeRequestIdRef = yield* Ref.make(Option.none<string>());
   const requestControlRef = yield* Ref.make<{
     readonly active: Option.Option<{
@@ -141,7 +141,7 @@ export const listen: Effect.Effect<
     }),
   ).pipe(Effect.forkScoped);
 
-  const handleRequest = (request: DesktopTelemetryRequestDesktopUpdate): Effect.Effect<void> =>
+  const handleRequest = (request: DesktopLinkRequestDesktopUpdate): Effect.Effect<void> =>
     Effect.scoped(
       Effect.gen(function* () {
         const cancellation = yield* Deferred.make<void>();

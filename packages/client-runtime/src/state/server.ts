@@ -1602,19 +1602,11 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
-    traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:trace-diagnostics",
-      tag: WS_METHODS.serverGetTraceDiagnostics,
-    }),
     npmRelease: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:npm-release",
       tag: WS_METHODS.serverGetNpmRelease,
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
-    }),
-    processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:process-diagnostics",
-      tag: WS_METHODS.serverGetProcessDiagnostics,
     }),
     hostResources: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:server:host-resources",
@@ -1622,13 +1614,6 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 5_000,
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
-    }),
-    processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:process-resource-history",
-      tag: WS_METHODS.serverGetProcessResourceHistory,
-      staleTimeMs: 5_000,
-      refreshIntervalMs: 5_000,
-      idleTtlMs: 0,
     }),
     scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-deliveries",
@@ -1699,18 +1684,6 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         );
       },
-    }),
-    resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:resource-telemetry",
-      tag: WS_METHODS.subscribeResourceTelemetry,
-      idleTtlMs: 0,
-    }),
-    resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:resource-telemetry-history",
-      tag: WS_METHODS.serverGetResourceTelemetryHistory,
-      staleTimeMs: 5_000,
-      refreshIntervalMs: 5_000,
-      idleTtlMs: 0,
     }),
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
@@ -1920,10 +1893,6 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
       },
     }),
-    signalProcess: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:signal-process",
-      tag: WS_METHODS.serverSignalProcess,
-    }),
     upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:upsert",
       tag: WS_METHODS.scheduledTasksUpsert,
@@ -2001,15 +1970,6 @@ export function createServerEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.threadId, input.turnItemId]),
       },
     }),
-    answerFeedbackRequest: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:agent-feedback:answer-request",
-      tag: WS_METHODS.agentFeedbackAnswerRequest,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
-      },
-    }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,
@@ -2018,10 +1978,6 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
-    checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:check-otlp-endpoint",
-      tag: WS_METHODS.serverCheckOtlpEndpoint,
-    }),
     checkSecretSource: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-secret-source",
       tag: WS_METHODS.serverCheckSecretSource,
@@ -2029,14 +1985,6 @@ export function createServerEnvironmentAtoms<R, E>(
     listTextGeneratorModels: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:list-text-generator-models",
       tag: WS_METHODS.serverListTextGeneratorModels,
-    }),
-    retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:retry-resource-telemetry",
-      tag: WS_METHODS.serverRetryResourceTelemetry,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
-      },
     }),
   };
 }

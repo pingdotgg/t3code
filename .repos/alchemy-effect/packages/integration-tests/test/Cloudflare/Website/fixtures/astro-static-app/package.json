@@ -1,8 +1,0 @@
-{
-  "name": "alchemy-astro-static-fixture",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "astro": "7.1.0"
-  }
-}

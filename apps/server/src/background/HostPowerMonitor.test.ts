@@ -1,4 +1,4 @@
-import type { DesktopHostTelemetrySnapshot } from "@t3tools/contracts";
+import type { DesktopLinkSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
-import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as DesktopLinkReceiver from "../desktopLink/DesktopLinkReceiver.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
 
 describe("HostPowerMonitor", () => {
@@ -84,9 +84,9 @@ describe("HostPowerMonitor", () => {
     () =>
       Effect.gen(function* () {
         const sampledAt = DateTime.makeUnsafe("2026-06-17T12:00:00.000Z");
-        const initial: DesktopHostTelemetrySnapshot = {
+        const initial: DesktopLinkSnapshot = {
           version: 1,
-          type: "desktopTelemetry",
+          type: "desktopLink",
           sequence: 1,
           sampledAtUnixMs: DateTime.toEpochMillis(sampledAt),
           electronPid: 100,
@@ -103,9 +103,8 @@ describe("HostPowerMonitor", () => {
             updatedAt: sampledAt,
           },
           speedLimitPercent: Option.none(),
-          electronProcesses: [],
         };
-        const updated: DesktopHostTelemetrySnapshot = {
+        const updated: DesktopLinkSnapshot = {
           ...initial,
           sequence: 2,
           power: {
@@ -114,9 +113,9 @@ describe("HostPowerMonitor", () => {
             updatedAt: DateTime.makeUnsafe("2026-06-17T12:00:01.000Z"),
           },
         };
-        const desktopChanges = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(1);
+        const desktopChanges = yield* PubSub.sliding<DesktopLinkSnapshot>(1);
         const changeApplied = yield* Deferred.make<void>();
-        const layerReceiver = DesktopTelemetryReceiver.layerTest({
+        const layerReceiver = DesktopLinkReceiver.layerTest({
           latest: Effect.succeedSome(initial),
           changes: Stream.empty,
           subscribe: Effect.gen(function* () {

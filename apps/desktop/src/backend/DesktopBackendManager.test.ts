@@ -3,7 +3,7 @@ import {
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
-  DesktopTelemetryControlMessage,
+  DesktopLinkControlMessage,
 } from "@t3tools/contracts";
 import {
   DATABASE_MIGRATION_PROGRESS_MESSAGE,
@@ -32,15 +32,15 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopLinkPublisher from "../desktopLink/DesktopLinkPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const decodeDesktopBackendBootstrap = Schema.decodeEffect(
   Schema.fromJsonString(DesktopBackendBootstrap),
 );
-const encodeDesktopTelemetryControl = Schema.encodeSync(
-  Schema.fromJsonString(DesktopTelemetryControlMessage),
+const encodeDesktopLinkControl = Schema.encodeSync(
+  Schema.fromJsonString(DesktopLinkControlMessage),
 );
 
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -58,8 +58,8 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     desktopBootstrapToken: "token",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
-    desktopTelemetryFd: 4,
-    desktopTelemetryControlFd: 5,
+    desktopLinkFd: 4,
+    desktopLinkControlFd: 5,
   },
   bootstrapDelivery: "fd3",
   extendEnv: true,
@@ -71,8 +71,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
 const configWithObservability: DesktopBackendBootstrapValue = {
   ...baseConfig.bootstrap,
   tailscaleServeEnabled: true,
-  desktopTelemetryFd: 4,
-  otlpTracesUrl: "http://127.0.0.1:4318/v1/traces",
+  desktopLinkFd: 4,
 };
 
 function makeProcess(options?: {
@@ -141,10 +140,8 @@ interface MakeInstanceInput {
     DesktopBackendManager.DesktopBackendStartConfig,
     PlatformError.PlatformError
   >;
-  readonly desktopTelemetryStream?: Stream.Stream<Uint8Array>;
-  readonly desktopTelemetryPublisher?: Partial<
-    DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
-  >;
+  readonly desktopLinkStream?: Stream.Stream<Uint8Array>;
+  readonly desktopLinkPublisher?: Partial<DesktopLinkPublisher.DesktopLinkPublisher["Service"]>;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
 }
 
@@ -166,17 +163,17 @@ function makeTestInstance(input: MakeInstanceInput) {
     Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
       forInstance: () => Effect.succeed(stubLog),
     } satisfies DesktopObservability.DesktopBackendOutputLogFactory["Service"]),
-    Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
+    Layer.succeed(DesktopLinkPublisher.DesktopLinkPublisher, {
       latest: Effect.succeedNone,
       changes: Stream.empty,
-      encoded: input.desktopTelemetryStream ?? Stream.empty,
+      encoded: input.desktopLinkStream ?? Stream.empty,
       handleControlForSource: () => Effect.void,
       removeControlSource: () => Effect.void,
       publishUpdateReport: () => Effect.void,
       updateRequests: Stream.empty,
       updateCommits: Stream.empty,
       updateCancellations: Stream.empty,
-      ...input.desktopTelemetryPublisher,
+      ...input.desktopLinkPublisher,
     }),
     DesktopBrowserHost.layer,
     DesktopWslEnvironment.layerTest(
@@ -315,8 +312,8 @@ describe("DesktopBackendManager", () => {
           bootstrap: configWithObservability,
         },
         spawnerLayer: layerSpawner,
-        desktopTelemetryStream: Stream.encodeText(
-          Stream.make('{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n'),
+        desktopLinkStream: Stream.encodeText(
+          Stream.make('{"version":1,"type":"desktopLinkHello","electronPid":123}\n'),
         ),
         onReady: Effect.sync(() => {
           readyCount += 1;
@@ -351,10 +348,7 @@ describe("DesktopBackendManager", () => {
       );
 
       assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
-      assert.equal(
-        telemetryJson,
-        '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
-      );
+      assert.equal(telemetryJson, '{"version":1,"type":"desktopLinkHello","electronPid":123}\n');
     }),
   );
 
@@ -390,7 +384,7 @@ describe("DesktopBackendManager", () => {
       );
       const run = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
-        desktopTelemetryStream: Stream.empty,
+        desktopLinkStream: Stream.empty,
         onExitObserved: () => Deferred.succeed(exitObserved, undefined).pipe(Effect.asVoid),
         trackProcess: () =>
           Deferred.succeed(recording, undefined).pipe(
@@ -430,7 +424,7 @@ describe("DesktopBackendManager", () => {
 
       const exit = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
-        desktopTelemetryStream: Stream.empty,
+        desktopLinkStream: Stream.empty,
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
 
       assert.deepEqual(exit, { code: Option.none(), reason: "killed by SIGKILL" });
@@ -459,7 +453,7 @@ describe("DesktopBackendManager", () => {
 
       const runFiber = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
-        desktopTelemetryStream: Stream.empty,
+        desktopLinkStream: Stream.empty,
         onExitObserved: () => Deferred.succeed(exitObserved, void 0).pipe(Effect.asVoid),
       }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)), Effect.forkChild);
 
@@ -476,7 +470,7 @@ describe("DesktopBackendManager", () => {
       Effect.gen(function* () {
         const probeStarted = yield* Deferred.make<void>();
         const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
+        const readyLine = encodeDesktopLinkControl({ version: 1, type: "serverReady" });
         const instance = yield* makeTestInstance({
           spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -507,13 +501,14 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
+  it.effect("continues routing desktop link control messages after an invalid line", () =>
     Effect.gen(function* () {
       const handled = yield* Deferred.make<boolean>();
-      const controlMessage = encodeDesktopTelemetryControl({
+      const controlMessage = encodeDesktopLinkControl({
         version: 1,
-        type: "setDiagnosticsDemand",
-        enabled: true,
+        type: "setHostPowerIntervals",
+        activeIntervalMs: 1_000,
+        idleIntervalMs: 2_000,
       });
       const layerSpawner = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -531,10 +526,10 @@ describe("DesktopBackendManager", () => {
       );
       const instance = yield* makeTestInstance({
         spawnerLayer: layerSpawner,
-        desktopTelemetryPublisher: {
+        desktopLinkPublisher: {
           handleControlForSource: (_sourceId, message) =>
-            message.type === "setDiagnosticsDemand"
-              ? Deferred.succeed(handled, message.enabled).pipe(Effect.asVoid)
+            message.type === "setHostPowerIntervals"
+              ? Deferred.succeed(handled, message.activeIntervalMs === 1_000).pipe(Effect.asVoid)
               : Effect.void,
         },
       });
@@ -610,7 +605,7 @@ describe("DesktopBackendManager", () => {
             discardedSessionCount += 1;
           }),
         },
-        desktopTelemetryPublisher: {
+        desktopLinkPublisher: {
           removeControlSource: () =>
             Effect.sync(() => {
               removedTelemetrySources += 1;

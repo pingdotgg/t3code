@@ -1,5 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "include": ["*.ts", "test/**/*.ts"],
-  "references": [{ "path": "../../packages/alchemy" }]
-}

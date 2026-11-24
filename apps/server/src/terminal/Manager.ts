@@ -30,7 +30,6 @@ import {
   type TerminalOpenInput,
   type TerminalObserveInput,
   type TerminalResizeInput,
-  type ResourceMonitorProcessTableEntry,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
   type TerminalSummary,
@@ -77,7 +76,6 @@ import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
-import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -139,7 +137,7 @@ class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocess
   "TerminalSubprocessCheckError",
   {
     cause: Schema.optional(Schema.Defect()),
-    command: Schema.Literals(["powershell", "ps", "resource-monitor"]),
+    command: Schema.Literals(["powershell", "ps"]),
     exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
     timedOut: Schema.optional(Schema.Boolean),
     stdoutTruncated: Schema.optional(Schema.Boolean),
@@ -1699,10 +1697,6 @@ interface TerminalManagerOptions {
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
-  processTable?: Effect.Effect<
-    ReadonlyArray<ResourceMonitorProcessTableEntry>,
-    TerminalSubprocessCheckError
-  >;
   foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -1774,7 +1768,6 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
-  const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
@@ -1791,11 +1784,6 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
-    processTable: nativeTelemetry.processTable.pipe(
-      Effect.mapError(
-        (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
-      ),
-    ),
     managedBinaryCacheDir: providerStatusCacheDir,
     managedBinaryToolsDir: path.join(baseDir, "tools"),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,

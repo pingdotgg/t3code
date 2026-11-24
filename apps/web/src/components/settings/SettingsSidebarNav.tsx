@@ -95,7 +95,6 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
-  "/settings/diagnostics": WrenchIcon,
   "/settings/voice": MicIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/chat": MessageSquareTextIcon,
@@ -121,7 +120,6 @@ const SETTINGS_SECTION_ICONS: Readonly<
 
 // Detail pages without a nav entry highlight the page that links to them.
 const SETTINGS_DETAIL_PAGE_PARENTS: Readonly<Record<string, SettingsPath>> = {
-  "/settings/diagnostics": "/settings/maintenance",
   "/settings/open-source-licenses": "/settings/about",
 };
 

@@ -38,12 +38,6 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-
-import {
-  parseCodexFeedbackCommand,
-  submitCodexFeedback,
-  type CodexFeedbackSubmission,
-} from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
@@ -242,12 +236,6 @@ export function useThreadComposerState(input: {
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const dispatchingQueuedMessageIds = useAtomValue(dispatchingQueuedMessageIdsAtom);
-  const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
-    Record<string, ReadonlyArray<CodexFeedbackSubmission>>
-  >({});
-  const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
-    reportFailure: false,
-  });
   const editQueuedRun = useAtomCommand(threadEnvironment.editQueuedRun, {
     label: "edit queued message",
     reportFailure: false,
@@ -268,16 +256,6 @@ export function useThreadComposerState(input: {
   const dispatchingQueuedMessageId =
     selectedThreadQueuedMessages.find((message) => dispatchingQueuedMessageIds[message.messageId])
       ?.messageId ?? null;
-  const feedbackSubmissions = selectedThreadKey
-    ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
-    : [];
-  const dismissFeedback = (id: MessageId) => {
-    if (!selectedThreadKey) return;
-    setFeedbackSubmissionsByThreadKey((current) => ({
-      ...current,
-      [selectedThreadKey]: (current[selectedThreadKey] ?? []).filter((entry) => entry.id !== id),
-    }));
-  };
   const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
@@ -794,13 +772,7 @@ export function useThreadComposerState(input: {
       alertModelUnavailable();
       return null;
     }
-    const provider = serverConfig?.providers.find(
-      (entry) => entry.instanceId === modelSelection.instanceId,
-    );
-    const feedbackCommand =
-      attachments.length === 0 && provider?.driver === "codex"
-        ? parseCodexFeedbackCommand(text)
-        : null;
+    const feedbackCommand = null;
     if (feedbackCommand) {
       if (!readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope))
         return null;
@@ -811,35 +783,6 @@ export function useThreadComposerState(input: {
         );
         return null;
       }
-      const metadata = makeQueuedMessageMetadata();
-      await submitCodexFeedback(
-        {
-          submission: {
-            id: MessageId.make(metadata.messageId),
-            command: text,
-            createdAt: metadata.createdAt,
-          },
-          clearDraft: () => clearComposerDraftContent(threadKey),
-          onUpdate: (submission) => {
-            setFeedbackSubmissionsByThreadKey((current) => {
-              const existing = current[threadKey] ?? [];
-              const found = existing.some((entry) => entry.id === submission.id);
-              return {
-                ...current,
-                [threadKey]: found
-                  ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                  : [...existing, submission],
-              };
-            });
-          },
-          upload: () =>
-            uploadThreadFeedback({
-              environmentId: thread.environmentId,
-              input: { threadId: thread.id, ...feedbackCommand },
-            }),
-        },
-        m,
-      );
       return null;
     }
 
@@ -1045,8 +988,6 @@ export function useThreadComposerState(input: {
   };
 
   return {
-    feedbackSubmissions,
-    dismissFeedback,
     selectedThreadFeed,
     selectedThreadActivityRun,
     selectedThreadAnnouncedRun,

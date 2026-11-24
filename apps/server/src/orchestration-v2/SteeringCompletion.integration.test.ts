@@ -1,7 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import * as TestClock from "effect/testing/TestClock";
 import {
-  ChatAttachmentId,
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
   ComposerContextId,
   CommandId,
@@ -1301,102 +1299,6 @@ it.effect(
         assert.deepEqual(back.thread.modelSelection, runSelection);
       }).pipe(Effect.provide(layer));
     }),
-);
-
-it.effect("restarts the turn for an image when native steering takes text only", () =>
-  Effect.gen(function* () {
-    const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-      "steering-text-only-attachment",
-      true,
-      true,
-      Effect.void,
-      false,
-    );
-    yield* Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const threadId = yield* startFirstTurn;
-      const before = yield* orchestrator.getThreadProjection(threadId);
-      const originalStart = before.runs[0]!.startedAt;
-      assert.isNotNull(originalStart);
-      // A feedback card the run showed before the restart, still waiting for the user.
-      const card = {
-        type: "feedback_request.record" as const,
-        threadId,
-        runId: before.runs[0]!.id,
-        nodeId: before.runs[0]!.rootNodeId!,
-        turnItemId: TurnItemId.make("turn-item:feedback-request:steer"),
-        preview: {
-          kind: "bug" as const,
-          subject: "general",
-          expected: "a",
-          actual: "b",
-          workaround: "",
-          trace: null,
-        },
-      };
-      yield* orchestrator.dispatch({
-        ...card,
-        commandId: CommandId.make("feedback-pending"),
-        feedbackStatus: "pending",
-      });
-      yield* TestClock.adjust("10 seconds");
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make("steer-image"),
-        threadId,
-        messageId: MessageId.make("message:steer-image"),
-        text: "look at this",
-        attachments: [
-          {
-            type: "image",
-            id: ChatAttachmentId.make("steer-image"),
-            name: "screenshot.png",
-            mimeType: "image/png",
-            sizeBytes: 4,
-          },
-        ],
-        modelSelection: runSelection,
-        dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      yield* worker.drain();
-      const after = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(after.runs[0]?.id, before.runs[0]?.id);
-      assert.deepEqual(after.runs[0]?.startedAt, originalStart);
-      assert.equal(after.attempts[0]?.status, "superseded");
-      const restartedAt = yield* DateTime.now;
-      assert.deepEqual(after.attempts[1]?.startedAt, restartedAt);
-      assert.deepEqual(
-        after.nodes.find((node) => node.id === after.runs[0]?.rootNodeId)?.startedAt,
-        restartedAt,
-      );
-      assert.deepEqual(steered, []);
-      assert.deepEqual(
-        started.map((turn) => [turn.message.text, turn.message.attachments.length]),
-        [
-          ["first", 0],
-          ["look at this", 1],
-        ],
-      );
-      // The restart replaced the root, and the user's answer can still close the card.
-      assert.notEqual(after.runs[0]?.rootNodeId, card.nodeId);
-      yield* orchestrator.dispatch({
-        ...card,
-        commandId: CommandId.make("feedback-sent"),
-        feedbackStatus: "sent",
-      });
-      const closed = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
-        (item) => item.id === card.turnItemId,
-      );
-      assert.deepInclude(closed, {
-        status: "completed",
-        feedbackStatus: "sent",
-        nodeId: card.nodeId,
-      });
-    }).pipe(Effect.provide(layer));
-  }),
 );
 
 it.effect.each(["complete", "stop-before-end"] as const)(

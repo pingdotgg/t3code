@@ -48,7 +48,6 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
-import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
@@ -352,15 +351,6 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
 );
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
-  const recorded: Array<ProviderUsageAnalytics.ProviderTurnReport> = [];
-  const layerAnalytics = Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
-    runStarted: () => Effect.void,
-    turnCompleted: (report) =>
-      Effect.sync(() => {
-        recorded.push(report);
-      }),
-    runSettled: () => Effect.void,
-  });
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
     const eventSink = yield* EventSink.EventSinkV2;
@@ -440,13 +430,7 @@ it.effect("records accepted billed turn usage once without billing the context w
       },
     });
     assert.isEmpty(ignored);
-    assert.lengthOf(recorded, 1);
-    assert.deepEqual(recorded[0], {
-      driver: CODEX_DRIVER,
-      providerTurn,
-      context: input.analyticsContext,
-    });
-  }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect(

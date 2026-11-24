@@ -1,3 +1,0 @@
-# octane-aws-robots-marker
-User-agent: *
-Allow: /

@@ -11,7 +11,6 @@ const SETTINGS_LABEL = msg("Settings");
 
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   ...SETTINGS_SECTION_LABELS,
-  "/settings/diagnostics": msg("Diagnostics"),
   "/settings/open-source-licenses": msg("Open source licenses"),
 };
 

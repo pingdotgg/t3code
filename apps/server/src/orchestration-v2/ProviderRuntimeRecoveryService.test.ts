@@ -527,12 +527,7 @@ it.effect(
       // Nothing in memory waits on a link or feedback card; the user can still answer it.
       // Claude never reported reading the steer, so the orchestrator queues it.
       assert.deepEqual(
-        cards.filter(
-          (card) =>
-            card.type === "link_request" ||
-            card.type === "feedback_request" ||
-            card.type === "user_message",
-        ),
+        cards.filter((card) => card.type === "link_request" || card.type === "user_message"),
         [],
       );
     }).pipe(Effect.provide(layer));

@@ -16,7 +16,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
-import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as DesktopLinkReceiver from "../desktopLink/DesktopLinkReceiver.ts";
 
 const DESKTOP_UPDATE_TIMEOUT = Duration.minutes(20);
 const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
@@ -44,7 +44,7 @@ export class DesktopAppUpdate extends Context.Service<
       reportProgress: (
         stage: ServerSelfUpdateProgressStage,
       ) => Effect.Effect<void, ServerSelfUpdateError>,
-      trackSwitch?: DesktopTelemetryReceiver.DesktopTrackSwitch,
+      trackSwitch?: DesktopLinkReceiver.DesktopTrackSwitch,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
     /** Success stops the server; returns only on installation failure or timeout. */
     readonly commit: (
@@ -57,10 +57,10 @@ export class DesktopAppUpdate extends Context.Service<
 export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const random = yield* SecureRandom.SecureRandom;
-  const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
+  const receiver = yield* DesktopLinkReceiver.DesktopLinkReceiver;
   const inFlight = yield* Ref.make(false);
 
-  const available = config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined;
+  const available = config.mode === "desktop" && config.desktopLinkControlFd !== undefined;
   const failWith = (reason: string, cause?: unknown) =>
     cause === undefined
       ? new ServerSelfUpdateError({ reason })

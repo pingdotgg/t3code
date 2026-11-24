@@ -21,18 +21,11 @@ const MARKETING_SITE_URL = resolveMarketingSiteUrl(process.env.EXPO_PUBLIC_MARKE
 function marketingSiteDocumentUrl(path: string): string {
   return new URL(path, MARKETING_SITE_URL).toString();
 }
-
-const PRIVACY_POLICY_URL = marketingSiteDocumentUrl("privacy-policy");
 const SECURITY_POLICY_URL = marketingSiteDocumentUrl("security-policy");
 const TERMS_OF_SERVICE_URL = marketingSiteDocumentUrl("terms-of-service");
 export const LEGAL_URL = marketingSiteDocumentUrl("legal");
 
-const ALLOWED_LEGAL_DOCUMENT_URLS = [
-  LEGAL_URL,
-  PRIVACY_POLICY_URL,
-  TERMS_OF_SERVICE_URL,
-  SECURITY_POLICY_URL,
-] as const;
+const ALLOWED_LEGAL_DOCUMENT_URLS = [LEGAL_URL, TERMS_OF_SERVICE_URL, SECURITY_POLICY_URL] as const;
 
 function webDocumentIdentity(value: string): string | null {
   try {

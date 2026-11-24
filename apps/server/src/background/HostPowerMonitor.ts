@@ -8,7 +8,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as DesktopLinkReceiver from "../desktopLink/DesktopLinkReceiver.ts";
 
 export class HostPowerMonitor extends Context.Service<
   HostPowerMonitor,
@@ -84,8 +84,8 @@ export const make = Effect.fn("background.hostPower.make")(function* (
 export const layer = Layer.effect(
   HostPowerMonitor,
   Effect.gen(function* () {
-    const desktopTelemetry = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
-    const desktopSubscription = yield* desktopTelemetry.subscribe;
+    const desktopLink = yield* DesktopLinkReceiver.DesktopLinkReceiver;
+    const desktopSubscription = yield* desktopLink.subscribe;
     const initial = desktopSubscription.latest;
     const monitor = yield* Option.match(initial, {
       onNone: () => make(),

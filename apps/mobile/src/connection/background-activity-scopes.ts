@@ -37,9 +37,6 @@ function stableScopeKey(environmentId: EnvironmentId, scope: BackgroundScope): s
 function scopeForSubscription(
   observation: EnvironmentRpcSubscriptionObservation,
 ): BackgroundScope | null {
-  if (observation.method === WS_METHODS.subscribeResourceTelemetry) {
-    return { type: "diagnostics" };
-  }
   if (observation.method !== WS_METHODS.subscribeVcsStatus) {
     return null;
   }

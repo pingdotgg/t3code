@@ -161,7 +161,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const stageDistDir = path.join(tempDir, "dist");
   const packagedAppDir = path.join(stageDistDir, "win-unpacked");
   const resourcesDir = path.join(packagedAppDir, "resources");
-  yield* fs.makeDirectory(path.join(resourcesDir, "resource-monitor"), { recursive: true });
+  yield* fs.makeDirectory(resourcesDir, { recursive: true });
   yield* fs.copyFile(generatedAsarPath, path.join(resourcesDir, WINDOWS_SERVER_ASAR_RESOURCE));
   if (input.copyUnpackedNatives) {
     yield* fs.copy(
@@ -169,10 +169,6 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
       path.join(resourcesDir, `${WINDOWS_SERVER_ASAR_RESOURCE}.unpacked`),
     );
   }
-  yield* fs.writeFileString(
-    path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
-    "monitor",
-  );
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
   yield* fs.writeFileString(path.join(packagedAppDir, "chrome_crashpad_handler.exe"), "crashpad");
@@ -860,51 +856,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
 
         assert.instanceOf(error, WindowsDesktopBuildPrerequisitesMissingError);
-        assert.deepStrictEqual(error.missing, ["rust", "python", "msvc"]);
-        assert.equal(error.rustTarget, "x86_64-pc-windows-msvc");
-        assert.include(error.message, "Visual Studio Build Tools components");
-      }),
-    ),
-  );
-
-  it.effect("does not require MSVC when reusing a prebuilt Windows resource monitor", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-windows-preflight-" });
-        const pythonPath = path.join(tempDir, "python.exe");
-        yield* fs.writeFileString(pythonPath, "python");
-        const commands: string[] = [];
-        const spawner = Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) => {
-            const childProcess = command as unknown as { readonly command: string };
-            commands.push(childProcess.command);
-            return Effect.succeed(mockProcess(childProcess.command === "powershell.exe" ? 1 : 0));
-          }),
-        );
-
-        yield* preflightWindowsDesktopBuild({
-          arch: "x64",
-          bundlesWslRuntime: true,
-        }).pipe(
-          Effect.provide(
-            Layer.merge(
-              spawner,
-              ConfigProvider.layer(
-                ConfigProvider.fromEnv({
-                  env: {
-                    npm_config_python: pythonPath,
-                    T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
-                  },
-                }),
-              ),
-            ),
-          ),
-        );
-
-        assert.notInclude(commands, "powershell.exe");
+        assert.deepStrictEqual(error.missing, ["python"]);
       }),
     ),
   );
@@ -938,14 +890,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           bundlesWslRuntime: false,
         }).pipe(
           Effect.provide(
-            Layer.merge(
-              spawner,
-              ConfigProvider.layer(
-                ConfigProvider.fromEnv({
-                  env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
-                }),
-              ),
-            ),
+            Layer.merge(spawner, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
           ),
           Effect.flip,
         );
@@ -1347,24 +1292,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         yield* fs.remove(nativePath, { recursive: true });
         yield* fs.writeFileString(nativePath, "native-binary");
-        const resourceMonitorPath = path.join(
-          fixture.packagedAppDir,
-          "resources/resource-monitor/t3-resource-monitor.exe",
-        );
-        yield* fs.remove(resourceMonitorPath);
-        yield* fs.makeDirectory(resourceMonitorPath);
-
-        const resourceMonitorError = yield* validateWindowsPackagedPayload({
-          stageDistDir: fixture.stageDistDir,
-          appExecutableName: fixture.appExecutableName,
-          targetArch: "x64",
-          appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
-        }).pipe(Effect.flip);
-        assert.instanceOf(resourceMonitorError, WindowsPackagedPayloadValidationError);
-        assert.equal(resourceMonitorError.reason, "resource-monitor-missing");
-        assert.deepStrictEqual(resourceMonitorError.missingFiles, [
-          "resource-monitor/t3-resource-monitor.exe",
-        ]);
       }),
     ),
   );

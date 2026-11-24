@@ -7,19 +7,9 @@ import * as LogLevel from "effect/LogLevel";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-
-import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { markNoCopyOnWrite } from "./noCopyOnWrite.ts";
-import {
-  DEFAULT_SIGNAL_EXPORT,
-  nodeProcessRuntimeAttributes,
-  processServiceInstanceId,
-  type SignalExport,
-} from "@t3tools/shared/observability";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { type ReleaseChannel, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
-import packageJson from "../package.json" with { type: "json" };
+import { type ReleaseChannel } from "@t3tools/shared/releaseResource";
 
 // Official release workflows set this telemetry channel; other builds report dev.
 // Unlike __T3CODE_BUILD_CHANNEL__, this is not the sign-in page's latest/nightly channel.
@@ -72,19 +62,6 @@ export class ServerConfig extends Context.Service<
     readonly traceBatchWindowMs: number;
     readonly traceMaxBytes: number;
     readonly traceMaxFiles: number;
-    readonly otlpTracesUrl: string | undefined;
-    readonly otlpMetricsUrl: string | undefined;
-    readonly otlpLogsUrl: string | undefined;
-    readonly otlpTracesExport: SignalExport;
-    readonly otlpMetricsExport: SignalExport;
-    readonly otlpLogsExport: SignalExport;
-    readonly otlpTracesSource?: OtlpEndpointSource;
-    readonly otlpTracesVariable?: string;
-    readonly otlpMetricsSource?: OtlpEndpointSource;
-    readonly otlpMetricsVariable?: string;
-    readonly otlpLogsSource?: OtlpEndpointSource;
-    readonly otlpLogsVariable?: string;
-    readonly otelEnvironment: OtelEnvironment.OtelEnvironment;
     readonly mode: RuntimeMode;
     readonly port: number;
     readonly host: string | undefined;
@@ -101,12 +78,11 @@ export class ServerConfig extends Context.Service<
     readonly desktopBootstrapToken: string | undefined;
     readonly desktopBootstrapSecret?: string | undefined;
     readonly shellEnvironmentPrepared?: boolean | undefined;
-    readonly desktopTelemetryFd?: number | undefined;
-    readonly desktopTelemetryControlFd?: number | undefined;
+    readonly desktopLinkFd?: number | undefined;
+    readonly desktopLinkControlFd?: number | undefined;
     readonly desktopAppUpdate?: boolean | undefined;
     readonly desktopBrowserFd?: number | undefined;
     readonly desktopBrowserControlFd?: number | undefined;
-    readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
@@ -120,23 +96,6 @@ export class ServerConfig extends Context.Service<
 }
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
-
-export const otlpResource = (
-  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
-  hostName: string,
-) => ({
-  serviceName: "t3code-server",
-  serviceVersion: packageJson.version,
-  attributes: {
-    "service.namespace": "t3code",
-    "service.runtime": "t3-server",
-    "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
-    "service.instance.id": processServiceInstanceId(config.otelEnvironment.resourceAttributes),
-    ...releaseResourceAttributes(telemetryChannel, config.otelEnvironment.resourceAttributes),
-    "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
-    ...nodeProcessRuntimeAttributes(),
-  },
-});
 
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
 
@@ -244,13 +203,6 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     traceBatchWindowMs: 200,
     traceMaxBytes: 10 * 1024 * 1024,
     traceMaxFiles: 10,
-    otlpTracesUrl: undefined,
-    otlpMetricsUrl: undefined,
-    otlpLogsUrl: undefined,
-    otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-    otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-    otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-    otelEnvironment: OtelEnvironment.none,
     cwd,
     baseDir,
     ...derivedPaths,
@@ -262,11 +214,10 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
-    desktopTelemetryFd: undefined,
-    desktopTelemetryControlFd: undefined,
+    desktopLinkFd: undefined,
+    desktopLinkControlFd: undefined,
     desktopBrowserFd: undefined,
     desktopBrowserControlFd: undefined,
-    resourceMonitorPath: undefined,
     staticDir: undefined,
     devUrl,
     devAllowedOrigins: [],

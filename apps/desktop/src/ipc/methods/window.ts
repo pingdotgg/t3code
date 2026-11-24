@@ -18,7 +18,6 @@ import {
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -30,10 +29,8 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
-import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopPrimaryPaste from "../../app/DesktopPrimaryPaste.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
-import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
@@ -81,35 +78,6 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
     return environment.branding;
   }),
 });
-
-/**
- * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
- * stops them. Read once here: a sync IPC handler cannot wait on the filesystem. Until the login
- * shell's environment (which may opt out) is known, answer null so the renderer asks again.
- */
-export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
-  function* () {
-    const ipc = yield* DesktopIpc.DesktopIpc;
-    const env = yield* HostProcess.Environment;
-    const policyAllows = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
-      Effect.map((found) => found?.document.limits?.telemetry !== false),
-      Effect.orElseSucceed(() => false),
-    );
-    const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
-    yield* ipc.handleSync(
-      DesktopIpc.makeSyncIpcMethod({
-        channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-        result: Schema.NullOr(Schema.Boolean),
-        handler: () =>
-          shellEnvironment.discoveryFinished.pipe(
-            Effect.map((known) =>
-              !policyAllows || !isRelayTracingEnabled(env) ? false : known ? true : null,
-            ),
-          ),
-      }),
-    );
-  },
-);
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,

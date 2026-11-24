@@ -1,9 +1,0 @@
-{
-  "name": "alchemy-vite-tanstack-start-template-fixture",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
-  "imports": {
-    "#/*": "./src/*"
-  }
-}

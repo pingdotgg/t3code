@@ -16,7 +16,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -41,7 +40,6 @@ import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
-  type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -533,9 +531,6 @@ describe("server state projection", () => {
         const observability = {
           logsDirectoryPath: "/synthetic/logs",
           localTracingEnabled: false,
-          otlpTracesEnabled: false,
-          otlpMetricsEnabled: false,
-          otlpLogsEnabled: false,
         };
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -549,7 +544,7 @@ describe("server state projection", () => {
             ) as typeof observability;
             for (const next of [
               { ...CONFIG, observability: reordered },
-              { ...CONFIG, observability: { ...reordered, otlpTracesUrl: undefined } },
+              { ...CONFIG, observability: { ...reordered } },
               { ...CONFIG, observability: { ...observability } },
             ]) {
               const encode = Schema.encodeEffect(Schema.fromJsonString(ServerObservability));
@@ -565,7 +560,7 @@ describe("server state projection", () => {
             const changed = yield* h.send(
               snapshotEvent({
                 ...CONFIG,
-                observability: { ...observability, otlpTracesUrl: "https://traces.example.test" },
+                observability: { ...observability },
               }),
             );
             yield* TestClock.adjust("10 seconds");
@@ -1885,91 +1880,4 @@ describe("provider setup commands", () => {
   );
 });
 
-describe("resource telemetry history", () => {
-  it.effect.each([
-    ["resourceTelemetryHistory", WS_METHODS.serverGetResourceTelemetryHistory],
-    ["processResourceHistory", WS_METHODS.serverGetProcessResourceHistory],
-  ] as const)(
-    "%s refreshes an initially empty history while mounted and stops after unmount",
-    ([atomKey, method]) =>
-      Effect.gen(function* () {
-        vi.useFakeTimers();
-        try {
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              let reads = 0;
-              const client = {
-                [method]: () =>
-                  Effect.sync(() => ({
-                    retainedSampleCount: reads++,
-                  })),
-              } as unknown as WsRpcProtocolClient;
-              const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-                target: TARGET,
-                state: yield* SubscriptionRef.make<SupervisorConnectionState>({
-                  ...AVAILABLE_CONNECTION_STATE,
-                  phase: "connected",
-                }),
-                session: yield* SubscriptionRef.make(Option.some(session(client))),
-                prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-                connect: Effect.void,
-                disconnect: Effect.void,
-                retryNow: Effect.void,
-              });
-              const environments = EnvironmentRegistry.EnvironmentRegistry.of({
-                run: (_id, effect) =>
-                  Effect.provideService(
-                    effect,
-                    EnvironmentSupervisor.EnvironmentSupervisor,
-                    supervisor,
-                  ),
-                followStream: (_id, stream) =>
-                  Stream.provideService(
-                    stream,
-                    EnvironmentSupervisor.EnvironmentSupervisor,
-                    supervisor,
-                  ),
-              } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-              const runtime = Atom.runtime(
-                Layer.merge(
-                  Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
-                  Layer.succeed(Persistence.EnvironmentCacheStore, {
-                    loadServerConfig: () => Effect.succeedNone,
-                  } as unknown as Persistence.EnvironmentCacheStore["Service"]),
-                ),
-              );
-              const atoms = createServerEnvironmentAtoms(runtime, {
-                initialConfigValueAtom: () => Atom.make(CONFIG),
-              });
-              const registry = yield* Effect.acquireRelease(
-                Effect.sync(AtomRegistry.make),
-                (value) => Effect.sync(() => value.dispose()),
-              );
-              const history: Atom.Atom<
-                AsyncResult.AsyncResult<{ readonly retainedSampleCount: number }, Error>
-              > = atoms[atomKey]({
-                environmentId: TARGET.environmentId,
-                input: { windowMs: 900_000, bucketMs: 30_000 },
-              });
-              const unmount = registry.mount(history);
-              const initial = yield* AtomRegistry.getResult(registry, history, {
-                suspendOnWaiting: true,
-              });
-              expect(initial.retainedSampleCount).toBe(0);
-              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
-              expect(reads).toBe(2);
-              const updated = yield* AtomRegistry.getResult(registry, history, {
-                suspendOnWaiting: true,
-              });
-              expect(updated.retainedSampleCount).toBe(1);
-              unmount();
-              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
-              expect(reads).toBe(2);
-            }),
-          );
-        } finally {
-          vi.useRealTimers();
-        }
-      }),
-  );
-});
+describe("resource telemetry history", () => {});

@@ -380,7 +380,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     // A redirect's text answers its approval, so `/side` there is that text.
     sideChat: !props.redirectsApproval,
     usageLimits: usageLimitsOffered,
-    codexFeedback: selectedProviderStatus?.driver === "codex",
     freshSession: props.onFreshSession !== undefined && draftContext === undefined,
   });
   const sendPresentation = resolveComposerSendPresentation(

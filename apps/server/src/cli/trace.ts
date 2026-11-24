@@ -5,15 +5,13 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
 import * as ServerConfig from "../config.ts";
-import { streamTraceFileLines, toRotatedTracePaths } from "../diagnostics/TraceDiagnostics.ts";
 import { resolveBaseDir } from "../os-jank.ts";
-import { baseDirFlag, DurationFromString, traceFileConfig, traceMaxFilesConfig } from "./config.ts";
+import { baseDirFlag, DurationFromString, traceFileConfig } from "./config.ts";
 
 const decodeTraceSpanLine = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -161,7 +159,6 @@ const traceSummaryCommand = Command.make("summary", {
   Command.withDescription("Summarize the local server trace file: counts, rates, and latency."),
   Command.withHandler(
     Effect.fn("cli.trace.summary")(function* (flags) {
-      const fs = yield* FileSystem.FileSystem;
       const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
       const baseDir = yield* resolveBaseDir(
         Option.getOrUndefined(Option.orElse(flags.baseDir, () => envHome)),
@@ -173,11 +170,6 @@ const traceSummaryCommand = Command.make("summary", {
         ? (yield* Clock.currentTimeMillis) - Duration.toMillis(flags.since.value)
         : undefined;
       const summarizer = makeTraceSpanSummary(sinceMs);
-      yield* Effect.forEach(
-        toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
-        (path) => streamTraceFileLines(fs, path, summarizer.addLine),
-        { discard: true },
-      );
       const summary = summarizer.finish();
 
       yield* Console.log(

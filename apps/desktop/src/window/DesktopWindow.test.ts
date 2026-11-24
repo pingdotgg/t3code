@@ -42,7 +42,6 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -335,11 +334,6 @@ function layerTest(input: {
     Layer.provide(
       Layer.mergeAll(
         layerDesktopAssets,
-        Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
-          register: () => Effect.void,
-          recordMetrics: () => Effect.void,
-          shutdown: Effect.void,
-        }),
         input.platform === undefined
           ? layerDesktopEnvironment
           : layerDesktopEnvironmentFor(input.platform),
@@ -460,11 +454,6 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       Layer.provide(
         Layer.mergeAll(
           layerDesktopAssets,
-          Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
-            register: () => Effect.void,
-            recordMetrics: () => Effect.void,
-            shutdown: Effect.void,
-          }),
           layerDesktopEnvironment,
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,

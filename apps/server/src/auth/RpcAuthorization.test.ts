@@ -54,13 +54,6 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("lets only a session that operates threads approve sending a feedback report", () => {
-    // Guest links have no RPC session, and read-only sessions lack this scope.
-    expect(requiredScopeForRpcMethod(WS_METHODS.agentFeedbackAnswerRequest)).toBe(
-      AuthOrchestrationOperateScope,
-    );
-  });
-
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
       AuthOrchestrationOperateScope,
@@ -125,7 +118,7 @@ it("requires operate permission for tool updates even alongside a read-only chec
 });
 
 describe("RPC scope middleware", () => {
-  const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
+  const tested = [WS_METHODS.serverProbe, WS_METHODS.serverGetHostResources] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
       (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
@@ -146,7 +139,7 @@ describe("RPC scope middleware", () => {
         Effect.provide(
           Layer.mergeAll(
             group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
-            group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () =>
+            group.toLayerHandler(WS_METHODS.serverGetHostResources, () =>
               Effect.sync(() => handled.push("retry")).pipe(Effect.andThen(Effect.never)),
             ),
             RpcAuthorization.layer(scopes),
@@ -155,9 +148,7 @@ describe("RPC scope middleware", () => {
       );
 
       expect(yield* client[WS_METHODS.serverProbe]({})).toEqual({});
-      expect(
-        yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip),
-      ).toMatchObject({
+      expect(yield* client[WS_METHODS.serverGetHostResources]({}).pipe(Effect.flip)).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: missing,
       });

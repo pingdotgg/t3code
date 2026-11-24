@@ -1,1 +1,0 @@
-export * from "./Adapter.ts";

@@ -2747,7 +2747,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       replyTo === null,
     sideChat: props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null,
     usageLimits: props.onUsageLimitsCommand !== undefined,
-    codexFeedback: selectedProvider === "codex" && multipleModelSelections === null,
     freshSession: props.onFreshSession !== undefined,
   });
   const replyBannerItems: readonly ComposerBannerStackItem[] = replyTo

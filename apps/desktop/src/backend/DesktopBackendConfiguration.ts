@@ -1,6 +1,4 @@
 import * as NodeOS from "node:os";
-
-import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
@@ -60,18 +58,6 @@ export class DesktopBackendConfiguration extends Context.Service<
   }
 >()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
 
-interface BackendObservabilitySettings {
-  readonly otlpTracesUrl: Option.Option<string>;
-  readonly otlpMetricsUrl: Option.Option<string>;
-  readonly otlpLogsUrl: Option.Option<string>;
-}
-
-const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
-  otlpTracesUrl: Option.none(),
-  otlpMetricsUrl: Option.none(),
-  otlpLogsUrl: Option.none(),
-};
-
 const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_PORT",
   "T3CODE_MODE",
@@ -88,7 +74,6 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
-  "T3CODE_TELEMETRY_ENABLED",
   "T3CODE_FEATURE_FLAGS",
   // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
   "T3CODE_OTEL_SDK_DISABLED",
@@ -152,97 +137,9 @@ const mergeWslEnv = (
   return parts.length > 0 ? parts.join(":") : undefined;
 };
 
-const logBackendObservabilitySettingsReadFailure = (
-  settingsPath: string,
-  cause: PlatformError.PlatformError,
-) => {
-  const error = new DesktopBackendObservabilitySettingsReadError({ settingsPath, cause });
-  return Effect.logWarning(error).pipe(
-    Effect.annotateLogs({
-      component: "desktop-backend-configuration",
-      error,
-    }),
-  );
-};
-
-function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
-  return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
-}
-
-const resolveResourceMonitorPath = Effect.fn(
-  "desktop.backendConfiguration.resolveResourceMonitorPath",
-)(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const binaryName = resourceMonitorBinaryName(environment.platform);
-  const candidates = environment.isDevelopment
-    ? [
-        environment.path.join(
-          environment.rootDir,
-          "native/resource-monitor/target/release",
-          binaryName,
-        ),
-        environment.path.join(
-          environment.rootDir,
-          "native/resource-monitor/target/debug",
-          binaryName,
-        ),
-      ]
-    : environment.isPackaged
-      ? [environment.path.join(environment.resourcesPath, "resource-monitor", binaryName)]
-      : environment.resolveResourcePathCandidates(
-          environment.path.join("resource-monitor", binaryName),
-        );
-
-  for (const candidate of candidates) {
-    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
-      return Option.some(candidate);
-    }
-  }
-
-  return Option.none<string>();
-});
-
-const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
-    Effect.asSome,
-    Effect.catchTags({
-      PlatformError: (cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeedNone
-          : logBackendObservabilitySettingsReadFailure(environment.serverSettingsPath, cause).pipe(
-              Effect.as(Option.none()),
-            ),
-    }),
-  );
-  if (Option.isNone(raw)) {
-    return emptyBackendObservabilitySettings;
-  }
-
-  const parsed = parsePersistedServerObservabilitySettings(raw.value);
-  return {
-    otlpTracesUrl: Option.fromNullishOr(parsed.otlpTracesUrl),
-    otlpMetricsUrl: Option.fromNullishOr(parsed.otlpMetricsUrl),
-    otlpLogsUrl: Option.fromNullishOr(parsed.otlpLogsUrl),
-  };
-});
-
-const readBackendObservabilitySettings = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const persisted = yield* readPersistedBackendObservabilitySettings;
-  return {
-    otlpTracesUrl: Option.orElse(environment.otlpTracesUrl, () => persisted.otlpTracesUrl),
-    otlpMetricsUrl: Option.orElse(environment.otlpMetricsUrl, () => persisted.otlpMetricsUrl),
-    otlpLogsUrl: Option.orElse(environment.otlpLogsUrl, () => persisted.otlpLogsUrl),
-  } satisfies BackendObservabilitySettings;
-});
-
 interface SharedBootstrapInput {
   readonly bootstrapToken: string;
   readonly bootstrapSecret: string;
-  readonly observabilitySettings: BackendObservabilitySettings;
   readonly hostScope: string;
 }
 
@@ -503,25 +400,9 @@ const isLocalHostIpv4 = (ip: string): boolean => {
   return false;
 };
 
-const buildObservabilityFragment = (observabilitySettings: BackendObservabilitySettings) => ({
-  ...Option.match(observabilitySettings.otlpTracesUrl, {
-    onNone: () => ({}),
-    onSome: (otlpTracesUrl) => ({ otlpTracesUrl }),
-  }),
-  ...Option.match(observabilitySettings.otlpMetricsUrl, {
-    onNone: () => ({}),
-    onSome: (otlpMetricsUrl) => ({ otlpMetricsUrl }),
-  }),
-  ...Option.match(observabilitySettings.otlpLogsUrl, {
-    onNone: () => ({}),
-    onSome: (otlpLogsUrl) => ({ otlpLogsUrl }),
-  }),
-});
-
 const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolvePrimary")(
   function* (
     input: SharedBootstrapInput & {
-      readonly resourceMonitorPath: Option.Option<string>;
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
       readonly desktopAppUpdate: boolean;
@@ -546,16 +427,11 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
-      desktopTelemetryFd: 4,
-      desktopTelemetryControlFd: 5,
+      desktopLinkFd: 4,
+      desktopLinkControlFd: 5,
       desktopAppUpdate: input.desktopAppUpdate,
       desktopBrowserFd: 6,
       desktopBrowserControlFd: 7,
-      ...Option.match(input.resourceMonitorPath, {
-        onNone: () => ({}),
-        onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
-      }),
-      ...buildObservabilityFragment(input.observabilitySettings),
     };
 
     return {
@@ -618,7 +494,6 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
-    ...buildObservabilityFragment(input.observabilitySettings),
   };
 
   const archivePath = environment.path.join(environment.resourcesPath, WSL_RUNTIME_ARCHIVE_NAME);
@@ -802,14 +677,9 @@ export const make = Effect.gen(function* () {
       bootstrapSecret,
       yield* Clock.currentTimeMillis,
     ).pipe(Effect.provideService(Mac.Mac, mac));
-    const observabilitySettings = yield* readBackendObservabilitySettings.pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-    );
     return {
       bootstrapToken,
       bootstrapSecret,
-      observabilitySettings,
       hostScope: yield* hostScope,
     } satisfies SharedBootstrapInput;
   });
@@ -833,10 +703,6 @@ export const make = Effect.gen(function* () {
 
   const buildWindowsPrimaryConfig = Effect.gen(function* () {
     const shared = yield* sharedInputs;
-    const resourceMonitorPath = yield* resolveResourceMonitorPath().pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
-    );
     const cliPath = yield* DesktopCliShim.install.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -844,7 +710,6 @@ export const make = Effect.gen(function* () {
     const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
     return yield* resolvePrimaryStartConfig({
       ...shared,
-      resourceMonitorPath,
       cliPath,
       shellEnvironmentPrepared,
       desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),

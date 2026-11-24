@@ -1,6 +1,5 @@
 import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
-  type AgentFeedbackMode,
   ChatAttachment,
   CheckpointId,
   MessageId,
@@ -589,7 +588,6 @@ export interface ProviderAdapterV2EnsureThreadInput {
 }
 
 export interface ProviderAdapterV2TurnInput {
-  readonly agentFeedback?: AgentFeedbackMode;
   readonly appThread: OrchestrationV2AppThread;
   readonly threadId: ThreadId;
   readonly runId: RunId;

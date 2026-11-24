@@ -47,12 +47,6 @@ export function useAvailableSettingsSearchItems() {
         environment.connection.phase === "connected" &&
         environment.serverConfig?.environment.capabilities.fastWorktreeCheckout === true,
     ) === true;
-  const hasAgentFeedbackEnvironment =
-    environments.some(
-      (environment) =>
-        environment.connection.phase === "connected" &&
-        environment.serverConfig?.environment.capabilities.agentFeedback === true,
-    ) === true;
   const hasTextGeneratorsEnvironment =
     environments.some(
       (environment) =>
@@ -91,7 +85,6 @@ export function useAvailableSettingsSearchItems() {
     managedTunnelActive,
     hasPeerLinkHost,
     hasFastWorktreeCheckoutEnvironment,
-    hasAgentFeedbackEnvironment,
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
     hasSecretProvidersEnvironment,
