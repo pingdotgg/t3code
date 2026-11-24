@@ -135,6 +135,7 @@ const layerAnalytics = Layer.effectContext(
               Effect.as(true),
             ),
           flush: Effect.void,
+          enabled: Effect.succeed(true),
           recordOwners: () => Effect.void,
         }),
       ),

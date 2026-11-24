@@ -162,8 +162,8 @@ function CrashReportsSetting() {
   const gt = useGT();
   const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
   const enabled = AsyncResult.isSuccess(preferences)
-    ? preferences.value.crashReportsEnabled !== false
-    : true;
+    ? preferences.value.crashReportsEnabled === true
+    : false;
 
   const change = (value: boolean) => {
     setSaving(true);
