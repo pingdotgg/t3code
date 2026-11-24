@@ -60,6 +60,13 @@ const STATUS_NOT_FOUND_ERROR = Buffer.concat([
     'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
   ),
 ]);
+// Gemini rejects an image the agent read; the bad part stays in the native history.
+const MALFORMED_MEDIA_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x6c]),
+  Buffer.from(
+    "INVALID_ARGUMENT (code 400): Unable to process input: the file or media data is empty, corrupted, or malformed.",
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -231,6 +238,14 @@ describe("watchAntigravityPromptOutcome", () => {
         assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
         assert.equal(outcome?.threadDisposition, "broken");
       }
+      // Rejected media in the saved history fails every later prompt too.
+      const mediaOutcome = yield* turn([
+        [USER_INPUT, input],
+        [PLANNER_RESPONSE, reply],
+        [TOOL, reply],
+        [ERROR_MESSAGE, MALFORMED_MEDIA_ERROR],
+      ]);
+      assert.equal(mediaOutcome?.threadDisposition, "broken");
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(
