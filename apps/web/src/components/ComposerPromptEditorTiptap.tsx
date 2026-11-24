@@ -28,8 +28,7 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
-import { Fragment, type NodeType, type ResolvedPos, Slice } from "@tiptap/pm/model";
-import { dropPoint } from "@tiptap/pm/transform";
+import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
 import type {
   AssistantCitation,
   ComposerContextClipboardFragment,
@@ -1581,17 +1580,18 @@ function ComposerPromptEditorTiptapInner(
           const $target = view.state.doc.resolve(pos);
           if (!$target.parent.inlineContent) {
             // Between blocks, fill an adjacent empty paragraph (the padding of an empty composer) or start
-            // a new line; a nearby selection would replace or join a block.
+            // a new line at the drop point; a nearby selection would replace or join a block.
             const isEmptyParagraph = (node: typeof $target.nodeAfter) =>
               node?.type.name === "paragraph" && node.content.size === 0;
             if (isEmptyParagraph($target.nodeAfter)) pos += 1;
             else if (isEmptyParagraph($target.nodeBefore)) pos -= 1;
             else {
-              const line = view.state.schema.nodes.paragraph!.create();
-              const at = dropPoint(view.state.doc, pos, new Slice(Fragment.from(line), 0, 0));
-              if (at === null) return false;
+              const index = $target.index();
+              const paragraph = view.state.schema.nodes.paragraph!;
+              // Between list items a paragraph does not fit; ProseMirror's drop adds an item there.
+              if (!$target.parent.canReplaceWith(index, index, paragraph)) return false;
               view.focus();
-              return insertClipboardText(view, data, at);
+              return insertClipboardText(view, data, pos);
             }
           }
           view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));

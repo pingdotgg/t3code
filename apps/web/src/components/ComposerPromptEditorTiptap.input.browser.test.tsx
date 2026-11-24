@@ -642,6 +642,26 @@ it("drops plain text on a new line below the last line", async () => {
   expect(serializeEditorDoc(editor.state.doc).value).toBe("before");
 });
 
+it("drops text on a list marker inside the list", async () => {
+  await using screen = await mountEditor("- one\n- two");
+  const { editor } = screen;
+  const item = editor.view.dom.querySelectorAll("li")[1]!.getBoundingClientRect();
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "added");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: item.left - 8,
+        clientY: item.top + item.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toMatch(/^- one\n.*added[\s\S]*- two$/);
+});
+
 it("drops text on a rule's edge without replacing the rule", async () => {
   await using screen = await mountEditor("before\n\n---\n\nafter");
   const { editor } = screen;
