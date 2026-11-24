@@ -118,6 +118,23 @@ it.effect("points an unencoded delegated-task id at the encoded thread it belong
   }),
 );
 
+it.effect("points a delegated-task id without its thread: prefix at the thread it belongs to", () =>
+  Effect.gen(function* () {
+    const commandId = `command:mcp:${bareId}:delegate-task:0e7d2c41-6b9a-4f3e-8d15-a2c4b6e8f019`;
+    const encoded = ThreadId.make(`thread:delegated-task:${encodeURIComponent(commandId)}`);
+
+    for (const pasted of [
+      `delegated-task:${commandId}`,
+      `node:delegated-task:${encodeURIComponent(commandId)}`,
+    ]) {
+      const error = yield* readBare([encoded], client, ThreadId.make(pasted));
+
+      expect(error.code).toBe("thread_not_found");
+      expect(error.message).toContain(`Did you mean \`${encoded}\`?`);
+    }
+  }),
+);
+
 it.effect("identifies the target and effective caller ceiling when a thread write is refused", () =>
   Effect.gen(function* () {
     for (const [runtimeMode, interactionMode, code] of [
