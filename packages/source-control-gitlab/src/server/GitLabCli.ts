@@ -459,24 +459,39 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
+// GitLab's Clone button offers `git@host:group/project.git`.
+const SCP_LIKE_REMOTE = /^[^@/\s]+@([^:/\s]+):(.+)$/;
+
 function parseRepositoryLookup(repository: string): {
   readonly host: string | null;
   readonly projectPath: string;
 } {
   const trimmed = repository.trim();
-  if (!/^https?:\/\//i.test(trimmed)) return { host: null, projectPath: repository };
+  const scpLike = SCP_LIKE_REMOTE.exec(trimmed);
+  if (scpLike) return repositoryLookupAt(scpLike[1]!, scpLike[2]!, repository);
+  if (!/^(?:https?|ssh|git\+ssh):\/\//i.test(trimmed)) {
+    return { host: null, projectPath: trimmed.replace(/\.git$/, "") };
+  }
   try {
     const url = new URL(trimmed);
-    const projectPath = decodeURIComponent(url.pathname)
-      .replace(/\/-(?:\/.*)?$/, "")
-      .replace(/^\/+|\/+$/g, "")
-      .replace(/\.git$/, "");
-    return projectPath.length === 0
-      ? { host: null, projectPath: repository }
-      : { host: url.host, projectPath };
+    // An SSH URL's port belongs to the git daemon, not to the API.
+    const host = /^https?:$/i.test(url.protocol) ? url.host : url.hostname;
+    return repositoryLookupAt(host, decodeURIComponent(url.pathname), repository);
   } catch {
     return { host: null, projectPath: repository };
   }
+}
+
+function repositoryLookupAt(
+  host: string,
+  path: string,
+  repository: string,
+): { readonly host: string | null; readonly projectPath: string } {
+  const projectPath = path
+    .replace(/\/-(?:\/.*)?$/, "")
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/, "");
+  return projectPath.length === 0 ? { host: null, projectPath: repository } : { host, projectPath };
 }
 
 // glab prints a missing project or merge request as a bare 404, and an expired
