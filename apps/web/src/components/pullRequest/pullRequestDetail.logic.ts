@@ -4,6 +4,7 @@ import {
   pullRequestLinkCommit,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes } from "hast";
 
@@ -1569,10 +1570,11 @@ export function readableFailure(failure: unknown, hint: string): string {
     failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "";
   const detail = raw.replace(OPERATION_PREFIX, "").trim();
   if (detail.length === 0 || TOOL_NOISE.some((pattern) => pattern.test(detail))) return hint;
+  const end = FAILURE_DETAIL_MAX_LENGTH - 1;
   const bounded =
     detail.length <= FAILURE_DETAIL_MAX_LENGTH
       ? detail
-      : `${detail.slice(0, FAILURE_DETAIL_MAX_LENGTH - 1)}…`;
+      : `${detail.slice(0, splitsSurrogatePair(detail, end) ? end - 1 : end)}…`;
   return bounded;
 }
 
