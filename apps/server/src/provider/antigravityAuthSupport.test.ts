@@ -158,6 +158,20 @@ describe("Antigravity process environment", () => {
     ).toBe("127.0.0.1 0 127.0.0.1 0");
   });
 
+  it("keeps Google sign-ins in the profile's token file on agy 1.5.16", () => {
+    // agy 1.5.16 dropped the SSH_CONNECTION fallback and only reads this variable.
+    const env =
+      buildAntigravityAcpSpawnInput({
+        installation: { executablePath: "/usr/bin/agy" },
+        profile,
+        cwd: "/project",
+        baseEnv: { PATH: "/usr/bin", AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "0" },
+        auth: { authMethod: "oauth-personal", apiKey: "", gcpProject: "", gcpLocation: "" },
+      }).env ?? {};
+
+    expect(env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE).toBe("1");
+  });
+
   it("isolates TEMP and TMP to the profile directory on Windows", () => {
     const windowsProfile: AntigravityProfile = {
       platform: "win32",
