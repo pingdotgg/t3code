@@ -543,7 +543,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
         new CliUpdateError({
           reason:
             mirror === undefined
-              ? `No release archive was published for t3@${targetVersion}.`
+              ? `No release archive was published for t3@${targetVersion} on ${platform}-${arch}.`
               : `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
         }),
       ),
