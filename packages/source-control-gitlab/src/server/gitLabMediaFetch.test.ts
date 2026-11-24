@@ -81,7 +81,7 @@ it.effect("does not fetch an avatar from a loopback or link-local address", () =
 
 it.effect("does not follow an avatar redirect onto a loopback or link-local address", () => {
   const requests: string[] = [];
-  const internal = "http://169.254.169.254/uploads/-/system/user/avatar/857/avatar.png";
+  const internal = "https://169.254.169.254/uploads/-/system/user/avatar/857/avatar.png";
   return Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
     expect(yield* fetchMedia({ url: AVATAR, headers: {} })).toBeNull();
