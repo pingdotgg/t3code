@@ -26,6 +26,8 @@ export function usePullRequestCommentTasks(
   params: PullRequestParams,
   comment: Pick<PullRequestComment, "id" | "body" | "kind">,
   canEdit: boolean,
+  /** For a copy the activity refresh does not reach, such as a reply loaded page by page. */
+  onSaved?: (body: string) => void,
 ) {
   const gt = useGT();
   const updateComment = useAtomCommand(composerPullRequests.updateComment, {
@@ -42,7 +44,10 @@ export function usePullRequestCommentTasks(
       ...target,
       input: { ...target.input, commentId: comment.id, kind: comment.kind, body: next },
     });
-    if (!AsyncResult.isFailure(result)) return true;
+    if (!AsyncResult.isFailure(result)) {
+      onSaved?.(next);
+      return true;
+    }
     const cause = squashAtomCommandFailure(result);
     Dialog.alert(
       gt("Could not save the comment"),

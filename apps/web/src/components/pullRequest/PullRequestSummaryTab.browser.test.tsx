@@ -264,9 +264,30 @@ it("ticks a checkbox in a comment the viewer may edit", async () => {
     canEdit: true,
   };
   await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
-  expect(screen.container.querySelector('[aria-label="Edit comment"]')).not.toBeNull();
-  const box = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  expect(box.disabled).toBe(false);
+  await expect.element(screen.getByRole("button", { name: "Edit comment" })).toBeInTheDocument();
+  await expect.element(screen.getByRole("checkbox", { name: "Toggle task" })).toBeEnabled();
+});
+
+it("opens the comment editor from the ticks already saved", async () => {
+  setup();
+  const comment = {
+    id: "22",
+    kind: "issue-comment" as const,
+    body: "- [ ] Trigger review",
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+    canEdit: true,
+  };
+  await using screen = await render({ ...detail, comments: [comment], commentCount: 1 });
+  await userEvent.click(screen.getByRole("checkbox", { name: "Toggle task" }));
+  await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(1));
+  const edit = screen.getByRole("button", { name: "Edit comment" });
+  await expect.element(edit).toBeEnabled();
+  await userEvent.click(edit);
+  await expect.element(screen.getByRole("textbox")).toHaveValue("- [x] Trigger review");
 });
 
 it("ticks a checkbox in a review summary the viewer may edit", async () => {
@@ -291,9 +312,8 @@ it("ticks a checkbox in a review summary the viewer may edit", async () => {
     comments: [review],
     commentCount: 1,
   });
-  expect(screen.container.querySelector('[aria-label="Edit comment"]')).not.toBeNull();
-  const box = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  expect(box.disabled).toBe(false);
+  await expect.element(screen.getByRole("button", { name: "Edit comment" })).toBeInTheDocument();
+  await expect.element(screen.getByRole("checkbox", { name: "Toggle task" })).toBeEnabled();
 });
 
 it("shows a comment's exact time in the chosen 24-hour clock", async () => {

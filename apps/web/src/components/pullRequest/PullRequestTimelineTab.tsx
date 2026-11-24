@@ -95,27 +95,24 @@ function TimelineBody({
   cwd,
   environmentId,
   threadRef,
-  saveTasks = null,
-  onRefresh,
+  onTaskListChange,
 }: {
   body: string;
   markdown: boolean;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
-  saveTasks?: ((body: string) => Promise<boolean>) | null;
-  onRefresh: () => void;
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
-  const tasks = usePullRequestTaskToggle(body, saveTasks, onRefresh);
   return (
     <div className="mt-3">
       {markdown ? (
         <PullRequestMarkdown
-          text={tasks.text}
+          text={body}
           cwd={cwd}
           environmentId={environmentId}
           threadRef={threadRef}
-          onTaskListChange={tasks.onTaskListChange}
+          onTaskListChange={onTaskListChange}
         />
       ) : (
         <p className="whitespace-pre-wrap text-xs text-muted-foreground">{body}</p>
@@ -286,11 +283,16 @@ function ConversationCard({
   };
 
   // The timeline shows the body trimmed; the whitespace around it goes back on save.
+  const untrimmed = (shown: string) => {
+    if (editable === null) return shown;
+    const start = editable.body.length - editable.body.trimStart().length;
+    return (
+      editable.body.slice(0, start) + shown + editable.body.slice(editable.body.trimEnd().length)
+    );
+  };
   const saveTasks = async (shown: string) => {
     if (editable === null) return false;
-    const start = editable.body.length - editable.body.trimStart().length;
-    const body =
-      editable.body.slice(0, start) + shown + editable.body.slice(editable.body.trimEnd().length);
+    const body = untrimmed(shown);
     const result = await updateComment({
       environmentId: reactions.environmentId,
       input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
@@ -301,6 +303,11 @@ function ConversationCard({
     }
     return true;
   };
+  const tasks = usePullRequestTaskToggle(
+    event.body ?? "",
+    editable === null ? null : saveTasks,
+    reactions.onRefresh,
+  );
 
   return (
     <article
@@ -355,6 +362,7 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton
               aria-label={gt("Edit comment")}
+              disabled={tasks.saving}
               onClick={() => setEditing(true)}
             />
           ) : null}
@@ -379,7 +387,7 @@ function ConversationCard({
       {editing && editable !== null ? (
         <div className="px-2 pb-2 pt-3">
           <PullRequestMarkdownEditor
-            value={editable.body}
+            value={tasks.text === (event.body ?? "") ? editable.body : untrimmed(tasks.text)}
             cwd={cwd}
             environmentId={reactions.environmentId}
             completionScope={reactions.completionScope}
@@ -393,13 +401,12 @@ function ConversationCard({
       ) : event.body ? (
         <div className="px-2 pb-2">
           <TimelineBody
-            body={event.body}
+            body={tasks.text}
             markdown={event.markdown}
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
-            saveTasks={editable === null ? null : saveTasks}
-            onRefresh={reactions.onRefresh}
+            onTaskListChange={tasks.onTaskListChange}
           />
         </div>
       ) : null}
@@ -839,7 +846,6 @@ function ReviewVerdictEvent({
           cwd={cwd}
           environmentId={reactions.environmentId}
           threadRef={reactions.threadRef}
-          onRefresh={reactions.onRefresh}
         />
       ) : null}
     </div>

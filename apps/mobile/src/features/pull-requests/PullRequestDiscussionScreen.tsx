@@ -14,7 +14,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { pullRequestConversationThreads, type PullRequestThreadComment } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react-native";
-import { useRef, useState } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import { ScrollView, View, type ScrollViewInstance } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
@@ -52,18 +52,38 @@ export function PullRequestDiscussionScreen({
 function DiscussionCommentBody({
   params,
   comment,
-  canEdit,
+  permissions,
+  onSaved,
+  onChanged,
+  onEdit,
 }: {
   params: PullRequestParams;
   comment: PullRequestThreadComment;
-  canEdit: boolean;
+  permissions: ComponentProps<typeof PullRequestCommentFooter>["permissions"];
+  onSaved: (body: string) => void;
+  onChanged: () => void;
+  onEdit: () => void;
 }) {
+  const editable = { ...comment, kind: "review-comment" as const };
   const tasks = usePullRequestCommentTasks(
     params,
-    { id: comment.id, body: comment.body, kind: "review-comment" },
-    canEdit,
+    editable,
+    permissions.canEditComment(editable),
+    onSaved,
   );
-  return <PullRequestMarkdown markdown={tasks.body} onTaskListChange={tasks.toggleTask} />;
+  return (
+    <>
+      <PullRequestMarkdown markdown={tasks.body} onTaskListChange={tasks.toggleTask} />
+      {/* The edit starts from the body as shown, with the ticks already made. */}
+      <PullRequestCommentFooter
+        params={params}
+        comment={{ ...editable, body: tasks.body }}
+        permissions={permissions}
+        onChanged={onChanged}
+        onEdit={onEdit}
+      />
+    </>
+  );
 }
 
 function Discussion({ params }: { params: PullRequestParams & { readonly discussionId: string } }) {
@@ -292,12 +312,12 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 <DiscussionCommentBody
                   params={params}
                   comment={comment}
-                  canEdit={permissions.canEditComment({ ...comment, kind: "review-comment" })}
-                />
-                <PullRequestCommentFooter
-                  params={params}
-                  comment={{ ...comment, kind: "review-comment" }}
                   permissions={permissions}
+                  onSaved={(body) =>
+                    setExtra((loaded) =>
+                      loaded.map((reply) => (reply.id === comment.id ? { ...reply, body } : reply)),
+                    )
+                  }
                   onChanged={refresh}
                   onEdit={() => {
                     if (extra.some((loaded) => loaded.id === comment.id))

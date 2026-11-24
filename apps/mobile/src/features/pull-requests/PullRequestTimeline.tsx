@@ -236,7 +236,7 @@ function TimelineComment({
       ) : null}
       <PullRequestCommentFooter
         params={params}
-        comment={comment}
+        comment={{ ...comment, body: tasks.body }}
         permissions={actions.permissions}
         onChanged={actions.onChanged}
       />

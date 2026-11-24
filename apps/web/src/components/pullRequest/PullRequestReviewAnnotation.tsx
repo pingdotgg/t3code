@@ -189,27 +189,64 @@ export function InlineReviewThreads({
   );
 }
 
-function ThreadCommentText({
+function ThreadCommentContent({
   body,
   workspaceRoot,
   environmentId,
+  completionScope,
+  editing,
+  saving,
   save,
+  onEdit,
+  onCancel,
+  onSave,
 }: {
   body: string;
   workspaceRoot: string;
   environmentId: EnvironmentId;
+  completionScope: PullRequestCompletionScope | null;
+  editing: boolean;
+  saving: boolean;
   save: ((body: string) => Promise<boolean>) | null;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (body: string) => void;
 }) {
+  const gt = useGT();
   // Each save refreshes the pull request itself, so there is nothing left to do once they drain.
   const tasks = usePullRequestTaskToggle(body, save, () => {});
+  if (editing) {
+    return (
+      <PullRequestMarkdownEditor
+        className="mt-1"
+        value={tasks.text}
+        cwd={workspaceRoot}
+        environmentId={environmentId}
+        completionScope={completionScope}
+        label={gt("Edit comment")}
+        saving={saving}
+        onSave={onSave}
+        onCancel={onCancel}
+      />
+    );
+  }
   return (
-    <PullRequestMarkdown
-      className="min-w-0 flex-1 text-sm"
-      text={tasks.text}
-      cwd={workspaceRoot}
-      environmentId={environmentId}
-      onTaskListChange={tasks.onTaskListChange}
-    />
+    <div className="mt-1 flex items-start gap-1">
+      <PullRequestMarkdown
+        className="min-w-0 flex-1 text-sm"
+        text={tasks.text}
+        cwd={workspaceRoot}
+        environmentId={environmentId}
+        onTaskListChange={tasks.onTaskListChange}
+      />
+      {save === null ? null : (
+        <PullRequestEditButton
+          aria-label={gt("Edit comment")}
+          disabled={tasks.saving}
+          onClick={onEdit}
+        />
+      )}
+    </div>
   );
 }
 
@@ -424,36 +461,18 @@ export function ReviewThreadCard({
                     onRefresh={onReacted}
                   />
                 </div>
-                {editingId === comment.id ? (
-                  <PullRequestMarkdownEditor
-                    className="mt-1"
-                    value={comment.body}
-                    cwd={workspaceRoot}
-                    environmentId={environmentId}
-                    completionScope={completionScope}
-                    label={gt("Edit comment")}
-                    saving={savingEdit}
-                    onSave={(body) => void saveEdit(comment.id, body)}
-                    onCancel={() => setEditingId(null)}
-                  />
-                ) : (
-                  <div className="mt-1 flex items-start gap-1">
-                    <ThreadCommentText
-                      body={comment.body}
-                      workspaceRoot={workspaceRoot}
-                      environmentId={environmentId}
-                      save={
-                        canEditComment(comment) ? (body) => saveComment(comment.id, body) : null
-                      }
-                    />
-                    {canEditComment(comment) ? (
-                      <PullRequestEditButton
-                        aria-label={gt("Edit comment")}
-                        onClick={() => setEditingId(comment.id)}
-                      />
-                    ) : null}
-                  </div>
-                )}
+                <ThreadCommentContent
+                  body={comment.body}
+                  workspaceRoot={workspaceRoot}
+                  environmentId={environmentId}
+                  completionScope={completionScope}
+                  editing={editingId === comment.id}
+                  saving={savingEdit}
+                  save={canEditComment(comment) ? (body) => saveComment(comment.id, body) : null}
+                  onEdit={() => setEditingId(comment.id)}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(body) => void saveEdit(comment.id, body)}
+                />
               </article>
             ))}
           </div>

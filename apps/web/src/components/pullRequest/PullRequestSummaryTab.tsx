@@ -230,7 +230,7 @@ function CommentBody({
     return (
       <PullRequestMarkdownEditor
         className={className}
-        value={comment.body}
+        value={tasks.text}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
         completionScope={editing.completionScope}
@@ -256,6 +256,7 @@ function CommentBody({
       {editing.canEdit(comment) ? (
         <PullRequestEditButton
           aria-label={gt("Edit comment")}
+          disabled={tasks.saving}
           onClick={() => editing.onEdit(comment)}
         />
       ) : null}
