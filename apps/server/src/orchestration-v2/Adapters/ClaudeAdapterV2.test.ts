@@ -10601,6 +10601,76 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         : [],
     );
 
+  it.effect("measures Claude context from the last main-model pass in an advisor response", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-advisor-context"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const usage = {
+        input_tokens: 4,
+        cache_read_input_tokens: 1087272,
+        cache_creation_input_tokens: 1222,
+        output_tokens: 711,
+        iterations: [
+          {
+            type: "message",
+            input_tokens: 2,
+            cache_read_input_tokens: 543529,
+            cache_creation_input_tokens: 214,
+            output_tokens: 268,
+          },
+          { type: "advisor_message", input_tokens: 545497, output_tokens: 3144 },
+          {
+            type: "message",
+            input_tokens: 2,
+            cache_read_input_tokens: 543743,
+            cache_creation_input_tokens: 1008,
+            output_tokens: 443,
+          },
+        ],
+      };
+      for (const frame of [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_advisor", usage: zeroUsage },
+        }),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage,
+        }),
+        usageSnapshotFrame("msg_snapshot_only", "00000000-0000-4000-8000-000000000690", {
+          ...zeroUsage,
+          iterations: [
+            ...usage.iterations,
+            { type: "advisor_message", input_tokens: 547000, output_tokens: 25 },
+          ],
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000691", result: "Done." }),
+      ])
+        yield* Queue.offer(harness.sdkMessages, frame);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [545196, 545196]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("reports context from final stream usage when the request starts at zero", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -21767,27 +21837,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("records a forked skill's model from its transcript instead of the parent's", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({
-        subagentModel: "claude-haiku-4-5-20251001",
-      });
-      const now = yield* DateTime.now;
-      const parentModel = "claude-opus-4-6";
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now,
-          attemptId: RunAttemptId.make("attempt-forked-skill-model"),
-          text: "/fork-probe go",
-          attachments: [],
-          modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
-        }),
-      );
+  it.effect.each([
+    {
+      launch: "forked skill",
+      text: "/fork-probe go",
       // A `context: fork` skill has no Agent call and streams none of its own replies:
       // task_started carries no tool_use_id, and only its prompt echo names the fork.
-      for (const frame of [
+      frames: [
         claudeSdkFrame({
           type: "system",
           subtype: "task_started",
@@ -21818,28 +21874,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000233",
           session_id: WAKE_NATIVE_SESSION,
         }),
-        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000234", result: "OK" }),
-      ]) {
-        yield* Queue.offer(harness.sdkMessages, frame);
-      }
-      yield* Queue.take(harness.terminalReceipts);
+      ],
+    },
+    {
+      launch: "foreground Agent call with no streamed reply",
+      text: "Ask a subagent one thing.",
+      frames: [
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            model: "claude-opus-4-6",
+            id: "msg_unstreamed_model_launch",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-unstreamed-model",
+                name: "Agent",
+                input: { description: "One thing", prompt: "Check one thing." },
+              },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000235",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-unstreamed-model",
+          tool_use_id: "toolu-unstreamed-model",
+          description: "One thing",
+          task_type: "local_agent",
+          uuid: "00000000-0000-4000-8000-000000000236",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeSubagentNotificationFrame({
+          taskId: "task-unstreamed-model",
+          toolUseId: "toolu-unstreamed-model",
+          summary: "OK",
+          uuid: "00000000-0000-4000-8000-000000000237",
+        }),
+      ],
+    },
+  ])(
+    "records the model of a $launch from its transcript instead of the parent's",
+    ({ text, frames }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          subagentModel: "claude-haiku-4-5-20251001",
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-transcript-model"),
+            text,
+            attachments: [],
+            modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-opus-4-6" },
+          }),
+        );
+        for (const frame of [
+          ...frames,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000234", result: "OK" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
 
-      const fork = harness.events
-        .filter((event) => event.type === "subagent.updated")
-        .at(-1)?.subagent;
-      assert.equal(fork?.status, "completed");
-      assert.equal(fork?.model, "claude-haiku-4-5");
-      assert.equal(fork?.modelSelection?.model, "claude-haiku-4-5");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        const subagent = harness.events
+          .filter((event) => event.type === "subagent.updated")
+          .at(-1)?.subagent;
+        assert.equal(subagent?.status, "completed");
+        assert.equal(subagent?.model, "claude-haiku-4-5");
+        assert.equal(subagent?.modelSelection?.model, "claude-haiku-4-5");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each([

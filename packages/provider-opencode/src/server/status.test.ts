@@ -1358,6 +1358,24 @@ it.effect("publishes the catalog OpenCode lists after its startup snapshot had s
   }),
 );
 
+it.effect("lists a newly followed server's catalog once its startup snapshot has passed", () =>
+  Effect.gen(function* () {
+    const startup = [model("startup-only")];
+    const live = [model("live-only")];
+    const listings = [[], [], startup];
+    const read = Effect.sync(() => listings.shift() ?? live);
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+
+    yield* watch.follow("server", Effect.succeed(Stream.never), read);
+    yield* TestClock.adjust("3 seconds");
+    NodeAssert.deepEqual(seen, [undefined, live]);
+  }),
+);
+
 it.effect("keeps the last listed catalog once its server has stopped", () =>
   Effect.gen(function* () {
     const live = [model("live-only")];
@@ -1449,7 +1467,8 @@ it.effect("reads later changes after a catalog read that never answered", () =>
       Effect.sync(() => seen.push(catalog)),
     ).pipe(Effect.forkScoped);
     yield* watch.follow("server", Effect.succeed(Stream.fromQueue(events)), read);
-    yield* TestClock.adjust("31 seconds");
+    // The new server's settle gives up after 5 seconds, then the queued re-read hangs for 30.
+    yield* TestClock.adjust("36 seconds");
     answering = true;
     yield* Queue.offer(events, { type: "model.updated" });
     yield* TestClock.adjust("1 second");
