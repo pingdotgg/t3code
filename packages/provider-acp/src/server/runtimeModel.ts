@@ -1400,7 +1400,7 @@ function splitShellCommandSegments(command: string): Array<Array<ShellToken>> {
   return segments;
 }
 
-const BARE_REDIRECTION_OPERATOR = /^(?:\d+|\*)?(?:>>?|<<?)$/u;
+const BARE_REDIRECTION_OPERATOR = /^(?:<<<|(?:\d+|\*)?(?:>>?|<<?-?|[<>]&))$/u;
 
 function unwrapShellWrapper(
   command: string,

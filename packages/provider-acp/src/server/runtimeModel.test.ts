@@ -1585,6 +1585,7 @@ describe("extractMcpToolCallIdentity", () => {
       `& "C:\\temp\\my-acp-mcp-call.cmd" html_render -`,
       `cmd /c "echo %T3_ACP_MCP_CALL% html_render -"`,
       `powershell -NoProfile -Command "Write-Output '$env:T3_ACP_MCP_CALL html_render'"`,
+      `pwsh -Command 'Write-Output ignored' <<< '& $env:T3_ACP_MCP_CALL html_render -'`,
       `bash -c 'echo hi' "$T3_ACP_MCP_CALL" html_render -`,
       `"$env:T3_ACP_MCP_CALL html_render -"`,
     ]) {
