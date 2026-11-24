@@ -30,6 +30,16 @@ export const IssueTrackerKind = TrimmedNonEmptyString.check(
 ).pipe(Schema.brand("IssueTrackerKind"));
 export type IssueTrackerKind = typeof IssueTrackerKind.Type;
 
+/**
+ * One saved account of a standalone tracker. A tracker's first account has none: it predates
+ * accounts, and keeps its credential and bindings unchanged.
+ */
+export const IssueTrackerAccountId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+).pipe(Schema.brand("IssueTrackerAccountId"));
+export type IssueTrackerAccountId = typeof IssueTrackerAccountId.Type;
+
 export const IssueActor = PullRequestActor;
 export type IssueActor = typeof IssueActor.Type;
 
@@ -150,6 +160,14 @@ export const IssueEventKind = Schema.Literals([
 ]);
 export type IssueEventKind = typeof IssueEventKind.Type;
 
+export const IssueEventReference = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  kind: Schema.Literals(["issue", "pull-request"]),
+  url: TrimmedNonEmptyString,
+});
+export type IssueEventReference = typeof IssueEventReference.Type;
+
 export const IssueEvent = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: IssueEventKind,
@@ -157,6 +175,8 @@ export const IssueEvent = Schema.Struct({
   createdAt: IsoDateTime,
   /** What the event was about, where it has a subject: a label name, a login, a new title. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The issue or change request a `referenced` event came from, so a surface can open it. */
+  reference: Schema.optional(IssueEventReference),
 });
 export type IssueEvent = typeof IssueEvent.Type;
 
@@ -256,10 +276,16 @@ export const IssueListCursors = Schema.Record(
 );
 export type IssueListCursors = typeof IssueListCursors.Type;
 
+export const ISSUE_LIST_MAX_EXCLUDED_PROJECTS = 1_000;
+
 export const IssueListInput = Schema.Struct({
   state: IssueListState,
   involvement: Schema.optional(IssueInvolvement),
   projectId: Schema.optional(ProjectId),
+  /** Projects left out of the listing, as the issues page hides them. */
+  excludeProjectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(ISSUE_LIST_MAX_EXCLUDED_PROJECTS)),
+  ),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */
@@ -306,7 +332,7 @@ export const IssueListResult = Schema.Struct({
   /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
-  /** By update, newest first, across every scope this answer covers. */
+  /** Newest first by the requested `sort` (`updated` when absent), across every scope this answer covers. */
   entries: Schema.Array(IssueListEntry),
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */
@@ -566,12 +592,29 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
-/** Which standalone tracker scope a project's issues come from, beside its git host's own. */
+export const MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES = 250;
+
+/**
+ * Which standalone tracker scopes a project's issues come from, beside its git host's own.
+ * `scope` is where agents file new issues; `additionalScopes` are listed and written too.
+ */
 export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
+  /** The account the scope is read with; absent for the tracker's first account. */
+  accountId: Schema.optional(IssueTrackerAccountId),
   scope: TrimmedNonEmptyString,
+  additionalScopes: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMaxLength(MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES),
+    ),
+  ),
 });
 export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+export const issueTrackerBindingScopes = (binding: IssueTrackerProjectBinding) => [
+  binding.scope,
+  ...(binding.additionalScopes ?? []),
+];
 
 /** One container the connected account can read, offered when a project is bound. */
 export const IssueTrackerScope = Schema.Struct({
@@ -586,6 +629,8 @@ export type IssueTrackerScope = typeof IssueTrackerScope.Type;
  */
 export const IssueTrackerConnection = Schema.Struct({
   ...StandaloneIssueTrackerDescriptor.fields,
+  /** Which of the tracker's accounts this is; absent for its first. */
+  accountId: Schema.optional(IssueTrackerAccountId),
   /** A credential is stored. It may still be rejected, which `account` being null reports. */
   connected: Schema.Boolean,
   /** Who the credential signs in as, or null when there is none or it was refused. */
@@ -599,15 +644,29 @@ export const IssueTrackerConnection = Schema.Struct({
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
 export const IssueTrackerConnectionList = Schema.Struct({
+  /** Each standalone tracker's first account. */
   trackers: Schema.Array(IssueTrackerConnection),
-  /** Which standalone tracker scope each bound project reads; a project absent here reads none. */
+  /** The accounts added beside a tracker's first, oldest first. Absent from older servers. */
+  accounts: Schema.optional(Schema.Array(IssueTrackerConnection)),
+  /**
+   * Which standalone tracker scopes each project bound with a tracker's first account reads. A
+   * project bound with an added account is in `accountBindings` instead, so older clients never
+   * read another account's team as the first account's.
+   */
   bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
+  /** Projects bound with an added account. Absent from older servers. */
+  accountBindings: Schema.optional(Schema.Record(ProjectId, IssueTrackerProjectBinding)),
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;
 
-/** A credential for one standalone tracker; `null` disconnects it and unbinds its projects. */
+/**
+ * A credential for one standalone tracker account; `null` disconnects it and unbinds its
+ * projects. `addAccount` saves the credential as a new account beside the existing ones.
+ */
 export const IssueTrackerConnectInput = Schema.Struct({
   tracker: IssueTrackerKind,
+  accountId: Schema.optional(IssueTrackerAccountId),
+  addAccount: Schema.optional(Schema.Boolean),
   token: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
 });
 export type IssueTrackerConnectInput = typeof IssueTrackerConnectInput.Type;
@@ -616,6 +675,8 @@ export const IssueTrackerBindProjectInput = Schema.Struct({
   projectId: ProjectId,
   /** Null unbinds. */
   binding: Schema.NullOr(IssueTrackerProjectBinding),
+  /** On an unbind, the account the binding was made with; absent for a tracker's first. */
+  accountId: Schema.optionalKey(IssueTrackerAccountId),
 });
 export type IssueTrackerBindProjectInput = typeof IssueTrackerBindProjectInput.Type;
 

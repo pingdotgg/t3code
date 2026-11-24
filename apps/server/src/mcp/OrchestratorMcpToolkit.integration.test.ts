@@ -103,8 +103,15 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
   function* (followupResult: string) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
+    // The recording names the parent, then the child, after the fixture's titles; this test's differ.
+    const threadNames = ["MCP replay parent", delegatedPrompt];
     const transcript = yield* decodeProviderReplayNdjson(
-      text.replaceAll(queuedFollowupResult, followupResult),
+      text
+        .replaceAll(queuedFollowupResult, followupResult)
+        .replace(
+          /"name":"Replay fixture: delegated_task_status"/g,
+          () => `"name":${JSON.stringify(threadNames.shift())}`,
+        ),
     );
     // The recording ends when the recorder closes the app-server while the parent
     // turn is still open. This test keeps acting as that parent afterwards, and

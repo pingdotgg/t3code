@@ -314,6 +314,17 @@ describe("AzureDevOpsCli.layer", () => {
         // az expands a separate `@file` value a second time, so a body of `@notes.txt` read notes.txt.
         expect(mockRun.mock.calls.at(-1)?.[0].args).toContain("--description=@/tmp/body.md");
       }
+
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+      yield* az.createPullRequest({
+        cwd: "/somewhere",
+        baseBranch: "main",
+        headSelector: "feature",
+        title: "Draft",
+        bodyFile: "/tmp/body.md",
+        draft: true,
+      });
+      expect(mockRun.mock.calls.at(-1)?.[0].args.join(" ")).toContain("--draft true");
     }).pipe(Effect.provide(layer)),
   );
 
@@ -403,7 +414,7 @@ describe("azureCliInvocation", () => {
     AzureDevOpsCli.azureCliInvocation().pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
-      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(SpawnExecutableResolution, async () => launcher),
       Effect.provideService(AzureCliInstallLocation, () => install),
     );
 

@@ -188,6 +188,8 @@ export function ProjectScriptEditorDialog({
     <>
       <Dialog
         open={request !== null}
+        // A stray click outside would discard the unsaved draft; Escape and Cancel still close it.
+        disablePointerDismissal
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
@@ -504,6 +506,7 @@ function ProjectScriptEditorForm({
               </Label>
               <Textarea
                 id="script-command"
+                data-script-command-input
                 // oxlint-disable-next-line t3code/no-untranslated-copy -- example shell command
                 placeholder="bun test"
                 value={command}
