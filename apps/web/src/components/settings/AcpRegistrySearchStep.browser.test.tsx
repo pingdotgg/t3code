@@ -4,7 +4,6 @@ import {
   ProviderDriverKind,
   type AcpRegistrySearchAgent,
 } from "@t3tools/contracts";
-import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -150,30 +149,20 @@ it("leaves out Registry agents that T3 Code supports as their own providers", as
   expect(page.getByRole("button", { name: "Add Codex" }).query()).toBeNull();
 });
 
-function DialogStep() {
-  const [open, setOpen] = useState(true);
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogPopup aria-label="Add provider">
+it("Escape in the search clears it without closing Add provider", async () => {
+  setup();
+  const onOpenChange = vi.fn();
+  await using _screen = await render(
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogPopup>
         <Step />
       </DialogPopup>
-    </Dialog>
+    </Dialog>,
   );
-}
-
-it("clears the registry search on Esc without closing the Add provider dialog", async () => {
-  setup();
-  await using _screen = await render(<DialogStep />);
-  const dialog = page.getByRole("dialog", { name: "Add provider" });
   const search = page.getByRole("searchbox", { name: "Search ACP Registry" });
-  await expect.element(search).toBeVisible();
-
   await userEvent.fill(search, "gemini");
   await vi.waitFor(() => {
-    expect(state.search).toHaveBeenLastCalledWith({
-      environmentId,
-      input: { query: "gemini" },
-    });
+    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "gemini" } });
   });
   for (const composition of [
     { key: "Escape", isComposing: true, keyCode: 27 },
@@ -189,18 +178,16 @@ it("clears the registry search on Esc without closing the Add provider dialog", 
         );
     });
     await expect.element(search).toHaveValue("gemini");
-    await expect.element(dialog).toHaveAttribute("data-open");
   }
 
   await userEvent.keyboard("{Escape}");
   await expect.element(search).toHaveValue("");
   await expect.element(search).toHaveFocus();
+  // The cleared search lists the whole Registry right away, without the typing debounce.
   expect(state.search).toHaveBeenLastCalledWith({
     environmentId,
     input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
   });
-  await expect.element(dialog).toHaveAttribute("data-open");
-
   // Holding Escape repeats the keydown, which must not also close the dialog.
   await act(() => {
     search.element().dispatchEvent(
@@ -212,8 +199,8 @@ it("clears the registry search on Esc without closing the Add provider dialog", 
       }),
     );
   });
-  await expect.element(dialog).toHaveAttribute("data-open");
+  expect(onOpenChange).not.toHaveBeenCalled();
 
   await userEvent.keyboard("{Escape}");
-  await expect.element(dialog).not.toBeInTheDocument();
+  expect(onOpenChange.mock.calls.map(([open]) => open)).toEqual([false]);
 });
