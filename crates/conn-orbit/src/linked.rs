@@ -166,6 +166,7 @@ mod tests {
             kind: OrbitTargetKind::Node {
                 node_name: label.to_owned(),
                 roles: vec![],
+                is_primary_agent: false,
             },
         }
     }

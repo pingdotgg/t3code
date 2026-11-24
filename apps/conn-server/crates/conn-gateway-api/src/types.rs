@@ -3,73 +3,60 @@
 //! Serde types for the schemas the operations in `operations.txt` use.
 
 ///`ConnBranchInstance`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnBranchInstance {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
+    pub id: i64,
+    pub name: ::std::string::String,
 }
 ///`ConnBranchPullRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnBranchPullRequest {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub number: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub title: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub url: ::std::option::Option<::std::string::String>,
+    pub number: i64,
+    pub title: ::std::string::String,
+    pub url: ::std::string::String,
 }
 ///`ConnEnvironment`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnEnvironment {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub admin_session_expires_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub cleanup_pending: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub cleanup_version: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub environment_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub admin_session_expires_at: ::std::string::String,
+    pub cleanup_pending: bool,
+    pub cleanup_version: i64,
+    pub environment_id: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub instance_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub instance_name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub instance_url: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub label: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(default)]
+    pub is_primary_agent: bool,
+    pub label: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub node_name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub power_state: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub power_state: ::std::option::Option<ConnEnvironmentPowerState>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub project_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub project_name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub project_slug: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub registered_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub registered_at: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub registered_by: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub renewal_checked_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub renewal_error_code: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub reservation_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub roles: ::std::vec::Vec<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub server_version: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub status: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub url: ::std::option::Option<::std::string::String>,
+    pub status: ConnEnvironmentStatus,
+    pub url: ::std::string::String,
 }
-///`ConnEnvironmentCleanupRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ConnEnvironmentCleanupRequest {}
 ///`ConnEnvironmentCleanupResponse202`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnEnvironmentCleanupResponse202 {
@@ -81,6 +68,61 @@ pub struct ConnEnvironmentCleanupResponse202 {
 pub struct ConnEnvironmentListResponse {
     pub data: ::std::vec::Vec<ConnEnvironment>,
     pub meta: Meta,
+}
+///`ConnEnvironmentPowerState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnEnvironmentPowerState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+impl ::std::fmt::Display for ConnEnvironmentPowerState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Stopped => f.write_str("stopped"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnEnvironmentPowerState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnEnvironmentPowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnEnvironmentPowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ConnEnvironmentRegisterRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -97,10 +139,6 @@ pub struct ConnEnvironmentRegisterResponse {
     pub data: ConnEnvironment,
     pub meta: Meta,
 }
-///`ConnEnvironmentRenewRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ConnEnvironmentRenewRequest {}
 ///`ConnEnvironmentRenewResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnEnvironmentRenewResponse {
@@ -214,6 +252,61 @@ pub struct ConnEnvironmentSessionResponse202 {
     pub data: Operation,
     pub meta: Meta,
 }
+///`ConnEnvironmentStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnEnvironmentStatus {
+    #[serde(rename = "registered")]
+    Registered,
+    #[serde(rename = "session_expired")]
+    SessionExpired,
+}
+impl ::std::fmt::Display for ConnEnvironmentStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Registered => f.write_str("registered"),
+            Self::SessionExpired => f.write_str("session_expired"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnEnvironmentStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "registered" => Ok(Self::Registered),
+            "session_expired" => Ok(Self::SessionExpired),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnEnvironmentStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnEnvironmentStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ConnEnvironmentUnregisterResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnEnvironmentUnregisterResponse {
@@ -230,25 +323,65 @@ pub struct ConnEnvironmentUnregisterResponseData {
     pub removed: bool,
 }
 ///`ConnHeldSession`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnHeldSession {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub access_token: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub environment_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub expires_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub pairing_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub token_type: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub url: ::std::option::Option<::std::string::String>,
+    pub access_token: ::std::string::String,
+    pub environment_id: ::std::string::String,
+    pub expires_at: ::std::string::String,
+    pub pairing_id: i64,
+    pub token_type: ConnHeldSessionTokenType,
+    pub url: ::std::string::String,
 }
-///`ConnInstanceCompleteRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ConnInstanceCompleteRequest {}
+///`ConnHeldSessionTokenType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnHeldSessionTokenType {
+    Bearer,
+}
+impl ::std::fmt::Display for ConnHeldSessionTokenType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Bearer => f.write_str("Bearer"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnHeldSessionTokenType {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "Bearer" => Ok(Self::Bearer),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnHeldSessionTokenType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnHeldSessionTokenType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ConnInstanceCompleteResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnInstanceCompleteResponse {
@@ -298,15 +431,13 @@ pub struct ConnInstanceDestroyResponse {
     pub meta: Meta,
 }
 ///`ConnInstanceNameCheck`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnInstanceNameCheck {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub available: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub available: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub domain: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub reason: ::std::option::Option<ConnInstanceNameCheckReason>,
 }
 ///`ConnInstanceNameCheckReason`
@@ -378,17 +509,263 @@ pub struct ConnInstanceNameCheckResponse {
     pub data: ConnInstanceNameCheck,
     pub meta: Meta,
 }
+///`ConnInstanceWork`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnInstanceWork {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub baseline: ::std::option::Option<ConnInstanceWorkBaseline>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub commits: ::std::option::Option<ConnInstanceWorkCommits>,
+    pub duration_ms: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub head: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub head_commit: ::std::option::Option<::std::string::String>,
+    pub instance_id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub modified: ::std::option::Option<ConnInstanceWorkModified>,
+    pub read_at: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub reason: ::std::option::Option<ConnInstanceWorkReason>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub stashes: ::std::option::Option<ConnInstanceWorkStashes>,
+    pub state: ConnInstanceWorkState,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub uncommitted: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub unpushed: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub untracked: ::std::option::Option<ConnInstanceWorkUntracked>,
+}
+///`ConnInstanceWorkBaseline`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnInstanceWorkBaseline {
+    #[serde(rename = "recorded")]
+    Recorded,
+    #[serde(rename = "default_now")]
+    DefaultNow,
+    #[serde(rename = "none")]
+    None,
+}
+impl ::std::fmt::Display for ConnInstanceWorkBaseline {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Recorded => f.write_str("recorded"),
+            Self::DefaultNow => f.write_str("default_now"),
+            Self::None => f.write_str("none"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnInstanceWorkBaseline {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "recorded" => Ok(Self::Recorded),
+            "default_now" => Ok(Self::DefaultNow),
+            "none" => Ok(Self::None),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnInstanceWorkBaseline {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnInstanceWorkBaseline {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnInstanceWorkCommits`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnInstanceWorkCommits {
+    pub branch_count: i64,
+    pub branches: ::std::vec::Vec<ConnInstanceWorkCommitsBranchesItem>,
+    pub count: i64,
+    pub head: i64,
+}
+///`ConnInstanceWorkCommitsBranchesItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnInstanceWorkCommitsBranchesItem {
+    pub count: i64,
+    pub name: ::std::string::String,
+}
+///`ConnInstanceWorkModified`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnInstanceWorkModified {
+    pub count: i64,
+    pub names: ::std::vec::Vec<::std::string::String>,
+}
+///`ConnInstanceWorkReason`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnInstanceWorkReason {
+    #[serde(rename = "stopped")]
+    Stopped,
+    #[serde(rename = "asleep")]
+    Asleep,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "not_a_repository")]
+    NotARepository,
+    #[serde(rename = "unreachable")]
+    Unreachable,
+}
+impl ::std::fmt::Display for ConnInstanceWorkReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Stopped => f.write_str("stopped"),
+            Self::Asleep => f.write_str("asleep"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::NotARepository => f.write_str("not_a_repository"),
+            Self::Unreachable => f.write_str("unreachable"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnInstanceWorkReason {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "stopped" => Ok(Self::Stopped),
+            "asleep" => Ok(Self::Asleep),
+            "timeout" => Ok(Self::Timeout),
+            "not_a_repository" => Ok(Self::NotARepository),
+            "unreachable" => Ok(Self::Unreachable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnInstanceWorkReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnInstanceWorkReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ConnInstanceWorkResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnInstanceWorkResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnInstanceWork,
     pub meta: Meta,
 }
-///`ConnLaunchCancelRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+///`ConnInstanceWorkStashes`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
-pub struct ConnLaunchCancelRequest {}
+pub struct ConnInstanceWorkStashes {
+    pub count: i64,
+    pub names: ::std::vec::Vec<::std::string::String>,
+}
+///`ConnInstanceWorkState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnInstanceWorkState {
+    #[serde(rename = "clean")]
+    Clean,
+    #[serde(rename = "dirty")]
+    Dirty,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+impl ::std::fmt::Display for ConnInstanceWorkState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Clean => f.write_str("clean"),
+            Self::Dirty => f.write_str("dirty"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnInstanceWorkState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "clean" => Ok(Self::Clean),
+            "dirty" => Ok(Self::Dirty),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnInstanceWorkState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnInstanceWorkState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnInstanceWorkUntracked`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnInstanceWorkUntracked {
+    pub count: i64,
+    pub names: ::std::vec::Vec<::std::string::String>,
+}
 ///`ConnLaunchCancelResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnLaunchCancelResponse {
@@ -405,9 +782,8 @@ pub struct ConnLaunchCreateRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub interaction_mode: ::std::option::Option<ConnLaunchCreateRequestInteractionMode>,
     pub message_id: ::std::string::String,
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub model_selection: ::std::option::Option<::serde_json::Value>,
+    pub model_selection: ::std::option::Option<ConnLaunchCreateRequestModelSelection>,
     pub project_id: i64,
     pub prompt: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -472,6 +848,74 @@ for ConnLaunchCreateRequestInteractionMode {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+///`ConnLaunchCreateRequestModelSelection`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnLaunchCreateRequestModelSelection {
+    #[serde(
+        rename = "instanceId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub instance_id: ::std::option::Option<::std::string::String>,
+    pub model: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<ConnLaunchCreateRequestModelSelectionOptions>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+}
+///`ConnLaunchCreateRequestModelSelectionOptions`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ConnLaunchCreateRequestModelSelectionOptions {
+    Null,
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<ConnLaunchCreateRequestModelSelectionOptionsArrayItem>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for ConnLaunchCreateRequestModelSelectionOptions {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<
+    ::std::vec::Vec<ConnLaunchCreateRequestModelSelectionOptionsArrayItem>,
+> for ConnLaunchCreateRequestModelSelectionOptions {
+    fn from(
+        value: ::std::vec::Vec<ConnLaunchCreateRequestModelSelectionOptionsArrayItem>,
+    ) -> Self {
+        Self::Array(value)
+    }
+}
+///`ConnLaunchCreateRequestModelSelectionOptionsArrayItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnLaunchCreateRequestModelSelectionOptionsArrayItem {
+    pub id: ::std::string::String,
+    pub value: ConnLaunchCreateRequestModelSelectionOptionsArrayItemValue,
+}
+///`ConnLaunchCreateRequestModelSelectionOptionsArrayItemValue`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ConnLaunchCreateRequestModelSelectionOptionsArrayItemValue {
+    Boolean(bool),
+    String(::std::string::String),
+}
+impl ::std::fmt::Display for ConnLaunchCreateRequestModelSelectionOptionsArrayItemValue {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match self {
+            Self::Boolean(x) => x.fmt(f),
+            Self::String(x) => x.fmt(f),
+        }
+    }
+}
+impl ::std::convert::From<bool>
+for ConnLaunchCreateRequestModelSelectionOptionsArrayItemValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
     }
 }
 ///`ConnLaunchCreateRequestRuntimeMode`
@@ -1475,80 +1919,424 @@ pub struct ConnLaunchSnapshotThread {
     pub accepted_at: ::std::string::String,
     pub environment_id: ::std::string::String,
     pub message_id: ::std::string::String,
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub model_selection: ::serde_json::Value,
+    pub model_selection: ConnLaunchSnapshotThreadModelSelection,
     pub project_id: ::std::string::String,
     pub thread_id: ::std::string::String,
+}
+///`ConnLaunchSnapshotThreadModelSelection`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct ConnLaunchSnapshotThreadModelSelection {
+    #[serde(
+        rename = "instanceId",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub instance_id: ::std::option::Option<::std::string::String>,
+    pub model: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<ConnLaunchSnapshotThreadModelSelectionOptions>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+}
+///`ConnLaunchSnapshotThreadModelSelectionOptions`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ConnLaunchSnapshotThreadModelSelectionOptions {
+    Null,
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<ConnLaunchSnapshotThreadModelSelectionOptionsArrayItem>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for ConnLaunchSnapshotThreadModelSelectionOptions {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<
+    ::std::vec::Vec<ConnLaunchSnapshotThreadModelSelectionOptionsArrayItem>,
+> for ConnLaunchSnapshotThreadModelSelectionOptions {
+    fn from(
+        value: ::std::vec::Vec<ConnLaunchSnapshotThreadModelSelectionOptionsArrayItem>,
+    ) -> Self {
+        Self::Array(value)
+    }
+}
+///`ConnLaunchSnapshotThreadModelSelectionOptionsArrayItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnLaunchSnapshotThreadModelSelectionOptionsArrayItem {
+    pub id: ::std::string::String,
+    pub value: ConnLaunchSnapshotThreadModelSelectionOptionsArrayItemValue,
+}
+///`ConnLaunchSnapshotThreadModelSelectionOptionsArrayItemValue`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ConnLaunchSnapshotThreadModelSelectionOptionsArrayItemValue {
+    Boolean(bool),
+    String(::std::string::String),
+}
+impl ::std::fmt::Display
+for ConnLaunchSnapshotThreadModelSelectionOptionsArrayItemValue {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match self {
+            Self::Boolean(x) => x.fmt(f),
+            Self::String(x) => x.fmt(f),
+        }
+    }
+}
+impl ::std::convert::From<bool>
+for ConnLaunchSnapshotThreadModelSelectionOptionsArrayItemValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+///`ConnManagedAck`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedAck {
+    pub acknowledged_at: ::std::string::String,
+    pub environment_id: ::std::string::String,
+    pub generation: i64,
+    pub kind: ConnManagedAckKind,
+    pub revision: i64,
+}
+///`ConnManagedAckKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnManagedAckKind {
+    #[serde(rename = "observed")]
+    Observed,
+    #[serde(rename = "recovered")]
+    Recovered,
+}
+impl ::std::fmt::Display for ConnManagedAckKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Observed => f.write_str("observed"),
+            Self::Recovered => f.write_str("recovered"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnManagedAckKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "observed" => Ok(Self::Observed),
+            "recovered" => Ok(Self::Recovered),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnManagedAckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnManagedAckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ConnManagedAckRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConnManagedAckRequest {
-    pub channel_name: ::std::string::String,
-    pub socket_id: ::std::string::String,
+    ///The registered Conn environment ID of the managed target.
+    pub environment_id: ::std::string::String,
+    ///Conditionally required.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub fenced_at: ::std::option::Option<::std::string::String>,
+    ///The current managed target generation.
+    pub generation: i64,
+    ///Conditionally required.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub handlers_closed_at: ::std::option::Option<::std::string::String>,
+    pub kind: ConnManagedAckRequestKind,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub notice_received_at: ::std::option::Option<::std::string::String>,
+    ///Conditionally required.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub recovered_at: ::std::option::Option<::std::string::String>,
+    pub revision: i64,
+}
+///`ConnManagedAckRequestKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnManagedAckRequestKind {
+    #[serde(rename = "observed")]
+    Observed,
+    #[serde(rename = "recovered")]
+    Recovered,
+}
+impl ::std::fmt::Display for ConnManagedAckRequestKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Observed => f.write_str("observed"),
+            Self::Recovered => f.write_str("recovered"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnManagedAckRequestKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "observed" => Ok(Self::Observed),
+            "recovered" => Ok(Self::Recovered),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnManagedAckRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnManagedAckRequestKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ConnManagedAckResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnManagedAckResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnManagedAck,
     pub meta: Meta,
+}
+///`ConnManagedAuthority`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedAuthority {
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub edges: ::std::vec::Vec<ConnManagedAuthorityEdgesItem>,
+    pub environment_id: ::std::string::String,
+    pub generation: i64,
+    pub head_revision: i64,
+    pub kind: ConnManagedAuthorityKind,
+    pub nonce: ::std::string::String,
+    pub owed: ::std::vec::Vec<ConnManagedAuthorityOwedItem>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub revisions: ::std::vec::Vec<ConnManagedAuthorityRevisionsItem>,
+    pub server_time: ::std::string::String,
+}
+///`ConnManagedAuthorityEdgesItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedAuthorityEdgesItem {
+    pub consumer_node_id: i64,
+    pub edge_id: i64,
+}
+///`ConnManagedAuthorityKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnManagedAuthorityKind {
+    #[serde(rename = "snapshot")]
+    Snapshot,
+    #[serde(rename = "delta")]
+    Delta,
+    #[serde(rename = "current")]
+    Current,
+}
+impl ::std::fmt::Display for ConnManagedAuthorityKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Snapshot => f.write_str("snapshot"),
+            Self::Delta => f.write_str("delta"),
+            Self::Current => f.write_str("current"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnManagedAuthorityKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "snapshot" => Ok(Self::Snapshot),
+            "delta" => Ok(Self::Delta),
+            "current" => Ok(Self::Current),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnManagedAuthorityKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnManagedAuthorityKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnManagedAuthorityOwedItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedAuthorityOwedItem {
+    pub edge_ids: ::std::vec::Vec<i64>,
+    pub revision: i64,
 }
 ///`ConnManagedAuthorityRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConnManagedAuthorityRequest {
-    pub channel_name: ::std::string::String,
-    pub socket_id: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub after_revision: ::std::option::Option<i64>,
+    ///The registered Conn environment ID of the managed target.
+    pub environment_id: ::std::string::String,
+    ///The current managed target generation.
+    pub generation: i64,
+    pub nonce: ::std::string::String,
 }
 ///`ConnManagedAuthorityResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnManagedAuthorityResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnManagedAuthority,
     pub meta: Meta,
+}
+///`ConnManagedAuthorityRevisionsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedAuthorityRevisionsItem {
+    pub edge_ids: ::std::vec::Vec<i64>,
+    pub revision: i64,
 }
 ///`ConnManagedBroadcastingAuthRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConnManagedBroadcastingAuthRequest {
     pub channel_name: ::std::string::String,
+    ///The registered Conn environment ID of the managed target.
+    pub environment_id: ::std::string::String,
+    ///The current managed target generation.
+    pub generation: i64,
     pub socket_id: ::std::string::String,
 }
 ///`ConnManagedBroadcastingAuthResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ConnManagedBroadcastingAuthResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
-    pub meta: Meta,
+    ///The Reverb app key and the HMAC-SHA256 of `socket_id:channel_name`.
+    pub auth: ::std::string::String,
+}
+///`ConnManagedIntrospect`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedIntrospect {
+    pub caller_node_id: i64,
+    pub edge_id: i64,
+    pub environment_id: ::std::string::String,
+    pub expires_at: ::std::string::String,
+    pub generation: i64,
+    pub nonce: ::std::string::String,
+    pub revision: i64,
+    pub scopes: ::std::vec::Vec<::std::string::String>,
+    pub token_id: i64,
 }
 ///`ConnManagedIntrospectRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConnManagedIntrospectRequest {
-    pub channel_name: ::std::string::String,
-    pub socket_id: ::std::string::String,
+    ///The registered Conn environment ID of the managed target.
+    pub environment_id: ::std::string::String,
+    ///The current managed target generation.
+    pub generation: i64,
+    pub nonce: ::std::string::String,
+    pub peer_address: ::std::string::String,
+    pub token: ::std::string::String,
 }
 ///`ConnManagedIntrospectResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnManagedIntrospectResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnManagedIntrospect,
     pub meta: Meta,
+}
+///`ConnManagedRealtime`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedRealtime {
+    pub channel: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub key: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub url: ::std::option::Option<::std::string::String>,
 }
 ///`ConnManagedRealtimeRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConnManagedRealtimeRequest {
-    pub channel_name: ::std::string::String,
-    pub socket_id: ::std::string::String,
+    ///The registered Conn environment ID of the managed target.
+    pub environment_id: ::std::string::String,
+    ///The current managed target generation.
+    pub generation: i64,
 }
 ///`ConnManagedRealtimeResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnManagedRealtimeResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnManagedRealtime,
     pub meta: Meta,
+}
+///`ConnManagedToken`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnManagedToken {
+    pub expires_at: ::std::string::String,
+    pub generation: i64,
+    pub revision: i64,
+    pub scopes: ::std::vec::Vec<::std::string::String>,
+    pub token: ::std::string::String,
 }
 ///`ConnManagedTokenCreateRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -1611,8 +2399,7 @@ for ConnManagedTokenCreateRequestPurpose {
 ///`ConnManagedTokenCreateResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnManagedTokenCreateResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnManagedToken,
     pub meta: Meta,
 }
 ///`ConnMeProfileRequest`
@@ -1624,16 +2411,26 @@ pub struct ConnMeProfileRequest {
 ///`ConnMeProfileResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnMeProfileResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnNode,
     pub meta: Meta,
 }
 ///`ConnMeResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnMeResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnNode,
     pub meta: Meta,
+}
+///`ConnNode`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct ConnNode {
+    pub id: i64,
+    pub name: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub profile: ::std::option::Option<ConnProfile>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub profile_channel: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub wireguard_ip: ::std::option::Option<::std::string::String>,
 }
 ///`ConnNodeEnvironmentsRestartResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -1730,10 +2527,6 @@ for ConnNodeEnvironmentsRestartResponseDataRestartsItemAnswer {
         value.parse()
     }
 }
-///`ConnOperationCancelRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ConnOperationCancelRequest {}
 ///`ConnOperationCancelResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnOperationCancelResponse {
@@ -1747,23 +2540,19 @@ pub struct ConnOperationShowResponse {
     pub meta: Meta,
 }
 ///`ConnPairing`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnPairing {
+    pub client_label: ::std::string::String,
+    pub environment_id: ::std::string::String,
+    pub expires_at: ::std::string::String,
+    ///Present when `include_held=true`: true for a held session pairing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_label: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub environment_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub expires_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub issued_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub node_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub node_name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub held: ::std::option::Option<bool>,
+    pub id: i64,
+    pub issued_at: ::std::string::String,
+    pub node_id: i64,
+    pub node_name: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub revoked_at: ::std::option::Option<::std::string::String>,
 }
 ///`ConnPairingCreateRequest`
@@ -1783,7 +2572,7 @@ pub struct ConnPairingCreateResponse {
 ///`ConnPairingListResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnPairingListResponse {
-    pub data: ::std::vec::Vec<::serde_json::Value>,
+    pub data: ::std::vec::Vec<ConnPairing>,
     pub meta: Meta,
 }
 ///`ConnPairingRevokeRequest`
@@ -1805,21 +2594,16 @@ pub struct ConnPairingRevokeResponse {
 ///`ConnPairingShowResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnPairingShowResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: IssuedConnPairing,
     pub meta: Meta,
 }
 ///`ConnProfile`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnProfile {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub settings_version: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub updated_at: ::std::option::Option<::std::string::String>,
+    pub id: i64,
+    pub name: ::std::string::String,
+    pub settings_version: i64,
+    pub updated_at: ::std::string::String,
 }
 ///`ConnProfileCreateRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -1840,18 +2624,13 @@ pub struct ConnProfileListResponse {
     pub meta: Meta,
 }
 ///`ConnProfileSettings`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnProfileSettings {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub profile_id: ::std::option::Option<i64>,
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub profile_id: i64,
     pub sections: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
-    pub settings: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub updated_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub version: ::std::option::Option<i64>,
+    pub settings: ConnProfileSettingsSettings,
+    pub updated_at: ::std::string::String,
+    pub version: i64,
 }
 ///`ConnProfileSettingsPatchRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2465,6 +3244,27 @@ pub struct ConnProfileSettingsPatchRequestSectionsWorkspacesValueItem {
 pub struct ConnProfileSettingsPatchResponse {
     pub data: ConnProfileSettings,
     pub meta: Meta,
+}
+///`ConnProfileSettingsSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ConnProfileSettingsSettings {
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for ConnProfileSettingsSettings {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<::std::vec::Vec<::serde_json::Value>>
+for ConnProfileSettingsSettings {
+    fn from(value: ::std::vec::Vec<::serde_json::Value>) -> Self {
+        Self::Array(value)
+    }
 }
 ///`ConnProfileSettingsShowResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3091,37 +3891,30 @@ pub struct ConnProfileSettingsUpdateResponse {
     pub meta: Meta,
 }
 ///`ConnProject`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnProject {
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub checks: ::std::vec::Vec<ConnProjectCheck>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub cloneable: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cloneable: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub cloneable_reason: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub instance_domain_suffix: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub node_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub node_name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub slug: ::std::option::Option<::std::string::String>,
+    pub slug: ::std::string::String,
 }
 ///`ConnProjectBranch`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnProjectBranch {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub default: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub default: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub instance: ::std::option::Option<ConnBranchInstance>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pull_request: ::std::option::Option<ConnBranchPullRequest>,
 }
 ///`ConnProjectBranchesResponse`
@@ -3139,18 +3932,15 @@ pub struct ConnProjectBranchesResponseMeta {
     pub request_id: ::std::string::String,
 }
 ///`ConnProjectCheck`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnProjectCheck {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub code: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub key: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub label: ::std::option::Option<::std::string::String>,
+    pub key: ::std::string::String,
+    pub label: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub message: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub status: ::std::option::Option<ConnProjectCheckStatus>,
+    pub status: ConnProjectCheckStatus,
 }
 ///`ConnProjectCheckStatus`
 #[derive(
@@ -3248,35 +4038,27 @@ pub struct ConnRealtimeShowResponseData {
     pub url: ::std::option::Option<::std::string::String>,
 }
 ///`ConnReservation`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnReservation {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub create_operation_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub destroy_operation_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub environment_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub error_code: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub expires_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub expires_at: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub finalize_operation_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub instance_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pairing: ::std::option::Option<IssuedConnPairing>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub project_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub state: ::std::option::Option<::std::string::String>,
+    pub project_id: i64,
+    pub state: ConnReservationState,
 }
-///`ConnReservationCreateRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ConnReservationCreateRequest {}
 ///`ConnReservationCreateResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnReservationCreateResponse {
@@ -3284,9 +4066,29 @@ pub struct ConnReservationCreateResponse {
     pub meta: Meta,
 }
 ///`ConnReservationFinalizeRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
-pub struct ConnReservationFinalizeRequest {}
+pub struct ConnReservationFinalizeRequest {
+    ///Optional frozen branch selection. Omit for installed-client behavior without a remote admission read.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub branch: ::std::option::Option<ConnReservationFinalizeRequestBranch>,
+    pub name: ::std::string::String,
+}
+///Optional frozen branch selection. Omit for installed-client behavior without a remote admission read.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(tag = "mode", deny_unknown_fields)]
+pub enum ConnReservationFinalizeRequestBranch {
+    #[serde(rename = "new")]
+    New {
+        ///A valid Git branch name.
+        from: ::std::string::String,
+    },
+    #[serde(rename = "existing")]
+    Existing {
+        ///A valid Git branch name.
+        name: ::std::string::String,
+    },
+}
 ///`ConnReservationFinalizeResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnReservationFinalizeResponse {
@@ -3305,47 +4107,1847 @@ pub struct ConnReservationShowResponse {
     pub data: ConnReservation,
     pub meta: Meta,
 }
+///`ConnReservationState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnReservationState {
+    #[serde(rename = "preparing")]
+    Preparing,
+    #[serde(rename = "ready")]
+    Ready,
+    #[serde(rename = "finalizing")]
+    Finalizing,
+    #[serde(rename = "finalized")]
+    Finalized,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "released")]
+    Released,
+    #[serde(rename = "expired")]
+    Expired,
+}
+impl ::std::fmt::Display for ConnReservationState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Preparing => f.write_str("preparing"),
+            Self::Ready => f.write_str("ready"),
+            Self::Finalizing => f.write_str("finalizing"),
+            Self::Finalized => f.write_str("finalized"),
+            Self::Failed => f.write_str("failed"),
+            Self::Released => f.write_str("released"),
+            Self::Expired => f.write_str("expired"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnReservationState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "preparing" => Ok(Self::Preparing),
+            "ready" => Ok(Self::Ready),
+            "finalizing" => Ok(Self::Finalizing),
+            "finalized" => Ok(Self::Finalized),
+            "failed" => Ok(Self::Failed),
+            "released" => Ok(Self::Released),
+            "expired" => Ok(Self::Expired),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnReservationState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnReservationState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTask`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTask {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub attention: ::std::option::Option<ConnTaskAttention>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub created_at: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub deployed_at: ::std::option::Option<::std::string::String>,
+    pub id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub last_activity_at: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub pr_opened_at: ::std::option::Option<::std::string::String>,
+    pub project: ConnTaskProject,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub pull_request: ::std::option::Option<ConnTaskPullRequest>,
+    pub status: ConnTaskStatus,
+    pub subtask_counts: ConnTaskSubtaskCounts,
+    pub title: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub updated_at: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub work_status: ::std::option::Option<ConnTaskWorkStatus>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub workspace: ::std::option::Option<ConnTaskWorkspace>,
+}
+///`ConnTaskAttention`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskAttention {
+    pub kind: ConnTaskAttentionKind,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub question: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub reason: ::std::option::Option<::std::string::String>,
+}
+///`ConnTaskAttentionKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskAttentionKind {
+    #[serde(rename = "question")]
+    Question,
+}
+impl ::std::fmt::Display for ConnTaskAttentionKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Question => f.write_str("question"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskAttentionKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "question" => Ok(Self::Question),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskAttentionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskAttentionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetail`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetail {
+    pub agents: ::std::vec::Vec<ConnTaskDetailAgentsItem>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub attention: ::std::option::Option<ConnTaskDetailAttention>,
+    pub brief: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub created_at: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub deployed_at: ::std::option::Option<::std::string::String>,
+    pub execution: ConnTaskDetailExecution,
+    pub id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub last_activity_at: ::std::option::Option<::std::string::String>,
+    pub metrics: ConnTaskDetailMetrics,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub pr_opened_at: ::std::option::Option<::std::string::String>,
+    pub project: ConnTaskDetailProject,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub pull_request: ::std::option::Option<ConnTaskDetailPullRequest>,
+    pub status: ConnTaskDetailStatus,
+    pub subtask_counts: ConnTaskDetailSubtaskCounts,
+    pub subtasks: ::std::vec::Vec<ConnTaskDetailSubtasksItem>,
+    pub title: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub updated_at: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub work: ::std::option::Option<ConnTaskDetailWork>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub work_status: ::std::option::Option<ConnTaskDetailWorkStatus>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub workspace: ::std::option::Option<ConnTaskDetailWorkspace>,
+}
+///`ConnTaskDetailAgentsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailAgentsItem {
+    pub attempt: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub conn: ::std::option::Option<ConnTaskDetailAgentsItemConn>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub created_at: ::std::option::Option<::std::string::String>,
+    pub current: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub effort: ::std::option::Option<::std::string::String>,
+    pub id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub model: ::std::option::Option<::std::string::String>,
+    pub needs_input: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub observed_at: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    pub role: ConnTaskDetailAgentsItemRole,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub state: ::std::option::Option<ConnTaskDetailAgentsItemState>,
+    pub subtask_ids: ::std::vec::Vec<i64>,
+}
+///`ConnTaskDetailAgentsItemConn`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailAgentsItemConn {
+    pub environment_id: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub thread_id: ::std::option::Option<::std::string::String>,
+}
+///`ConnTaskDetailAgentsItemRole`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailAgentsItemRole {
+    #[serde(rename = "implementer")]
+    Implementer,
+    #[serde(rename = "reviewer")]
+    Reviewer,
+}
+impl ::std::fmt::Display for ConnTaskDetailAgentsItemRole {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Implementer => f.write_str("implementer"),
+            Self::Reviewer => f.write_str("reviewer"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailAgentsItemRole {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "implementer" => Ok(Self::Implementer),
+            "reviewer" => Ok(Self::Reviewer),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailAgentsItemRole {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailAgentsItemRole {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailAgentsItemState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailAgentsItemState {
+    #[serde(rename = "idle")]
+    Idle,
+    #[serde(rename = "working")]
+    Working,
+    #[serde(rename = "asking_for_input")]
+    AskingForInput,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for ConnTaskDetailAgentsItemState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Idle => f.write_str("idle"),
+            Self::Working => f.write_str("working"),
+            Self::AskingForInput => f.write_str("asking_for_input"),
+            Self::Done => f.write_str("done"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailAgentsItemState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "idle" => Ok(Self::Idle),
+            "working" => Ok(Self::Working),
+            "asking_for_input" => Ok(Self::AskingForInput),
+            "done" => Ok(Self::Done),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailAgentsItemState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailAgentsItemState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailAttention`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailAttention {
+    pub kind: ConnTaskDetailAttentionKind,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub question: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub reason: ::std::option::Option<::std::string::String>,
+}
+///`ConnTaskDetailAttentionKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailAttentionKind {
+    #[serde(rename = "question")]
+    Question,
+}
+impl ::std::fmt::Display for ConnTaskDetailAttentionKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Question => f.write_str("question"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailAttentionKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "question" => Ok(Self::Question),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailAttentionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailAttentionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailExecution`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailExecution {
+    pub implementer_mode: ConnTaskDetailExecutionImplementerMode,
+}
+///`ConnTaskDetailExecutionImplementerMode`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailExecutionImplementerMode {
+    #[serde(rename = "task")]
+    Task,
+    #[serde(rename = "per_subtask")]
+    PerSubtask,
+}
+impl ::std::fmt::Display for ConnTaskDetailExecutionImplementerMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Task => f.write_str("task"),
+            Self::PerSubtask => f.write_str("per_subtask"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailExecutionImplementerMode {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "task" => Ok(Self::Task),
+            "per_subtask" => Ok(Self::PerSubtask),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailExecutionImplementerMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnTaskDetailExecutionImplementerMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailMetrics`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailMetrics {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub duration_ms: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub lines_added: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub lines_deleted: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub tokens: ::std::option::Option<i64>,
+}
+///`ConnTaskDetailProject`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailProject {
+    pub code: ::std::string::String,
+    pub id: i64,
+    pub name: ::std::string::String,
+    pub slug: ::std::string::String,
+}
+///`ConnTaskDetailPullRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailPullRequest {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub number: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub state: ::std::option::Option<ConnTaskDetailPullRequestState>,
+    pub url: ::std::string::String,
+}
+///`ConnTaskDetailPullRequestState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailPullRequestState {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(rename = "merged")]
+    Merged,
+}
+impl ::std::fmt::Display for ConnTaskDetailPullRequestState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Open => f.write_str("open"),
+            Self::Closed => f.write_str("closed"),
+            Self::Merged => f.write_str("merged"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailPullRequestState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "open" => Ok(Self::Open),
+            "closed" => Ok(Self::Closed),
+            "merged" => Ok(Self::Merged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailPullRequestState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailPullRequestState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailStatus {
+    #[serde(rename = "backlog")]
+    Backlog,
+    #[serde(rename = "todo")]
+    Todo,
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "reviewing")]
+    Reviewing,
+    #[serde(rename = "settling")]
+    Settling,
+    #[serde(rename = "waiting_for_review")]
+    WaitingForReview,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ConnTaskDetailStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Backlog => f.write_str("backlog"),
+            Self::Todo => f.write_str("todo"),
+            Self::Reserved => f.write_str("reserved"),
+            Self::Running => f.write_str("running"),
+            Self::Reviewing => f.write_str("reviewing"),
+            Self::Settling => f.write_str("settling"),
+            Self::WaitingForReview => f.write_str("waiting_for_review"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "backlog" => Ok(Self::Backlog),
+            "todo" => Ok(Self::Todo),
+            "reserved" => Ok(Self::Reserved),
+            "running" => Ok(Self::Running),
+            "reviewing" => Ok(Self::Reviewing),
+            "settling" => Ok(Self::Settling),
+            "waiting_for_review" => Ok(Self::WaitingForReview),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailSubtaskCounts`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailSubtaskCounts {
+    pub cancelled: i64,
+    pub completed: i64,
+    pub failed: i64,
+    pub running: i64,
+    pub todo: i64,
+    pub total: i64,
+}
+///`ConnTaskDetailSubtasksItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailSubtasksItem {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub attention: ::std::option::Option<ConnTaskDetailSubtasksItemAttention>,
+    pub brief: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub current_implementer_agent_id: ::std::option::Option<i64>,
+    pub deliverables: ::std::vec::Vec<ConnTaskDetailSubtasksItemDeliverablesItem>,
+    pub id: i64,
+    pub metrics: ConnTaskDetailSubtasksItemMetrics,
+    pub position: i64,
+    pub status: ConnTaskDetailSubtasksItemStatus,
+    pub title: ::std::string::String,
+}
+///`ConnTaskDetailSubtasksItemAttention`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailSubtasksItemAttention {
+    pub kind: ConnTaskDetailSubtasksItemAttentionKind,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub question: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub reason: ::std::option::Option<::std::string::String>,
+}
+///`ConnTaskDetailSubtasksItemAttentionKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailSubtasksItemAttentionKind {
+    #[serde(rename = "question")]
+    Question,
+}
+impl ::std::fmt::Display for ConnTaskDetailSubtasksItemAttentionKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Question => f.write_str("question"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailSubtasksItemAttentionKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "question" => Ok(Self::Question),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailSubtasksItemAttentionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnTaskDetailSubtasksItemAttentionKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailSubtasksItemDeliverablesItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailSubtasksItemDeliverablesItem {
+    pub description: ::std::string::String,
+    pub id: ::std::string::String,
+    #[serde(rename = "type")]
+    pub type_: ConnTaskDetailSubtasksItemDeliverablesItemType,
+}
+///`ConnTaskDetailSubtasksItemDeliverablesItemType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailSubtasksItemDeliverablesItemType {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "command")]
+    Command,
+    #[serde(rename = "review")]
+    Review,
+}
+impl ::std::fmt::Display for ConnTaskDetailSubtasksItemDeliverablesItemType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::File => f.write_str("file"),
+            Self::Command => f.write_str("command"),
+            Self::Review => f.write_str("review"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailSubtasksItemDeliverablesItemType {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "file" => Ok(Self::File),
+            "command" => Ok(Self::Command),
+            "review" => Ok(Self::Review),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailSubtasksItemDeliverablesItemType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnTaskDetailSubtasksItemDeliverablesItemType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailSubtasksItemMetrics`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailSubtasksItemMetrics {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub duration_ms: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub lines_added: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub lines_deleted: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub tokens: ::std::option::Option<i64>,
+}
+///`ConnTaskDetailSubtasksItemStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailSubtasksItemStatus {
+    #[serde(rename = "todo")]
+    Todo,
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "reviewing")]
+    Reviewing,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ConnTaskDetailSubtasksItemStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Todo => f.write_str("todo"),
+            Self::Reserved => f.write_str("reserved"),
+            Self::Running => f.write_str("running"),
+            Self::Reviewing => f.write_str("reviewing"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailSubtasksItemStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "todo" => Ok(Self::Todo),
+            "reserved" => Ok(Self::Reserved),
+            "running" => Ok(Self::Running),
+            "reviewing" => Ok(Self::Reviewing),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailSubtasksItemStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnTaskDetailSubtasksItemStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWork`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailWork {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub check: ::std::option::Option<ConnTaskDetailWorkCheck>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub current_implementer_agent_id: ::std::option::Option<i64>,
+    pub deliverables: ::std::vec::Vec<ConnTaskDetailWorkDeliverablesItem>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub review: ::std::option::Option<ConnTaskDetailWorkReview>,
+    pub status: ConnTaskDetailWorkStatus,
+}
+///`ConnTaskDetailWorkCheck`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailWorkCheck {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub exit_code: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub failed_step: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub finished_at: ::std::option::Option<::std::string::String>,
+    pub id: i64,
+    pub kind: ConnTaskDetailWorkCheckKind,
+    pub started_at: ::std::string::String,
+    pub status: ConnTaskDetailWorkCheckStatus,
+}
+///`ConnTaskDetailWorkCheckKind`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkCheckKind {
+    #[serde(rename = "baseline")]
+    Baseline,
+    #[serde(rename = "handoff")]
+    Handoff,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkCheckKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Baseline => f.write_str("baseline"),
+            Self::Handoff => f.write_str("handoff"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkCheckKind {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "baseline" => Ok(Self::Baseline),
+            "handoff" => Ok(Self::Handoff),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkCheckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailWorkCheckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWorkCheckStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkCheckStatus {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "passed")]
+    Passed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "changed")]
+    Changed,
+    #[serde(rename = "lost")]
+    Lost,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkCheckStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Passed => f.write_str("passed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Changed => f.write_str("changed"),
+            Self::Lost => f.write_str("lost"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkCheckStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "passed" => Ok(Self::Passed),
+            "failed" => Ok(Self::Failed),
+            "changed" => Ok(Self::Changed),
+            "lost" => Ok(Self::Lost),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkCheckStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailWorkCheckStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWorkDeliverablesItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailWorkDeliverablesItem {
+    pub description: ::std::string::String,
+    pub id: ::std::string::String,
+    #[serde(rename = "type")]
+    pub type_: ConnTaskDetailWorkDeliverablesItemType,
+}
+///`ConnTaskDetailWorkDeliverablesItemType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkDeliverablesItemType {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "command")]
+    Command,
+    #[serde(rename = "review")]
+    Review,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkDeliverablesItemType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::File => f.write_str("file"),
+            Self::Command => f.write_str("command"),
+            Self::Review => f.write_str("review"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkDeliverablesItemType {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "file" => Ok(Self::File),
+            "command" => Ok(Self::Command),
+            "review" => Ok(Self::Review),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkDeliverablesItemType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnTaskDetailWorkDeliverablesItemType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWorkReview`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkReview {
+    #[serde(rename = "reviewing")]
+    Reviewing,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "not_approved")]
+    NotApproved,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkReview {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Reviewing => f.write_str("reviewing"),
+            Self::Approved => f.write_str("approved"),
+            Self::NotApproved => f.write_str("not_approved"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkReview {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "reviewing" => Ok(Self::Reviewing),
+            "approved" => Ok(Self::Approved),
+            "not_approved" => Ok(Self::NotApproved),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkReview {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailWorkReview {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWorkStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkStatus {
+    #[serde(rename = "todo")]
+    Todo,
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "reviewing")]
+    Reviewing,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Todo => f.write_str("todo"),
+            Self::Reserved => f.write_str("reserved"),
+            Self::Running => f.write_str("running"),
+            Self::Reviewing => f.write_str("reviewing"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "todo" => Ok(Self::Todo),
+            "reserved" => Ok(Self::Reserved),
+            "running" => Ok(Self::Running),
+            "reviewing" => Ok(Self::Reviewing),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailWorkStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWorkspace`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailWorkspace {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub branch: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub conn_environment_id: ::std::option::Option<::std::string::String>,
+    pub instance_id: i64,
+    pub name: ::std::string::String,
+    pub node: ConnTaskDetailWorkspaceNode,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub power_state: ::std::option::Option<ConnTaskDetailWorkspacePowerState>,
+    pub status: ConnTaskDetailWorkspaceStatus,
+}
+///`ConnTaskDetailWorkspaceNode`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskDetailWorkspaceNode {
+    pub id: i64,
+    pub name: ::std::string::String,
+}
+///`ConnTaskDetailWorkspacePowerState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkspacePowerState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkspacePowerState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Stopped => f.write_str("stopped"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkspacePowerState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkspacePowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnTaskDetailWorkspacePowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskDetailWorkspaceStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskDetailWorkspaceStatus {
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "checkout_prepared")]
+    CheckoutPrepared,
+    #[serde(rename = "source_resolved")]
+    SourceResolved,
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "removing")]
+    Removing,
+}
+impl ::std::fmt::Display for ConnTaskDetailWorkspaceStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Reserved => f.write_str("reserved"),
+            Self::CheckoutPrepared => f.write_str("checkout_prepared"),
+            Self::SourceResolved => f.write_str("source_resolved"),
+            Self::Active => f.write_str("active"),
+            Self::Removing => f.write_str("removing"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskDetailWorkspaceStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "reserved" => Ok(Self::Reserved),
+            "checkout_prepared" => Ok(Self::CheckoutPrepared),
+            "source_resolved" => Ok(Self::SourceResolved),
+            "active" => Ok(Self::Active),
+            "removing" => Ok(Self::Removing),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskDetailWorkspaceStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskDetailWorkspaceStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ConnTaskListResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnTaskListResponse {
-    pub data: ::std::vec::Vec<::serde_json::Value>,
-    pub meta: Meta,
+    pub data: ::std::vec::Vec<ConnTask>,
+    pub meta: ConnTaskListResponseMeta,
+}
+///`ConnTaskListResponseMeta`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct ConnTaskListResponseMeta {
+    ///Send as `cursor` with the same filters for the next page; null on the last page.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+    ///The request ID the Gateway assigned or accepted; the same value is in the `X-Orbit-Request-Id` response header and in the Activity record.
+    pub request_id: ::std::string::String,
+}
+///`ConnTaskProject`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskProject {
+    pub code: ::std::string::String,
+    pub id: i64,
+    pub name: ::std::string::String,
+    pub slug: ::std::string::String,
+}
+///`ConnTaskPullRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskPullRequest {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub number: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub state: ::std::option::Option<ConnTaskPullRequestState>,
+    pub url: ::std::string::String,
+}
+///`ConnTaskPullRequestState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskPullRequestState {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(rename = "merged")]
+    Merged,
+}
+impl ::std::fmt::Display for ConnTaskPullRequestState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Open => f.write_str("open"),
+            Self::Closed => f.write_str("closed"),
+            Self::Merged => f.write_str("merged"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskPullRequestState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "open" => Ok(Self::Open),
+            "closed" => Ok(Self::Closed),
+            "merged" => Ok(Self::Merged),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskPullRequestState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskPullRequestState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ConnTaskShowResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnTaskShowResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: ConnTaskDetail,
     pub meta: Meta,
 }
+///`ConnTaskStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskStatus {
+    #[serde(rename = "backlog")]
+    Backlog,
+    #[serde(rename = "todo")]
+    Todo,
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "reviewing")]
+    Reviewing,
+    #[serde(rename = "settling")]
+    Settling,
+    #[serde(rename = "waiting_for_review")]
+    WaitingForReview,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ConnTaskStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Backlog => f.write_str("backlog"),
+            Self::Todo => f.write_str("todo"),
+            Self::Reserved => f.write_str("reserved"),
+            Self::Running => f.write_str("running"),
+            Self::Reviewing => f.write_str("reviewing"),
+            Self::Settling => f.write_str("settling"),
+            Self::WaitingForReview => f.write_str("waiting_for_review"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "backlog" => Ok(Self::Backlog),
+            "todo" => Ok(Self::Todo),
+            "reserved" => Ok(Self::Reserved),
+            "running" => Ok(Self::Running),
+            "reviewing" => Ok(Self::Reviewing),
+            "settling" => Ok(Self::Settling),
+            "waiting_for_review" => Ok(Self::WaitingForReview),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskSubtaskCounts`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskSubtaskCounts {
+    pub cancelled: i64,
+    pub completed: i64,
+    pub failed: i64,
+    pub running: i64,
+    pub todo: i64,
+    pub total: i64,
+}
+///`ConnTaskWorkStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskWorkStatus {
+    #[serde(rename = "todo")]
+    Todo,
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "reviewing")]
+    Reviewing,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for ConnTaskWorkStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Todo => f.write_str("todo"),
+            Self::Reserved => f.write_str("reserved"),
+            Self::Running => f.write_str("running"),
+            Self::Reviewing => f.write_str("reviewing"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskWorkStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "todo" => Ok(Self::Todo),
+            "reserved" => Ok(Self::Reserved),
+            "running" => Ok(Self::Running),
+            "reviewing" => Ok(Self::Reviewing),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskWorkStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskWorkStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskWorkspace`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskWorkspace {
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub branch: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub conn_environment_id: ::std::option::Option<::std::string::String>,
+    pub instance_id: i64,
+    pub name: ::std::string::String,
+    pub node: ConnTaskWorkspaceNode,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub power_state: ::std::option::Option<ConnTaskWorkspacePowerState>,
+    pub status: ConnTaskWorkspaceStatus,
+}
+///`ConnTaskWorkspaceNode`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ConnTaskWorkspaceNode {
+    pub id: i64,
+    pub name: ::std::string::String,
+}
+///`ConnTaskWorkspacePowerState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskWorkspacePowerState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+impl ::std::fmt::Display for ConnTaskWorkspacePowerState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Stopped => f.write_str("stopped"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskWorkspacePowerState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskWorkspacePowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskWorkspacePowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ConnTaskWorkspaceStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnTaskWorkspaceStatus {
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "checkout_prepared")]
+    CheckoutPrepared,
+    #[serde(rename = "source_resolved")]
+    SourceResolved,
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "removing")]
+    Removing,
+}
+impl ::std::fmt::Display for ConnTaskWorkspaceStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Reserved => f.write_str("reserved"),
+            Self::CheckoutPrepared => f.write_str("checkout_prepared"),
+            Self::SourceResolved => f.write_str("source_resolved"),
+            Self::Active => f.write_str("active"),
+            Self::Removing => f.write_str("removing"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnTaskWorkspaceStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "reserved" => Ok(Self::Reserved),
+            "checkout_prepared" => Ok(Self::CheckoutPrepared),
+            "source_resolved" => Ok(Self::SourceResolved),
+            "active" => Ok(Self::Active),
+            "removing" => Ok(Self::Removing),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnTaskWorkspaceStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnTaskWorkspaceStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`ConnThread`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnThread {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub environment_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub environment_id: ::std::string::String,
+    pub instance_id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub last_run_completed_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub last_user_message_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub needs_input: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub project_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub seen_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub state: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub thread_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub title: ::std::option::Option<::std::string::String>,
+    pub needs_input: bool,
+    pub project_id: i64,
+    pub seen_at: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub state: ::std::option::Option<ConnThreadState>,
+    pub thread_id: ::std::string::String,
+    pub title: ::std::string::String,
 }
 ///`ConnThreadListResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ConnThreadListResponse {
-    pub data: ::std::vec::Vec<::serde_json::Value>,
+    pub data: ::std::vec::Vec<ConnThread>,
     pub meta: ConnThreadListResponseMeta,
 }
 ///`ConnThreadListResponseMeta`
@@ -3362,13 +5964,72 @@ pub struct ConnThreadListResponseMetaEnvironmentsItem {
     pub instance_id: i64,
     ///The container power state: `stopped` is asleep, and its rows are the last read.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
-    pub power_state: ::std::option::Option<::std::string::String>,
+    pub power_state: ::std::option::Option<
+        ConnThreadListResponseMetaEnvironmentsItemPowerState,
+    >,
     ///When the Gateway last read the server, or tried to; null before its first read.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub read_at: ::std::option::Option<::std::string::String>,
     ///Why that read failed, such as `conn.server_unreachable` or `conn.session_expired`; null after a success.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub read_error: ::std::option::Option<::std::string::String>,
+}
+///The container power state: `stopped` is asleep, and its rows are the last read.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnThreadListResponseMetaEnvironmentsItemPowerState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "stopped")]
+    Stopped,
+}
+impl ::std::fmt::Display for ConnThreadListResponseMetaEnvironmentsItemPowerState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Stopped => f.write_str("stopped"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnThreadListResponseMetaEnvironmentsItemPowerState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str>
+for ConnThreadListResponseMetaEnvironmentsItemPowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ConnThreadListResponseMetaEnvironmentsItemPowerState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ConnThreadRecordRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3383,28 +6044,138 @@ pub struct ConnThreadRecordResponse {
     pub data: ConnThread,
     pub meta: Meta,
 }
+///`ConnThreadState`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ConnThreadState {
+    #[serde(rename = "idle")]
+    Idle,
+    #[serde(rename = "preparing")]
+    Preparing,
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "starting")]
+    Starting,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "interrupted")]
+    Interrupted,
+    #[serde(rename = "error")]
+    Error,
+}
+impl ::std::fmt::Display for ConnThreadState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Idle => f.write_str("idle"),
+            Self::Preparing => f.write_str("preparing"),
+            Self::Queued => f.write_str("queued"),
+            Self::Starting => f.write_str("starting"),
+            Self::Running => f.write_str("running"),
+            Self::Waiting => f.write_str("waiting"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::Interrupted => f.write_str("interrupted"),
+            Self::Error => f.write_str("error"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnThreadState {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "idle" => Ok(Self::Idle),
+            "preparing" => Ok(Self::Preparing),
+            "queued" => Ok(Self::Queued),
+            "starting" => Ok(Self::Starting),
+            "running" => Ok(Self::Running),
+            "waiting" => Ok(Self::Waiting),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            "interrupted" => Ok(Self::Interrupted),
+            "error" => Ok(Self::Error),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnThreadState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnThreadState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`Error`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Error {
     pub error: ErrorError,
+    ///Optional HTTP status code included by `RequireEnabledExtension` (`extension.disabled`).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub status: ::std::option::Option<i64>,
 }
 ///`ErrorError`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ErrorError {
     ///Stable error code, namespaced by family, such as `node.not_active` or `route.target_conflict`.
     pub code: ::std::string::String,
-    ///Bounded, redacted details such as the conflicting record IDs or the failed validation rule.
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
-    pub details: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ///Bounded, redacted details such as the conflicting record IDs or the failed validation rule. Encodes as `[]` when empty and as a JSON object when non-empty; omitted by `GuardBrowserOrigins` (`api.origin_refused`). The request ID travels in the `X-Orbit-Request-Id` response header.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub details: ::std::option::Option<ErrorErrorDetails>,
     ///Safe message without credentials, environment values, or remote output.
     pub message: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub request_id: ::std::option::Option<::std::string::String>,
 }
-///`InstanceWakeRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-#[serde(deny_unknown_fields)]
-pub struct InstanceWakeRequest {}
+///Bounded, redacted details such as the conflicting record IDs or the failed validation rule. Encodes as `[]` when empty and as a JSON object when non-empty; omitted by `GuardBrowserOrigins` (`api.origin_refused`). The request ID travels in the `X-Orbit-Request-Id` response header.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ErrorErrorDetails {
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for ErrorErrorDetails {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<::std::vec::Vec<::serde_json::Value>> for ErrorErrorDetails {
+    fn from(value: ::std::vec::Vec<::serde_json::Value>) -> Self {
+        Self::Array(value)
+    }
+}
 ///`InstanceWakeResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InstanceWakeResponse {
@@ -3412,12 +6183,10 @@ pub struct InstanceWakeResponse {
     pub meta: Meta,
 }
 ///`IssuedConnPairing`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct IssuedConnPairing {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub pairing: ::std::option::Option<ConnPairing>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub pairing_url: ::std::option::Option<::std::string::String>,
+    pub pairing: ConnPairing,
+    pub pairing_url: ::std::string::String,
 }
 ///`Meta`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3426,70 +6195,94 @@ pub struct Meta {
     pub request_id: ::std::string::String,
 }
 ///`Operation`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Operation {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub assistance: ::std::option::Option<
-        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    >,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub attempts: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub assistance: OperationAssistance,
+    pub attempts: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub caller_node_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub caller_node_name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub cancel_requested: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cancel_requested: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub created_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub current_step: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub current_step_observed_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub current_step_started_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub error: ::std::option::Option<
-        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    >,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: OperationError,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub error_code: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub failed_step: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub finished_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub hold_wait_reason: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub input: ::std::option::Option<OperationInput>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub kind: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id: i64,
+    pub input: OperationInput,
+    pub kind: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub overdue_since: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub poll_after_seconds: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub ready_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub result: ::std::option::Option<
-        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    >,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub sequence: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub result: OperationResult,
+    pub sequence: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub started_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub status: ::std::option::Option<::std::string::String>,
+    pub status: OperationStatus,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub steps: ::std::vec::Vec<OperationStep>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub target_id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub target_type: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target_id: i64,
+    pub target_type: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub triggered_by: ::std::option::Option<::std::string::String>,
+}
+///`OperationAssistance`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum OperationAssistance {
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<::serde_json::Value>),
+    Null,
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for OperationAssistance {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<::std::vec::Vec<::serde_json::Value>> for OperationAssistance {
+    fn from(value: ::std::vec::Vec<::serde_json::Value>) -> Self {
+        Self::Array(value)
+    }
+}
+///`OperationError`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum OperationError {
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<::serde_json::Value>),
+    Null,
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for OperationError {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<::std::vec::Vec<::serde_json::Value>> for OperationError {
+    fn from(value: ::std::vec::Vec<::serde_json::Value>) -> Self {
+        Self::Array(value)
+    }
 }
 ///`OperationInput`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3511,81 +6304,233 @@ impl ::std::convert::From<::std::vec::Vec<::serde_json::Value>> for OperationInp
         Self::Array(value)
     }
 }
+///`OperationResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum OperationResult {
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+    Array(::std::vec::Vec<::serde_json::Value>),
+    Null,
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+for OperationResult {
+    fn from(
+        value: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ) -> Self {
+        Self::Object(value)
+    }
+}
+impl ::std::convert::From<::std::vec::Vec<::serde_json::Value>> for OperationResult {
+    fn from(value: ::std::vec::Vec<::serde_json::Value>) -> Self {
+        Self::Array(value)
+    }
+}
 ///`OperationShowResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct OperationShowResponse {
     pub data: Operation,
     pub meta: Meta,
 }
+///`OperationStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum OperationStatus {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "interrupted")]
+    Interrupted,
+}
+impl ::std::fmt::Display for OperationStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Queued => f.write_str("queued"),
+            Self::Running => f.write_str("running"),
+            Self::Waiting => f.write_str("waiting"),
+            Self::Succeeded => f.write_str("succeeded"),
+            Self::Failed => f.write_str("failed"),
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::Interrupted => f.write_str("interrupted"),
+        }
+    }
+}
+impl ::std::str::FromStr for OperationStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "running" => Ok(Self::Running),
+            "waiting" => Ok(Self::Waiting),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            "interrupted" => Ok(Self::Interrupted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OperationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OperationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`OperationStep`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct OperationStep {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub finished_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub job: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub job: ::std::string::String,
+    pub name: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub started_at: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub status: ::std::option::Option<::std::string::String>,
+    pub status: OperationStepStatus,
+}
+///`OperationStepStatus`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum OperationStepStatus {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "skipped")]
+    Skipped,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "interrupted")]
+    Interrupted,
+}
+impl ::std::fmt::Display for OperationStepStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Running => f.write_str("running"),
+            Self::Succeeded => f.write_str("succeeded"),
+            Self::Failed => f.write_str("failed"),
+            Self::Skipped => f.write_str("skipped"),
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::Interrupted => f.write_str("interrupted"),
+        }
+    }
+}
+impl ::std::str::FromStr for OperationStepStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "skipped" => Ok(Self::Skipped),
+            "cancelled" => Ok(Self::Cancelled),
+            "interrupted" => Ok(Self::Interrupted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OperationStepStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OperationStepStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`Project`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Project {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub code: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub container_server: ::std::option::Option<ProjectContainerServer>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub default_auto_deploy: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub code: ::std::string::String,
+    pub container_server: ProjectContainerServer,
+    pub default_auto_deploy: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub default_branch: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub id: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub is_laravel: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub maintenance: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub maintenance: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub merge_check: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub nested_fleet: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::string::String,
+    pub nested_fleet: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub php_version: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub repository_url: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub review_and_merge: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub repository_url: ::std::string::String,
+    pub review_and_merge: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub root: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub slug: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub source_access: ::std::option::Option<ProjectSourceAccess>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub slug: ::std::string::String,
+    pub source_access: ProjectSourceAccess,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_check: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_implementer_effort: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_implementer_model: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_implementer_provider: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_pr_mode: ::std::option::Option<ProjectTaskPrMode>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_reviewer_effort: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_reviewer_model: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub task_reviewer_provider: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub task_workspace_routed: ::std::option::Option<bool>,
-    #[serde(rename = "type", skip_serializing_if = "::std::option::Option::is_none")]
-    pub type_: ::std::option::Option<ProjectType>,
+    pub task_workspace_routed: bool,
+    #[serde(rename = "type")]
+    pub type_: ProjectType,
 }
 ///`ProjectContainerServer`
 #[derive(
@@ -3645,8 +6590,297 @@ impl ::std::convert::TryFrom<::std::string::String> for ProjectContainerServer {
 ///`ProjectListResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ProjectListResponse {
-    pub data: ::std::vec::Vec<Project>,
+    pub data: ::std::vec::Vec<ProjectListResponseDataItem>,
     pub meta: Meta,
+}
+///`ProjectListResponseDataItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct ProjectListResponseDataItem {
+    pub code: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub color: ::std::option::Option<::std::string::String>,
+    pub container_server: ProjectListResponseDataItemContainerServer,
+    pub default_auto_deploy: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub default_branch: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub icon: ::std::option::Option<::std::string::String>,
+    pub id: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instance_count: ::std::option::Option<i64>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub is_laravel: ::std::option::Option<bool>,
+    pub maintenance: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub merge_check: ::std::option::Option<::std::string::String>,
+    pub name: ::std::string::String,
+    pub nested_fleet: bool,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub node_name: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub php_version: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub repository: ::std::option::Option<::std::string::String>,
+    pub repository_url: ::std::string::String,
+    pub review_and_merge: bool,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub root: ::std::option::Option<::std::string::String>,
+    pub slug: ::std::string::String,
+    pub source_access: ProjectListResponseDataItemSourceAccess,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_check: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_implementer_effort: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_implementer_model: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_implementer_provider: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_pr_mode: ::std::option::Option<ProjectListResponseDataItemTaskPrMode>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_reviewer_effort: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_reviewer_model: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub task_reviewer_provider: ::std::option::Option<::std::string::String>,
+    pub task_workspace_routed: bool,
+    #[serde(rename = "type")]
+    pub type_: ProjectListResponseDataItemType,
+}
+///`ProjectListResponseDataItemContainerServer`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ProjectListResponseDataItemContainerServer {
+    #[serde(rename = "t3")]
+    T3,
+    #[serde(rename = "conn")]
+    Conn,
+}
+impl ::std::fmt::Display for ProjectListResponseDataItemContainerServer {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::T3 => f.write_str("t3"),
+            Self::Conn => f.write_str("conn"),
+        }
+    }
+}
+impl ::std::str::FromStr for ProjectListResponseDataItemContainerServer {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "t3" => Ok(Self::T3),
+            "conn" => Ok(Self::Conn),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ProjectListResponseDataItemContainerServer {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ProjectListResponseDataItemContainerServer {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ProjectListResponseDataItemSourceAccess`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ProjectListResponseDataItemSourceAccess {
+    #[serde(rename = "github_app")]
+    GithubApp,
+    #[serde(rename = "gh_cli")]
+    GhCli,
+}
+impl ::std::fmt::Display for ProjectListResponseDataItemSourceAccess {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::GithubApp => f.write_str("github_app"),
+            Self::GhCli => f.write_str("gh_cli"),
+        }
+    }
+}
+impl ::std::str::FromStr for ProjectListResponseDataItemSourceAccess {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "github_app" => Ok(Self::GithubApp),
+            "gh_cli" => Ok(Self::GhCli),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ProjectListResponseDataItemSourceAccess {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ProjectListResponseDataItemSourceAccess {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ProjectListResponseDataItemTaskPrMode`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ProjectListResponseDataItemTaskPrMode {
+    #[serde(rename = "review_before_pr")]
+    ReviewBeforePr,
+    #[serde(rename = "pr_when_done")]
+    PrWhenDone,
+}
+impl ::std::fmt::Display for ProjectListResponseDataItemTaskPrMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ReviewBeforePr => f.write_str("review_before_pr"),
+            Self::PrWhenDone => f.write_str("pr_when_done"),
+        }
+    }
+}
+impl ::std::str::FromStr for ProjectListResponseDataItemTaskPrMode {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "review_before_pr" => Ok(Self::ReviewBeforePr),
+            "pr_when_done" => Ok(Self::PrWhenDone),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ProjectListResponseDataItemTaskPrMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String>
+for ProjectListResponseDataItemTaskPrMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ProjectListResponseDataItemType`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum ProjectListResponseDataItemType {
+    #[serde(rename = "monorepo")]
+    Monorepo,
+    #[serde(rename = "laravel-app")]
+    LaravelApp,
+    #[serde(rename = "symfony-app")]
+    SymfonyApp,
+    #[serde(rename = "laravel-package")]
+    LaravelPackage,
+    #[serde(rename = "node-package")]
+    NodePackage,
+}
+impl ::std::fmt::Display for ProjectListResponseDataItemType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Monorepo => f.write_str("monorepo"),
+            Self::LaravelApp => f.write_str("laravel-app"),
+            Self::SymfonyApp => f.write_str("symfony-app"),
+            Self::LaravelPackage => f.write_str("laravel-package"),
+            Self::NodePackage => f.write_str("node-package"),
+        }
+    }
+}
+impl ::std::str::FromStr for ProjectListResponseDataItemType {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "monorepo" => Ok(Self::Monorepo),
+            "laravel-app" => Ok(Self::LaravelApp),
+            "symfony-app" => Ok(Self::SymfonyApp),
+            "laravel-package" => Ok(Self::LaravelPackage),
+            "node-package" => Ok(Self::NodePackage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ProjectListResponseDataItemType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ProjectListResponseDataItemType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ProjectSourceAccess`
 #[derive(
@@ -3702,6 +6936,20 @@ impl ::std::convert::TryFrom<::std::string::String> for ProjectSourceAccess {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`ProjectSummary`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+pub struct ProjectSummary {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub color: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub icon: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub instance_count: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub node_name: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub repository: ::std::option::Option<::std::string::String>,
 }
 ///`ProjectTaskPrMode`
 #[derive(
@@ -3825,161 +7073,208 @@ impl ::std::convert::TryFrom<::std::string::String> for ProjectType {
         value.parse()
     }
 }
+///`RealtimeAuthRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct RealtimeAuthRequest {
+    pub channel_name: ::std::string::String,
+    pub socket_id: ::std::string::String,
+}
 ///`RealtimeAuthResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct RealtimeAuthResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
-    pub meta: Meta,
+    ///The Reverb app key and the HMAC-SHA256 channel signature.
+    pub auth: ::std::string::String,
+    ///JSON-encoded presence member data, returned only for `presence-node.{id}` channels.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub channel_data: ::std::option::Option<::std::string::String>,
+}
+///`RealtimeConfig`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+pub struct RealtimeConfig {
+    pub channel: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub key: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub url: ::std::option::Option<::std::string::String>,
 }
 ///`RealtimeShowResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RealtimeShowResponse {
-    ///TODO(6200): an untyped object in the Gateway document; typed once Orbit group 6200 documents it.
-    pub data: ::serde_json::Value,
+    pub data: RealtimeConfig,
     pub meta: Meta,
 }
 ///`TaskInsights`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsights {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub breakdowns: ::std::option::Option<TaskInsightsBreakdowns>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub current: ::std::option::Option<TaskInsightsSummary>,
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub breakdowns: TaskInsightsBreakdowns,
+    pub current: TaskInsightsSummary,
     pub daily: ::std::vec::Vec<TaskInsightsDay>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub from: ::std::option::Option<::std::string::String>,
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub from: ::std::string::String,
     pub hourly: ::std::vec::Vec<TaskInsightsHour>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub period: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub previous: ::std::option::Option<TaskInsightsSummary>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub to: ::std::option::Option<::std::string::String>,
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub period: TaskInsightsPeriod,
+    pub previous: TaskInsightsSummary,
+    pub to: ::std::string::String,
     pub weekly: ::std::vec::Vec<TaskInsightsWeek>,
 }
 ///`TaskInsightsBreakdownRow`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsBreakdownRow {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub key: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub label: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub key: ::std::string::String,
+    pub label: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub lead_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tasks: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub merged: i64,
+    pub tasks: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens_per_merged_pr: ::std::option::Option<i64>,
-    #[serde(rename = "yield", skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(rename = "yield", deserialize_with = "::std::option::Option::deserialize")]
     pub yield_: ::std::option::Option<f64>,
 }
 ///`TaskInsightsBreakdowns`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsBreakdowns {
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub model: ::std::vec::Vec<TaskInsightsBreakdownRow>,
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub project: ::std::vec::Vec<TaskInsightsBreakdownRow>,
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub release: ::std::vec::Vec<TaskInsightsBreakdownRow>,
 }
 ///`TaskInsightsCheckPart`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsCheckPart {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub failures: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub name: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub runs: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub failures: i64,
+    pub name: ::std::string::String,
+    pub runs: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub seconds: ::std::option::Option<f64>,
 }
 ///`TaskInsightsDay`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsDay {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub date: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub date: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub delivery_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub lead_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub not_merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub merged: i64,
+    pub not_merged: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pr_first_pass: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pr_merge_wait_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub review_rounds: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens_per_merged_pr: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub wasted_share: ::std::option::Option<f64>,
 }
 ///`TaskInsightsHandoffs`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsHandoffs {
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub check_parts: ::std::vec::Vec<TaskInsightsCheckPart>,
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub findings_by_category: ::serde_json::Map<
         ::std::string::String,
         ::serde_json::Value,
     >,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub findings_per_first_review: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub first_review_approval: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub handoffs_per_subtask: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub questions_per_task: ::std::option::Option<f64>,
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub rejected_deliveries: ::serde_json::Map<
         ::std::string::String,
         ::serde_json::Value,
     >,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tasks: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub unresolved_tasks: ::std::option::Option<i64>,
+    pub tasks: i64,
+    pub unresolved_tasks: i64,
 }
 ///`TaskInsightsHour`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsHour {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub delivery_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub hour: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub hour: ::std::string::String,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub lead_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub not_merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub merged: i64,
+    pub not_merged: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pr_first_pass: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pr_merge_wait_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub review_rounds: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens_per_merged_pr: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub wasted_share: ::std::option::Option<f64>,
+}
+///`TaskInsightsPeriod`
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd
+)]
+pub enum TaskInsightsPeriod {
+    #[serde(rename = "24h")]
+    X24h,
+    #[serde(rename = "7d")]
+    X7d,
+    #[serde(rename = "30d")]
+    X30d,
+}
+impl ::std::fmt::Display for TaskInsightsPeriod {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::X24h => f.write_str("24h"),
+            Self::X7d => f.write_str("7d"),
+            Self::X30d => f.write_str("30d"),
+        }
+    }
+}
+impl ::std::str::FromStr for TaskInsightsPeriod {
+    type Err = self::error::ConversionError;
+    fn from_str(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "24h" => Ok(Self::X24h),
+            "7d" => Ok(Self::X7d),
+            "30d" => Ok(Self::X30d),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TaskInsightsPeriod {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &str,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TaskInsightsPeriod {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`TaskInsightsResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3988,73 +7283,65 @@ pub struct TaskInsightsResponse {
     pub meta: Meta,
 }
 ///`TaskInsightsSummary`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsSummary {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub cache_hit: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub cost_per_merged_pr: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub cost_usd: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub delivery_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub deploy_wait_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub excluded: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub excluded: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub handoff_first_try: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub handoffs: ::std::option::Option<TaskInsightsHandoffs>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub handoffs: TaskInsightsHandoffs,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub lead_time_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub merge_wait_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub merged: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pr_first_pass: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub pr_merge_wait_ms: ::std::option::Option<i64>,
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub questions_by_cause: ::serde_json::Map<
         ::std::string::String,
         ::serde_json::Value,
     >,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub questions_per_task: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub queue_ms: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub review_rounds: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub subtask_first_pass: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tasks: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tasks: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens_per_hundred_lines: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens_per_merged_pr: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub wasted_share: ::std::option::Option<f64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub work_ms: ::std::option::Option<i64>,
-    #[serde(rename = "yield", skip_serializing_if = "::std::option::Option::is_none")]
+    #[serde(rename = "yield", deserialize_with = "::std::option::Option::deserialize")]
     pub yield_: ::std::option::Option<f64>,
 }
 ///`TaskInsightsWeek`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TaskInsightsWeek {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub merged: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tasks: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub merged: i64,
+    pub tasks: i64,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub tokens_per_merged_pr: ::std::option::Option<i64>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub week_start: ::std::option::Option<::std::string::String>,
+    pub week_start: ::std::string::String,
 }
 /// Error types.
 pub mod error {

@@ -97,7 +97,9 @@ pub(crate) fn record(tx: &mut Tx<'_>, input: Value) -> Outcome {
                 fields.insert("updatedAt".into(), json!(now));
             }
             tx.append(
-                Draft::new(&c.thread_id, "thread.unsnoozed", thread).command(Some(&c.command_id)),
+                Draft::new(&c.thread_id, "thread.unsnoozed", thread)
+                    .command(Some(&c.command_id))
+                    .payload_instance(),
             )?;
         }
         item

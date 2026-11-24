@@ -9,6 +9,8 @@ mod notices;
 mod presentation;
 mod roster;
 mod subagents;
+pub(crate) use subagents::transcript_answers;
+pub use subagents::{MemberAnswers, MemberTranscript, TranscriptCursor};
 mod wakes;
 mod workflows;
 
@@ -60,6 +62,14 @@ pub enum Out {
     StopTail {
         tool_use_id: String,
     },
+    /// A root that did not complete takes its run's live workflow with it: ask the SDK to
+    /// stop it, without waiting for the answer.
+    StopTask {
+        task_id: String,
+    },
+    /// A workflow member settled: read its transcript off the runtime thread, then hand the
+    /// answer back with [`Mapper::member_transcript`].
+    ReadMemberTranscript(MemberTranscript),
 }
 
 const DEFAULT_CONTEXT_TOKENS: u64 = 200_000;
@@ -631,7 +641,8 @@ impl<E: Env> Mapper<E> {
         self.track_scheduled_wakeup(&message);
         // Before routing: an idle Monitor reports its task before its call replays.
         self.roster.track_monitor_calls(&message);
-        if self.turn.is_none() && is_wake_frame(&message) {
+        if self.turn.is_none() && (is_wake_frame(&message) || self.restarts_running_task(&message))
+        {
             self.hold_wake(message, &mut out);
             return out;
         }
@@ -995,6 +1006,10 @@ impl<E: Env> Mapper<E> {
                 };
                 if let Some(task_id) = &msg.task_id {
                     self.wakes.unmark_backgrounded(task_id);
+                    if self.turn.is_none() {
+                        // Its outcome supersedes a held restart: replaying it would reopen the task.
+                        self.wake.retain(|held| !is_task_started(held, task_id));
+                    }
                 }
                 self.on_task_notification(&msg, out);
                 self.apply_roster(&msg, out);
@@ -1388,6 +1403,14 @@ impl<E: Env> Mapper<E> {
             item["completedAt"] = json!(now);
             item["updatedAt"] = json!(now);
             out.push(turn_item(item));
+        }
+        if !completed {
+            let node_status = if status == TurnStatus::Failed {
+                "failed"
+            } else {
+                "cancelled"
+            };
+            self.end_run_workflows(&turn.run_id, node_status, out);
         }
         let mut provider_turn = provider_turn(&turn, status_text, Some(&now), true);
         // A steer's cut-off segment counts towards the turn.
@@ -2934,6 +2957,11 @@ fn result_for_other_turn(
 }
 
 /// Root frames that mean Claude is working with no turn open.
+fn is_task_started(message: &Inbound, task_id: &str) -> bool {
+    matches!(message, Inbound::System(m)
+        if m.subtype == "task_started" && m.task_id.as_deref() == Some(task_id))
+}
+
 fn is_wake_frame(message: &Inbound) -> bool {
     match message {
         Inbound::Assistant(m) => m.parent_tool_use_id.is_none(),
@@ -2948,7 +2976,10 @@ impl<E: Env> Mapper<E> {
     /// Holds a frame for a continuation turn and asks the engine for one, once.
     fn hold_wake(&mut self, message: Inbound, out: &mut Vec<Out>) {
         let starts_work = matches!(message, Inbound::Assistant(_) | Inbound::StreamEvent(_));
-        if !starts_work && self.wake.is_empty() {
+        // A running task's restart is wake evidence: the continuation takes the task over.
+        let restart = matches!(message, Inbound::System(_));
+        let is_result = matches!(message, Inbound::Result(_));
+        if !starts_work && !restart && self.wake.is_empty() {
             // Output that belongs to no work we saw start, such as the one `result` of an
             // unknown `--resume` id.
             if matches!(message, Inbound::Result(_)) {
@@ -2965,10 +2996,21 @@ impl<E: Env> Mapper<E> {
             self.wake.pop_front();
         }
         self.wake.push_back(message);
-        if !starts_work {
-            return;
+        if starts_work || is_result {
+            self.request_continuation(out);
         }
-        self.request_continuation(out);
+    }
+
+    /// `isKnownSubagentTaskStarted` for a task still running: Claude reports it again when a
+    /// wake picks it up.
+    fn restarts_running_task(&self, message: &Inbound) -> bool {
+        let Inbound::System(m) = message else {
+            return false;
+        };
+        m.subtype == "task_started"
+            && m.task_id
+                .as_deref()
+                .is_some_and(|id| self.subagents.is_running(id))
     }
 
     /// `trackClaudeScheduledWakeup`, in arrival order.

@@ -10,7 +10,10 @@
 //! No auth is set here. In an Orbit container the inherited environment points the CLI at the
 //! AI router.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use serde_json::{Map, Value, json};
 
@@ -626,6 +629,20 @@ pub fn config_dir(config: &ClaudeConfig, env: &Map<String, Value>) -> PathBuf {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => expand_home("~/.claude"),
     }
+}
+
+/// `workflowFilesRoot`: `<CLAUDE_CONFIG_DIR>/projects` from the query's environment, a relative
+/// value resolved from the session cwd, else `~/.claude/projects`.
+pub fn workflow_files_root(env: &Map<String, Value>, cwd: Option<&Path>) -> PathBuf {
+    let config = match env
+        .get("CLAUDE_CONFIG_DIR")
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
+        Some(dir) if !dir.is_empty() => cwd.map_or_else(|| PathBuf::from(dir), |cwd| cwd.join(dir)),
+        _ => expand_home("~/.claude"),
+    };
+    config.join("projects")
 }
 
 /// Claude's managed settings file (`claudeManagedSettingsPath`).

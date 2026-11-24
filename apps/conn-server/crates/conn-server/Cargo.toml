@@ -74,6 +74,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 
 [dev-dependencies]
 conn-support = { workspace = true, features = ["test-util"] }
+# `TerminalManager::hold_lock`: stalls a terminal close in host tests.
+conn-terminal = { workspace = true, features = ["test-util"] }
 # examples/replay_server.rs: the scripted provider instead of Claude.
 conn-engine = { workspace = true, features = ["fake-provider"] }
 # Paused clock: tests wait for "all tasks idle" instead of real time.
