@@ -306,24 +306,16 @@ export function probeSourceControlProvider(input: {
     return first;
   });
 
-  // The auth check does not depend on the version output, so both spawn at once.
-  return Effect.all(
-    [
-      probeCli({
-        spec,
-        process: input.process,
-        cwd: input.cwd,
-      }),
-      auth,
-    ],
-    { concurrency: "unbounded" },
-  ).pipe(
-    Effect.map(
-      ([item, auth]) =>
-        ({
-          ...item,
-          auth: item.status === "available" ? auth : unknownAuth(item.installHint),
-        }) satisfies SourceControlProviderDiscoveryItem,
+  // Auth waits on the version probe so a CLI that is not installed costs one failed spawn per sweep.
+  return probeCli({
+    spec,
+    process: input.process,
+    cwd: input.cwd,
+  }).pipe(
+    Effect.flatMap((item): Effect.Effect<SourceControlProviderDiscoveryItem> =>
+      item.status === "available"
+        ? Effect.map(auth, (auth) => ({ ...item, auth }))
+        : Effect.succeed({ ...item, auth: unknownAuth(item.installHint) }),
     ),
   );
 }
