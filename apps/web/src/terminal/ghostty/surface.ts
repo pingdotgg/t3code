@@ -20,7 +20,7 @@ import {
 } from "./renderer";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
-import { setWheelScroller } from "../../motion/gesture";
+import { setWheelScroller, sidewaysWheelDelta } from "../../motion/gesture";
 import { observeResize } from "../../lib/observeResize";
 import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
@@ -1753,7 +1753,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onWheel = (event: WheelEvent) => {
-    if (event.deltaY === 0 || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+    if (sidewaysWheelDelta(event) !== 0 || event.deltaY === 0) return;
     event.preventDefault();
     const delta = terminalWheelDeltaRows(
       event,

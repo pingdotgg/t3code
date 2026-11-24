@@ -81,9 +81,9 @@ export function WorkItemListColumn({
         split && "overflow-hidden md:rounded-pane md:rounded-ss-none",
       )}
     >
-      {/* A closed right panel leaves this column full-width, so the header reserves native
-          window controls. */}
-      <SettingsPaneHeader transparent trailingEdge={!rightPanelOpen}>
+      {/* Beside an open review that pane holds the window's top-right corner; otherwise
+          the layout pane's own edge decides. */}
+      <SettingsPaneHeader transparent trailingEdge={split || rightPanelOpen ? false : undefined}>
         {/* Maximized away, the open review's notch holds the pane's tabs instead. */}
         {maximizedAway ? null : (
           <SettingsTabNotch title={title} icon={icon}>
