@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Startar MCP-servrar för {provider}",
   "fedaa29ff8815a77": "Läser in hooks för {provider}",
   "57025ae4de5beb57": "Läser in regler och färdigheter för {provider}",
+  "1cbfbcad9f0d04fe": "Återupptar sessionen för {provider}",
   "4729a188600f1501": "Ansluter till {provider}",
   "8c8977097681630f": "Startar {provider}",
   "f1d27d127ab27ac6": "Startar",

@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Démarrage des serveurs MCP de {provider}",
   "fedaa29ff8815a77": "Chargement des hooks de {provider}",
   "57025ae4de5beb57": "Chargement des règles et des skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reprise de la session de {provider}",
   "4729a188600f1501": "Connexion à {provider}",
   "8c8977097681630f": "Démarrage de {provider}",
   "f1d27d127ab27ac6": "Démarrage",

@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "{provider} の MCP サーバーを起動中",
   "fedaa29ff8815a77": "{provider} のフックを読み込み中",
   "57025ae4de5beb57": "{provider} のルールとスキルを読み込み中",
+  "1cbfbcad9f0d04fe": "{provider} のセッションを再開中",
   "4729a188600f1501": "{provider} に接続中",
   "8c8977097681630f": "{provider} を起動中",
   "f1d27d127ab27ac6": "起動中",
