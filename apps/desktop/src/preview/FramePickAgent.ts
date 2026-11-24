@@ -1,4 +1,6 @@
 export const FRAME_PICK_MESSAGE_KEY = "__t3codeFramePick";
+export const FRAME_PICK_COMMAND_CHANNEL = "preview:frame-pick-command";
+export const FRAME_PICK_ESCAPE_CHANNEL = "preview:frame-pick-escape";
 
 export interface FramePickRect {
   readonly x: number;
@@ -7,11 +9,16 @@ export interface FramePickRect {
   readonly height: number;
 }
 
+export interface FramePickSize {
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface FramePickHit {
   readonly id: string | null;
   readonly label: string;
-  readonly rect: FramePickRect;
-  readonly styles: Readonly<Record<string, string>> | null;
+  readonly visibleRect: FramePickRect;
+  readonly unclippedSize: FramePickSize;
 }
 
 export interface FramePickCapture {
@@ -20,7 +27,24 @@ export interface FramePickCapture {
   readonly tagName: string;
 }
 
+export type FramePickCommand =
+  | { readonly kind: "capture"; readonly id: string }
+  | { readonly kind: "describe"; readonly id: string }
+  | {
+      readonly kind: "style";
+      readonly id: string;
+      readonly property: string;
+      readonly value: string;
+    }
+  | { readonly kind: "restore"; readonly id: string };
+
 export type FramePickPointerType = "pointermove" | "pointerdown" | "pointerup" | "pointerout";
+
+export interface FramePickElementBox {
+  readonly id: string;
+  readonly visibleRect: FramePickRect;
+  readonly unclippedSize: FramePickSize;
+}
 
 export type FramePickUp =
   | { readonly kind: "hello" }
@@ -34,38 +58,23 @@ export type FramePickUp =
       readonly hit: FramePickHit | null;
     }
   | { readonly kind: "key"; readonly key: string }
-  | {
-      readonly kind: "rects";
-      readonly rects: ReadonlyArray<{ readonly id: string; readonly rect: FramePickRect }>;
-    }
-  | {
-      readonly kind: "captured";
-      readonly requestId: string;
-      readonly capture: FramePickCapture | null;
-    };
+  | { readonly kind: "rects"; readonly rects: ReadonlyArray<FramePickElementBox> };
 
 export type FramePickDown =
   | { readonly kind: "start" }
   | { readonly kind: "stop" }
-  | { readonly kind: "refresh" }
-  | { readonly kind: "capture"; readonly requestId: string; readonly id: string }
-  | {
-      readonly kind: "style";
-      readonly id: string;
-      readonly property: string;
-      readonly value: string;
-    }
-  | { readonly kind: "restore"; readonly id: string };
+  | { readonly kind: "refresh" };
 
 export interface FramePickDelivery {
   readonly up: FramePickUp;
-  readonly path: ReadonlyArray<number>;
-  readonly frames: ReadonlyArray<string>;
+  readonly framePathsOutermostFirst: ReadonlyArray<string>;
+  readonly senderDocumentToken: string | null;
 }
 
 export interface FramePickRelay {
-  readonly send: (path: ReadonlyArray<number>, down: FramePickDown) => void;
+  readonly send: (down: FramePickDown) => void;
   readonly dispose: () => void;
+  readonly runCommandForDocument: (documentToken: string, command: FramePickCommand) => unknown;
 }
 
 // Main injects this function's source text into subframes, so it must not reference anything
@@ -73,10 +82,11 @@ export interface FramePickRelay {
 export function installFramePickAgent(
   key: string,
   deliver?: (delivery: FramePickDelivery) => void,
+  documentToken: string | null = null,
 ): FramePickRelay {
   const registry = window as unknown as Record<string, FramePickRelay | undefined>;
-  const installed = deliver ? undefined : registry[key];
-  if (installed) return installed;
+  const replaceAgentWhoseStopIsStillInFlight = (): void => registry[key]?.dispose();
+  if (!deliver) replaceAgentWhoseStopIsStillInFlight();
 
   const styleProperties = [
     "font-family",
@@ -87,16 +97,19 @@ export function installFramePickAgent(
     "background-color",
     "border-color",
     "border-width",
+    "border-style",
     "border-radius",
     "opacity",
     "padding",
     "margin",
     "gap",
+    "width",
+    "height",
   ];
   const toolKeys = new Set(["Escape", "v", "r", "d", "e"]);
   const elementsById = new Map<string, Element>();
-  const idsByElement = new WeakMap<Element, string>();
-  const baselines = new Map<string, Map<string, string>>();
+  let idsByElement = new WeakMap<Element, string>();
+  const styleAttributeBeforeFirstEdit = new Map<string, string | null>();
   let lastId = 0;
   let active = false;
   let cursorStyle: HTMLStyleElement | null = null;
@@ -172,92 +185,214 @@ export function installFramePickAgent(
     return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
   };
 
-  const visibleRect = (element: Element): FramePickRect => {
-    if (!element.isConnected) return { x: 0, y: 0, width: 0, height: 0 };
-    const box = element.getBoundingClientRect();
-    return intersect(
-      { x: box.left, y: box.top, width: box.width, height: box.height },
-      {
-        x: 0,
-        y: 0,
-        width: document.documentElement.clientWidth,
-        height: document.documentElement.clientHeight,
-      },
+  const isNumber = (value: unknown): value is number =>
+    typeof value === "number" && Number.isFinite(value);
+  const isRect = (value: unknown): value is FramePickRect => {
+    const rect = value as Partial<FramePickRect> | null;
+    return (
+      typeof rect === "object" &&
+      rect !== null &&
+      isNumber(rect.x) &&
+      isNumber(rect.y) &&
+      isNumber(rect.width) &&
+      isNumber(rect.height)
+    );
+  };
+  const isSize = (value: unknown): value is FramePickSize => {
+    const size = value as Partial<FramePickSize> | null;
+    return (
+      typeof size === "object" && size !== null && isNumber(size.width) && isNumber(size.height)
     );
   };
 
-  const contentBox = (frame: HTMLIFrameElement): FramePickRect => {
+  const transformScale = (element: HTMLElement, box: DOMRect): { sx: number; sy: number } => ({
+    sx: element.offsetWidth ? box.width / element.offsetWidth : 1,
+    sy: element.offsetHeight ? box.height / element.offsetHeight : 1,
+  });
+
+  const parentAcrossShadowRoots = (element: Element): Element | null => {
+    if (element.parentElement) return element.parentElement;
+    const root = element.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  };
+
+  const viewportRect = (): FramePickRect => ({
+    x: 0,
+    y: 0,
+    width: document.documentElement.clientWidth,
+    height: document.documentElement.clientHeight,
+  });
+
+  const clipByOverflowAncestor = (clip: FramePickRect, ancestor: HTMLElement): FramePickRect => {
+    const style = getComputedStyle(ancestor);
+    const clipsX = style.overflowX !== "visible";
+    const clipsY = style.overflowY !== "visible";
+    if (!clipsX && !clipsY) return clip;
+    const box = ancestor.getBoundingClientRect();
+    const { sx, sy } = transformScale(ancestor, box);
+    return intersect(clip, {
+      x: clipsX ? box.left + ancestor.clientLeft * sx : clip.x,
+      y: clipsY ? box.top + ancestor.clientTop * sy : clip.y,
+      width: clipsX ? ancestor.clientWidth * sx : clip.width,
+      height: clipsY ? ancestor.clientHeight * sy : clip.height,
+    });
+  };
+
+  const visibleAreaFor = (element: Element): FramePickRect => {
+    let clip = viewportRect();
+    for (
+      let ancestor = parentAcrossShadowRoots(element);
+      ancestor && ancestor !== document.documentElement && ancestor !== document.body;
+      ancestor = parentAcrossShadowRoots(ancestor)
+    ) {
+      if (ancestor instanceof HTMLElement) clip = clipByOverflowAncestor(clip, ancestor);
+    }
+    return clip;
+  };
+
+  const elementBox = (element: Element): Omit<FramePickElementBox, "id"> => {
+    if (!element.isConnected) {
+      return {
+        visibleRect: { x: 0, y: 0, width: 0, height: 0 },
+        unclippedSize: { width: 0, height: 0 },
+      };
+    }
+    const box = element.getBoundingClientRect();
+    return {
+      visibleRect: intersect(
+        { x: box.left, y: box.top, width: box.width, height: box.height },
+        visibleAreaFor(element),
+      ),
+      unclippedSize: { width: box.width, height: box.height },
+    };
+  };
+
+  interface ChildDocumentPlacement {
+    readonly originX: number;
+    readonly originY: number;
+    readonly scaleX: number;
+    readonly scaleY: number;
+    readonly visibleArea: FramePickRect;
+  }
+
+  const childDocumentPlacement = (frame: HTMLIFrameElement): ChildDocumentPlacement => {
     const box = frame.getBoundingClientRect();
     const style = getComputedStyle(frame);
+    const { sx, sy } = transformScale(frame, box);
     const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
     const paddingTop = Number.parseFloat(style.paddingTop) || 0;
     const paddingRight = Number.parseFloat(style.paddingRight) || 0;
     const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+    const originX = box.left + (frame.clientLeft + paddingLeft) * sx;
+    const originY = box.top + (frame.clientTop + paddingTop) * sy;
+    const contentBox = {
+      x: originX,
+      y: originY,
+      width: (frame.clientWidth - paddingLeft - paddingRight) * sx,
+      height: (frame.clientHeight - paddingTop - paddingBottom) * sy,
+    };
     return {
-      x: box.left + frame.clientLeft + paddingLeft,
-      y: box.top + frame.clientTop + paddingTop,
-      width: frame.clientWidth - paddingLeft - paddingRight,
-      height: frame.clientHeight - paddingTop - paddingBottom,
+      originX,
+      originY,
+      scaleX: sx,
+      scaleY: sy,
+      visibleArea: intersect(contentBox, visibleAreaFor(frame)),
     };
   };
 
-  const shiftRect = (rect: FramePickRect, box: FramePickRect): FramePickRect =>
+  const placeRect = (rect: FramePickRect, placement: ChildDocumentPlacement): FramePickRect =>
     intersect(
-      { x: rect.x + box.x, y: rect.y + box.y, width: rect.width, height: rect.height },
-      box,
+      {
+        x: placement.originX + rect.x * placement.scaleX,
+        y: placement.originY + rect.y * placement.scaleY,
+        width: rect.width * placement.scaleX,
+        height: rect.height * placement.scaleY,
+      },
+      placement.visibleArea,
     );
+  const placeSize = (size: FramePickSize, placement: ChildDocumentPlacement): FramePickSize => ({
+    width: size.width * placement.scaleX,
+    height: size.height * placement.scaleY,
+  });
 
-  const translate = (up: FramePickUp, box: FramePickRect): FramePickUp => {
+  const placeValidHit = (hit: unknown, placement: ChildDocumentPlacement): FramePickHit | null => {
+    const candidate = hit as Partial<FramePickHit> | null;
+    if (!candidate || typeof candidate !== "object" || typeof candidate.label !== "string")
+      return null;
+    if (!isRect(candidate.visibleRect) || !isSize(candidate.unclippedSize)) return null;
+    return {
+      id: typeof candidate.id === "string" ? candidate.id : null,
+      label: candidate.label,
+      visibleRect: placeRect(candidate.visibleRect, placement),
+      unclippedSize: placeSize(candidate.unclippedSize, placement),
+    };
+  };
+
+  const placeValidBoxes = (
+    boxes: unknown,
+    placement: ChildDocumentPlacement,
+  ): FramePickElementBox[] | null => {
+    if (!Array.isArray(boxes)) return null;
+    return boxes.flatMap((entry: unknown) => {
+      const candidate = entry as Partial<FramePickElementBox> | null;
+      if (!candidate || typeof candidate.id !== "string") return [];
+      if (!isRect(candidate.visibleRect) || !isSize(candidate.unclippedSize)) return [];
+      return [
+        {
+          id: candidate.id,
+          visibleRect: placeRect(candidate.visibleRect, placement),
+          unclippedSize: placeSize(candidate.unclippedSize, placement),
+        },
+      ];
+    });
+  };
+
+  const placeChildMessage = (
+    up: FramePickUp,
+    placement: ChildDocumentPlacement,
+  ): FramePickUp | null => {
     if (up.kind === "pointer") {
+      if (!isNumber(up.x) || !isNumber(up.y)) return null;
       return {
         ...up,
-        x: up.x + box.x,
-        y: up.y + box.y,
-        hit: up.hit ? { ...up.hit, rect: shiftRect(up.hit.rect, box) } : null,
+        x: placement.originX + up.x * placement.scaleX,
+        y: placement.originY + up.y * placement.scaleY,
+        hit: placeValidHit(up.hit, placement),
       };
     }
     if (up.kind === "rects") {
-      return {
-        ...up,
-        rects: up.rects.map((entry) => ({ id: entry.id, rect: shiftRect(entry.rect, box) })),
-      };
+      const rects = placeValidBoxes(up.rects, placement);
+      return rects ? { kind: "rects", rects } : null;
     }
     return up;
   };
 
   const sendUp = (
     up: FramePickUp,
-    path: ReadonlyArray<number> = [],
-    frames: ReadonlyArray<string> = [],
+    framePathsOutermostFirst: ReadonlyArray<string> = [],
+    senderDocumentToken: string | null = documentToken,
   ): void => {
-    if (deliver) deliver({ up, path, frames });
-    else post(window.parent, { up, path, frames });
+    const delivery = { up, framePathsOutermostFirst, senderDocumentToken };
+    if (deliver) deliver(delivery);
+    else post(window.parent, delivery);
   };
 
-  const sendDown = (index: number, down: FramePickDown, path: ReadonlyArray<number>): void =>
-    post(childFrames()[index]?.contentWindow, { down, path });
+  const sendDown = (frame: HTMLIFrameElement, down: FramePickDown): void =>
+    post(frame.contentWindow, { down });
 
   const broadcast = (down: FramePickDown): void => {
-    (down.kind === "refresh" ? childFrames() : scanFrames()).forEach((_frame, index) =>
-      sendDown(index, down, []),
-    );
+    for (const frame of down.kind === "refresh" ? childFrames() : scanFrames())
+      sendDown(frame, down);
   };
 
   const register = (element: Element): string => {
     const known = idsByElement.get(element);
-    if (known) return known;
+    if (known && elementsById.get(known) === element) return known;
     lastId += 1;
     const id = String(lastId);
     idsByElement.set(element, id);
     elementsById.set(id, element);
     return id;
-  };
-
-  const snapshotStyles = (element: Element): Record<string, string> => {
-    const computed = getComputedStyle(element);
-    return Object.fromEntries(
-      styleProperties.map((property) => [property, computed.getPropertyValue(property)]),
-    );
   };
 
   const hitAt = (x: number, y: number, selecting: boolean): FramePickHit | null => {
@@ -268,8 +403,7 @@ export function installFramePickAgent(
     return {
       id: selecting ? register(element) : null,
       label: describe(element),
-      rect: visibleRect(element),
-      styles: selecting ? snapshotStyles(element) : null,
+      ...elementBox(element),
     };
   };
 
@@ -277,29 +411,62 @@ export function installFramePickAgent(
     if (elementsById.size === 0) return;
     sendUp({
       kind: "rects",
-      rects: Array.from(elementsById, ([id, element]) => ({ id, rect: visibleRect(element) })),
+      rects: Array.from(elementsById, ([id, element]) => ({ id, ...elementBox(element) })),
     });
   };
 
-  const restore = (id: string): void => {
+  const styleTarget = (id: string): HTMLElement | SVGElement | null => {
     const element = elementsById.get(id);
-    const saved = baselines.get(id);
-    if (!saved || !(element instanceof HTMLElement || element instanceof SVGElement)) return;
-    for (const [property, value] of saved) {
-      if (value) element.style.setProperty(property, value);
-      else element.style.removeProperty(property);
-    }
-    baselines.delete(id);
+    return element instanceof HTMLElement || element instanceof SVGElement ? element : null;
+  };
+
+  const restore = (id: string): void => {
+    const element = styleTarget(id);
+    if (!element || !styleAttributeBeforeFirstEdit.has(id)) return;
+    const original = styleAttributeBeforeFirstEdit.get(id) ?? null;
+    if (original === null) element.removeAttribute("style");
+    else element.setAttribute("style", original);
+    styleAttributeBeforeFirstEdit.delete(id);
+    reportRects();
   };
 
   const applyStyle = (id: string, property: string, value: string): void => {
-    const element = elementsById.get(id);
-    if (!(element instanceof HTMLElement || element instanceof SVGElement)) return;
-    const saved = baselines.get(id) ?? new Map<string, string>();
-    if (!saved.has(property)) saved.set(property, element.style.getPropertyValue(property));
-    baselines.set(id, saved);
+    const element = styleTarget(id);
+    if (!element) return;
+    if (!styleAttributeBeforeFirstEdit.has(id))
+      styleAttributeBeforeFirstEdit.set(id, element.getAttribute("style"));
     element.style.setProperty(property, value, "important");
     reportRects();
+  };
+
+  const computedStyles = (element: Element): Record<string, string> => {
+    const computed = getComputedStyle(element);
+    return Object.fromEntries(
+      styleProperties.map((property) => [property, computed.getPropertyValue(property)]),
+    );
+  };
+
+  const captureWithFreshRect = (element: Element): FramePickCapture => {
+    reportRects();
+    return {
+      selector: cssPath(element),
+      htmlPreview: element.outerHTML.slice(0, 500),
+      tagName: element.tagName.toLowerCase(),
+    };
+  };
+
+  const runCommand = (command: FramePickCommand): unknown => {
+    if (command.kind === "style") {
+      applyStyle(command.id, command.property, command.value);
+      return null;
+    }
+    if (command.kind === "restore") {
+      restore(command.id);
+      return null;
+    }
+    const element = elementsById.get(command.id);
+    if (!element) return null;
+    return command.kind === "describe" ? computedStyles(element) : captureWithFreshRect(element);
   };
 
   const onPointer = (event: PointerEvent): void => {
@@ -328,13 +495,15 @@ export function installFramePickAgent(
     event.stopImmediatePropagation();
   };
 
+  const escapeEndsTheSessionThroughMainOnly = (pressed: string): boolean => pressed === "Escape";
+
   const onKey = (event: KeyboardEvent): void => {
     if (!event.isTrusted || event.isComposing || event.metaKey || event.ctrlKey || event.altKey)
       return;
     if (!toolKeys.has(event.key)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    sendUp({ kind: "key", key: event.key });
+    if (!escapeEndsTheSessionThroughMainOnly(event.key)) sendUp({ kind: "key", key: event.key });
   };
 
   const onLayoutChange = (): void => {
@@ -372,80 +541,84 @@ export function installFramePickAgent(
     window.removeEventListener("resize", onLayoutChange);
     cursorStyle?.remove();
     cursorStyle = null;
-    for (const id of Array.from(baselines.keys())) restore(id);
+    for (const id of Array.from(styleAttributeBeforeFirstEdit.keys())) restore(id);
     elementsById.clear();
+    idsByElement = new WeakMap();
   };
 
-  const handleHere = (down: FramePickDown): void => {
-    if (down.kind === "start") activate();
-    else if (down.kind === "stop") deactivate();
-    else if (down.kind === "refresh") reportRects();
-    else if (down.kind === "style") applyStyle(down.id, down.property, down.value);
-    else if (down.kind === "restore") restore(down.id);
-    else if (down.kind === "capture") {
-      const element = elementsById.get(down.id);
-      sendUp({
-        kind: "captured",
-        requestId: down.requestId,
-        capture: element
-          ? {
-              selector: cssPath(element),
-              htmlPreview: element.outerHTML.slice(0, 500),
-              tagName: element.tagName.toLowerCase(),
-            }
-          : null,
-      });
+  const route = (down: FramePickDown): void => {
+    if (!deliver) {
+      if (down.kind === "start") activate();
+      else if (down.kind === "stop") deactivate();
+      else reportRects();
     }
-  };
-
-  const route = (down: FramePickDown, path: ReadonlyArray<number>): void => {
-    const [next, ...rest] = path;
-    if (next !== undefined) {
-      sendDown(next, down, rest);
-      return;
-    }
-    if (!deliver) handleHere(down);
-    if (down.kind === "start" || down.kind === "stop" || down.kind === "refresh") broadcast(down);
+    broadcast(down);
     // Main injects a fresh agent into every frame when the next session starts.
     if (down.kind === "stop") relay.dispose();
   };
 
-  const onMessage = (event: MessageEvent): void => {
-    const envelope = (event.data as Record<string, unknown> | null)?.[key] as
-      | { up?: FramePickUp; down?: FramePickDown; path?: number[]; frames?: string[] }
-      | undefined;
-    if (!envelope || typeof envelope !== "object" || !Array.isArray(envelope.path)) return;
-    if (envelope.up) {
-      const isSender = (frame: HTMLIFrameElement): boolean => frame.contentWindow === event.source;
-      let frames = childFrames();
-      if (!frames.some(isSender)) frames = scanFrames();
-      const index = frames.findIndex(isSender);
-      const frame = frames[index];
-      if (!frame) return;
-      if (envelope.up.kind === "hello") {
-        if (deliver || active) sendDown(index, { kind: "start" }, []);
-        return;
-      }
-      sendUp(
-        translate(envelope.up, contentBox(frame)),
-        [index, ...envelope.path],
-        [cssPath(frame), ...(envelope.frames ?? [])],
-      );
+  const senderFrame = (source: MessageEventSource | null): HTMLIFrameElement | undefined => {
+    const isSender = (frame: HTMLIFrameElement): boolean => frame.contentWindow === source;
+    return childFrames().find(isSender) ?? scanFrames().find(isSender);
+  };
+
+  const relayChildMessage = (
+    event: MessageEvent,
+    envelope: {
+      up: FramePickUp;
+      framePathsOutermostFirst?: unknown;
+      senderDocumentToken?: unknown;
+    },
+  ): void => {
+    const frame = senderFrame(event.source);
+    if (!frame) return;
+    if (envelope.up.kind === "hello") {
+      if (deliver || active) sendDown(frame, { kind: "start" });
       return;
     }
-    if (envelope.down && !deliver && event.source === window.parent)
-      route(envelope.down, envelope.path);
+    const placed = placeChildMessage(envelope.up, childDocumentPlacement(frame));
+    if (!placed) return;
+    const innerPaths = Array.isArray(envelope.framePathsOutermostFirst)
+      ? envelope.framePathsOutermostFirst.filter((path): path is string => typeof path === "string")
+      : [];
+    sendUp(
+      placed,
+      [cssPath(frame), ...innerPaths],
+      typeof envelope.senderDocumentToken === "string" ? envelope.senderDocumentToken : null,
+    );
+  };
+
+  const onMessage = (event: MessageEvent): void => {
+    const envelope = (event.data as Record<string, unknown> | null)?.[key] as
+      | {
+          up?: FramePickUp;
+          down?: { kind?: unknown };
+          framePathsOutermostFirst?: unknown;
+          senderDocumentToken?: unknown;
+        }
+      | undefined;
+    if (!envelope || typeof envelope !== "object") return;
+    if (envelope.up && typeof envelope.up === "object") {
+      relayChildMessage(event, { ...envelope, up: envelope.up });
+      return;
+    }
+    if (envelope.down && !deliver && event.source === window.parent) {
+      const kind = envelope.down.kind;
+      if (kind === "start" || kind === "stop" || kind === "refresh") route({ kind });
+    }
   };
 
   window.addEventListener("message", onMessage);
   const relay: FramePickRelay = {
-    send: (path, down) => route(down, path),
+    send: (down) => route(down),
     dispose: () => {
       window.removeEventListener("message", onMessage);
       if (deliver) return;
       deactivate();
-      delete registry[key];
+      if (registry[key] === relay) delete registry[key];
     },
+    runCommandForDocument: (token, command) =>
+      documentToken !== null && token === documentToken && active ? runCommand(command) : null,
   };
   if (!deliver) {
     Object.defineProperty(registry, key, { value: relay, configurable: true });
