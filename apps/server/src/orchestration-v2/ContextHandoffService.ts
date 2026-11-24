@@ -25,7 +25,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
-import { contextBoundaryOrdinal } from "./contextBoundary.ts";
+import { turnItemsSinceContextBoundary } from "./contextBoundary.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
@@ -162,19 +162,10 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
         ...(source.thread.historyOrigin === "v1_import" ? [null] : []),
       ],
     });
-    const boundary = contextBoundaryOrdinal({ runs: throughRuns, turnItems });
-    const boundedItems =
-      boundary === 0
-        ? turnItems
-        : (() => {
-            const allowedRunIds = new Set(
-              throughRuns.filter((run) => run.ordinal >= boundary).map((run) => run.id),
-            );
-            return turnItems.filter((item) => item.runId !== null && allowedRunIds.has(item.runId));
-          })();
+    const bounded = turnItemsSinceContextBoundary({ runs: throughRuns, turnItems });
     return {
-      items: visibleConversationItems(source, boundedItems),
-      cleared: boundary > 0,
+      items: visibleConversationItems(source, bounded.turnItems),
+      cleared: bounded.boundary > 0,
     };
   },
 );

@@ -88,7 +88,11 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { modelSwitchSince } from "./modelSwitch.ts";
-import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
+import {
+  contextBoundaryOrdinal,
+  isScheduledFreshRun,
+  turnItemsSinceContextBoundary,
+} from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { outputRequestProblem } from "./runOutput.ts";
@@ -9462,19 +9466,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               mergeBackSourceProjection.thread.id,
               sourceRuns.map((run) => run.id),
             );
-            const boundary = contextBoundaryOrdinal({ runs: sourceRuns, turnItems: rawItems });
-            const boundedItems =
-              boundary === 0
-                ? rawItems
-                : (() => {
-                    const allowedRunIds = new Set(
-                      sourceRuns.filter((run) => run.ordinal >= boundary).map((run) => run.id),
-                    );
-                    return rawItems.filter(
-                      (item) => item.runId !== null && allowedRunIds.has(item.runId),
-                    );
-                  })();
-            return visibleConversationItems(mergeBackSourceProjection, boundedItems);
+            const { turnItems } = turnItemsSinceContextBoundary({
+              runs: sourceRuns,
+              turnItems: rawItems,
+            });
+            return visibleConversationItems(mergeBackSourceProjection, turnItems);
           });
     const mergeBackHandoff =
       pendingMergeBackTransfer === undefined ||

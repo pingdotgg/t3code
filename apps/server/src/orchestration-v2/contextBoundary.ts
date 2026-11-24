@@ -37,3 +37,18 @@ export function contextBoundaryOrdinal(
   }
   return boundary;
 }
+
+/** Rows of runs from the latest context boundary on; all rows when nothing was cleared. */
+export function turnItemsSinceContextBoundary(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
+): { readonly boundary: number; readonly turnItems: OrchestrationV2ThreadProjection["turnItems"] } {
+  const boundary = contextBoundaryOrdinal(projection);
+  if (boundary === 0) return { boundary, turnItems: projection.turnItems };
+  const kept = new Set(
+    projection.runs.filter((run) => run.ordinal >= boundary).map((run) => run.id),
+  );
+  return {
+    boundary,
+    turnItems: projection.turnItems.filter((item) => item.runId !== null && kept.has(item.runId)),
+  };
+}
