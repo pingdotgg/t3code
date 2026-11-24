@@ -11,14 +11,30 @@ if (!(SNAP_SHOT_MODIFIERS as readonly string[]).includes(requested ?? "")) {
   process.exit(1);
 }
 const [left, right] = WINDOWS_MODIFIER_PAIR_VIRTUAL_KEYS[requested as SnapShotModifier];
+const MODIFIER_VIRTUAL_KEYS = new Set([
+  0x10,
+  0x11,
+  0x12,
+  ...Object.values(WINDOWS_MODIFIER_PAIR_VIRTUAL_KEYS).flat(),
+]);
+const TYPING_VIRTUAL_KEYS = Array.from({ length: 0xfe - 0x08 + 1 }, (_, i) => i + 0x08).filter(
+  (key) => !MODIFIER_VIRTUAL_KEYS.has(key),
+);
 
 async function poll() {
   const api = await loadWindowsForegroundApi();
   let active = false;
+  // A key typed while either key of the pair was held means the overlap came from typing (rolled
+  // Shifts for consecutive capitals), not a deliberate press, so it does not trigger.
+  let typed = false;
   process.send?.("ready");
   const timer = setInterval(() => {
-    const pressed = api.isKeyDown(left) && api.isKeyDown(right);
-    if (pressed && !active) {
+    const leftDown = api.isKeyDown(left);
+    const rightDown = api.isKeyDown(right);
+    const pressed = leftDown && rightDown;
+    if (!leftDown && !rightDown) typed = false;
+    else if (!typed) typed = TYPING_VIRTUAL_KEYS.some((key) => api.isKeyDown(key));
+    if (pressed && !active && !typed) {
       try {
         process.send?.("trigger");
       } catch {}
