@@ -1,4 +1,7 @@
-import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
+import {
+  makeSourceControlDefinitionRegistry,
+  recognizeRemoteWith,
+} from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -86,5 +89,42 @@ describe("Bitbucket remotes", () => {
       name: "Bitbucket",
       baseUrl: "https://bitbucket.org",
     });
+  });
+});
+
+describe("Bitbucket repository keys", () => {
+  const registry = makeSourceControlDefinitionRegistry([definition]);
+
+  it.each([
+    "git@bitbucket.org:Workspace/Repo.git",
+    "git@ssh.bitbucket.org:Workspace/Repo.git",
+    "ssh://git@altssh.bitbucket.org:443/Workspace/Repo.git",
+    "https://bitbucket.org/Workspace/Repo.git",
+  ])("names %s on bitbucket.org, where its pull requests live", (remoteUrl) => {
+    const canonicalKey = registry.repositoryKeyFromRemote(remoteUrl);
+    expect(canonicalKey).toBe("bitbucket.org/workspace/repo");
+    const link = parse("https://bitbucket.org/workspace/repo/pull-requests/5")!;
+    expect(
+      definition.isChangeRequestInRepository(
+        {
+          canonicalKey,
+          displayName: "workspace/repo",
+          locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+        },
+        link,
+      ),
+    ).toBe(true);
+  });
+
+  it("matches keys saved under Bitbucket Cloud's SSH hosts", () => {
+    expect(registry.canonicalRepositoryKey("ssh.bitbucket.org/workspace/repo")).toBe(
+      "bitbucket.org/workspace/repo",
+    );
+    expect(registry.canonicalRepositoryKey("altssh.bitbucket.org/workspace/repo")).toBe(
+      "bitbucket.org/workspace/repo",
+    );
+    expect(registry.repositoryKeyFromRemote("git@bitbucket.example.com:team/repo.git")).toBe(
+      "bitbucket.example.com/team/repo",
+    );
   });
 });
