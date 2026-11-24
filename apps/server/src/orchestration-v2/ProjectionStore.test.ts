@@ -2731,6 +2731,231 @@ it.effect("SQL projection keeps background thread updates out of updatedAt", () 
   backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
 );
 
+it.effect("repeated touches bump updatedAt without rewriting the thread payload", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const createdAt = DateTime.makeUnsafe("2026-10-06T14:00:00.000Z");
+    const threadId = ThreadId.make("thread:repeated-touches");
+    const linkedAt = DateTime.formatIso(createdAt);
+    const links = [1, 2, 3].map((number): ThreadPullRequestLink => ({
+      host: "github.com",
+      repository: "owner/repository",
+      number,
+      url: `https://github.com/owner/repository/pull/${number}`,
+      source: "manual",
+      linkedAt,
+      snapshot: null,
+      stack: null,
+    }));
+    const thread = {
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id: threadId,
+      projectId: ProjectId.make("project:repeated-touches"),
+      title: "Repeated touches",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt,
+      updatedAt: createdAt,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+      pullRequests: links,
+    };
+    yield* store.apply({
+      id: EventId.make("event:repeated-touches:created"),
+      type: "thread.created",
+      threadId,
+      occurredAt: createdAt,
+      payload: thread,
+    });
+    const storedPayload = sql<{ readonly payload_json: string; readonly updated_at: string }>`
+      SELECT payload_json, updated_at FROM orchestration_v2_projection_threads
+      WHERE thread_id = ${threadId}`;
+    const [created] = yield* storedPayload;
+
+    const runId = RunId.make("run:repeated-touches");
+    const rootNodeId = NodeId.make("node:repeated-touches");
+    const run = {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("message:repeated-touches"),
+      rootNodeId,
+      activeAttemptId: null,
+      status: "running" as const,
+      requestedAt: createdAt,
+      startedAt: createdAt,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    for (const minutes of [1, 2, 3]) {
+      yield* store.apply({
+        id: EventId.make(`event:repeated-touches:run:${minutes}`),
+        type: "run.updated",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: DateTime.add(createdAt, { minutes }),
+        payload: run,
+      });
+    }
+    const latest = DateTime.add(createdAt, { minutes: 3 });
+
+    // A touch moves the column and leaves the payload, with every linked PR in it, alone.
+    const [touched] = yield* storedPayload;
+    assert.strictEqual(touched?.updated_at, DateTime.formatIso(latest));
+    assert.strictEqual(touched?.payload_json, created?.payload_json);
+
+    const readLatest = Effect.gen(function* () {
+      const projection = yield* store.getThreadProjection(threadId);
+      const shell = yield* store.getThreadShell(threadId);
+      const listed = (yield* store.getShellSnapshot()).threads.find(({ id }) => id === threadId);
+      const pullRequests = (yield* store.getPullRequestSnapshot({ threadId })).threads;
+      const recovery = yield* store.getRuntimeRecoveryProjection(threadId);
+      assert.deepEqual(
+        [
+          (yield* store.getThread(threadId)).updatedAt,
+          projection.thread.updatedAt,
+          shell?.updatedAt,
+          listed?.updatedAt,
+          pullRequests[0]?.updatedAt,
+          recovery.thread.updatedAt,
+        ],
+        Array.from({ length: 6 }, () => latest),
+      );
+      for (const numbers of [
+        (yield* store.getThread(threadId)).pullRequests,
+        projection.thread.pullRequests,
+        pullRequests[0]?.pullRequests,
+      ]) {
+        assert.deepEqual(
+          numbers?.map((link) => link.number),
+          [1, 2, 3],
+        );
+      }
+    });
+    yield* readLatest;
+
+    // A command that rewrites the whole row from what it read must not roll the timestamp back.
+    yield* store.apply({
+      id: EventId.make("event:repeated-touches:link-updated"),
+      type: "thread.pull-request-link-updated",
+      threadId,
+      occurredAt: DateTime.add(createdAt, { minutes: 4 }),
+      payload: {
+        ...links[1]!,
+        snapshot: {
+          state: "open",
+          title: "Ship it",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: DateTime.formatIso(DateTime.add(createdAt, { minutes: 4 })),
+          syncedAt: DateTime.formatIso(DateTime.add(createdAt, { minutes: 4 })),
+          closedAt: null,
+          mergedAt: null,
+        },
+      },
+    });
+    assert.strictEqual((yield* storedPayload)[0]?.updated_at, DateTime.formatIso(latest));
+    yield* readLatest;
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("limit recovery measures the reset from the stored updatedAt when no run completed", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = yield* addRolledBackRecoveryCandidate("limit-stored-updated-at");
+    const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+    const created = yield* DateTime.now;
+    const day = (days: number) => DateTime.add(created, { days });
+    const applyLimit = (resetAt: DateTime.Utc, occurredAt: DateTime.Utc) =>
+      store.apply({
+        id: EventId.make(`event:limit-stored-updated-at:${DateTime.formatIso(resetAt)}`),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt,
+        payload: {
+          id: TurnItemId.make("limit-stored-updated-at:error"),
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "failed",
+          title: "Usage limit reached",
+          startedAt: created,
+          completedAt: created,
+          updatedAt: created,
+          type: "error",
+          failure: {
+            class: "usage_limit",
+            message: "Plan limit reached.",
+            resetAt: DateTime.formatIso(resetAt),
+            code: "usageLimitExceeded",
+            retryable: null,
+          },
+        },
+      });
+    yield* applyLimit(day(5), created);
+    // This touch moves only the column, leaving the payload's updatedAt at `created`.
+    yield* store.apply({
+      id: EventId.make("event:limit-stored-updated-at:failed"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId ?? undefined,
+      driver,
+      providerInstanceId,
+      occurredAt: day(10),
+      payload: { ...run, status: "failed", completedAt: null },
+    });
+    assert.deepEqual(
+      yield* sql`SELECT t.updated_at, json_extract(t.payload_json, '$.updatedAt') AS payload_updated_at,
+          r.completed_at
+        FROM orchestration_v2_projection_threads t, orchestration_v2_projection_runs r
+        WHERE t.thread_id = ${threadId} AND r.run_id = ${run.id}`,
+      [
+        {
+          updated_at: DateTime.formatIso(day(10)),
+          payload_updated_at: DateTime.formatIso(created),
+          completed_at: null,
+        },
+      ],
+    );
+    const candidate = () =>
+      store
+        .getLimitRecoveryCandidates({ now: day(1), autoResume: false, snooze: true })
+        .pipe(Effect.map((rows) => rows.find((row) => row.id === threadId)));
+    // A reset on day 5 is after the payload's updatedAt but before the stored one.
+    assert.isUndefined(yield* candidate());
+    yield* applyLimit(day(15), day(10));
+    const found = yield* candidate();
+    assert.deepEqual([found?.updatedAt, found?.latestRunCompletedAt], [day(10), null]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 const runlessNativeSubagentNeedsRecovery = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = yield* addRolledBackRecoveryCandidate("runless-native-recovery");
