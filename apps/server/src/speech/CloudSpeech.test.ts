@@ -129,7 +129,7 @@ it.effect.each(["openai", "xai", "elevenlabs"] as const)(
 
 it.effect.each([
   {
-    provider: "openai",
+    provider: "xai",
     window: "between pieces",
     text: "Read this sentence aloud. ".repeat(200),
     model: "",
@@ -180,12 +180,12 @@ it.effect.each([
         .pipe(Stream.runDrain, Effect.flip, Effect.provideService(FetchHttpClient.Fetch, upstream));
       expect(failure).toMatchObject({ reason: "unreadable-key" });
       expect(
-        upstream.mock.calls.filter(([url]) => String(url).endsWith("/audio/speech")),
+        upstream.mock.calls.filter(([url]) => /\/(audio\/speech|tts)$/.test(String(url))),
       ).toHaveLength(uploads);
     }),
 );
 
-it.effect("splits CJK replies below gpt-4o-mini-tts's token limit", () =>
+it.effect("splits CJK replies into pieces of at most 1,000 characters", () =>
   Effect.gen(function* () {
     const upstream = vi.fn<typeof fetch>(
       async () =>
@@ -201,18 +201,18 @@ it.effect("splits CJK replies below gpt-4o-mini-tts's token limit", () =>
         ),
       ),
     );
-    yield* service.setKey("openai", Redacted.make("speech-key"));
+    yield* service.setKey("xai", Redacted.make("speech-key"));
     yield* service
-      .stream("openai", {
+      .stream("xai", {
         text: "読み上げのテストです。".repeat(250),
-        model: "gpt-4o-mini-tts",
+        model: "grok-tts",
         voice: "",
         speed: 1,
         language: "ja",
       })
       .pipe(Stream.runDrain, Effect.provideService(FetchHttpClient.Fetch, upstream));
     const inputs = upstream.mock.calls.map(
-      ([, init]) => (JSON.parse(String(init?.body)) as { input: string }).input,
+      ([, init]) => (JSON.parse(String(init?.body)) as { text: string }).text,
     );
     expect(inputs.length).toBeGreaterThan(1);
     expect(inputs.every((input) => input.length <= 1000)).toBe(true);

@@ -97,6 +97,31 @@ export function encodeMp3(
   );
 }
 
+/** Encodes little-endian 16-bit mono PCM as it arrives, so playback starts before synthesis ends. */
+export function encodeMp3Stream<E>(pcm: Stream.Stream<Uint8Array, E>, rate: number) {
+  return Effect.promise(loadLamejs).pipe(
+    Effect.map(({ Mp3Encoder }) => {
+      const encoder = new Mp3Encoder(1, rate, mp3Kbps(rate));
+      // A chunk may end inside a sample; its odd byte waits for the next chunk.
+      let odd = new Uint8Array(0);
+      return pcm.pipe(
+        Stream.map((chunk) => {
+          const bytes = concat([odd, chunk]);
+          const view = new DataView(bytes.buffer);
+          const samples = new Int16Array(bytes.length >> 1);
+          for (let index = 0; index < samples.length; index++)
+            samples[index] = view.getInt16(index * 2, true);
+          odd = bytes.slice(samples.length * 2);
+          return concat([encoder.encodeBuffer(samples)]);
+        }),
+        Stream.concat(Stream.sync(() => concat([encoder.flush()]))),
+      );
+    }),
+    Stream.unwrap,
+    Stream.filter((bytes) => bytes.length > 0),
+  );
+}
+
 // lamejs returns Int8Array despite its types; copying into Uint8Array keeps byte values unsigned.
 function concat(parts: readonly Uint8Array[]) {
   const bytes = new Uint8Array(parts.reduce((size, part) => size + part.length, 0));

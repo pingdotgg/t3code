@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import { it } from "@effect/vitest";
 import { expect, vi } from "vite-plus/test";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
@@ -11,8 +13,13 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
-import { localSynthesisLanguage, localSynthesisRuntime } from "./LocalSpeechSynthesis.ts";
-import { encodeMp3, leadingSentence, pcm16Mono } from "./synthesisAudio.ts";
+import {
+  LocalSpeechSynthesis,
+  localSynthesisLanguage,
+  localSynthesisRuntime,
+} from "./LocalSpeechSynthesis.ts";
+import { encodeMp3, encodeMp3Stream, leadingSentence, pcm16Mono } from "./synthesisAudio.ts";
+import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {
   const pcm = pcm16Mono(Float32Array.of(0, 1, -1, 2, -2, Number.NaN, 0.5), 1);
@@ -258,7 +265,172 @@ it.effect("places ElevenLabs word timings of later pieces after the earlier piec
   }),
 );
 
-it.effect.each(["openai", "xai", "openrouter"] as const)(
+it.effect("speaks OpenAI replies over Realtime sessions and fails on a provider error", () =>
+  Effect.gen(function* () {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeWS.WebSocketServer({ host: "127.0.0.1", port: 0 })),
+      (server) => Effect.sync(() => server.close()),
+    );
+    if (!server.address())
+      yield* Effect.promise(() => new Promise((resolve) => server.once("listening", resolve)));
+    const address = server.address();
+    if (typeof address !== "object" || !address) throw new Error("Missing server port");
+    const { port } = address;
+    // A tone, so samples read out of step encode differently.
+    const pcm = new Uint8Array(
+      Int16Array.from({ length: 4800 }, (_, index) => 8000 * Math.sin(index / 7)).buffer,
+    );
+    // An odd split ends the first delta inside a sample.
+    const audio = [pcm.subarray(0, 4801), pcm.subarray(4801)].map((delta) => ({
+      type: "response.output_audio.delta",
+      delta: Buffer.from(delta).toString("base64"),
+    }));
+    let reply: unknown[] = [...audio, { type: "response.done", response: { status: "completed" } }];
+    const urls: string[] = [];
+    const keys: unknown[] = [];
+    const sent: unknown[] = [];
+    let created = Promise.withResolvers<void>();
+    server.on("connection", (socket, request) => {
+      keys.push(request.headers.authorization);
+      socket.on("message", (data) => {
+        const event = JSON.parse(String(data));
+        sent.push(event);
+        if (event.type === "response.create") created.resolve();
+        const answers = event.type === "session.update" ? [{ type: "session.updated" }] : reply;
+        for (const answer of answers)
+          if (answer === "close") socket.close();
+          else socket.send(JSON.stringify(answer));
+      });
+    });
+    const NativeWebSocket = globalThis.WebSocket;
+    vi.stubGlobal(
+      "WebSocket",
+      class extends NativeWebSocket {
+        constructor(url: string | URL, init?: ConstructorParameters<typeof NativeWebSocket>[1]) {
+          urls.push(String(url));
+          super(`ws://127.0.0.1:${port}`, init);
+        }
+      },
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllGlobals()));
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const bytes = <E>(stream: Stream.Stream<CloudSpeech.SpeechSynthesisPart, E>) =>
+      stream.pipe(
+        Stream.runCollect,
+        Effect.map((parts) =>
+          Uint8Array.from(parts.flatMap((part) => (part instanceof Uint8Array ? [...part] : []))),
+        ),
+      );
+    const request = {
+      text: "Merged #35910 after 840 tests.",
+      // Settings saved for the retired speech models still read aloud.
+      model: "gpt-4o-mini-tts",
+      voice: "fable",
+      speed: 1.25,
+      language: "auto",
+    };
+    const synthesize = (overrides: Partial<typeof request>) =>
+      bytes(service.stream("openai", { ...request, ...overrides }));
+    yield* service.setKey("openai", Redacted.make("speech-key"));
+    const mp3 = yield* synthesize({});
+    expect(mp3SampleRate(mp3)).toBe(24000);
+    expect(mp3).toEqual(yield* bytes(encodeMp3Stream(Stream.make(pcm), 24000)));
+    yield* synthesize({ voice: "cedar", language: "es" });
+    expect(urls).toEqual(Array(2).fill("wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1"));
+    expect(keys).toEqual(["Bearer speech-key", "Bearer speech-key"]);
+    const input = (text: string) => [{ type: "message", role: "user", content: [{ text }] }];
+    expect(sent).toMatchObject([
+      {
+        type: "session.update",
+        session: {
+          type: "realtime",
+          instructions: expect.stringContaining("word for word"),
+          output_modalities: ["audio"],
+          audio: {
+            input: { turn_detection: null },
+            output: { voice: "marin", format: { type: "audio/pcm", rate: 24000 } },
+          },
+        },
+      },
+      {
+        type: "response.create",
+        response: {
+          conversation: "none",
+          output_modalities: ["audio"],
+          input: input(
+            '{"text":"Merged number three five nine one zero after eight hundred forty tests."}',
+          ),
+        },
+      },
+      // Spanish keeps its digits for the voice to read in Spanish.
+      { session: { audio: { output: { voice: "cedar" } } } },
+      { response: { input: input('{"text":"Merged #35910 after 840 tests."}') } },
+    ]);
+    const catalog = yield* service.synthesisModels("openai");
+    expect(catalog).toMatchObject({
+      defaultModel: "gpt-realtime-2.1",
+      speedAppliedByProvider: false,
+      models: [{ id: "gpt-realtime-2.1", voices: expect.arrayContaining(["marin", "cedar"]) }],
+    });
+    // Like xAI and OpenRouter, it sends no word timings: players spread the words over the audio
+    // length that the timings give once synthesis ends.
+    expect(catalog).not.toHaveProperty("wordTimings");
+    const timings = yield* Effect.gen(function* () {
+      const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+      return yield* streams.timings(yield* streams.start("openai", request), 0);
+    }).pipe(
+      Effect.provide(
+        SpeechSynthesisStreams.layer.pipe(
+          Layer.provide(Layer.mock(CloudSpeech.CloudSpeech)({ stream: service.stream })),
+          Layer.provide(Layer.mock(LocalSpeechSynthesis)({})),
+          Layer.provide(SecureRandom.layerWebCrypto),
+        ),
+      ),
+    );
+    expect(timings).toEqual({ words: [], done: true, durationSeconds: expect.any(Number) });
+    // The 0.2 s tone fills 11 frames of 576 samples with the encoder's delay and padding.
+    expect(timings.durationSeconds).toBeCloseTo((11 * 576) / 24000, 6);
+    for (const [event, reason] of [
+      [
+        { type: "error", error: { code: "invalid_api_key", message: "private diagnostic" } },
+        "rejected-key",
+      ],
+      [
+        {
+          type: "response.done",
+          response: { status: "failed", status_details: { error: { code: "insufficient_quota" } } },
+        },
+        "rate-limit",
+      ],
+      [{ type: "response.done", response: { status: "incomplete" } }, "unavailable"],
+      // A session that closes before `response.done` never passes for complete audio.
+      ["close", "unavailable"],
+    ] as const) {
+      reply = [audio[0], event];
+      const failure = yield* Effect.flip(synthesize({}));
+      expect(failure).toMatchObject({ provider: "openai", reason });
+      expect(failure.message).not.toContain("private diagnostic");
+    }
+    // A session that never answers fails at the stall timeout.
+    reply = [];
+    created = Promise.withResolvers<void>();
+    const stalled = yield* Effect.forkChild(Effect.flip(synthesize({})));
+    yield* Effect.promise(() => created.promise);
+    yield* TestClock.adjust("30 seconds");
+    expect(yield* Fiber.join(stalled)).toMatchObject({ provider: "openai", reason: "unavailable" });
+  }),
+);
+
+it.effect.each(["xai", "openrouter"] as const)(
   "synthesizes with %s without leaking keys to another destination",
   (provider) =>
     Effect.gen(function* () {
@@ -291,14 +463,11 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
               ),
             ),
           );
-        yield* service.setKey(
-          provider === "openai" ? "xai" : "openai",
-          Redacted.make("must-not-be-forwarded"),
-        );
+        yield* service.setKey("openai", Redacted.make("must-not-be-forwarded"));
         const request = {
           text: "Read this reply.",
-          model: provider === "openai" ? "gpt-4o-mini-tts" : "google/gemini-test-tts",
-          voice: provider === "openai" ? "alloy" : "reader",
+          model: "google/gemini-test-tts",
+          voice: "reader",
           speed: 1.25,
           language: "en",
         };
@@ -347,7 +516,6 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         const [url, init] = upstream.mock.calls[0]!;
         expect(String(url)).toBe(
           {
-            openai: "https://api.openai.com/v1/audio/speech",
             xai: "https://api.x.ai/v1/tts",
             openrouter: "https://openrouter.ai/api/v1/audio/speech",
           }[provider],
@@ -361,7 +529,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
                 input: request.text,
                 model: request.model,
                 voice: request.voice,
-                response_format: provider === "openai" ? "mp3" : "pcm",
+                response_format: "pcm",
               },
         );
         if (provider === "openrouter")
@@ -370,31 +538,19 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         const catalog = yield* service.synthesisModels(provider);
         expect(catalog).toMatchObject({
           apiKeyProvider: provider,
-          defaultModel:
-            provider === "openai"
-              ? "gpt-4o-mini-tts"
-              : provider === "xai"
-                ? "grok-tts"
-                : "google/gemini-test-tts",
+          defaultModel: provider === "xai" ? "grok-tts" : "google/gemini-test-tts",
           speedAppliedByProvider: provider !== "openrouter",
           supportsModelSelection: true,
           supportsVoiceSelection: true,
         });
-        if (provider === "openai")
-          expect(catalog.models.map((model) => model.id)).toEqual([
-            "gpt-4o-mini-tts",
-            "tts-1",
-            "tts-1-hd",
-          ]);
-        else
-          expect(catalog.models).toEqual(
-            provider === "xai"
-              ? [{ id: "grok-tts", name: "Grok TTS", voices: ["reader"] }]
-              : [
-                  { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
-                  { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
-                ],
-          );
+        expect(catalog.models).toEqual(
+          provider === "xai"
+            ? [{ id: "grok-tts", name: "Grok TTS", voices: ["reader"] }]
+            : [
+                { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
+                { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
+              ],
+        );
         if (provider === "xai") {
           expect(new Headers(upstream.mock.calls.at(-1)?.[1]?.headers).get("authorization")).toBe(
             "Bearer speech-key",
@@ -479,9 +635,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         yield* Effect.promise(() => reading.promise);
         yield* TestClock.adjust("2 minutes");
         expect(yield* Fiber.join(stalled)).toMatchObject({ reason: "unavailable" });
-        for (const operation of (provider === "openai"
-          ? ["synthesis"]
-          : ["catalog", "synthesis"]) as ReadonlyArray<"catalog" | "synthesis">) {
+        for (const operation of ["catalog", "synthesis"] as const) {
           let pulls = 0;
           const cancel = vi.fn();
           upstream.mockResolvedValueOnce(
