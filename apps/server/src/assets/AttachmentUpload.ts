@@ -210,11 +210,13 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
           (head, chunk) => Buffer.concat([head, chunk]),
         ),
       );
-      if (fileHeaderMimeType(header) !== claims.mimeType) {
+      // Only a body that is no image at all; browsers derive the declared type from the extension.
+      if (!fileHeaderMimeType(header)?.startsWith("image/")) {
         return {
           ok: false,
           status: 400,
-          detail: `Body is not a ${claims.mimeType} image. Send the raw file bytes, not base64 or a data URL.`,
+          detail:
+            "Body is not a GIF, JPEG, PNG or WebP image. Send the raw file bytes, not base64 or a data URL.",
         } satisfies StoreAttachmentUploadResult;
       }
     }

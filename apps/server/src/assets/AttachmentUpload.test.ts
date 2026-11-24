@@ -202,7 +202,7 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("rejects image bodies that are not the declared image type", () =>
+  it.effect("rejects image bodies that are not an image", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const base64Png = Buffer.from(VALID_PNG_BYTES).toString("base64");
@@ -210,7 +210,6 @@ describe("AttachmentUpload", () => {
         new TextEncoder().encode(base64Png),
         new TextEncoder().encode(`data:image/png;base64,${base64Png}`),
         new TextEncoder().encode("not a png"),
-        VALID_JPEG_BYTES,
       ]) {
         const issued = yield* issueAttachmentUploadUrl({
           ...uploadInput,
@@ -226,6 +225,17 @@ describe("AttachmentUpload", () => {
         });
       }
       expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+
+      // A real image whose extension implied another type is still stored.
+      const renamed = yield* issueAttachmentUploadUrl({
+        ...uploadInput,
+        sizeBytes: VALID_JPEG_BYTES.byteLength,
+      });
+      const renamedClaims = yield* validateAttachmentUploadToken(
+        renamed.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!renamedClaims) throw new Error("Expected valid upload claims.");
+      expect(yield* storeAttachmentUpload(renamedClaims, VALID_JPEG_BYTES)).toEqual({ ok: true });
     }).pipe(Effect.provide(layerTest)),
   );
 
