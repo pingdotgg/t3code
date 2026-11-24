@@ -1290,6 +1290,7 @@ async fn provision_creates_a_worktree_and_waits_for_a_blocking_setup_script() {
         start_from_origin: true,
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
     };
     let exit = runner.script(false);
     let launch = {
@@ -1410,6 +1411,7 @@ async fn a_cancel_during_post_checkout_removes_the_checkout_and_branch() {
         base_ref: "main".into(),
         branch: Some("feature-pc".into()),
         start_from_origin: false,
+        submodules: None,
         setup: None,
         worktrees_dir: worktrees.clone(),
     };
@@ -1552,6 +1554,7 @@ async fn a_worktree_cleanup_cannot_remove_keeps_its_branch_and_says_so() {
             base_ref: "main".into(),
             branch: Some("feature-locked".into()),
             start_from_origin: false,
+            submodules: None,
             setup: Some(std::sync::Arc::new(LockingRunner)),
             worktrees_dir: fx.root.path().join("worktrees"),
         },
@@ -1588,6 +1591,7 @@ async fn a_failed_post_checkout_hook_keeps_the_checkout_and_its_files() {
             base_ref: "main".into(),
             branch: Some("feature-hook".into()),
             start_from_origin: false,
+            submodules: None,
             setup: None,
             worktrees_dir: fx.root.path().join("worktrees"),
         },
@@ -1640,6 +1644,7 @@ async fn a_cancel_while_git_populates_the_checkout_removes_it() {
         base_ref: "main".into(),
         branch: Some("feature-slow".into()),
         start_from_origin: false,
+        submodules: None,
         setup: None,
         worktrees_dir: fx.root.path().join("worktrees"),
     };
@@ -1729,6 +1734,7 @@ async fn an_async_setup_script_runs_on_while_the_agent_starts() {
         start_from_origin: false,
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
+        submodules: None,
     };
     let script_stage = |thread: &str| {
         let snapshot = setups.get(thread).unwrap();
@@ -1794,6 +1800,7 @@ async fn cancelling_a_blocking_setup_closes_its_terminal() {
         base_ref: "main".into(),
         branch: None,
         start_from_origin: false,
+        submodules: None,
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
     };
@@ -1832,6 +1839,7 @@ async fn cancelling_while_the_setup_terminal_opens_closes_it() {
         base_ref: "main".into(),
         branch: None,
         start_from_origin: false,
+        submodules: None,
         setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
     };
@@ -2038,6 +2046,149 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
+}
+
+/// T3 `GitVcsDriverCore.createWorktree` with `worktreeSparsePatternsPath`: the patterns file
+/// named by `t3.json` at the ref limits the checkout; a missing one fails with nothing left.
+#[tokio::test]
+async fn a_sparse_worktree_leaves_out_what_t3_json_excludes() {
+    let fx = Fixture::new("sparse");
+    let dir = fx.root.path().join("worktrees");
+    write(&fx.work, "patterns", "/*\n!/excluded/\n");
+    write(&fx.work, "excluded/asset", "omitted by design\n");
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"./patterns"}"#,
+    );
+    commit_all(&fx.work, "sparse checkout");
+    let create = |branch: &str| {
+        let input = CreateWorktree {
+            cwd: fx.work.clone(),
+            ref_name: "HEAD".into(),
+            new_ref_name: Some(branch.into()),
+            base_ref_name: None,
+            worktrees_dir: dir.clone(),
+        };
+        async move { worktree::create_worktree(&input).await }
+    };
+    let sparse = create("probe-sparse").await.unwrap().path;
+    assert!(!sparse.join("excluded/asset").exists());
+    assert!(sparse.join("README.md").exists() && sparse.join("src/lib.rs").exists());
+
+    // `parseT3ProjectFile` is lenient JSON: comments and trailing commas are fine.
+    write(
+        &fx.work,
+        "t3.json",
+        "{\n  // keep assets out\n  \"worktreeSparsePatternsPath\": \"./patterns\",\n}\n",
+    );
+    commit_all(&fx.work, "jsonc t3.json");
+    let jsonc = create("probe-jsonc").await.unwrap().path;
+    assert!(!jsonc.join("excluded/asset").exists());
+
+    // One invalid field rejects the whole file, so the checkout is full.
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"./patterns","worktreeSubmodules":"bogus"}"#,
+    );
+    commit_all(&fx.work, "invalid t3.json");
+    let full = create("probe-invalid").await.unwrap().path;
+    assert!(full.join("excluded/asset").exists());
+
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSparsePatternsPath":"missing"}"#,
+    );
+    commit_all(&fx.work, "missing patterns");
+    let error = create("probe-missing").await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("\"missing\", which is not a file in HEAD"),
+        "{error}"
+    );
+    assert!(
+        git(&fx.work, &["branch", "--list", "probe-missing"])
+            .trim()
+            .is_empty()
+    );
+}
+
+/// `resolveProjectFileBackedSetting("worktreeSubmodules", …)`: the setting, else `t3.json` at
+/// `HEAD` (even when sparse patterns leave it out), else recursive; nothing without
+/// `.gitmodules`. `none` leaves the module empty.
+#[tokio::test]
+async fn submodule_mode_follows_the_setting_then_t3_json() {
+    let fx = Fixture::new("submodule-mode");
+    let mode = |setting: Option<&'static str>| {
+        let work = fx.work.clone();
+        async move { worktree::submodule_mode(&work, setting).await }
+    };
+    assert_eq!(mode(None).await, None, "no .gitmodules");
+    write(
+        &fx.work,
+        ".gitmodules",
+        "[submodule \"module\"]\n\tpath = module\n\turl = ../child\n",
+    );
+    commit_all(&fx.work, "gitmodules");
+    use worktree::{Origin, Submodules};
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    write(&fx.work, "t3.json", r#"{"worktreeSubmodules":"top-level"}"#);
+    commit_all(&fx.work, "t3.json");
+    // Read from HEAD: the working copy may lack it.
+    std::fs::remove_file(fx.work.join("t3.json")).unwrap();
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::TopLevel, Origin::ProjectFile))
+    );
+    assert_eq!(
+        mode(Some("none")).await,
+        Some((Submodules::None, Origin::Settings))
+    );
+    assert_eq!(
+        mode(Some("recursive")).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    write(
+        &fx.work,
+        "t3.json",
+        "{\n  /* a setup script fills it */\n  \"worktreeSubmodules\": \"none\",\n}\n",
+    );
+    commit_all(&fx.work, "jsonc t3.json");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::None, Origin::ProjectFile))
+    );
+    // A repeated key takes its last value, as `JSON.parse` does.
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSubmodules":"recursive","worktreeSubmodules":"top-level"}"#,
+    );
+    commit_all(&fx.work, "repeated key");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::TopLevel, Origin::ProjectFile))
+    );
+    write(
+        &fx.work,
+        "t3.json",
+        r#"{"worktreeSubmodules":"none","scripts":[{"name":" ","command":"x"}]}"#,
+    );
+    commit_all(&fx.work, "invalid t3.json");
+    assert_eq!(
+        mode(None).await,
+        Some((Submodules::Recursive, Origin::Settings))
+    );
+    worktree::update_submodules(&fx.work, Submodules::None)
+        .await
+        .unwrap();
+    assert!(!fx.work.join("module").exists());
 }
 
 /// The Git settings a project can carry that change what a plain `git diff` reports.

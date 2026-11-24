@@ -393,6 +393,8 @@ pub struct ProvisionRequest {
     /// Runs the setup script; `None` skips the stage.
     pub setup: Option<Arc<dyn SetupRunner>>,
     pub worktrees_dir: PathBuf,
+    /// `worktreeSubmodules` for the project; `None` follows `t3.json`.
+    pub submodules: Option<String>,
 }
 
 impl std::fmt::Debug for ProvisionRequest {
@@ -563,42 +565,37 @@ async fn provision_stages(
     });
     setups.stage_status(thread, StageId::Checkout, StageStatus::Done, None);
 
-    // A file check is blocking I/O: it runs off the runtime thread.
-    let gitmodules = worktree.path.join(".gitmodules");
-    let has_submodules = tokio::task::spawn_blocking(move || gitmodules.exists())
-        .await
-        .unwrap_or(false);
-    if has_submodules {
-        setups.stage_status(thread, StageId::Submodules, StageStatus::Running, None);
-        let result = cancellable(cancel, async {
-            git(
-                "GitVcsDriver.submodules",
-                &worktree.path,
-                ["submodule", "update", "--init", "--recursive"],
-            )
-            .timeout(Duration::from_secs(3600))
-            .run()
-            .await?;
-            Ok(())
-        })
-        .await;
-        match result {
-            Ok(()) => setups.stage_status(thread, StageId::Submodules, StageStatus::Done, None),
-            Err(ProvisionError::Cancelled) => return Err(ProvisionError::Cancelled),
-            Err(_) => setups.stage_status(
-                thread,
-                StageId::Submodules,
-                StageStatus::Warning,
-                Some("submodule checkout failed"),
-            ),
-        }
-    } else {
-        setups.stage_status(
+    match worktree::submodule_mode(&worktree.path, request.submodules.as_deref()).await {
+        None => setups.stage_status(
             thread,
             StageId::Submodules,
             StageStatus::Skipped,
             Some("none"),
-        );
+        ),
+        Some((worktree::Submodules::None, origin)) => setups.stage_status(
+            thread,
+            StageId::Submodules,
+            StageStatus::Skipped,
+            Some(format!("disabled in {}", origin.label()).as_str()),
+        ),
+        Some((mode, _)) => {
+            setups.stage_status(thread, StageId::Submodules, StageStatus::Running, None);
+            match cancellable(cancel, async {
+                worktree::update_submodules(&worktree.path, mode).await?;
+                Ok(())
+            })
+            .await
+            {
+                Ok(()) => setups.stage_status(thread, StageId::Submodules, StageStatus::Done, None),
+                Err(ProvisionError::Cancelled) => return Err(ProvisionError::Cancelled),
+                Err(_) => setups.stage_status(
+                    thread,
+                    StageId::Submodules,
+                    StageStatus::Warning,
+                    Some("submodule checkout failed"),
+                ),
+            }
+        }
     }
 
     match &request.setup {

@@ -271,6 +271,10 @@ impl EngineHost for Host {
         request: WorktreeRequest,
     ) -> BoxFuture<'_, Result<ProvisionedWorktree, String>> {
         Box::pin(async move {
+            let submodules = crate::settings::worktree_submodules(
+                &self.environment.settings.raw(),
+                request.project_id.as_deref(),
+            );
             let made = provision(
                 &self.vcs.setups,
                 ProvisionRequest {
@@ -281,6 +285,7 @@ impl EngineHost for Host {
                     start_from_origin: request.start_from_origin,
                     setup: self.setup_runner(request.project_id, request.link_origin),
                     worktrees_dir: self.worktrees_dir(),
+                    submodules,
                 },
             )
             .await

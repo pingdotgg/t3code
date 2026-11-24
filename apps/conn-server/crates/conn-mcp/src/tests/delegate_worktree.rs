@@ -113,6 +113,7 @@ impl conn_engine::EngineHost for GitHost {
                     start_from_origin: request.start_from_origin,
                     setup: Some(self.setup.clone()),
                     worktrees_dir: self.worktrees.clone(),
+                    submodules: None,
                 },
             )
             .await
