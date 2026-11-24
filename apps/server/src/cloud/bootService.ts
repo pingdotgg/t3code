@@ -898,7 +898,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* windowsVariable("USERDOMAIN"),
       yield* windowsVariable("USERNAME"),
     ),
-    systemRoot: (yield* windowsVariable("SystemRoot")) || "C:\\Windows",
+    systemRoot:
+      (yield* windowsVariable("SystemRoot")) || (yield* windowsVariable("windir")) || "C:\\Windows",
   };
   // The unit is per user, so the launcher to stop is the one serving the installed unit's home.
   const launcherLockPath = (unit: Option.Option<string>) =>
