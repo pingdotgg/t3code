@@ -451,14 +451,24 @@ async fn reopening_without_a_size_keeps_the_live_grid() {
     let reopened = manager.open(sized(None, None)).unwrap();
     assert_eq!(reopened.pid, pid);
     assert_eq!(grid(reopened), (Some(125), Some(43)));
-    write(&manager, "t12", "term-1", "stty size\n").await;
+    // Keep one foreground job across the resizes. The interactive shell's line editor
+    // can restore its own grid when it takes control between separate stty commands.
+    write(
+        &manager,
+        "t12",
+        "term-1",
+        "sh -c 'stty size; read -r x; stty size; read -r x; stty size'\n",
+    )
+    .await;
     output_contains(&mut sub, "43 125").await;
 
     let cols_only = manager.open(sized(Some(110), None)).unwrap();
     assert_eq!(grid(cols_only), (Some(110), Some(43)));
+    write(&manager, "t12", "term-1", "\n").await;
+    output_contains(&mut sub, "43 110").await;
     let explicit = manager.open(sized(Some(118), Some(39))).unwrap();
     assert_eq!(grid(explicit), (Some(118), Some(39)));
-    write(&manager, "t12", "term-1", "stty size\n").await;
+    write(&manager, "t12", "term-1", "\n").await;
     output_contains(&mut sub, "39 118").await;
 
     // A viewer's grid still comes first.

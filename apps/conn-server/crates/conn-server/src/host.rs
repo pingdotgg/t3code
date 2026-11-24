@@ -1048,6 +1048,17 @@ mod tests {
         );
     }
 
+    // Project scripts open terminals before the test viewer can pass its own environment.
+    fn project_script_shell(dir: &std::path::Path) -> String {
+        let shell = dir.join("test-shell");
+        conn_support::test_util::executable(
+            &shell,
+            "#!/bin/sh\nexport HISTFILE=/dev/null\nexec /bin/sh \"$@\"\n",
+        )
+        .unwrap();
+        shell.to_string_lossy().into_owned()
+    }
+
     /// T3's settle effect (`ThreadSettlementService.ts:725`) through the production path: the
     /// engine's `thread.settled` effect reaches the host, which closes the thread's terminals
     /// and runs the project's `runOnSettle` script in its worktree. The script runs once per
@@ -1107,7 +1118,7 @@ mod tests {
             .update(script("printf 'ran\\n' >> settle-runs.txt"), None)
             .unwrap();
         let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
-            shells: vec!["/bin/sh".into()],
+            shells: vec![project_script_shell(&dir)],
             ..Default::default()
         });
         let host = Arc::new(Host {
@@ -1337,7 +1348,7 @@ mod tests {
             json!({"defaultProjectScripts":[script]})
         };
         let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
-            shells: vec!["/bin/sh".into()],
+            shells: vec![project_script_shell(&dir)],
             ..Default::default()
         });
         let host = Arc::new(Host {
