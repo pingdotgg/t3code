@@ -304,6 +304,27 @@ it("keeps the chosen comment order when the right panel remounts the tab", async
     .toBeVisible();
 });
 
+it("comes back at the scroll position it left when the right panel remounts the tab", async () => {
+  setup();
+  const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+  const value = { ...detail, body, url: "https://github.com/owner/repo/pull/2" };
+  const mount = async () => {
+    const container = document.createElement("div");
+    container.className = "flex h-[300px]";
+    const screen = await renderUi(tab(value), { container });
+    const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
+    return Object.assign(screen, { scroller });
+  };
+  {
+    await using screen = await mount();
+    screen.scroller.scrollTop = 500;
+    await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
+    await act(async () => screen.scroller.dispatchEvent(new Event("scroll")));
+  }
+  await using screen = await mount();
+  expect(screen.scroller.scrollTop).toBe(500);
+});
+
 it("scrolls from the keyboard after a click inside it", async () => {
   setup();
   const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");

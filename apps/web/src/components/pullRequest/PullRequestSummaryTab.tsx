@@ -25,7 +25,14 @@ import {
 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
@@ -461,6 +468,14 @@ export function PullRequestSection({
 
 const COMMENT_PAGE = 10;
 
+interface SummaryView {
+  readonly order: "newest" | "oldest";
+  readonly shown: number;
+  readonly scrollTop: number;
+}
+// Session-only: switching right-panel tabs unmounts the Summary, which comes back as it was left.
+const summaryViewByScopeKey = new Map<string, SummaryView>();
+
 const COMMENT_FILTER_STORAGE_KEY = "t3code:pull-request-comment-filter:v1";
 const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Schema.Boolean });
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
@@ -510,7 +525,23 @@ export function PullRequestSummaryTab({
   const fixCheckLabel =
     requestedFixCheckLabel ?? gt("Fix", { $context: "verb, fix a review finding" });
   const terminology = sourceControlClients.get(detail.provider).changeRequest;
-  const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
+  const viewKey = `${environmentId}:${detail.url}`;
+  const rememberView = (patch: Partial<SummaryView>) => {
+    const view = summaryViewByScopeKey.get(viewKey) ?? {
+      order: "newest",
+      shown: COMMENT_PAGE,
+      scrollTop: 0,
+    };
+    summaryViewByScopeKey.set(viewKey, { ...view, ...patch });
+  };
+  const [shown, setShownState] = useState(() => ({
+    url: detail.url,
+    count: summaryViewByScopeKey.get(viewKey)?.shown ?? COMMENT_PAGE,
+  }));
+  const setShown = (next: { url: string; count: number }) => {
+    setShownState(next);
+    rememberView({ shown: next.count });
+  };
   const shownConversations = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(
     COMMENT_FILTER_STORAGE_KEY,
@@ -536,7 +567,9 @@ export function PullRequestSummaryTab({
     filteredItems,
     shownConversations,
   );
-  const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
+  const [commentOrder, setCommentOrder] = useState(
+    () => summaryViewByScopeKey.get(viewKey)?.order ?? "newest",
+  );
   const visibleItems = orderPullRequestComments(recentItems, commentOrder);
   const showOldestCommentsButton =
     hiddenConversationCount > 0 ? (
@@ -674,6 +707,12 @@ export function PullRequestSummaryTab({
     revealSummary();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries once the description markdown renders, including after its editor closes
   }, [revealUrl, description, checksReveals, descriptionReveals, editingDescription]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts a remounted Summary back at the scroll position it left, before paint
+  useLayoutEffect(() => {
+    const scrollTop = summaryViewByScopeKey.get(viewKey)?.scrollTop ?? 0;
+    if (scrollRef.current && scrollTop > 0) scrollRef.current.scrollTop = scrollTop;
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- restores once per mount
+  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
   useEffect(() => () => stopHolding.current?.(), []);
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
@@ -871,6 +910,7 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef(node);
       }}
+      onScroll={(event) => rememberView({ scrollTop: event.currentTarget.scrollTop })}
       tabIndex={-1}
       data-workspace-focus-default
       className="h-full overflow-y-auto outline-none"
@@ -1152,7 +1192,11 @@ export function PullRequestSummaryTab({
                   ? gt("Show oldest comments first")
                   : gt("Show newest comments first")
               }
-              onClick={() => setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))}
+              onClick={() => {
+                const order = commentOrder === "newest" ? "oldest" : "newest";
+                setCommentOrder(order);
+                rememberView({ order });
+              }}
             >
               <ArrowDownUpIcon aria-hidden className="size-3" />
               {commentOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
