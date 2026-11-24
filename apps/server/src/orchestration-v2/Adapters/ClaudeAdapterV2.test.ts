@@ -1794,9 +1794,10 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         }),
         queryRunner: {
           allocateSessionId: Effect.succeed("native-thread-claude-gate"),
-          open: () =>
-            Effect.sync(() => {
+          open: (input) =>
+            Effect.gen(function* () {
               log.push("open query");
+              if (input.onStartupPhase !== undefined) yield* input.onStartupPhase("mcp");
               return {
                 messages: Stream.never,
                 offer: () => Effect.void,
@@ -1815,7 +1816,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
-              };
+              } satisfies ClaudeAdapterV2.ClaudeAgentSdkQuerySession;
             }),
           forkSession: () => Effect.die("unused"),
           subagentLaunchToolUseId: () => Effect.succeed(null),
@@ -1855,6 +1856,25 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
       );
 
       assert.deepStrictEqual(log, [`enter ${instanceId}`, "open query", "exit"]);
+      // The step reported while the process opens is cleared before the turn runs.
+      const startup = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" || event.type === "provider_turn.updated",
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+      );
+      assert.deepStrictEqual(
+        Array.from(startup, (event) =>
+          event.type === "provider_session.updated"
+            ? (event.providerSession.startupPhase ?? null)
+            : event.type === "provider_turn.updated"
+              ? event.providerTurn.status
+              : null,
+        ),
+        ["mcp", null, "running"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -4530,6 +4550,58 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(harness.processQueues.length, 2);
       yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000704"));
       assert.deepEqual(initCwds, ["/workspace", "/workspace"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reports connecting while a turn's first API request is unanswered", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions();
+      const status = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make("connecting-phase"),
+          text: "Hello",
+          attachments: [],
+        }),
+      );
+      // Init lands before the request and must not count as its answer.
+      yield* harness.offerAndWait(wakeTurnInit);
+      yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000901"));
+      yield* harness.offerAndWait(
+        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000902", text: "Hi." }),
+      );
+      // A later request in the same turn is the model working, not startup.
+      yield* harness.offerAndWait(status("00000000-0000-4000-8000-000000000903"));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "provider_session.updated"
+            ? [event.providerSession.startupPhase ?? null]
+            : [],
+        ),
+        ["connecting", null],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
