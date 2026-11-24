@@ -105,10 +105,12 @@ export default function PreviewImageContent(props: {
               src={props.src}
               alt={props.name}
               className="block max-w-none"
+              // A cached image has its natural size before onLoad runs, so it stays at 0x0 until the
+              // fit scale is known instead of painting at full size for a frame.
               style={
                 natural.width
                   ? { width: natural.width * scale, height: natural.height * scale }
-                  : { maxWidth: "100%" }
+                  : { width: 0, height: 0 }
               }
               onLoad={(event) =>
                 setNatural({
