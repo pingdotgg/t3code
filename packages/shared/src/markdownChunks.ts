@@ -14,7 +14,8 @@ const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
-  [/^ {0,3}<!--/, /-->/],
+  // "<!-->" and "<!--->" close themselves, so the closer is searched from just after "<!".
+  [/^ {0,3}<!(?=--)/, /-->/],
   [/^ {0,3}<\?/, /\?>/],
   [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
   [/^ {0,3}<![A-Za-z]/, />/],

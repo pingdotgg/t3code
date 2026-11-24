@@ -187,6 +187,15 @@ describe("splitMarkdown", () => {
       "$$ trailing",
       "[math]: /inside-math",
       "",
+      "<!-->",
+      "```",
+      "-->",
+      "```",
+      "[comment]: /after-a-closed-comment",
+      "```",
+      "[code]: /inside-a-fence-after-a-comment",
+      "```",
+      "",
       "- ```md",
       "  ~~~",
       "  ~~~",
@@ -194,7 +203,7 @@ describe("splitMarkdown", () => {
       "  ```",
     ].join("\n");
     expect(splitMarkdown(text).definitions).toBe(
-      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence",
+      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
     );
   });
 });
