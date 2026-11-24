@@ -49,7 +49,6 @@ import {
   useDiffPanelStore,
 } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { useHideTestFiles } from "./diffs/useHideTestFiles";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -257,7 +256,7 @@ export default function DiffPanel({
     false,
     Schema.Boolean,
   );
-  const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const { hideTestFiles, setHideTestFiles, matchesHiddenFile, fileLabel } = useHideTestFiles();
   const [baseRefQuery, setBaseRefQuery] = useState("");
   // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
   const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
@@ -754,13 +753,13 @@ export default function DiffPanel({
     return { ...entry, fileKey: `${pathKey}:${occurrence}` };
   });
   const diffFileKeys = renderableFileEntries.map((file) => file.fileKey);
-  const testFileCount = renderableFiles.filter((file) =>
-    isTestChangedFile(resolveFileDiffPath(file)),
+  const matchingFileCount = renderableFiles.filter((file) =>
+    matchesHiddenFile(resolveFileDiffPath(file)),
   ).length;
   // Hiding is display-only: lazy loading indexes into the full list. A requested file stays visible.
   const isFileShown = (file: FileDiffMetadata) => {
     const path = resolveFileDiffPath(file);
-    return !hideTestFiles || path === selectedFilePath || !isTestChangedFile(path);
+    return !hideTestFiles || path === selectedFilePath || !matchesHiddenFile(path);
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
@@ -1525,12 +1524,14 @@ export default function DiffPanel({
             {diffIgnoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
           </TooltipPopup>
         </Tooltip>
-        {testFileCount > 0 && (
+        {matchingFileCount > 0 && (
           <Tooltip>
             <TooltipTrigger
               render={
                 <Toggle
-                  aria-label={gt("Hide test files")}
+                  aria-label={
+                    fileLabel === "matching" ? gt("Hide matching files") : gt("Hide test files")
+                  }
                   variant="ghost"
                   size="sm"
                   pressed={hideTestFiles}
@@ -1543,10 +1544,12 @@ export default function DiffPanel({
             <TooltipPopup side="top">
               {hideTestFiles
                 ? gt(
-                    "{count, plural, one {Show {count} hidden test file} other {Show {count} hidden test files}}",
-                    { count: testFileCount },
+                    "{kind, select, matching {{count, plural, one {Show {count} hidden matching file} other {Show {count} hidden matching files}}} other {{count, plural, one {Show {count} hidden test file} other {Show {count} hidden test files}}}}",
+                    { kind: fileLabel, count: matchingFileCount },
                   )
-                : gt("Hide test files")}
+                : fileLabel === "matching"
+                  ? gt("Hide matching files")
+                  : gt("Hide test files")}
             </TooltipPopup>
           </Tooltip>
         )}

@@ -70,6 +70,7 @@ import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeConte
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
+import { DiffHideFilePatternsSettings } from "./DiffHideFilePatternsSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { managedTelemetryOffMessage, usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -575,6 +576,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
       ? [gt("Default diff file state")]
       : []),
+    ...(settings.diffHideFilePatterns !== DEFAULT_UNIFIED_SETTINGS.diffHideFilePatterns
+      ? ["Additional hidden file patterns"]
+      : []),
     ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
       ? [gt("Diff whitespace changes")]
       : []),
@@ -722,6 +726,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
+      diffHideFilePatterns: DEFAULT_UNIFIED_SETTINGS.diffHideFilePatterns,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
@@ -1814,6 +1819,7 @@ export function DiffsSettingsPanel() {
             </Select>
           }
         />
+        <DiffHideFilePatternsSettings />
         <DiffColorsSettingsRow />
       </SettingsSection>
 
