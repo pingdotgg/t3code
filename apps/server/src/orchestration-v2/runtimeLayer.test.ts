@@ -14037,6 +14037,247 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
+  it.effect(
+    "holds a buffered provider notification behind a usage limit so it cannot release a held wake before reset",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("wake-limit:buffered-provider-notification");
+        const projectId = ProjectId.make("wake-limit:project:buffered-provider-notification");
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+        const taskId = NodeId.make("wake-limit:task:buffered-provider-notification");
+        const wakeMessageId = MessageId.make("wake-limit:message:buffered-provider-notification");
+        const bufferedWakeMessageId = MessageId.make(
+          "wake-limit:buffered-message:buffered-provider-notification",
+        );
+        yield* seedProject({
+          projectId,
+          title: "Wake limit buffered project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("wake-limit:create:buffered-provider-notification"),
+          threadId,
+          projectId,
+          title: "Limited thread with buffered wake",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("wake-limit:start:buffered-provider-notification"),
+          threadId,
+          messageId: MessageId.make("wake-limit:start:buffered-provider-notification"),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* events.write({
+          commandId: CommandId.make("wake-limit:failure:buffered-provider-notification"),
+          events: [
+            {
+              id: EventId.make("wake-limit:run:buffered-provider-notification"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...run,
+                status: "failed",
+                completedAt: now,
+                delegatedCompletion: {
+                  disposition: "open",
+                  nextGeneration: 2,
+                  delivery: {
+                    generation: 1,
+                    messageId: wakeMessageId,
+                    taskIds: [taskId],
+                  },
+                },
+              },
+            },
+            {
+              id: EventId.make("wake-limit:error:buffered-provider-notification"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("wake-limit:error:buffered-provider-notification"),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        yield* orchestrator.dispatch(
+          limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now))!,
+        );
+        const armed = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        assert.equal(armed.limitRecovery?.runId, run.id);
+        assert.equal(armed.limitRecovery?.resetAt, resetAt);
+        assert.isTrue(armed.limitRecovery?.autoResume);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("wake-limit:wake:buffered-provider-notification"),
+          threadId,
+          messageId: wakeMessageId,
+          text: `Delegated task ${taskId} reached a terminal state. Use task_status with taskId ${taskId} to read the result.`,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: run.id,
+            generation: 1,
+            taskIds: [taskId],
+          },
+        });
+        const afterWake = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(afterWake.runs, 2);
+        const wakeRun = afterWake.runs[1]!;
+        assert.equal(wakeRun.status, "queued");
+        assert.isTrue(wakeRun.queueHeld);
+        assert.equal(wakeRun.userMessageId, wakeMessageId);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("wake-limit:buffered-wake:buffered-provider-notification"),
+          threadId,
+          messageId: bufferedWakeMessageId,
+          text: "Background activity updated",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "provider",
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "updated",
+            summary: "Background activity updated",
+          },
+        });
+        const afterBufferedWake = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(afterBufferedWake.runs, 3);
+        const bufferedWakeRun = afterBufferedWake.runs[2]!;
+        assert.equal(bufferedWakeRun.status, "queued");
+        assert.isTrue(bufferedWakeRun.queueHeld);
+        assert.equal(bufferedWakeRun.userMessageId, bufferedWakeMessageId);
+        assert.equal(
+          afterBufferedWake.runs.find((candidate) => candidate.id === wakeRun.id)?.status,
+          "queued",
+        );
+        assert.isTrue(
+          afterBufferedWake.runs.find((candidate) => candidate.id === wakeRun.id)?.queueHeld,
+        );
+        assert.equal(afterBufferedWake.thread.limitRecovery?.runId, run.id);
+        assert.equal(afterBufferedWake.thread.limitRecovery?.resetAt, resetAt);
+        assert.isTrue(afterBufferedWake.thread.limitRecovery?.autoResume);
+        yield* TestClock.adjust("1 minute");
+        const atReset = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const resume = limitRecoveryCommand(atReset, true, Date.parse(resetAt));
+        assert.isNotNull(resume);
+        yield* orchestrator.dispatch(resume);
+        const afterResume = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(afterResume.runs, 4);
+        const continuation = afterResume.runs[3]!;
+        assert.equal(continuation.usageLimitContinuationOfRunId, run.id);
+        assert.equal(
+          afterResume.runs.find((candidate) => candidate.id === wakeRun.id)?.status,
+          "queued",
+        );
+        assert.isTrue(afterResume.runs.find((candidate) => candidate.id === wakeRun.id)?.queueHeld);
+        assert.equal(
+          afterResume.runs.find((candidate) => candidate.id === bufferedWakeRun.id)?.status,
+          "queued",
+        );
+        assert.isTrue(
+          afterResume.runs.find((candidate) => candidate.id === bufferedWakeRun.id)?.queueHeld,
+        );
+        const promoted = yield* Queue.unbounded<RunId>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* events.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+              ? Queue.offer(promoted, stored.event.payload.id)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+        const completedAt = yield* DateTime.now;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("wake-limit:resumed-completed:buffered-provider-notification"),
+              type: "run.updated",
+              threadId,
+              runId: continuation.id,
+              ...(continuation.rootNodeId === null ? {} : { nodeId: continuation.rootNodeId }),
+              providerInstanceId: continuation.providerInstanceId,
+              occurredAt: completedAt,
+              payload: {
+                ...continuation,
+                status: "completed",
+                completedAt,
+              },
+            },
+          ],
+        });
+        assert.equal(yield* Queue.take(promoted), wakeRun.id);
+        const afterCompletion = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          afterCompletion.runs.find((candidate) => candidate.id === wakeRun.id)?.status,
+          "starting",
+        );
+        assert.isNotTrue(
+          afterCompletion.runs.find((candidate) => candidate.id === wakeRun.id)?.queueHeld,
+        );
+        assert.equal(
+          afterCompletion.runs.find((candidate) => candidate.id === bufferedWakeRun.id)?.status,
+          "queued",
+        );
+        assert.isNotTrue(
+          afterCompletion.runs.find((candidate) => candidate.id === bufferedWakeRun.id)?.queueHeld,
+        );
+      }),
+  );
+
   it.effect.each([
     "resume",
     "resume-started",

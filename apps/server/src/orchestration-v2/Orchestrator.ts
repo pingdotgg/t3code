@@ -8085,17 +8085,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
-    // A subagent finishing must not wake a thread whose provider is still
-    // usage-limited: the wake would fail on the same limit and drop the armed
-    // auto-resume. Queue it held behind the limited run instead; the reset
-    // resume releases it. Buffered wakes only replay produced output, so they start.
+    // Automatic wakes—including buffered provider notifications—must not start
+    // while usage-limited, or they become latestExecutedRun, drop armed
+    // auto-resume, and release held wakes. Hold them until reset or manual resume.
     let limitedRunForAutomaticWake: OrchestrationV2Run | undefined;
     if (
       activeRun === undefined &&
       command.createdBy === "agent" &&
       command.usageLimitContinuationOfRunId === undefined &&
       (command.delegatedCompletion !== undefined || command.notification !== undefined) &&
-      !isBufferedProviderNotification(command) &&
       startsOrQueuesRun &&
       usageLimitHoldsQueue(projection, modelSelection.instanceId, yield* DateTime.now)
     ) {
