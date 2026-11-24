@@ -943,6 +943,32 @@ describe("synchronized model preferences", () => {
     expect(first.favorites).toEqual([{ provider, model: "sol" }]);
   });
 
+  it("reorders only existing favorites without dropping concurrent adds or restoring removals", () => {
+    const sol = { provider, model: "sol" };
+    const luna = { provider, model: "luna" };
+    const astra = { provider, model: "astra" };
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      favorites: [sol, luna],
+    });
+    expect(
+      applyServerSettingsPatch(initial, { reorderModelFavorites: [luna, sol] }).favorites,
+    ).toEqual([luna, sol]);
+    // Another window starred astra before reorder arrived: astra is kept.
+    const withAdded = applyServerSettingsPatch(initial, {
+      setModelFavorites: [{ ...astra, favorite: true }],
+    });
+    expect(
+      applyServerSettingsPatch(withAdded, { reorderModelFavorites: [luna, sol] }).favorites,
+    ).toEqual([luna, sol, astra]);
+    // Another window unstarred sol before reorder arrived: sol is not restored.
+    const withRemoved = applyServerSettingsPatch(withAdded, {
+      setModelFavorites: [{ ...sol, favorite: false }],
+    });
+    expect(
+      applyServerSettingsPatch(withRemoved, { reorderModelFavorites: [luna, sol] }).favorites,
+    ).toEqual([luna, astra]);
+  });
+
   it("preserves unrelated models and providers during bulk visibility and order edits", () => {
     const otherProvider = ProviderInstanceId.make("claude_work");
     const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

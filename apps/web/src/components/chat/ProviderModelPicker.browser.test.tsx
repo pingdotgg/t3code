@@ -1,9 +1,11 @@
 import {
+  AuthSettingsWriteScope,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type AuthEnvironmentScope,
   type ModelSelection,
   type ServerSettings,
   type ServerSettingsPatch,
@@ -14,7 +16,7 @@ import { RegistryContext } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -26,21 +28,25 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 const FAVORITES_ENV_ID = EnvironmentId.make("favorites-reorder-test");
 const favoritesTestState = vi.hoisted(() => ({
   settingsAtom: null as Atom.Writable<ServerSettings | null> | null,
-  permissionAtom: null as Atom.Writable<boolean> | null,
+  canWriteSettings: true,
   savedPatches: [] as Array<ServerSettingsPatch>,
   updateSettingsCommand: null as unknown,
 }));
 
+vi.mock(import("../../state/session"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useEnvironmentScope: ((id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
+      id === FAVORITES_ENV_ID
+        ? scope === AuthSettingsWriteScope && favoritesTestState.canWriteSettings
+        : actual.useEnvironmentScope(id, scope)) as never,
+  };
+});
+
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
-  const updateSettings = {
-    ...actual.serverEnvironment.updateSettings,
-    permissionAtom: ((id: EnvironmentId | null) =>
-      id === FAVORITES_ENV_ID && favoritesTestState.permissionAtom
-        ? favoritesTestState.permissionAtom
-        : actual.serverEnvironment.updateSettings.permissionAtom(id)) as never,
-  };
-  favoritesTestState.updateSettingsCommand = updateSettings;
+  favoritesTestState.updateSettingsCommand = actual.serverEnvironment.updateSettings;
   return {
     ...actual,
     serverEnvironment: {
@@ -49,7 +55,6 @@ vi.mock(import("../../state/server"), async (original) => {
         id === FAVORITES_ENV_ID && favoritesTestState.settingsAtom
           ? favoritesTestState.settingsAtom
           : actual.serverEnvironment.settingsValueAtom(id)) as never,
-      updateSettings,
     },
   };
 });
@@ -472,14 +477,13 @@ it("reorders favorites by drag handle and Alt+Arrow keys while keeping jumps and
     favorites: initialFavorites,
     providerModelPreferences: {},
   });
-  const permissionAtom = Atom.make(true);
   favoritesTestState.settingsAtom = settingsAtom;
-  favoritesTestState.permissionAtom = permissionAtom;
+  favoritesTestState.canWriteSettings = true;
   favoritesTestState.savedPatches = [];
   using _favoritesReset = {
     [Symbol.dispose]() {
       favoritesTestState.settingsAtom = null;
-      favoritesTestState.permissionAtom = null;
+      favoritesTestState.canWriteSettings = true;
       favoritesTestState.savedPatches = [];
     },
   };
@@ -529,7 +533,7 @@ it("reorders favorites by drag handle and Alt+Arrow keys while keeping jumps and
   ]);
   expect(document.querySelectorAll("[data-favorite-drag-handle]").length).toBe(3);
 
-  // Drag the third favorite (GPT Astra) onto the first row (GPT Sol) via its drag handle.
+  // Drag the third favorite (GPT Astra) onto the first row (GPT Sol) via real browser pointer input.
   const firstRow = page.getByRole("option", { name: /GPT Sol/ }).element();
   const thirdRow = page.getByRole("option", { name: /GPT Astra/ }).element();
   const firstSortable = firstRow.closest<HTMLElement>("[data-model-picker-sortable-index]")!;
@@ -537,31 +541,34 @@ it("reorders favorites by drag handle and Alt+Arrow keys while keeping jumps and
   const thirdHandle = thirdRow.querySelector<HTMLElement>("[data-favorite-drag-handle]")!;
   const startRect = thirdHandle.getBoundingClientRect();
   const targetRect = firstRow.getBoundingClientRect();
+  const frame = window.frameElement?.getBoundingClientRect();
   const startX = startRect.left + startRect.width / 2;
   const startY = startRect.top + startRect.height / 2;
   const targetY = targetRect.top + targetRect.height / 2;
-
-  const dragPointer = (type: string, clientY: number, buttons: number) =>
-    new PointerEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      isPrimary: true,
-      button: 0,
+  const mouse = (
+    type: "mousePressed" | "mouseMoved" | "mouseReleased",
+    x: number,
+    y: number,
+    buttons: number,
+  ) =>
+    cdp().send("Input.dispatchMouseEvent", {
+      type,
+      x: x + (frame?.left ?? 0),
+      y: y + (frame?.top ?? 0),
+      button: type === "mouseMoved" ? "none" : "left",
       buttons,
-      pointerId: 1,
-      pointerType: "mouse",
-      clientX: startX,
-      clientY,
+      clickCount: type === "mouseMoved" ? 0 : 1,
     });
 
-  thirdHandle.dispatchEvent(dragPointer("pointerdown", startY, 1));
-  document.dispatchEvent(dragPointer("pointermove", startY - 8, 1));
+  await mouse("mouseMoved", startX, startY, 0);
+  await mouse("mousePressed", startX, startY, 1);
+  await mouse("mouseMoved", startX, startY - 8, 1);
   await vi.waitFor(() => expect(thirdSortable.dataset.dragging).toBe("true"));
-  document.dispatchEvent(dragPointer("pointermove", targetY, 1));
+  await mouse("mouseMoved", startX, targetY, 1);
   await vi.waitFor(() =>
     expect(firstSortable.style.transform).toMatch(/translate3d\(0px,\s*[1-9]/),
   );
-  document.dispatchEvent(dragPointer("pointerup", targetY, 0));
+  await mouse("mouseReleased", startX, targetY, 0);
 
   await vi.waitFor(() =>
     expect(optionOrder()).toEqual([
@@ -571,10 +578,13 @@ it("reorders favorites by drag handle and Alt+Arrow keys while keeping jumps and
     ]),
   );
   // Dragging did not accidentally select the model or close the picker.
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toBeVisible();
+  await expect.element(search).toHaveAttribute("aria-keyshortcuts", "Alt+ArrowUp Alt+ArrowDown");
   expect(onInstanceModelChange).not.toHaveBeenCalled();
   // Hidden/disabled favorites stay in their original slot when visible favorites reorder.
   expect(favoritesTestState.savedPatches.at(-1)).toEqual({
-    favorites: [
+    reorderModelFavorites: [
       { provider: codex, model: "astra" },
       { provider: disabled, model: "hidden-fav" },
       { provider: codex, model: "sol" },
@@ -582,9 +592,9 @@ it("reorders favorites by drag handle and Alt+Arrow keys while keeping jumps and
     ],
   });
 
-  // Keyboard reorder: move the highlighted first item (GPT Astra) down twice with Alt+ArrowDown.
-  const search = page.getByPlaceholder("Search models...");
+  // Keyboard reorder: highlight the first item (GPT Astra) and move it down twice with Alt+ArrowDown.
   await expect.element(search).toHaveFocus();
+  await page.getByRole("option", { name: /GPT Astra/ }).hover();
   await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
   await vi.waitFor(() =>
     expect(optionOrder()).toEqual([

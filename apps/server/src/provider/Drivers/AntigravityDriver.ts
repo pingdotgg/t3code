@@ -3,8 +3,10 @@ import {
   AntigravitySettings,
   ProviderDriverKind,
   ProviderSetupError,
+  RuntimeMode,
   settingsSecretLiteral,
 } from "@t3tools/contracts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -17,8 +19,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -35,6 +37,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { brokenRuntimeError } from "../providerCompatibility.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -47,8 +50,8 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
-  antigravityCliSessionMode,
   antigravityModelOptions,
+  antigravitySessionMode,
   antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
@@ -84,7 +87,13 @@ const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
+const RememberedRuntimeModes = Schema.fromJsonString(
+  Schema.Struct({ authMethod: Schema.String, modes: Schema.Array(RuntimeMode) }),
+);
+const decodeRememberedRuntimeModes = Schema.decodeUnknownOption(RememberedRuntimeModes);
+const encodeRememberedRuntimeModes = Schema.encodeSync(RememberedRuntimeModes);
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
 const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
@@ -177,6 +186,18 @@ export const AntigravityDriver: ProviderDriver<
       ),
     );
     const profileDirectory = directories.profile;
+    // Only a session reports whether agy offers Auto, so keep the last answer across restarts.
+    const runtimeModesPath = path.join(profileDirectory, "t3-runtime-modes.json");
+    const rememberedRuntimeModes = yield* fileSystem.readFileString(runtimeModesPath).pipe(
+      Effect.map((contents) =>
+        decodeRememberedRuntimeModes(contents).pipe(
+          Option.filter((saved) => saved.authMethod === auth.authMethod),
+          Option.map((saved) => saved.modes),
+          Option.getOrUndefined,
+        ),
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
     for (const directory of [
       directories.runtimeTemp,
       path.join(profileDirectory, "antigravity-acp", "tmp"),
@@ -313,22 +334,44 @@ export const AntigravityDriver: ProviderDriver<
         childProcessSpawner: spawner,
         spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
+      // A custom or PATH executable has no version until it answers initialize.
+      const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
+        const version = (yield* runtime.initialize()).agentInfo?.version;
+        const advisory = version ? yield* installation.compatibility(version) : undefined;
+        const refused =
+          version &&
+          brokenRuntimeError({
+            instanceId,
+            name: "Antigravity",
+            version,
+            advisory,
+            action:
+              executable.source === "managed"
+                ? "Update it in Antigravity setup"
+                : `Update the Antigravity executable at ${executable.executablePath}`,
+          });
+        if (refused) {
+          return yield* new AcpErrors.AcpTransportError({ detail: refused.detail, cause: refused });
+        }
+        return yield* runtime.start();
+      });
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
-        start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tapError((cause): Effect.Effect<void> =>
-                runtimeInput.onAuthorizationUrl === undefined &&
-                isAntigravitySignInRequiredError(cause)
-                  ? provider.onAuthRequired
-                  : Effect.void,
-              ),
+        setMode: (modeId: string) =>
+          runtime.getModeState.pipe(
+            Effect.flatMap((modeState) =>
+              runtime.setMode(antigravitySessionMode(modeId, modeState)),
             ),
+          ),
+        start: () =>
+          startCompatible().pipe(
+            Effect.tapError((cause): Effect.Effect<void> =>
+              runtimeInput.onAuthorizationUrl === undefined &&
+              isAntigravitySignInRequiredError(cause)
+                ? provider.onAuthRequired
+                : Effect.void,
+            ),
+          ),
       };
     });
 
@@ -382,10 +425,6 @@ export const AntigravityDriver: ProviderDriver<
       readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
     }) {
       if (auth.authMethod !== "oauth-personal") return undefined;
-      const resolved = yield* installation
-        .resolve(settings.binaryPath, processEnvironment)
-        .pipe(Effect.option);
-      if (Option.isSome(resolved) && resolved.value.harnessPath !== null) return undefined;
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
         .pipe(
@@ -398,8 +437,7 @@ export const AntigravityDriver: ProviderDriver<
               }),
           ),
         );
-      const { executable, spawn } = yield* prepareSpawn(cwd, processEnvironment);
-      if (executable.harnessPath !== null) return undefined;
+      const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
       // Without a display it prints the link only, instead of opening a browser on this machine.
@@ -463,6 +501,7 @@ export const AntigravityDriver: ProviderDriver<
       >,
     ) {
       yield* provider.onSessionStarted(started);
+      yield* authFlow.onSignedInElsewhere;
       yield* Stream.runForEach(runtime.getEvents(), (event) => {
         if (event._tag === "EventStreamBarrier") {
           return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
@@ -553,6 +592,16 @@ export const AntigravityDriver: ProviderDriver<
       probeUsage: usage.probe,
       clearUsage: usage.clear,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
+      ...(rememberedRuntimeModes ? { rememberedRuntimeModes } : {}),
+      rememberRuntimeModes: (modes) =>
+        writeFileStringAtomically({
+          filePath: runtimeModesPath,
+          contents: encodeRememberedRuntimeModes({ authMethod: auth.authMethod, modes }),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.catch(() => Effect.logWarning("Could not save Antigravity permission modes.")),
+        ),
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -582,7 +631,8 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
-      onSessionStarted: provider.onSessionStarted,
+      onSessionStarted: (started, cwd) =>
+        provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event, cwd) => {
         if (event._tag === "ConfigOptionsUpdated") {
           return provider.onConfigOptionsUpdated(event.configOptions);
@@ -651,7 +701,11 @@ export const AntigravityDriver: ProviderDriver<
                 : cause._tag === "ProviderSetupError" &&
                     (cause.operation === "configure" || cause.operation === "start")
                   ? cause.detail
-                  : refreshFailureDetail(cause),
+                  : cause._tag === "AcpTransportError" &&
+                      isProviderSetupError(cause.cause) &&
+                      cause.cause.operation === "runtime"
+                    ? cause.cause.detail
+                    : refreshFailureDetail(cause),
               cause,
             }),
       ),

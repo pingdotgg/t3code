@@ -119,33 +119,43 @@ export function reorderVisibleFavorites<T extends FavoriteModelEntry>(
     return [...allFavorites];
   }
 
-  const deduped: T[] = [];
-  const byKey = new Map<string, T>();
+  const visibleKeySet = new Set(visibleKeys);
+  const byVisibleKey = new Map<string, T>();
   for (const favorite of allFavorites) {
     const key = favoriteModelKey(favorite);
-    if (byKey.has(key)) continue;
-    byKey.set(key, favorite);
-    deduped.push(favorite);
+    if (visibleKeySet.has(key) && !byVisibleKey.has(key)) {
+      byVisibleKey.set(key, favorite);
+    }
   }
 
   const nextVisibleKeys = [...visibleKeys];
   const [moved] = nextVisibleKeys.splice(fromIndex, 1);
-  if (moved === undefined) return deduped;
+  if (moved === undefined) return [...allFavorites];
   nextVisibleKeys.splice(toIndex, 0, moved);
 
   const nextVisibleEntries: T[] = [];
-  const visibleKeySet = new Set<string>();
+  const placedVisibleKeys = new Set<string>();
   for (const key of nextVisibleKeys) {
-    const entry = byKey.get(key);
-    if (!entry || visibleKeySet.has(key)) continue;
-    visibleKeySet.add(key);
+    const entry = byVisibleKey.get(key);
+    if (!entry || placedVisibleKeys.has(key)) continue;
+    placedVisibleKeys.add(key);
     nextVisibleEntries.push(entry);
   }
 
+  const seenVisibleKeys = new Set<string>();
   let visibleCursor = 0;
-  return deduped.map((entry) =>
-    visibleKeySet.has(favoriteModelKey(entry)) ? nextVisibleEntries[visibleCursor++]! : entry,
-  );
+  const result: T[] = [];
+  for (const entry of allFavorites) {
+    const key = favoriteModelKey(entry);
+    if (!placedVisibleKeys.has(key)) {
+      result.push(entry);
+      continue;
+    }
+    if (seenVisibleKeys.has(key)) continue;
+    seenVisibleKeys.add(key);
+    result.push(nextVisibleEntries[visibleCursor++]!);
+  }
+  return result;
 }
 
 export function pendingFavoriteOrder<T extends FavoriteModelEntry>(

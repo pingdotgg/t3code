@@ -392,6 +392,7 @@ export function applyServerSettingsPatch(
   const {
     migrateModelPreferences,
     setModelFavorites,
+    reorderModelFavorites,
     setModelsHidden,
     setProviderModelOrder,
     providerModelPreferences,
@@ -451,7 +452,7 @@ export function applyServerSettingsPatch(
         : undefined;
   const initialFavorites =
     patch.favorites ?? current.favorites ?? migrateModelPreferences?.favorites ?? null;
-  const favorites =
+  const updatedFavorites =
     setModelFavorites?.reduce(
       (current, change) => {
         const exists = current.some(
@@ -467,6 +468,26 @@ export function applyServerSettingsPatch(
       },
       [...(initialFavorites ?? [])],
     ) ?? initialFavorites;
+  const favorites =
+    reorderModelFavorites && updatedFavorites !== null
+      ? (() => {
+          const rank = new Map<string, number>();
+          for (const entry of reorderModelFavorites) {
+            const key = `${entry.provider}\0${entry.model}`;
+            if (!rank.has(key)) rank.set(key, rank.size);
+          }
+          const rankedEntries = updatedFavorites
+            .filter((entry) => rank.has(`${entry.provider}\0${entry.model}`))
+            .sort(
+              (a, b) =>
+                rank.get(`${a.provider}\0${a.model}`)! - rank.get(`${b.provider}\0${b.model}`)!,
+            );
+          let cursor = 0;
+          return updatedFavorites.map((entry) =>
+            rank.has(`${entry.provider}\0${entry.model}`) ? rankedEntries[cursor++]! : entry,
+          );
+        })()
+      : updatedFavorites;
   const initialModelPreferences =
     providerModelPreferences ??
     current.providerModelPreferences ??

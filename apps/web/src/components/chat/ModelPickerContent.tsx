@@ -2,6 +2,7 @@ import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  AuthSettingsWriteScope,
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
@@ -23,12 +24,16 @@ import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifi
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AsyncResult } from "effect/reactivity";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderUpdateRequiredNotice,
+  providerUpdateChannelLags,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   memo,
+  useId,
   useState,
   useEffect,
   useEffectEvent,
@@ -61,7 +66,8 @@ import {
 import { ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { registerModelPickerContent } from "../../modelPickerVisibility";
-import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
+import { primaryServerKeybindingsAtom } from "../../state/server";
+import { useEnvironmentScope } from "~/state/session";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -242,7 +248,11 @@ function ModelPickerProviderNotices({
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
   emptyLabel: string;
-  updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
+  updateRequiredNotices: ReadonlyArray<{
+    instanceId: ProviderInstanceId;
+    notice: string;
+    canUpdateInSettings: boolean;
+  }>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
@@ -275,20 +285,25 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {updateRequiredNotices.map(({ instanceId, notice }) => (
+      {updateRequiredNotices.map(({ instanceId, notice, canUpdateInSettings }) => (
         <p
           key={instanceId}
           className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
         >
-          {notice}{" "}
-          <InlineButton
-            onClick={() => {
-              onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
-            }}
-          >
-            <T>Provider settings</T>
-          </InlineButton>
+          {notice}
+          {canUpdateInSettings ? (
+            <>
+              {" "}
+              <InlineButton
+                onClick={() => {
+                  onRequestClose?.();
+                  void navigate({ to: "/settings/providers" });
+                }}
+              >
+                <T>Provider settings</T>
+              </InlineButton>
+            </>
+          ) : null}
         </p>
       ))}
     </>
@@ -534,9 +549,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const isDraggingFavoriteRef = useRef(false);
   const suppressClickAfterDragRef = useRef(false);
   const { favorites } = useEnvironmentModelPreferences(props.environmentId);
-  const canUpdatePreferences = useAtomValue(
-    serverEnvironment.updateSettings.permissionAtom(props.environmentId),
-  );
+  const canUpdatePreferences = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
+  const reorderHintId = useId();
   const [pendingFavorites, setPendingFavorites] =
     useState<ReadonlyArray<FavoriteModelEntry> | null>(null);
   const [draggingFavoriteKey, setDraggingFavoriteKey] = useState<string | null>(null);
@@ -969,8 +983,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     !isSearching &&
     canUpdatePreferences &&
     visibleModels.length > 1;
+  const canReorderFavoritesRef = useRef(canReorderFavorites);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps drag-end callbacks aligned with current reorder eligibility
+  useLayoutEffect(() => {
+    canReorderFavoritesRef.current = canReorderFavorites;
+  }, [canReorderFavorites]);
   const handleReorderFavorites = (fromIndex: number, toIndex: number) => {
-    if (!canReorderFavorites) return;
+    if (!canReorderFavoritesRef.current) return;
     const visibleKeys = visibleModels.map((model) =>
       providerModelKey(model.instanceId, model.slug),
     );
@@ -988,7 +1007,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (unchanged) return;
     const seq = ++reorderSeqRef.current;
     setPendingFavorites(nextFavorites);
-    void updateModelPreferences({ favorites: nextFavorites }).then((result) => {
+    void updateModelPreferences({ reorderModelFavorites: nextFavorites }).then((result) => {
       if (seq === reorderSeqRef.current && (!result || AsyncResult.isFailure(result))) {
         setPendingFavorites(null);
       }
@@ -1019,7 +1038,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const notice = shown
       ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
       : null;
-    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+    return notice
+      ? [
+          {
+            instanceId: entry.instanceId,
+            notice,
+            canUpdateInSettings: !providerUpdateChannelLags(entry.snapshot, searchQuery),
+          },
+        ]
+      : [];
   });
 
   const modelJumpModelKeys = visibleModels
@@ -1291,9 +1318,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             <ComboboxSearchInput
               ref={searchInputRef}
               placeholder={gt("Search models...")}
+              aria-keyshortcuts={canReorderFavorites ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+              aria-describedby={canReorderFavorites ? reorderHintId : undefined}
               value={searchQuery}
               onChange={(e) => {
                 if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
+                if (e.target.value.trim().length > 0) {
+                  canReorderFavoritesRef.current = false;
+                }
                 isDraggingFavoriteRef.current = false;
                 suppressClickAfterDragRef.current = false;
                 setDraggingFavoriteKey(null);
@@ -1416,6 +1448,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             />
+            {canReorderFavorites ? (
+              <span id={reorderHintId} className="sr-only">
+                <T>Press Alt+Up or Alt+Down to reorder favorites</T>
+              </span>
+            ) : null}
 
             {canReorderFavorites ? (
               <ModelPickerSortableFavoritesList
@@ -1433,6 +1470,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 onDragEnd={(event) => {
                   isDraggingFavoriteRef.current = false;
                   setDraggingFavoriteKey(null);
+                  if (!canReorderFavoritesRef.current) return;
                   if (!event.over || event.active.id === event.over.id) return;
                   const fromIndex = filteredItemKeys.indexOf(String(event.active.id));
                   const toIndex = filteredItemKeys.indexOf(String(event.over.id));

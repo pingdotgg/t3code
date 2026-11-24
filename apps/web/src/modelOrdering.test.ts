@@ -72,6 +72,24 @@ describe("reorderVisibleFavorites", () => {
       { provider: claude, model: "opus" },
     ]);
   });
+
+  it("preserves repeated non-visible entries in their original slots", () => {
+    const hidden = { provider: antigravity, model: "hidden" };
+    const all = [
+      { provider: codex, model: "sol" },
+      hidden,
+      hidden,
+      { provider: claude, model: "opus" },
+    ];
+    const visible = [providerModelKey(codex, "sol"), providerModelKey(claude, "opus")];
+
+    expect(reorderVisibleFavorites(all, visible, 1, 0)).toEqual([
+      { provider: claude, model: "opus" },
+      hidden,
+      hidden,
+      { provider: codex, model: "sol" },
+    ]);
+  });
 });
 
 describe("pendingFavoriteOrder", () => {

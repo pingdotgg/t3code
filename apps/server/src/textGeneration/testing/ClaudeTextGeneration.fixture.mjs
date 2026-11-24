@@ -68,6 +68,23 @@ if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {
   fail("stdin missing expected content", 4);
 }
 
+const imageRejection = process.env.T3_FAKE_CLAUDE_IMAGE_REJECTION;
+if (imageRejection && stdinContent.includes('"type":"image"')) {
+  if (process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG) {
+    NodeFS.appendFileSync(process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG, "image\n");
+  }
+  process.stdout.write(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      api_error_status: 400,
+      result: `API Error: 400 ${imageRejection}`,
+    }) + "\n",
+  );
+  process.exit(1);
+}
+
 const configDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
 if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {
   fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);

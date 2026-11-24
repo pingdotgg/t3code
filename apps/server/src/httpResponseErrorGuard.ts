@@ -25,7 +25,6 @@ export function guardHttpResponseWriteErrors<T extends NodeHttp.Server>(
 // into a closed connection, and a slow client reconnects in the middle of a connect.
 const HTTP_KEEP_ALIVE_TIMEOUT_MS = 95_000;
 
-/** Install before `rejectRequestsUntilServing`, whose handoff starts at the next request listener. */
 export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
   server.keepAliveTimeout = HTTP_KEEP_ALIVE_TIMEOUT_MS;
   // `close` drops only the connections idle at that moment. One that finishes
@@ -48,8 +47,8 @@ export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
 
 /**
  * NodeHttpServer listens before serve() attaches its handlers, so requests in
- * between would hang. Install this after the write-error guards so only the
- * serving handlers trigger the handoff.
+ * between would hang. Its own pre-listen fallback stays silent while any other
+ * request listener exists, so only a listener added after listening takes over.
  */
 export function rejectRequestsUntilServing<T extends NodeHttp.Server>(server: T): T {
   const rejectRequest = (_request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
@@ -64,6 +63,7 @@ export function rejectRequestsUntilServing<T extends NodeHttp.Server>(server: T)
   server.on("upgrade", rejectUpgrade);
   // Node emits newListener before adding the handler, making the handoff synchronous.
   server.on("newListener", function onNewListener(event) {
+    if (!server.listening) return;
     if (event === "request") server.off("request", rejectRequest);
     if (event === "upgrade") server.off("upgrade", rejectUpgrade);
     if (
