@@ -519,7 +519,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requirePublished(themeId);
         // A saved edit is kept, so the effect that would undo it is dropped.
-        yield* publish(themeId, theme);
+        yield* publish(themeId, theme).pipe(Effect.asVoid);
       }),
     );
   });
@@ -535,15 +535,10 @@ const make = Effect.gen(function* () {
           THEME_BACKGROUND_EXTENSIONS,
           (extension) => {
             const file = NodePath.join(environmentThemesDir, `${themeId}.${extension}`);
-            return Effect.tryPromise(async () => {
-              try {
-                return (await NodeFS.promises.lstat(file)).isFile();
-              } catch (error) {
-                if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                  return false;
-                }
-                throw error;
-              }
+            return Effect.try({
+              try: () => NodeFS.lstatSync(file, { throwIfNoEntry: false })?.isFile() ?? false,
+              catch: (cause) =>
+                new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),
             }).pipe(
               Effect.flatMap((isFile) => (isFile ? fs.remove(file, { force: true }) : Effect.void)),
             );
@@ -556,8 +551,10 @@ const make = Effect.gen(function* () {
             }),
           ),
           Effect.ensuring(refresh),
-          Effect.mapError(
-            (cause) => new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),
+          Effect.mapError((cause) =>
+            cause instanceof EnvironmentThemeRefusedError
+              ? cause
+              : new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),
           ),
         );
       }),
