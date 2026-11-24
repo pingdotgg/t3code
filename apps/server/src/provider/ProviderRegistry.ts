@@ -292,21 +292,17 @@ const mergeProviderModels = (
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    const hasRetainablePreviousCapabilities =
-      previousModel !== undefined &&
-      hasModelCapabilities(previousModel) &&
-      (!isAntigravity ||
-        (previousModel.capabilities?.optionDescriptors?.some(
-          (descriptor) =>
-            descriptor.type !== "select" ||
-            descriptor.role !== "reasoning" ||
-            descriptor.currentValue !== undefined,
-        ) ??
-          false));
+    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+      return model;
+    }
+    // Antigravity's selected model reports its levels live, and older caches kept inactive
+    // thinking levels without a current value.
     if (
-      !hasRetainablePreviousCapabilities ||
-      hasModelCapabilities(model) ||
-      (isAntigravity && model.isDefault === true)
+      isAntigravity &&
+      (model.isDefault === true ||
+        previousModel.capabilities?.optionDescriptors?.some(
+          (descriptor) => descriptor.type === "select" && descriptor.currentValue === undefined,
+        ))
     ) {
       return model;
     }

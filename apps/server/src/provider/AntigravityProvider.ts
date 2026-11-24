@@ -69,9 +69,7 @@ function thinkingCapabilities(config: ThinkingConfig | null | undefined) {
   const descriptor = config
     ? acpProviderOptionDescriptors({ configOptions: [config], modeState: undefined })[0]
     : undefined;
-  if (descriptor?.type !== "select" || descriptor.currentValue === undefined) {
-    return EMPTY_MODEL_CAPABILITIES;
-  }
+  if (descriptor?.type !== "select") return EMPTY_MODEL_CAPABILITIES;
   return createModelCapabilities({ optionDescriptors: [descriptor] });
 }
 

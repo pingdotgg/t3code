@@ -3119,7 +3119,7 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
 
 describe("AntigravityAdapterV2 thinking level", () => {
   it.effect(
-    "skips thought_level overrides when currentValue is outside its advertised choices and rejects model drift",
+    "skips thought_level overrides when currentValue is outside its advertised choices",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3161,7 +3161,6 @@ describe("AntigravityAdapterV2 thinking level", () => {
           readonly targetModel: string;
           readonly thinkingForModel: (model: string) => string;
           readonly selectedThinking: string;
-          readonly driftModelOnThinkingWrite?: string;
         }) =>
           Effect.gen(function* () {
             const configWrites: Array<readonly [string, string | boolean]> = [];
@@ -3199,9 +3198,6 @@ describe("AntigravityAdapterV2 thinking level", () => {
                           configWrites.push([configId, value]);
                           if (configId === "thought_level" && typeof value === "string") {
                             currentThinking = value;
-                            if (scenario.driftModelOnThinkingWrite !== undefined) {
-                              currentModel = scenario.driftModelOnThinkingWrite;
-                            }
                           }
                           return { configOptions: liveConfig() };
                         }),
@@ -3247,21 +3243,6 @@ describe("AntigravityAdapterV2 thinking level", () => {
         });
         assert.isTrue(Exit.isSuccess(active.exit));
         assert.deepEqual(active.configWrites, [["thought_level", "low"]]);
-
-        // If a follow-up config write silently switches the session's model, refuse to continue.
-        const drifted = yield* runOpen({
-          targetModel: "gemini-test-low",
-          thinkingForModel: () => "high",
-          selectedThinking: "low",
-          driftModelOnThinkingWrite: "orchestrator-test",
-        });
-        assert.isTrue(Exit.isFailure(drifted.exit));
-        if (Exit.isFailure(drifted.exit)) {
-          assert.include(
-            String(drifted.exit.cause),
-            "switched model from 'gemini-test-low' to 'orchestrator-test'",
-          );
-        }
       }).pipe(Effect.provide(layerSession)),
   );
 });

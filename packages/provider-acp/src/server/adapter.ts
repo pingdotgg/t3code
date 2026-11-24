@@ -527,10 +527,7 @@ export interface AcpAdapterV2Flavor {
    * `reasoningEffort` is its `effortLevel`).
    */
   readonly ownedModelOptionIds?: ReadonlyArray<string>;
-  /**
-   * Flavor filter for live config options before `session/set_config_option` is sent
-   * (e.g. Antigravity keeps an inactive `thought_level` option on models without manual effort).
-   */
+  /** Returns false for a live config option the selected model advertises but does not use. */
   readonly canApplyConfigOption?: (option: EffectAcpSchema.SessionConfigOption) => boolean;
   readonly lockSessionModeToPolicy?: true;
   readonly sessionModeForPolicy?: (
@@ -8383,7 +8380,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           const configOptions = yield* runtime.getConfigOptions;
-          const modelBeforeFollowUp = findModelConfigOption(configOptions)?.currentValue;
           // A picked mode applies only when the flavor places it within the bound; an unknown mode
           // could be the agent's own skip-approval mode. Modes known to be permission levels are
           // also bounded by the thread's runtime mode, so model options cannot widen it.
@@ -8574,22 +8570,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               nativeBuildConfigurationBySessionId.delete(startResult.sessionId);
             }
-          }
-          const modelAfterFollowUp = findModelConfigOption(
-            yield* runtime.getConfigOptions,
-          )?.currentValue;
-          if (
-            appliedModel !== undefined &&
-            modelBeforeFollowUp === appliedModel &&
-            modelAfterFollowUp !== undefined &&
-            modelAfterFollowUp !== appliedModel
-          ) {
-            return yield* new AcpModelSelectionError({
-              model: modelSelection.model,
-              cause: EffectAcpErrors.AcpRequestError.invalidParams(
-                `Session switched model from '${appliedModel}' to '${modelAfterFollowUp}' while applying session options.`,
-              ),
-            });
           }
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
