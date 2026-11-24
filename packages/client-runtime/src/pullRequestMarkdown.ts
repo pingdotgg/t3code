@@ -31,7 +31,8 @@ type PullRequestBodyTableCell = {
 };
 
 // `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
-const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)\r?$/u;
+// The marker is the whole run, so a line that is no fence is given up on in one pass.
+const FENCE_PATTERN = /^\s{0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.

@@ -105,6 +105,7 @@ export function useUpdateEverything(
 
   return {
     hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    machines,
     ...view,
     restarts,
     run: async ({
