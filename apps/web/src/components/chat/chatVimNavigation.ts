@@ -373,17 +373,11 @@ export function attachChatVimNavigation(
     const list = listRef.current;
     const scroll = list?.getScrollableNode();
     if (!caret || !list || !scroll) return;
-    const rect = caret.getBoundingClientRect();
-    const pre = caret.startContainer.parentElement?.closest("pre");
-    if (pre) {
-      const box = pre.getBoundingClientRect();
-      if (rect.left < box.left) pre.scrollLeft += rect.left - box.left;
-      else if (rect.right > box.right) pre.scrollLeft += rect.right - box.right;
-    }
     if (messageScroll?.animation) {
       if (smooth) messageScroll.animation.retarget();
       return;
     }
+    const rect = caret.getBoundingClientRect();
     const current = scroll.scrollTop;
     const requested =
       pageFromTop === undefined ? current : (pendingPage?.top ?? current) + rect.top - pageFromTop;

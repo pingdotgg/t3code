@@ -97,6 +97,13 @@ export function openVimMessageText(
   function paint(visual: boolean) {
     clear();
     cell = caret();
+    const pre = cell?.startContainer.parentElement?.closest("pre");
+    if (pre && cell) {
+      const rect = cell.getBoundingClientRect();
+      const box = pre.getBoundingClientRect();
+      if (rect.left < box.left) pre.scrollLeft += rect.left - box.left;
+      else if (rect.right > box.right) pre.scrollLeft += rect.right - box.right;
+    }
     if (cell && typeof Highlight !== "undefined" && CSS.highlights) {
       block = new Highlight(cell);
       block.priority = 1;

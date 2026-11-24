@@ -1505,19 +1505,22 @@ it("keeps intermediate messages visible while Vim scrolls to either end of a lon
   await page.viewport(1100, 700);
   const thread = threadWithHistory("vim-long-jumps", 100);
   const lastReply = "End of the long conversation.";
+  const wideLine = `${"0123456789".repeat(30)}Z`;
   using _environment = installFakeEnvironment([
     {
       ...thread,
-      items: thread.items.map((item) =>
-        item.type === "assistant_message" && item.ordinal === 199
-          ? { ...item, text: lastReply }
-          : item,
-      ),
+      items: thread.items.map((item) => {
+        if (item.type !== "assistant_message") return item;
+        if (item.ordinal === 197) return { ...item, text: ["```", wideLine, "```"].join("\n") };
+        if (item.ordinal === 199) return { ...item, text: lastReply };
+        return item;
+      }),
     },
   ]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     vimModeEnabled: true,
+    wordWrap: false,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const router = getRouter(
@@ -1594,16 +1597,32 @@ it("keeps intermediate messages visible while Vim scrolls to either end of a lon
       expect(scroll.scrollTop).toBeLessThan(viewport.height);
     }
   }
-  const lastPrompt = page.getByText("vim-long-jumps: question 99", { exact: true });
-  await userEvent.keyboard("Kl");
-  expect(vimCursorRange()?.toString()).toBe("i");
+  const line = page.getByText(wideLine, { exact: true });
+  await userEvent.keyboard("KK");
+  await expect.element(line).toBeInViewport();
+  await userEvent.keyboard("$");
+  const originalBlock = line.element().closest("pre")!;
+  expect(originalBlock.scrollLeft).toBeGreaterThan(0);
+  const cell = vimCursorRange()!;
+  expect(cell.toString()).toBe("Z");
+  const returnTop = Math.round(
+    scroll.scrollTop + cell.getBoundingClientRect().top - viewport.bottom - 24,
+  );
   scroll.scrollTop = 0;
-  await expect.element(lastPrompt).not.toBeInTheDocument();
-  scroll.scrollTop = scroll.scrollHeight;
-  await expect.element(lastPrompt).toBeInViewport();
+  await expect.element(line).not.toBeInTheDocument();
+  scroll.scrollTop = returnTop;
   await vi.waitFor(() => {
-    expect(lastPrompt.element().contains(vimCursorRange()?.startContainer ?? null)).toBe(true);
-    expect(vimCursorRange()?.toString()).toBe("i");
+    const block = line.element().closest("pre")!;
+    const restored = vimCursorRange()!;
+    expect(block).not.toBe(originalBlock);
+    expect(block.contains(restored.startContainer)).toBe(true);
+    expect(restored.toString()).toBe("Z");
+    const rect = restored.getBoundingClientRect();
+    const bounds = block.getBoundingClientRect();
+    expect(rect.left).toBeGreaterThanOrEqual(bounds.left - 1);
+    expect(rect.right).toBeLessThanOrEqual(bounds.right + 1);
+    expect(rect.top).toBeGreaterThan(viewport.bottom);
+    expect(scroll.scrollTop).toBe(returnTop);
   });
   for (const shiftKey of [false, true]) {
     await userEvent.keyboard("f");
