@@ -30,6 +30,7 @@ import {
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
 } from "@t3tools/shared/composerContextReferences";
+import { autoLevelSelection } from "@t3tools/shared/autoModel";
 import { Atom } from "effect/reactivity";
 import type { RefObject } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -305,11 +306,15 @@ export function useQueuedRunEdit(input: {
     store.setPrompt(target, text);
     const run = serverProjection?.runs.find((run) => run.id === request.runId);
     const followsThreadSelection = message?.followsThreadSelection === true;
-    const originalModelSelection = followsThreadSelection
-      ? serverProjection?.thread.modelSelection
-      : run?.modelSelection;
+    // An Auto-routed pick opens as its Auto level, as in the picker, so saving routes it again.
+    const originalModelSelection = autoLevelSelection(
+      followsThreadSelection ? serverProjection?.thread.modelSelection : run?.modelSelection,
+    );
     if (run && !followsThreadSelection)
-      store.setModelSelection(target, run.modelSelection, { explicit: true, replaceOptions: true });
+      store.setModelSelection(target, autoLevelSelection(run.modelSelection), {
+        explicit: true,
+        replaceOptions: true,
+      });
     store.setThreadContexts(
       target,
       records.filter((record): record is ThreadContextRecord => record.kind === "thread"),

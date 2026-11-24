@@ -35,7 +35,11 @@ import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attach
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
-  readonly modelSelection?: { readonly instanceId: ProviderInstanceId; readonly model: string };
+  readonly modelSelection?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly model: string;
+    readonly options?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
+  };
   readonly activeAttemptId?: string;
 }
 
@@ -133,6 +137,7 @@ function Harness(props: {
   readonly runStatus: string;
   readonly hookRef: RefObject<HookResult | null>;
   readonly messages: ReadonlyArray<unknown>;
+  readonly runModelSelection?: RunStatus["modelSelection"];
 }) {
   const result = useQueuedRunEdit({
     environmentId: ENV,
@@ -140,7 +145,13 @@ function Harness(props: {
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
     serverProjection: projection(
-      [{ id: RUN, status: props.runStatus, modelSelection: savedContent("").modelSelection }],
+      [
+        {
+          id: RUN,
+          status: props.runStatus,
+          modelSelection: props.runModelSelection ?? savedContent("").modelSelection,
+        },
+      ],
       props.messages,
     ),
     promptRef: { current: "" },
@@ -179,10 +190,17 @@ function view(
   runStatus: string,
   hook: { current: HookResult | null },
   messages: ReadonlyArray<unknown> = [],
+  runModelSelection?: RunStatus["modelSelection"],
 ) {
   return (
     <AppAtomRegistryProvider>
-      <Harness threadRef={threadRef} runStatus={runStatus} hookRef={hook} messages={messages} />
+      <Harness
+        threadRef={threadRef}
+        runStatus={runStatus}
+        hookRef={hook}
+        messages={messages}
+        {...(runModelSelection ? { runModelSelection } : {})}
+      />
     </AppAtomRegistryProvider>
   );
 }
@@ -692,3 +710,20 @@ it.each([false, true])(
       );
   },
 );
+
+// Fork: the composer keeps only the options a model describes, so it would send an Auto-routed
+// run's model without its `auto` stamp and pin the message off Auto.
+it("opens an Auto-routed queued message on its Auto level", async () => {
+  const { hook } = setup();
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  await using _screen = await render(
+    view(THREAD_A, "queued", hook, [], {
+      instanceId,
+      model: "claude-opus-5-5",
+      options: [{ id: "auto", value: "medium" }],
+    }),
+  );
+  await beginChangedEdit(hook);
+  const draft = useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget);
+  expect(draft?.modelSelectionByProvider[instanceId]).toEqual({ instanceId, model: "auto-medium" });
+});
