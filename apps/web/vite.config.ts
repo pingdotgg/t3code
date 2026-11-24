@@ -104,6 +104,8 @@ const unitTestProject = {
 // Stay below ephemeral ranges: Windows reserves Hyper-V/WSL blocks there and EACCES is not skipped.
 const browserTestApiPort = 20_000 + ((Hash.string(import.meta.dirname) >>> 0) % 4_000);
 
+const isCi = Boolean(process.env.CI);
+
 const browserTestProject = {
   extends: true,
   // Pre-bundle lazy browser and worker dependencies to avoid mid-run reloads.
@@ -138,12 +140,16 @@ const browserTestProject = {
     include: ["src/**/*.browser.test.{ts,tsx}"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
+    // Limit parallel browser pages on smaller CI runners to avoid Chromium OOM disconnects.
+    ...(isCi ? { maxWorkers: 2 } : {}),
     setupFiles: ["./test/browserSetup.ts"],
     api: { port: browserTestApiPort, strictPort: false },
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright(),
+      provider: playwright(
+        isCi ? { launchOptions: { args: ["--disable-dev-shm-usage"] } } : undefined,
+      ),
       instances: [{ browser: "chromium" }],
       screenshotFailures: false,
       commands: {

@@ -183,7 +183,7 @@ describe("TeamsSettings", () => {
     await screen.getByRole("option", { name: /Server B/ }).click();
 
     resolveInvite(AsyncResult.success(makeInviteResult("t3team_server_a_inflight")));
-    await Promise.resolve();
+    await expect.element(screen.getByTestId("team-invite-create")).toBeEnabled();
 
     expect(screen.getByTestId("team-invite-generated").query()).toBeNull();
 
