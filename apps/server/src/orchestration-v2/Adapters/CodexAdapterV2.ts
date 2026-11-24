@@ -1420,7 +1420,7 @@ interface ActiveCodexTurnContext {
   readonly messagePhases: Map<string, "commentary" | "partial_answer" | "final_answer">;
   readonly asyncMessageIds: Set<string>;
   /** Open final answers and the first user input delivered while each was streaming. */
-  steeredAnswerOrdinals?: Map<string, number>;
+  firstSteerOrdinalByAnswerId?: Map<string, number>;
   latestCompletedAnswerOrdinal?: number;
   readonly itemPositions: Map<
     string,
@@ -4110,7 +4110,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const finalAnswerItem = (yield* Ref.get(finalAnswerItemIdsByTurn))
                 .get(update.turnId)
                 ?.has(update.itemId);
-              const steerOrdinal = context.steeredAnswerOrdinals?.get(update.itemId);
+              const steerOrdinal = context.firstSteerOrdinalByAnswerId?.get(update.itemId);
               const abandoned =
                 update.completed &&
                 steerOrdinal !== undefined &&
@@ -5605,7 +5605,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const open = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(payload.turnId);
               if (open?.size) {
                 const steerOrdinal = yield* resolveItemOrdinal(context, payload.item.id);
-                const steered = (context.steeredAnswerOrdinals ??= new Map());
+                const steered = (context.firstSteerOrdinalByAnswerId ??= new Map());
                 for (const id of open) {
                   if (!context.asyncMessageIds.has(id) && !steered.has(id))
                     steered.set(id, steerOrdinal);
@@ -6056,12 +6056,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.delivery === "async") context.asyncMessageIds.add(payload.item.id);
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
             // A late item/completed confirms this answer even if a steer arrived while it streamed.
-            context.steeredAnswerOrdinals?.delete(payload.item.id);
+            context.firstSteerOrdinalByAnswerId?.delete(payload.item.id);
             if (
               finalAnswer &&
               !context.asyncMessageIds.has(payload.item.id) &&
               payload.item.text &&
-              context.steeredAnswerOrdinals?.size
+              context.firstSteerOrdinalByAnswerId?.size
             ) {
               const position = context.itemPositions.get(payload.item.id);
               if (position)
