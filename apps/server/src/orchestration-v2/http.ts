@@ -20,7 +20,6 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
@@ -191,7 +190,6 @@ export const layer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* answerShellSnapshot(args.query).pipe(
-            traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
             ),
@@ -218,7 +216,6 @@ export const layer = HttpApiBuilder.group(
                 ),
               ),
             ),
-            traceLocalHandlerWork,
           );
           return HttpServerResponse.stream(body, { contentType: "application/json" });
         }),
@@ -230,7 +227,6 @@ export const layer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
             Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
-            traceLocalHandlerWork,
             Effect.catch(
               Effect.fnUntraced(function* (error) {
                 if (isThreadTranscriptTooLargeError(error)) {
@@ -258,7 +254,7 @@ export const layer = HttpApiBuilder.group(
             undefined,
             undefined,
             args.query.deferWork === "1",
-          ).pipe(traceLocalHandlerWork);
+          );
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
@@ -302,7 +298,6 @@ export const layer = HttpApiBuilder.group(
               Effect.map((page) =>
                 args.query.compactIds === "1" ? { ...page, idTable: true as const } : page,
               ),
-              traceLocalHandlerWork,
               Effect.catch(
                 Effect.fnUntraced(function* (cause) {
                   if (isThreadNotFound(cause))

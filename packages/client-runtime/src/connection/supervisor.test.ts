@@ -5,7 +5,6 @@ import {
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,7 +22,6 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Clock from "effect/Clock";
 import * as TestClock from "effect/testing/TestClock";
-import * as Tracer from "effect/Tracer";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
@@ -1879,23 +1877,12 @@ describe("EnvironmentSupervisor", () => {
 
   it.effect("releases and reconnects a relay session when credentials change", () =>
     Effect.gen(function* () {
-      const relaySpans: Array<Tracer.NativeSpan> = [];
-      const relayTracer = Tracer.make({
-        span(options) {
-          const span = new Tracer.NativeSpan(options);
-          relaySpans.push(span);
-          return span;
-        },
-      });
       const harness = yield* makeHarness({
         prepare: () => Effect.succeed(preparedFor(RELAY_TARGET)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
-      }).pipe(
-        Effect.provide(harness.dependencies),
-        Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
-      );
+      }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("credentials-changed");
@@ -1906,13 +1893,6 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
-      const attempts = relaySpans.filter((span) => span.name === "relay.connection.attempt");
-      expect(attempts).toHaveLength(2);
-      for (const span of attempts) {
-        expect(span.attributes.get("environment.id")).toBe(RELAY_TARGET.environmentId);
-        expect(span.attributes.get("environment.target.kind")).toBe(RELAY_TARGET._tag);
-        expect(span.attributes.has("environment.label")).toBe(false);
-      }
     }),
   );
 
