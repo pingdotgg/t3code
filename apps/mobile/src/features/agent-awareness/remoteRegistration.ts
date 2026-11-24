@@ -16,6 +16,7 @@ import {
   type RelayDeviceRegistrationRequest,
   type RelayAgentActivitySnapshotResponse,
   type RelayLiveActivityRegistrationRequest,
+  RelayMobileDeviceNotRegisteredError,
 } from "@t3tools/contracts/relay";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -998,15 +999,31 @@ const registerLiveActivityPushTokenValue = Effect.fn(
         }),
     ),
   );
-  const registered = yield* registerLiveActivityWithRelay({
+  const register = registerLiveActivityWithRelay({
     deviceId,
     activityPushToken: input.activityPushToken,
   });
+  const registered = yield* register.pipe(
+    // The relay pruned this device, so the saved record no longer proves it is registered.
+    Effect.catchIf(isDeviceNotRegisteredError, () =>
+      storage.clearAgentAwarenessRegistrationRecord.pipe(
+        Effect.ignore,
+        Effect.andThen(registerDevice()),
+        Effect.andThen(register),
+      ),
+    ),
+  );
   if (registered) {
     registeredActivityPushTokens.set(input.activityPushToken, yield* Clock.currentTimeMillis);
   }
   return registered;
 });
+
+const isRelayDeviceNotRegistered = Schema.is(RelayMobileDeviceNotRegisteredError);
+
+function isDeviceNotRegisteredError(error: AgentAwarenessRegistrationError): boolean {
+  return error._tag === "ManagedRelayRequestFailedError" && isRelayDeviceNotRegistered(error.cause);
+}
 
 function scheduleActiveLiveActivityRegistrationRetry(): void {
   if (activeLiveActivityRegistrationRetry || !relayTokenProvider) {

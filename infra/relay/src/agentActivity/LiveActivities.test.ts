@@ -177,4 +177,26 @@ describe("LiveActivities", () => {
       ).toEqual(["recently-ended", "updated-after-end"]);
     }),
   );
+
+  it.effect("rejects a Live Activity for a device the relay no longer has", () =>
+    Effect.gen(function* () {
+      const { db, layer } = yield* makePgliteRelayDb;
+      const liveActivities = yield* Effect.service(LiveActivities.LiveActivities).pipe(
+        Effect.provide(LiveActivities.layer.pipe(Layer.provide(layer))),
+      );
+
+      const error = yield* liveActivities
+        .register({
+          userId: "user-1",
+          registration: {
+            deviceId: "pruned" as RelayLiveActivityRegistrationRequest["deviceId"],
+            activityPushToken:
+              "activity-token" as RelayLiveActivityRegistrationRequest["activityPushToken"],
+          },
+        })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("LiveActivityDeviceNotRegisteredError");
+      expect(yield* Effect.promise(() => db.select().from(relayLiveActivities))).toEqual([]);
+    }),
+  );
 });

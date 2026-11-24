@@ -70,6 +70,18 @@ export class LiveActivityDeliveryMarkPersistenceError extends Schema.TaggedError
   }
 }
 
+// Pruned or unregistered devices must register again, or listTargets never sees their Live Activity.
+export class LiveActivityDeviceNotRegisteredError extends Schema.TaggedError<LiveActivityDeviceNotRegisteredError>()(
+  "LiveActivityDeviceNotRegisteredError",
+  {
+    deviceId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Mobile device ${this.deviceId} is not registered.`;
+  }
+}
+
 export class LiveActivityAggregatePrunePersistenceError extends Schema.TaggedError<LiveActivityAggregatePrunePersistenceError>()(
   "LiveActivityAggregatePrunePersistenceError",
   {
@@ -114,7 +126,10 @@ export class LiveActivities extends Context.Service<
     readonly register: (input: {
       readonly userId: string;
       readonly registration: RelayLiveActivityRegistrationRequest;
-    }) => Effect.Effect<void, LiveActivityRegistrationPersistenceError>;
+    }) => Effect.Effect<
+      void,
+      LiveActivityRegistrationPersistenceError | LiveActivityDeviceNotRegisteredError
+    >;
     readonly listTargets: (input: {
       readonly userId: string;
     }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
@@ -157,7 +172,17 @@ const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({
         "relay.mobile.device_id": input.registration.deviceId,
       });
-      yield* Effect.gen(function* () {
+      const registered = yield* Effect.gen(function* () {
+        const [device] = yield* db
+          .select({ deviceId: relayMobileDevices.deviceId })
+          .from(relayMobileDevices)
+          .where(
+            and(
+              eq(relayMobileDevices.userId, input.userId),
+              eq(relayMobileDevices.deviceId, input.registration.deviceId),
+            ),
+          );
+        if (!device) return false;
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         const registration = input.registration;
         const [current] = yield* db
@@ -215,6 +240,7 @@ const make = Effect.gen(function* () {
               updatedAt,
             },
           });
+        return true;
       }).pipe(
         Effect.mapError(
           (cause) =>
@@ -225,6 +251,11 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+      if (!registered) {
+        return yield* new LiveActivityDeviceNotRegisteredError({
+          deviceId: input.registration.deviceId,
+        });
+      }
     }),
 
     listTargets: Effect.fn("relay.live_activities.list_targets")(function* (input) {
