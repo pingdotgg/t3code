@@ -51,11 +51,14 @@ describe("Role menu item", () => {
     expect(children.at(-1)).toMatchObject({ id: "role:none", label: "No role" });
   });
 
-  it("is disabled with a hint without a roles directory, roles, or permission", () => {
+  it("is disabled with a hint while loading, or without a roles directory, roles, or permission", () => {
     expect(roleItem({ forkRoles: { current: null, list: null } })).toMatchObject({
       disabled: true,
-      detail: "Set a roles directory in Settings",
+      detail: "Loading roles…",
     });
+    expect(
+      roleItem({ forkRoles: { current: null, list: { directory: null, roles: [] } } }),
+    ).toMatchObject({ disabled: true, detail: "Set a roles directory in Settings" });
     expect(roleItem({ forkRoles: { current: null, list: { ...list, roles: [] } } })).toMatchObject({
       disabled: true,
       detail: "No roles in the roles directory",

@@ -157,7 +157,7 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
-        forkRoles: await readForkRoleMenuState(threadRef.environmentId, thread.roleId), // fork: roles
+        forkRoles: readForkRoleMenuState(threadRef.environmentId, thread.roleId), // fork: roles
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;

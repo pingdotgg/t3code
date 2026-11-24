@@ -2811,6 +2811,7 @@
   "f50619195a6d0ad2": "Donner à {appName} l’accès à {owner}",
   "9b771434a1d169dd": "L’app n’y est pas installée, les requêtes GitHub pour {repository} utilisent donc votre propre connexion et sa limite de débit plus basse.",
   "5d973795984549fc": "Installer",
+  "4f1db2c0eb5dbd4b": "Loading roles…",
   "ca87c746bbce56fb": "Set a roles directory in Settings",
   "620729eb5c44f7fc": "No roles in the roles directory",
   "abedd6f4ef51d17f": "Role",
@@ -3222,10 +3223,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3237,10 +3235,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quiconque l’exécute obtient cet accès"
-      ]
+      "c": [" ", "· quiconque l’exécute obtient cet accès"]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",

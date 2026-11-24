@@ -2811,6 +2811,7 @@
   "f50619195a6d0ad2": "Dar ao {appName} acesso a {owner}",
   "9b771434a1d169dd": "Ele não está instalado lá, então as solicitações ao GitHub para {repository} usam seu próprio login e o limite de taxa menor dele.",
   "5d973795984549fc": "Instalar",
+  "4f1db2c0eb5dbd4b": "Loading roles…",
   "ca87c746bbce56fb": "Set a roles directory in Settings",
   "620729eb5c44f7fc": "No roles in the roles directory",
   "abedd6f4ef51d17f": "Role",
@@ -3222,10 +3223,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "no computador que abriu esta página"
-      ]
+      "c": [" ", "no computador que abriu esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3237,10 +3235,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quem executar recebe este acesso"
-      ]
+      "c": [" ", "· quem executar recebe este acesso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",

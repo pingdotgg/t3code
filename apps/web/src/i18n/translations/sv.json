@@ -2811,6 +2811,7 @@
   "f50619195a6d0ad2": "Ge {appName} åtkomst till {owner}",
   "9b771434a1d169dd": "Den är inte installerad där, så GitHub-begäranden för {repository} använder din egen inloggning och dess lägre hastighetsgräns.",
   "5d973795984549fc": "Installera",
+  "4f1db2c0eb5dbd4b": "Loading roles…",
   "ca87c746bbce56fb": "Set a roles directory in Settings",
   "620729eb5c44f7fc": "No roles in the roles directory",
   "abedd6f4ef51d17f": "Role",
@@ -3222,10 +3223,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3237,10 +3235,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· den som kör den får den här åtkomsten"
-      ]
+      "c": [" ", "· den som kör den får den här åtkomsten"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",

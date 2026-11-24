@@ -2815,6 +2815,7 @@
   "f50619195a6d0ad2": "授予 {appName} 访问 {owner} 的权限",
   "9b771434a1d169dd": "该处尚未安装此应用，因此对 {repository} 的 GitHub 请求会使用你自己的登录身份，受较低的速率限制。",
   "5d973795984549fc": "安装",
+  "4f1db2c0eb5dbd4b": "Loading roles…",
   "ca87c746bbce56fb": "Set a roles directory in Settings",
   "620729eb5c44f7fc": "No roles in the roles directory",
   "abedd6f4ef51d17f": "Role",
@@ -3226,10 +3227,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "位于打开此页面的计算机上"
-      ]
+      "c": [" ", "位于打开此页面的计算机上"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3241,10 +3239,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· 运行它的任何人都会获得此访问权限"
-      ]
+      "c": [" ", "· 运行它的任何人都会获得此访问权限"]
     }
   ],
   "c54cc9c75db9dc58": "请只批准你刚刚发起的登录。",

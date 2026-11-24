@@ -589,7 +589,10 @@ export function createThreadEnvironmentAtoms<R, E>(
       snoozedUntil: null,
       snoozedAt: null,
     })),
-    setRole: optimistic.wrap(commands.setRole, (thread, input) => ({ ...thread, roleId: input.roleId })), // fork: roles
+    setRole: optimistic.wrap(commands.setRole, (thread, input) => ({
+      ...thread,
+      roleId: input.roleId,
+    })), // fork: roles
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),

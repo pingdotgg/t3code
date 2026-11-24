@@ -73,7 +73,7 @@ export function RolesHeader(props: { readonly section: ReturnType<typeof useRole
               aria-label={showAllLabel}
               aria-pressed={section.showAll}
               onClick={section.toggleShowAll}
-              className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+              className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
             />
           }
         >

@@ -5,8 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { createForkRolesEnvironmentAtoms } from "@t3tools/client-runtime/state/fork-roles";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import { AtomRegistry } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { msg } from "gt-react";
 
 import type { ForkRoleMenuState } from "../components/threadActionMenu.forkRoles";
@@ -19,7 +18,7 @@ import { serverEnvironment } from "./server";
 import { threadEnvironment } from "./threads";
 import { useOrchestrationCommand } from "./use-orchestration-command";
 
-export const forkRolesEnvironment = createForkRolesEnvironmentAtoms(
+const forkRolesEnvironment = createForkRolesEnvironmentAtoms(
   connectionAtomRuntime,
   serverEnvironment.settingsValueAtom,
 );
@@ -27,7 +26,7 @@ export const forkRolesEnvironment = createForkRolesEnvironmentAtoms(
 const rolesListAtom = (environmentId: EnvironmentId) =>
   forkRolesEnvironment.list({ environmentId, input: {} });
 
-export function useForkRoles(environmentId: EnvironmentId | null) {
+function useForkRoles(environmentId: EnvironmentId | null) {
   return useEnvironmentQuery(environmentId === null ? null : rolesListAtom(environmentId)).data;
 }
 
@@ -36,20 +35,15 @@ export function useForkRole(environmentId: EnvironmentId, roleId: string | null)
   return roles?.roles.find((role) => role.id === roleId) ?? null;
 }
 
-/** Menus are built when they open, so this waits briefly for the first answer. */
+/** Reading starts the fetch, so a menu opened before the first answer shows roles as loading. */
 export function readForkRoleMenuState(
   environmentId: EnvironmentId,
   current: string | null,
-): Promise<ForkRoleMenuState> {
-  return Effect.runPromise(
-    AtomRegistry.getResult(appAtomRegistry, rolesListAtom(environmentId), {
-      suspendOnWaiting: true,
-    }).pipe(
-      Effect.timeout("2 seconds"),
-      Effect.orElseSucceed(() => null),
-      Effect.map((list) => ({ current, list })),
-    ),
-  );
+): ForkRoleMenuState {
+  const settings = appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId));
+  if (!settings?.forkRolesDirectory) return { current, list: { directory: null, roles: [] } };
+  const list = AsyncResult.getOrElse(appAtomRegistry.get(rolesListAtom(environmentId)), () => null);
+  return { current, list };
 }
 
 /** Sets or clears a thread's role and reports a failure as a toast. */

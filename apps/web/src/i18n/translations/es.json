@@ -2811,6 +2811,7 @@
   "f50619195a6d0ad2": "Dar a {appName} acceso a {owner}",
   "9b771434a1d169dd": "No está instalada allí, así que las solicitudes a GitHub para {repository} usan tu propio inicio de sesión y su límite de frecuencia más bajo.",
   "5d973795984549fc": "Instalar",
+  "4f1db2c0eb5dbd4b": "Loading roles…",
   "ca87c746bbce56fb": "Set a roles directory in Settings",
   "620729eb5c44f7fc": "No roles in the roles directory",
   "abedd6f4ef51d17f": "Role",
@@ -3222,10 +3223,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3237,10 +3235,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quien lo ejecute obtiene este acceso"
-      ]
+      "c": [" ", "· quien lo ejecute obtiene este acceso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",

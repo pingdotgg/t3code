@@ -2810,6 +2810,7 @@
   "f50619195a6d0ad2": "{appName}에 {owner} 액세스 권한 부여",
   "9b771434a1d169dd": "그곳에 설치되어 있지 않아 {repository}에 대한 GitHub 요청에 내 로그인과 그보다 낮은 속도 제한이 적용됩니다.",
   "5d973795984549fc": "설치",
+  "4f1db2c0eb5dbd4b": "Loading roles…",
   "ca87c746bbce56fb": "Set a roles directory in Settings",
   "620729eb5c44f7fc": "No roles in the roles directory",
   "abedd6f4ef51d17f": "Role",
@@ -3221,10 +3222,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(이 페이지를 연 컴퓨터)"
-      ]
+      "c": [" ", "(이 페이지를 연 컴퓨터)"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3236,10 +3234,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· 실행하는 사람이 이 액세스 권한을 얻습니다"
-      ]
+      "c": [" ", "· 실행하는 사람이 이 액세스 권한을 얻습니다"]
     }
   ],
   "c54cc9c75db9dc58": "방금 시작한 로그인만 승인하세요.",

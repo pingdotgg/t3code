@@ -18,11 +18,13 @@ export function forkRoleMenuItems(
   if (state === undefined) return [];
   const roles = state.list?.roles ?? [];
   const hint =
-    state.list?.directory == null
-      ? resolve(msg("Set a roles directory in Settings"))
-      : roles.length === 0
-        ? resolve(msg("No roles in the roles directory"))
-        : undefined;
+    state.list === null
+      ? resolve(msg("Loading roles…"))
+      : state.list.directory === null
+        ? resolve(msg("Set a roles directory in Settings"))
+        : roles.length === 0
+          ? resolve(msg("No roles in the roles directory"))
+          : undefined;
   return [
     {
       id: "role",

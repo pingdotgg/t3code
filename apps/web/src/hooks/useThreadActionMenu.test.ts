@@ -63,6 +63,11 @@ vi.mock("../state/entities", () => ({
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
+// fork: roles
+vi.mock("../state/forkRoles", () => ({
+  readForkRoleMenuState: () => ({ current: null, list: null }),
+  useSetThreadRole: () => vi.fn(),
+}));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {
     recordEffect("metadata");

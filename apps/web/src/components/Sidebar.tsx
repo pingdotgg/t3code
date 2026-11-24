@@ -2741,7 +2741,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
-        const forkRoles = await readForkRoleMenuState(threadRef.environmentId, thread.roleId); // fork: roles
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2778,7 +2777,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
-              forkRoles, // fork: roles
+              forkRoles: readForkRoleMenuState(threadRef.environmentId, thread.roleId), // fork: roles
             }),
             position,
             source,
