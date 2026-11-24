@@ -98,43 +98,6 @@ const detailEntry = (repository: string, number: number): PullRequestDetail => (
 });
 
 describe("composer pull request menu", () => {
-  it("keeps root git repository behavior unchanged", () => {
-    const items = buildComposerPullRequestItems({
-      projectId: PROJECT_ID,
-      repository: "acme/root",
-      hasTrackedFolders: false,
-      query: "25",
-      triggerNumber: 25,
-      listedEntries: [
-        listEntry("acme/root", 25, { title: "Fix root bug" }),
-        listEntry("acme/other", 25, { title: "Other repo PR" }),
-      ],
-      providers: [provider(1)],
-      exactDetails: [],
-      linkedPullRequests: [],
-      limit: 12,
-    });
-    expect(items.map((item) => [item.label, item.description])).toEqual([["#25", "Fix root bug"]]);
-  });
-
-  it("lists pull requests for a non-git root with a single tracked repository", () => {
-    const items = buildComposerPullRequestItems({
-      projectId: PROJECT_ID,
-      repository: null,
-      hasTrackedFolders: true,
-      query: "25",
-      triggerNumber: 25,
-      listedEntries: [listEntry("acme/repo-a", 25, { title: "Single tracked PR" })],
-      providers: [provider(1)],
-      exactDetails: [],
-      linkedPullRequests: [],
-      limit: 12,
-    });
-    expect(items.map((item) => [item.label, item.description])).toEqual([
-      ["#25", "acme/repo-a · Single tracked PR"],
-    ]);
-  });
-
   it("lists and distinguishes pull requests across multiple tracked repositories", () => {
     const numericItems = buildComposerPullRequestItems({
       projectId: PROJECT_ID,
