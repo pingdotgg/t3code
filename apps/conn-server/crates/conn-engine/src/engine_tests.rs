@@ -8462,6 +8462,75 @@ async fn run_to_end(engine: &SqliteEngine, thread: &str, run: &str) -> Value {
     projection(engine, thread).await
 }
 
+/// #327's review: a child whose run completed while its provider-native subagent still
+/// worked keeps its task open. A restart cancels that orphaned subagent, and the task then
+/// reaches its parent, though the child has no unfinished run (`recoverDelegatedTasks`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_publishes_a_task_its_orphaned_native_subagent_held() {
+    let db = TempDb::new("restart-orphan-task");
+    let child = "thread:delegated-task:d1";
+    let task = "node:delegated-task:d1";
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut parent = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut parent).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut parent).await;
+        dispatch(&engine, delegate("d1", "hang", None)).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": child})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        until_provider_turn(&mut thread).await;
+        let run = format!("run:{child}:1");
+        engine
+            .inner()
+            .write(move |tx| {
+                let now = tx.now().to_owned();
+                tx.append(crate::store::Draft::new(
+                    child,
+                    "subagent.updated",
+                    json!({"id": "node:native", "threadId": child, "runId": run,
+                        "parentNodeId": null, "origin": "provider_native", "createdBy": "agent",
+                        "driver": "claudeAgent", "providerInstanceId": "claudeAgent",
+                        "providerThreadId": null, "childThreadId": null, "prompt": "p",
+                        "title": "native", "model": null, "status": "running", "result": null,
+                        "startedAt": now, "completedAt": null, "updatedAt": now}),
+                ))?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        dispatch(
+            &engine,
+            message_with(
+                child,
+                "s1",
+                "finish",
+                json!({"type": "start_immediately"}),
+                Some("steer"),
+            ),
+        )
+        .await;
+        until_run_ends(&mut thread).await;
+        let row = &projection(&engine, "t1").await["subagents"][0];
+        assert_eq!(row["id"], task);
+        assert!(
+            row["completedAt"].is_null(),
+            "the native subagent holds it: {row}"
+        );
+    }
+    let (engine, _) = open(&db);
+    let row = &projection(&engine, "t1").await["subagents"][0];
+    assert_eq!(row["status"], "completed", "{row}");
+    assert_eq!(row["result"], "steered: finish");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_delegated_task_runs_as_a_child_thread_and_wakes_its_parent() {
     let db = TempDb::new("delegate");
