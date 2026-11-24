@@ -1,6 +1,8 @@
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -47,6 +49,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   const broker = yield* CodexManagedTokenBroker.CodexManagedTokenBroker;
   const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environmentIdentity.getEnvironmentId;
+  const random = yield* SecureRandom.SecureRandom;
   const invocation = yield* resolveSelfInvocation();
   const auth = yield* makeCodexChatGptAuth({
     instanceId: options.instanceId,
@@ -87,12 +90,14 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     );
     const credentials = yield* auth.access;
     const profileKey = yield* auth.profileKey(credentials);
+    const sessionKey = Hex.encode(yield* random.randomBytes(16));
     const authArgs = selfInvocationArgs(invocation, [
       "__managed-chatgpt-token",
       endpoint,
       options.instanceId,
       environmentId,
       profileKey,
+      sessionKey,
     ]);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -135,7 +140,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       }),
       environment,
       revision: profileKey,
-      recentTokenRefusal: broker.recentRefusal(options.instanceId, profileKey),
+      recentTokenRefusal: broker.recentRefusal(options.instanceId, profileKey, sessionKey),
     } satisfies CodexEffectiveRuntime;
   });
   return { auth, resolve, installation, homePath, homeLayout };

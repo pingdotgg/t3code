@@ -8,6 +8,8 @@ export const Request = Schema.Struct({
   instanceId: Schema.NonEmptyString,
   environmentId: Schema.NonEmptyString,
   profileKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  // Ties a refusal to the Codex session that asked, never to another session's 401.
+  sessionKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{32}$/u)),
 });
 // Messages are safe setup text that Codex shows in its own diagnostics.
 export const Refusal = Schema.Struct({

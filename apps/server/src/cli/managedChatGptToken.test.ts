@@ -11,6 +11,7 @@ import { vi } from "vite-plus/test";
 import { runManagedChatGptTokenCli } from "./managedChatGptToken.ts";
 
 const profileKey = "a".repeat(64);
+const sessionKey = "b".repeat(32);
 const refusal = { kind: "refresh", message: "Your ChatGPT connection expired. Sign in again." };
 
 /** Runs the helper against a fake broker that sends `answer`, or closes when it is null. */
@@ -55,7 +56,13 @@ const runAgainst = (answer: string | null) =>
       () => Effect.sync(() => vi.restoreAllMocks()),
     );
     yield* Effect.promise(() =>
-      runManagedChatGptTokenCli([endpoint, "codex-managed", "environment-1", profileKey]),
+      runManagedChatGptTokenCli([
+        endpoint,
+        "codex-managed",
+        "environment-1",
+        profileKey,
+        sessionKey,
+      ]),
     );
     return { stdout: stdout.join(""), stderr: stderr.join(""), exitCode: process.exitCode };
   }).pipe(Effect.scoped);

@@ -1863,7 +1863,7 @@ const makeRenewalBrokerWith = (
         broker,
         endpoint,
         refreshTokens,
-        request: { version: 1, instanceId, environmentId, profileKey },
+        request: { version: 1, instanceId, environmentId, profileKey, sessionKey: "5e".repeat(16) },
         oauthEntered,
         oauthEntries,
         oauthRelease,
@@ -2061,10 +2061,16 @@ it.effect.each([
         assert.notInclude(text, secret);
         assert.notInclude(logged, secret);
       }
-      const recorded = yield* h.broker.recentRefusal(instanceId, request.profileKey);
+      const recorded = yield* h.broker.recentRefusal(
+        instanceId,
+        request.profileKey,
+        request.sessionKey,
+      );
       assert.equal(recorded?.kind, "unrecorded" in scenario ? undefined : scenario.kind);
       yield* TestClock.adjust("1 hour");
-      assert.isUndefined(yield* h.broker.recentRefusal(instanceId, request.profileKey));
+      assert.isUndefined(
+        yield* h.broker.recentRefusal(instanceId, request.profileKey, request.sessionKey),
+      );
     }),
   ).pipe(Effect.provide(logs.layer));
 });
@@ -2085,7 +2091,11 @@ it.effect("the private broker refuses a request past its job limit until one suc
       const response = parseBrokerResponse(yield* Effect.promise(() => refused.response));
       assert.equal(response.refusal?.kind, "busy");
       assert.notProperty(response, "token");
-      assert.equal((yield* h.broker.recentRefusal(instanceId, h.request.profileKey))?.kind, "busy");
+      assert.equal(
+        (yield* h.broker.recentRefusal(instanceId, h.request.profileKey, h.request.sessionKey))
+          ?.kind,
+        "busy",
+      );
       yield* Deferred.succeed(h.oauthRelease, undefined);
       for (const client of held) {
         assert.deepEqual(parseBrokerResponse(yield* Effect.promise(() => client.response)), {
@@ -2093,26 +2103,30 @@ it.effect("the private broker refuses a request past its job limit until one suc
         });
       }
       yield* h.broker.awaitIdle;
-      assert.isUndefined(yield* h.broker.recentRefusal(instanceId, h.request.profileKey));
+      assert.isUndefined(
+        yield* h.broker.recentRefusal(instanceId, h.request.profileKey, h.request.sessionKey),
+      );
     }),
   ),
 );
 
-it.effect("the private broker refuses a request that outlasts the helper's wait", () =>
+it.effect("the private broker refuses a request that outlasts the helper's wait in time", () =>
   provideBroker(
     Effect.gen(function* () {
       const h = yield* makeRenewalBroker;
       h.pause();
       const client = yield* brokerClient(h.endpoint, h.request);
       yield* Deferred.await(h.oauthEntered);
-      yield* TestClock.adjust(COMMAND_TIMEOUT_MS);
-      yield* Deferred.succeed(h.oauthRelease, undefined);
+      // Codex starts its wait before the helper starts and reaches the broker.
+      yield* TestClock.adjust(COMMAND_TIMEOUT_MS - 20_000);
       const response = parseBrokerResponse(yield* Effect.promise(() => client.response));
       assert.equal(response.refusal?.kind, "timeout");
       assert.notProperty(response, "token");
+      yield* Deferred.succeed(h.oauthRelease, undefined);
       yield* h.broker.awaitIdle;
       assert.equal(
-        (yield* h.broker.recentRefusal(instanceId, h.request.profileKey))?.kind,
+        (yield* h.broker.recentRefusal(instanceId, h.request.profileKey, h.request.sessionKey))
+          ?.kind,
         "timeout",
       );
     }),

@@ -10,9 +10,11 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -25,6 +27,14 @@ const MAX_REFUSALS = 64;
 // Codex asks once before its first request, then retries the unauthenticated
 // request for a while before it reports the 401.
 const RECENT_REFUSAL_MS = 10 * 60_000;
+// Codex and the helper start the same wait before the request arrives. Answering with a
+// quarter of it to spare covers the helper's start, and a renewal already on the wire
+// (limited to 20 seconds of the 80) still finishes and saves on its own.
+const ANSWER_TIMEOUT_MS = (Protocol.COMMAND_TIMEOUT_MS * 3) / 4;
+const TIMED_OUT: Protocol.Refusal = {
+  kind: "timeout",
+  message: "Timed out waiting for the managed ChatGPT connection. Try again.",
+};
 // Stay below macOS's 104-byte and Linux's 108-byte sockaddr_un limits, including NUL.
 const UNIX_SOCKET_PATH_BYTES = 100;
 const encodeResponse = Schema.encodeSync(Schema.fromJsonString(Protocol.Response));
@@ -43,10 +53,11 @@ export class CodexManagedTokenBroker extends Context.Service<
   {
     readonly endpoint: Effect.Effect<string, BrokerStartError>;
     readonly awaitIdle: Effect.Effect<void>;
-    /** The latest refused token request for a sign-in profile, unless a later one succeeded. */
+    /** A Codex session's latest refused token request, unless it has had a token since. */
     readonly recentRefusal: (
       instanceId: ProviderInstanceId,
       profileKey: string,
+      sessionKey: string,
     ) => Effect.Effect<Protocol.Refusal | undefined>;
   }
 >()("t3/provider/CodexManagedTokenBroker") {}
@@ -122,14 +133,23 @@ const acquireListener = Effect.gen(function* () {
   const connections = yield* FiberSet.make<void>();
   const runConnection = yield* FiberSet.runtime(connections)();
   const sockets = new Set<NodeNet.Socket>();
-  // Sessions launched before a new sign-in keep the old profile, so its refusals stay theirs.
+  // Each Codex session keeps its own refusal: another session's token or refusal says
+  // nothing about why this one was sent without credentials.
   const refusals = new Map<string, Protocol.Refusal & { readonly at: number }>();
-  const refusalKey = (instanceId: string, profileKey: string) => `${profileKey}:${instanceId}`;
+  const refusalKey = (session: {
+    readonly instanceId: string;
+    readonly profileKey: string;
+    readonly sessionKey: string;
+  }) => `${session.profileKey}:${session.instanceId}:${session.sessionKey}`;
   let closing = false;
   let admitted = 0;
   const refuse = Effect.fn("CodexManagedTokenBroker.refuse")(function* (
     socket: NodeNet.Socket,
-    request: { readonly instanceId: ProviderInstanceId; readonly profileKey: string },
+    request: {
+      readonly instanceId: ProviderInstanceId;
+      readonly profileKey: string;
+      readonly sessionKey: string;
+    },
     refusal: Protocol.Refusal,
     record = true,
   ) {
@@ -139,7 +159,7 @@ const acquireListener = Effect.gen(function* () {
       message: refusal.message,
     });
     if (record) {
-      const key = refusalKey(request.instanceId, request.profileKey);
+      const key = refusalKey(request);
       refusals.delete(key);
       refusals.set(key, { ...refusal, at: yield* Clock.currentTimeMillis });
       if (refusals.size > MAX_REFUSALS) refusals.delete(refusals.keys().next().value!);
@@ -151,8 +171,9 @@ const acquireListener = Effect.gen(function* () {
   const recentRefusal = Effect.fn("CodexManagedTokenBroker.recentRefusal")(function* (
     instanceId: ProviderInstanceId,
     profileKey: string,
+    sessionKey: string,
   ) {
-    const refusal = refusals.get(refusalKey(instanceId, profileKey));
+    const refusal = refusals.get(refusalKey({ instanceId, profileKey, sessionKey }));
     if (refusal === undefined) return undefined;
     if ((yield* Clock.currentTimeMillis) - refusal.at > RECENT_REFUSAL_MS) return undefined;
     return { kind: refusal.kind, message: refusal.message };
@@ -212,30 +233,36 @@ const acquireListener = Effect.gen(function* () {
         admitted++;
         transferred = true;
         runJob(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const auth = yield* makeCodexChatGptAuth({
-                instanceId: request.instanceId,
-                expectedProfileKey: request.profileKey,
-              });
-              // Retire abandoned permit waits; access saves a started rotation before honoring interruption.
-              return yield* auth.access.pipe(Effect.timeout(Protocol.COMMAND_TIMEOUT_MS));
-            }),
-          ).pipe(
-            Effect.matchCauseEffect({
-              onSuccess: (credentials) => {
-                refusals.delete(refusalKey(request.instanceId, request.profileKey));
-                return Protocol.writeFrame(
-                  socket,
-                  encodeResponse({ token: credentials.accessToken }),
-                  Protocol.RESPONSE_BYTES,
-                );
-              },
-              onFailure: (cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : refuse(socket, request, refusalFromCause(cause)),
-            }),
+          Effect.gen(function* () {
+            const access = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const auth = yield* makeCodexChatGptAuth({
+                  instanceId: request.instanceId,
+                  expectedProfileKey: request.profileKey,
+                });
+                // Retire abandoned permit waits; access saves a started rotation before honoring interruption.
+                return yield* auth.access.pipe(Effect.timeout(Protocol.COMMAND_TIMEOUT_MS));
+              }),
+            ).pipe(Effect.forkChild);
+            const answer = yield* Fiber.await(access).pipe(Effect.timeoutOption(ANSWER_TIMEOUT_MS));
+            if (Option.isNone(answer)) {
+              // The session got no token, so its refusal stands even if the renewal then succeeds.
+              yield* refuse(socket, request, TIMED_OUT);
+              yield* Fiber.await(access);
+              return;
+            }
+            const result = answer.value;
+            if (Exit.isSuccess(result)) {
+              refusals.delete(refusalKey(request));
+              return yield* Protocol.writeFrame(
+                socket,
+                encodeResponse({ token: result.value.accessToken }),
+                Protocol.RESPONSE_BYTES,
+              );
+            }
+            if (!Cause.hasInterruptsOnly(result.cause))
+              yield* refuse(socket, request, refusalFromCause(result.cause));
+          }).pipe(
             Effect.ignoreCause,
             Effect.ensuring(
               Effect.sync(() => {
@@ -282,11 +309,6 @@ const acquireListener = Effect.gen(function* () {
 const isSetupError = Schema.is(ProviderSetupError);
 const refusalFromCause = (cause: Cause.Cause<unknown>): Protocol.Refusal => {
   const error = Cause.squash(cause);
-  if (Cause.isTimeoutError(error))
-    return {
-      kind: "timeout",
-      message: "Timed out waiting for the managed ChatGPT connection. Try again.",
-    };
   // Setup failures carry safe, actionable text; anything else could carry token data.
   if (isSetupError(error) && error.operation.length > 0 && error.detail.length > 0)
     return { kind: error.operation.slice(0, 64), message: error.detail.slice(0, 1024) };
