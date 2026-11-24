@@ -500,7 +500,7 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     onSelectThread(thread);
   };
-  useThreadJumpShortcuts(homeListItems, selectThread);
+  useThreadJumpShortcuts(homeListItems, selectThread, props.onSelectPendingTask);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(homeListItems);

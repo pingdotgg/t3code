@@ -1,4 +1,8 @@
-import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  isDeliveredProviderTurn,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 
 export function unsentManualContinuationSource(
   run: Pick<OrchestrationV2Run, "manualContinuationOfRunId"> | undefined,
@@ -7,7 +11,9 @@ export function unsentManualContinuationSource(
   let sourceId = run?.manualContinuationOfRunId;
   if (sourceId === undefined) return undefined;
   const runs = new Map(projection.runs.map((source) => [source.id, source]));
-  const acceptedAttempts = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  const acceptedAttempts = new Set(
+    projection.providerTurns.filter(isDeliveredProviderTurn).map((turn) => turn.runAttemptId),
+  );
   const latestAttempt = (
     runId: OrchestrationV2Run["id"],
     matches: (attempt: (typeof projection.attempts)[number]) => boolean,

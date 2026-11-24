@@ -1564,3 +1564,120 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("retries failed hidden-tag and disable-unsnooze cleanups on identical saves", () =>
+  Effect.gen(function* () {
+    const project = ProjectId.make("project:retry-visibility");
+    const bound = ThreadId.make("thread:retry-visibility");
+    const hiddenTaskId = ScheduledTaskId.make("task:retry-hidden");
+    const snoozeTaskId = ScheduledTaskId.make("task:retry-snooze");
+    const dispatched = yield* Ref.make<Array<Record<string, unknown>>>([]);
+    const failTagOnce = yield* Ref.make(true);
+    const failUnsnoozeOnce = yield* Ref.make(true);
+    const now = yield* DateTime.now;
+    const shellState = yield* Ref.make<{
+      tags: Array<string>;
+      snoozedUntil: DateTime.DateTime | null;
+      snoozedByTaskId: ScheduledTaskId | null;
+    }>({
+      tags: [],
+      snoozedUntil: DateTime.add(now, { hours: 1 }),
+      snoozedByTaskId: snoozeTaskId,
+    });
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () =>
+              Ref.get(shellState).pipe(
+                Effect.map(
+                  (state) =>
+                    ({
+                      id: bound,
+                      projectId: project,
+                      status: "idle",
+                      archivedAt: null,
+                      deletedAt: null,
+                      tags: state.tags,
+                      snoozedUntil: state.snoozedUntil,
+                      snoozedByTaskId: state.snoozedByTaskId,
+                    }) as never,
+                ),
+              ),
+            dispatch: (command) =>
+              Effect.gen(function* () {
+                yield* Ref.update(dispatched, (all) => [...all, command as Record<string, unknown>]);
+                if (command.type === "thread.tag.set" && (yield* Ref.getAndSet(failTagOnce, false))) {
+                  return yield* Effect.fail(new Error("transient tag failure") as never);
+                }
+                if (
+                  command.type === "thread.unsnooze" &&
+                  (yield* Ref.getAndSet(failUnsnoozeOnce, false))
+                ) {
+                  return yield* Effect.fail(new Error("transient unsnooze failure") as never);
+                }
+                if (command.type === "thread.tag.set" && command.tagged) {
+                  yield* Ref.update(shellState, (state) => ({
+                    ...state,
+                    tags: [...state.tags, command.tag],
+                  }));
+                }
+                if (command.type === "thread.unsnooze") {
+                  yield* Ref.update(shellState, (state) => ({
+                    ...state,
+                    snoozedUntil: null,
+                    snoozedByTaskId: null,
+                  }));
+                }
+                return { sequence: 1, storedEvents: [] } as never;
+              }),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const hiddenInput = {
+        id: hiddenTaskId,
+        title: "Hidden retry",
+        prompt: "Check",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 3_600_000 },
+        projectId: project,
+        threadId: bound,
+        threadMode: "continue",
+        sidebarVisibility: "hidden",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      } as const;
+      yield* service.upsert(hiddenInput);
+      assert.deepStrictEqual((yield* Ref.get(shellState)).tags, []);
+      // Identical re-save retries the failed hidden-tag dispatch.
+      yield* service.upsert(hiddenInput);
+      assert.include((yield* Ref.get(shellState)).tags, "scheduled-task-hidden");
+
+      yield* service.upsert({
+        ...hiddenInput,
+        id: snoozeTaskId,
+        title: "Snooze retry",
+        sidebarVisibility: "snooze_between_runs",
+      });
+      // First disable fails to unsnooze; repeating setEnabled(false) retries wake cleanup.
+      yield* service.setEnabled({ id: snoozeTaskId, enabled: false });
+      assert.isNotNull((yield* Ref.get(shellState)).snoozedUntil);
+      yield* service.setEnabled({ id: snoozeTaskId, enabled: false });
+      assert.isNull((yield* Ref.get(shellState)).snoozedUntil);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
