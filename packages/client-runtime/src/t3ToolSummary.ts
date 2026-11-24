@@ -695,6 +695,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "list-issue-metadata": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Checked issue tracker metadata {count} time} other {Checked issue tracker metadata {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to check issue tracker metadata {count} time} other {Tried to check issue tracker metadata {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "create-issue": {
       const count = selected.length;
       label = done
@@ -706,6 +723,73 @@ export function summarizeT3ToolCalls(
         : resolve(
             msg(
               "{count, plural, one {Tried to file {count} issue} other {Tried to file {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "update-issue": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Updated {count} issue} other {Updated {count} issues}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to update {count} issue} other {Tried to update {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "set-issue-deps": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Updated dependencies on {count} issue} other {Updated dependencies on {count} issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to update dependencies on {count} issue} other {Tried to update dependencies on {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "create-issue-project": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Created {count} tracker project} other {Created {count} tracker projects}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to create {count} tracker project} other {Tried to create {count} tracker projects}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "set-issue-project-deps": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Updated {count} project dependency} other {Updated {count} project dependencies}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to update {count} project dependency} other {Tried to update {count} project dependencies}}",
               { count },
             ),
           );

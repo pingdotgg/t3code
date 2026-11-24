@@ -53,6 +53,13 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+  relations: false,
+  subIssues: false,
+  projects: false,
+  cycles: false,
+  priority: false,
+  estimate: false,
+  dueDate: false,
 };
 
 /**
@@ -711,19 +718,28 @@ export const make: Effect.Effect<
                 ],
                 { concurrency: 3 },
               ).pipe(
-                Effect.map(([conversation, events, links]) => ({
-                  ...item,
-                  // Its type's own entry, so the category is the one that type gives the name.
-                  state: states.find((state) => state.name === item.state.name) ?? item.state,
-                  states,
-                  // Nothing cheap names the viewer here; the service already read it per host.
-                  viewer: null,
-                  viewerPermissions: VIEWER_PERMISSIONS,
-                  comments: conversation.comments,
-                  commentsCursor: conversation.nextCursor,
-                  events,
-                  linkedPullRequests: links,
-                })),
+                Effect.map(([conversation, events, links]) => {
+                  const {
+                    project: _project,
+                    relations: _relations,
+                    bodyField: _bodyField,
+                    workItemType: _workItemType,
+                    ...detail
+                  } = item;
+                  return {
+                    ...detail,
+                    // Its type's own entry, so the category is the one that type gives the name.
+                    state: states.find((state) => state.name === item.state.name) ?? item.state,
+                    states,
+                    // Nothing cheap names the viewer here; the service already read it per host.
+                    viewer: null,
+                    viewerPermissions: VIEWER_PERMISSIONS,
+                    comments: conversation.comments,
+                    commentsCursor: conversation.nextCursor,
+                    events,
+                    linkedPullRequests: links,
+                  };
+                }),
               ),
             ),
           ),

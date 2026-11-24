@@ -1,5 +1,10 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
+import {
+  issueEventSentence,
+  issuePriorityLabel,
+  issueRelationLabel,
+  issueWriteAccess,
+} from "@t3tools/client-runtime/issue-presentation";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
@@ -22,18 +27,30 @@ import type {
   IssueLabelCandidate,
   IssueLinkedPullRequest,
   IssueListEntry,
+  IssuePriority,
+  IssueProject,
   IssueReaction,
   IssueRef,
+  IssueReference,
+  IssueRelation,
+  IssueRelationKind,
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
+  CalendarIcon,
   CheckIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
+  FolderKanbanIcon,
+  GitBranchIcon,
+  Link2Icon,
+  PlusIcon,
+  SignalIcon,
   TagIcon,
   UserPlusIcon,
   UsersIcon,
+  XIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useContext, useState, type ReactNode } from "react";
@@ -333,6 +350,159 @@ function IssueAssigneePicker({
   );
 }
 
+const PRIORITIES: ReadonlyArray<IssuePriority> = ["none", "urgent", "high", "medium", "low"];
+const RELATION_KINDS: ReadonlyArray<IssueRelationKind> = [
+  "blocks",
+  "blocked-by",
+  "related",
+  "duplicate",
+  "duplicated-by",
+];
+
+function IssueProjectPicker({
+  environmentId,
+  reference,
+  detail,
+  allowed,
+  disabledReason,
+}: {
+  environmentId: EnvironmentId;
+  reference: IssueRef;
+  detail: IssueDetail;
+  allowed: boolean;
+  disabledReason: string;
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const candidatesQuery = useEnvironmentQuery(
+    open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
+  );
+  const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
+  const needle = query.toLowerCase();
+  const knownProjects = candidatesQuery.data?.projects ?? [];
+  const allProjects =
+    detail.project && !knownProjects.some((project) => project.id === detail.project?.id)
+      ? [detail.project, ...knownProjects]
+      : knownProjects;
+  const candidates = allProjects.filter(
+    (project) => needle.length === 0 || project.name.toLowerCase().includes(needle),
+  );
+  const selectProject = async (project: IssueProject | null) => {
+    setOpen(false);
+    const nextId = project?.id ?? null;
+    if ((detail.project?.id ?? null) === nextId) return;
+    const result = await update({ environmentId, input: { ...reference, project: nextId } });
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: m(msg("Could not change project")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
+      });
+      return;
+    }
+    refreshIssueLists(environmentId);
+  };
+  return (
+    <PullRequestCandidatePicker
+      icon={<FolderKanbanIcon className="size-3.5" />}
+      label={gt("Change project")}
+      allowed={allowed}
+      disabledReason={disabledReason}
+      open={open}
+      onOpenChange={setOpen}
+      query={query}
+      onQueryChange={setQuery}
+      searchLabel={gt("Search projects")}
+      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
+      error={candidatesQuery.data === null ? candidatesQuery.error : null}
+      candidates={candidates}
+      emptyLabel={gt("This tracker has no projects.")}
+      noMatchLabel={gt("No project matches that.")}
+      errorLabel={gt("The projects could not be read.")}
+      truncated={candidatesQuery.data?.truncated === true}
+      truncatedLabel={gt("More projects exist than are listed here.")}
+      candidateKey={(candidate) => candidate.id}
+      onSelect={(candidate) =>
+        void selectProject(detail.project?.id === candidate.id ? null : candidate)
+      }
+    >
+      {(candidate) => (
+        <>
+          <span className="min-w-0 flex-1 truncate">
+            {candidate.name}
+            {candidate.state ? (
+              <span className="text-muted-foreground"> · {candidate.state}</span>
+            ) : null}
+          </span>
+          {detail.project?.id === candidate.id ? (
+            <CheckIcon
+              aria-label={gt("Selected", { $context: "project is assigned to the issue" })}
+              className="size-3.5 shrink-0"
+            />
+          ) : null}
+        </>
+      )}
+    </PullRequestCandidatePicker>
+  );
+}
+
+function RelatedIssueRow({
+  issue,
+  badge,
+  onSelect,
+  onRemove,
+  removing = false,
+}: {
+  issue: IssueReference;
+  badge?: string;
+  onSelect: (() => void) | null;
+  onRemove?: (() => void) | null;
+  removing?: boolean;
+}) {
+  const gt = useGT();
+  const state = issueStatePresentation(issue.state);
+  const body = (
+    <>
+      <state.Icon aria-hidden className={cn("size-3.5 shrink-0", state.toneClassName)} />
+      {badge ? (
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">{badge}</span>
+      ) : null}
+      <span className="shrink-0 font-mono text-xs text-muted-foreground">{issue.displayKey}</span>
+      <span className="min-w-0 flex-1 truncate text-sm">{issue.title}</span>
+    </>
+  );
+  const linkClassName =
+    "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent";
+  return (
+    <div className="flex items-center gap-1">
+      {onSelect ? (
+        <button type="button" className={linkClassName} onClick={onSelect}>
+          {body}
+        </button>
+      ) : (
+        <a href={issue.url} target="_blank" rel="noopener noreferrer" className={linkClassName}>
+          {body}
+        </a>
+      )}
+      {onRemove ? (
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label={gt("Remove {issue}", { issue: issue.displayKey })}
+          disabled={removing}
+          onClick={onRemove}
+        >
+          <XIcon aria-hidden className="size-3" />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 type TimelineItem =
   | { kind: "comment"; at: string; comment: IssueComment }
   | { kind: "event"; at: string; event: IssueEvent };
@@ -441,12 +611,22 @@ export function IssueDetailPanel({
       ?.workspaceRoot ?? "";
 
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
+  const createIssue = useAtomCommand(issueEnvironment.create, { reportFailure: false });
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
+  const setRelation = useAtomCommand(issueEnvironment.setRelation, { reportFailure: false });
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [changingState, setChangingState] = useState(false);
+  const [addingParent, setAddingParent] = useState(false);
+  const [parentDraft, setParentDraft] = useState("");
+  const [addingSubIssue, setAddingSubIssue] = useState(false);
+  const [subIssueTitle, setSubIssueTitle] = useState("");
+  const [addingRelation, setAddingRelation] = useState(false);
+  const [relationKind, setRelationKind] = useState<IssueRelationKind>("blocks");
+  const [relationKey, setRelationKey] = useState("");
+  const [mutatingRelation, setMutatingRelation] = useState(false);
 
   if (detail === null) {
     if (detailQuery.error !== null && !detailQuery.isPending) {
@@ -510,7 +690,13 @@ export function IssueDetailPanel({
     }
   };
 
-  const save = async (patch: { title?: string; body?: string }) => {
+  const save = async (patch: {
+    title?: string;
+    body?: string;
+    priority?: IssuePriority;
+    parent?: string | null;
+    project?: string | null;
+  }) => {
     setSaving(true);
     const result = await update({ environmentId, input: { ...reference, ...patch } });
     setSaving(false);
@@ -527,7 +713,89 @@ export function IssueDetailPanel({
     }
     refreshIssueLists(environmentId);
     setEditing(null);
+    setAddingParent(false);
+    setParentDraft("");
   };
+
+  const addSubIssue = async () => {
+    const title = subIssueTitle.trim();
+    if (title.length === 0 || saving) return;
+    setSaving(true);
+    const result = await createIssue({
+      environmentId,
+      input: {
+        projectId: reference.projectId,
+        tracker: reference.tracker,
+        ...host,
+        scope: detail.scope,
+        title,
+        body: "",
+        labels: [],
+        assignees: [],
+        parent: detail.key,
+      },
+    });
+    setSaving(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: m(msg("Could not create sub-issue")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
+      });
+      return;
+    }
+    setSubIssueTitle("");
+    setAddingSubIssue(false);
+    registry.refresh(detailAtom);
+    refreshIssueLists(environmentId);
+  };
+
+  const changeRelation = async (
+    action: "add" | "remove",
+    kind: IssueRelationKind,
+    targetKey: string,
+  ) => {
+    const trimmed = targetKey.trim();
+    if (trimmed.length === 0 || mutatingRelation) return;
+    setMutatingRelation(true);
+    const result = await setRelation({
+      environmentId,
+      input: { ...reference, action, kind, targetKey: trimmed },
+    });
+    setMutatingRelation(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title:
+          action === "add" ? m(msg("Could not add relation")) : m(msg("Could not remove relation")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
+      });
+      return;
+    }
+    if (action === "add") {
+      setRelationKey("");
+      setAddingRelation(false);
+    }
+  };
+
+  const selectRelatedIssue = (related: IssueReference) =>
+    onSelectIssue
+      ? () =>
+          onSelectIssue({
+            projectId: reference.projectId,
+            tracker: reference.tracker,
+            ...host,
+            scope: related.scope,
+            key: related.key,
+            url: related.url,
+          })
+      : null;
 
   const moveTo = async (state: string) => {
     if (changingState) return;
@@ -780,6 +1048,208 @@ export function IssueDetailPanel({
                 ) : null}
               </span>
             </PullRequestMetaRow>
+            {detail.capabilities.priority ? (
+              <PullRequestMetaRow icon={<SignalIcon className="size-3.5" />} label={gt("Priority")}>
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {access.priority ? (
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            aria-label={gt("Change priority")}
+                            disabled={saving}
+                          />
+                        }
+                      >
+                        {issuePriorityLabel(detail.priority ?? "none", messages)}
+                        <ChevronDownIcon aria-hidden className="size-3" />
+                      </MenuTrigger>
+                      <MenuPopup align="start">
+                        {PRIORITIES.map((priority) => (
+                          <MenuItem
+                            key={priority}
+                            onClick={() => {
+                              if (priority !== (detail.priority ?? "none")) {
+                                void save({ priority });
+                              }
+                            }}
+                          >
+                            {issuePriorityLabel(priority, messages)}
+                          </MenuItem>
+                        ))}
+                      </MenuPopup>
+                    </Menu>
+                  ) : (
+                    <span>{issuePriorityLabel(detail.priority ?? "none", messages)}</span>
+                  )}
+                </span>
+              </PullRequestMetaRow>
+            ) : null}
+            {detail.capabilities.projects ? (
+              <PullRequestMetaRow
+                icon={<FolderKanbanIcon className="size-3.5" />}
+                label={gt("Project")}
+              >
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {detail.project ? (
+                    <>
+                      <span className="truncate">
+                        {detail.project.url ? (
+                          <InlineButton
+                            render={
+                              <a
+                                href={detail.project.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              />
+                            }
+                          >
+                            {detail.project.name}
+                          </InlineButton>
+                        ) : (
+                          detail.project.name
+                        )}
+                        {detail.milestone ? (
+                          <span className="text-muted-foreground"> · {detail.milestone.name}</span>
+                        ) : null}
+                      </span>
+                      {access.projects ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label={gt("Remove project")}
+                          disabled={saving}
+                          onClick={() => void save({ project: null })}
+                        >
+                          <XIcon aria-hidden className="size-3" />
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      <T context="no project">None</T>
+                    </span>
+                  )}
+                  <IssueProjectPicker
+                    environmentId={environmentId}
+                    reference={reference}
+                    detail={detail}
+                    allowed={access.projects}
+                    disabledReason={blocked ?? gt("You cannot change the project on this issue.")}
+                  />
+                </span>
+              </PullRequestMetaRow>
+            ) : null}
+            {detail.cycle || detail.dueDate || detail.estimate != null ? (
+              <PullRequestMetaRow
+                icon={<CalendarIcon className="size-3.5" />}
+                label={gt("Schedule")}
+              >
+                <span className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  {detail.cycle ? (
+                    <span>
+                      {detail.cycle.name ??
+                        gt("Cycle {number}", { number: String(detail.cycle.number) })}
+                    </span>
+                  ) : null}
+                  {detail.dueDate ? (
+                    <span>{gt("Due {date}", { date: detail.dueDate })}</span>
+                  ) : null}
+                  {detail.estimate != null ? (
+                    <span>{gt("Estimate {estimate}", { estimate: String(detail.estimate) })}</span>
+                  ) : null}
+                </span>
+              </PullRequestMetaRow>
+            ) : null}
+            {detail.capabilities.subIssues && (detail.parent != null || access.subIssues) ? (
+              <PullRequestMetaRow
+                icon={<GitBranchIcon className="size-3.5" />}
+                label={gt("Parent")}
+              >
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {detail.parent ? (
+                    <>
+                      {onSelectIssue ? (
+                        <InlineButton onClick={selectRelatedIssue(detail.parent) ?? undefined}>
+                          {detail.parent.displayKey} · {detail.parent.title}
+                        </InlineButton>
+                      ) : (
+                        <InlineButton
+                          render={
+                            <a href={detail.parent.url} target="_blank" rel="noopener noreferrer" />
+                          }
+                        >
+                          {detail.parent.displayKey} · {detail.parent.title}
+                        </InlineButton>
+                      )}
+                      {access.subIssues ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label={gt("Remove parent issue")}
+                          disabled={saving}
+                          onClick={() => void save({ parent: null })}
+                        >
+                          <XIcon aria-hidden className="size-3" />
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : addingParent ? (
+                    <form
+                      className="flex items-center gap-1.5"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const next = parentDraft.trim();
+                        if (next.length > 0) void save({ parent: next });
+                      }}
+                    >
+                      <Input
+                        autoFocus
+                        aria-label={gt("Parent issue key")}
+                        placeholder={gt("e.g. ENG-123")}
+                        value={parentDraft}
+                        disabled={saving}
+                        onChange={(event) => setParentDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            setAddingParent(false);
+                            setParentDraft("");
+                          }
+                        }}
+                      />
+                      <Button type="submit" size="xs" disabled={saving || !parentDraft.trim()}>
+                        <T>Save</T>
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => {
+                          setAddingParent(false);
+                          setParentDraft("");
+                        }}
+                      >
+                        <T>Cancel</T>
+                      </Button>
+                    </form>
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground">
+                        <T context="no parent issue">None</T>
+                      </span>
+                      {access.subIssues ? (
+                        <Button size="xs" variant="ghost" onClick={() => setAddingParent(true)}>
+                          <PlusIcon aria-hidden className="size-3" />
+                          <T>Set parent</T>
+                        </Button>
+                      ) : null}
+                    </>
+                  )}
+                </span>
+              </PullRequestMetaRow>
+            ) : null}
           </div>
         </div>
 
@@ -830,6 +1300,176 @@ export function IssueDetailPanel({
             ) : null}
           </div>
         </PullRequestSection>
+
+        {detail.capabilities.subIssues &&
+        ((detail.subIssues?.length ?? 0) > 0 ||
+          (access.subIssues && detail.capabilities.create)) ? (
+          <PullRequestSection
+            key={`sub-issues:${detail.url}`}
+            title={
+              (detail.subIssues?.length ?? 0) > 0
+                ? gt("Sub-issues ({count})", { count: detail.subIssues!.length })
+                : gt("Sub-issues")
+            }
+            actions={
+              access.subIssues && detail.capabilities.create && !addingSubIssue ? (
+                <Button size="xs" variant="ghost" onClick={() => setAddingSubIssue(true)}>
+                  <PlusIcon aria-hidden className="size-3" />
+                  <T>Add sub-issue</T>
+                </Button>
+              ) : null
+            }
+          >
+            <div className="flex flex-col gap-1">
+              {(detail.subIssues ?? []).map((subIssue) => (
+                <RelatedIssueRow
+                  key={subIssue.key}
+                  issue={subIssue}
+                  onSelect={selectRelatedIssue(subIssue)}
+                />
+              ))}
+              {addingSubIssue ? (
+                <form
+                  className="mt-1 flex items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void addSubIssue();
+                  }}
+                >
+                  <Input
+                    autoFocus
+                    aria-label={gt("Sub-issue title")}
+                    placeholder={gt("Sub-issue title")}
+                    value={subIssueTitle}
+                    disabled={saving}
+                    onChange={(event) => setSubIssueTitle(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setAddingSubIssue(false);
+                        setSubIssueTitle("");
+                      }
+                    }}
+                  />
+                  <Button type="submit" size="sm" disabled={saving || !subIssueTitle.trim()}>
+                    <T>Create</T>
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setAddingSubIssue(false);
+                      setSubIssueTitle("");
+                    }}
+                  >
+                    <T>Cancel</T>
+                  </Button>
+                </form>
+              ) : null}
+            </div>
+          </PullRequestSection>
+        ) : null}
+
+        {detail.capabilities.relations &&
+        ((detail.relations?.length ?? 0) > 0 || access.relations) ? (
+          <PullRequestSection
+            key={`relations:${detail.url}`}
+            title={
+              (detail.relations?.length ?? 0) > 0
+                ? gt("Relations ({count})", { count: detail.relations!.length })
+                : gt("Relations")
+            }
+            actions={
+              access.relations && !addingRelation ? (
+                <Button size="xs" variant="ghost" onClick={() => setAddingRelation(true)}>
+                  <Link2Icon aria-hidden className="size-3" />
+                  <T>Add relation</T>
+                </Button>
+              ) : null
+            }
+          >
+            <div className="flex flex-col gap-1">
+              {(detail.relations ?? []).map((relation: IssueRelation) => (
+                <RelatedIssueRow
+                  key={relation.id}
+                  issue={relation.issue}
+                  badge={issueRelationLabel(relation.kind, messages)}
+                  onSelect={selectRelatedIssue(relation.issue)}
+                  onRemove={
+                    access.relations
+                      ? () => void changeRelation("remove", relation.kind, relation.issue.key)
+                      : null
+                  }
+                  removing={mutatingRelation}
+                />
+              ))}
+              {addingRelation ? (
+                <form
+                  className="mt-1 flex items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void changeRelation("add", relationKind, relationKey);
+                  }}
+                >
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          aria-label={gt("Relation type")}
+                          disabled={mutatingRelation}
+                        />
+                      }
+                    >
+                      {issueRelationLabel(relationKind, messages)}
+                      <ChevronDownIcon aria-hidden className="size-3" />
+                    </MenuTrigger>
+                    <MenuPopup align="start">
+                      {RELATION_KINDS.map((kind) => (
+                        <MenuItem key={kind} onClick={() => setRelationKind(kind)}>
+                          {issueRelationLabel(kind, messages)}
+                        </MenuItem>
+                      ))}
+                    </MenuPopup>
+                  </Menu>
+                  <Input
+                    autoFocus
+                    aria-label={gt("Related issue key")}
+                    placeholder={gt("e.g. ENG-123")}
+                    value={relationKey}
+                    disabled={mutatingRelation}
+                    onChange={(event) => setRelationKey(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setAddingRelation(false);
+                        setRelationKey("");
+                      }
+                    }}
+                  />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={mutatingRelation || !relationKey.trim()}
+                  >
+                    <T>Add</T>
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setAddingRelation(false);
+                      setRelationKey("");
+                    }}
+                  >
+                    <T>Cancel</T>
+                  </Button>
+                </form>
+              ) : null}
+            </div>
+          </PullRequestSection>
+        ) : null}
 
         {detail.linkedPullRequests.length > 0 ? (
           <PullRequestSection key={`linked:${detail.url}`} title={gt("Linked pull requests")}>

@@ -442,4 +442,214 @@ describe("issue toolkit handlers", () => {
       expect(unlinked.wasLinked).toBe(true);
     }),
   );
+
+  it.effect(
+    "supports native Linear sub-issues, blocking deps, metadata, and project dependencies via MCP",
+    () =>
+      Effect.gen(function* () {
+        const tracker = IssueTrackerKind.make("linear");
+        const host = "linear.app";
+        const calls = yield* Ref.make<Array<unknown>>([]);
+        const linearCaps = {
+          ...detail.capabilities,
+          relations: true,
+          subIssues: true,
+          projects: true,
+          cycles: true,
+          priority: true,
+          estimate: true,
+          dueDate: true,
+        };
+        const linear: StandaloneIssueTrackerApi = {
+          kind: tracker,
+          capabilities: linearCaps,
+          standalone: {
+            tracker,
+            displayName: "Linear",
+            host,
+            scopeNoun: "team",
+            credential: { label: "Personal API key", helpUrl: null },
+          },
+          parseIssueUrl: () => null,
+          probeCredential: () => Effect.succeed({ account: "user", scopes: [] }),
+          getViewer: () => Effect.succeed("user"),
+          listIssues: () => Effect.succeed({ items: [], nextCursor: null }),
+          getComments: () => Effect.succeed({ comments: [], nextCursor: null }),
+          getIssue: () =>
+            Effect.succeed({
+              ...detail,
+              key: "AI-1527",
+              displayKey: "AI-1527",
+              url: "https://linear.app/ai-dmc/issue/AI-1527",
+              priority: "high",
+              parent: {
+                scope: "AI",
+                key: "AI-1524",
+                displayKey: "AI-1524",
+                title: "Spec",
+                url: "https://linear.app/ai-dmc/issue/AI-1524",
+                state: { category: "open", name: "In Progress" },
+              },
+              subIssues: [],
+              relations: [
+                {
+                  id: "rel_1",
+                  kind: "blocked-by",
+                  issue: {
+                    scope: "AI",
+                    key: "AI-1525",
+                    displayKey: "AI-1525",
+                    title: "Step 1",
+                    url: "https://linear.app/ai-dmc/issue/AI-1525",
+                    state: { category: "open", name: "Todo" },
+                  },
+                },
+              ],
+            }),
+          listCandidates: () =>
+            Effect.succeed({
+              labels: [{ name: "Backend", color: "#00f", description: null }],
+              assignees: [{ id: "u1", login: "max", name: "Max", avatarUrl: null }],
+              projects: [{ id: "p1", name: "Catalog", milestones: [], relations: [] }],
+              cycles: [{ id: "c1", number: 12, name: "Cycle 12" }],
+              states: [{ category: "open", name: "Todo" }],
+              truncated: false,
+            }),
+          create: (input) =>
+            Ref.update(calls, (all) => [...all, { op: "create", input }]).pipe(
+              Effect.as({
+                key: "AI-1527",
+                displayKey: "AI-1527",
+                url: "https://linear.app/ai-dmc/issue/AI-1527",
+              }),
+            ),
+          update: (input) => Ref.update(calls, (all) => [...all, { op: "update", input }]),
+          setRelation: (input) =>
+            Ref.update(calls, (all) => [...all, { op: "setRelation", input }]),
+          createProject: (input) =>
+            Ref.update(calls, (all) => [...all, { op: "createProject", input }]).pipe(
+              Effect.as({ id: "p2", name: input.name, milestones: [], relations: [] }),
+            ),
+          setProjectRelation: (input) =>
+            Ref.update(calls, (all) => [...all, { op: "setProjectRelation", input }]),
+        };
+        const issueLayer = IssueService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              projectLayer,
+              Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+              Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
+                list: () => Effect.succeed(new Map([[PROJECT_ID, { tracker, scope: "AI" }]])),
+              }),
+              Layer.succeed(
+                IssueTrackerRegistry.IssueTrackerRegistry,
+                IssueTrackerRegistry.fromTrackers([linear]),
+              ),
+            ),
+          ),
+        );
+        const harness = yield* makeHarness([], issueLayer);
+
+        const metadata = yield* harness.call("list_issue_metadata", {});
+        expect(metadata.projects).toEqual([
+          { id: "p1", name: "Catalog", milestones: [], relations: [] },
+        ]);
+
+        const created = yield* harness.call("create_issue", {
+          title: "Step 2",
+          parent: "AI-1524",
+          project: "Catalog",
+          priority: "high",
+          blockedBy: ["AI-1525"],
+        });
+        expect(created.key).toBe("AI-1527");
+
+        yield* harness.call("update_issue", {
+          key: "AI-1527",
+          parent: "AI-1524",
+          project: "Catalog",
+          estimate: 2,
+        });
+
+        yield* harness.call("set_issue_deps", {
+          key: "AI-1527",
+          blockedBy: ["AI-1525"],
+          blocks: ["AI-1528"],
+        });
+
+        const createdProject = yield* harness.call("create_issue_project", {
+          name: "Rollout",
+          milestones: [{ name: "M1" }],
+        });
+        expect(createdProject.project).toMatchObject({ id: "p2", name: "Rollout" });
+
+        yield* harness.call("set_issue_project_deps", {
+          project: "Catalog",
+          kind: "blocks",
+          targetProject: "Rollout",
+        });
+
+        const read = yield* harness.call("read_issue", { key: "AI-1527" });
+        expect(read.parent).toMatchObject({ key: "AI-1524" });
+        expect(read.relations).toEqual([
+          expect.objectContaining({
+            kind: "blocked-by",
+            issue: expect.objectContaining({ key: "AI-1525" }),
+          }),
+        ]);
+
+        const recorded = yield* Ref.get(calls);
+        expect(recorded).toEqual([
+          expect.objectContaining({
+            op: "create",
+            input: expect.objectContaining({
+              parent: "AI-1524",
+              project: "Catalog",
+              priority: "high",
+              blockedBy: ["AI-1525"],
+            }),
+          }),
+          expect.objectContaining({
+            op: "update",
+            input: expect.objectContaining({
+              key: "AI-1527",
+              parent: "AI-1524",
+              project: "Catalog",
+              estimate: 2,
+            }),
+          }),
+          expect.objectContaining({
+            op: "setRelation",
+            input: expect.objectContaining({
+              key: "AI-1527",
+              action: "add",
+              kind: "blocks",
+              targetKey: "AI-1528",
+            }),
+          }),
+          expect.objectContaining({
+            op: "setRelation",
+            input: expect.objectContaining({
+              key: "AI-1527",
+              action: "add",
+              kind: "blocked-by",
+              targetKey: "AI-1525",
+            }),
+          }),
+          expect.objectContaining({
+            op: "createProject",
+            input: expect.objectContaining({ name: "Rollout", milestones: [{ name: "M1" }] }),
+          }),
+          expect.objectContaining({
+            op: "setProjectRelation",
+            input: expect.objectContaining({
+              action: "add",
+              project: "Catalog",
+              kind: "blocks",
+              targetProject: "Rollout",
+            }),
+          }),
+        ]);
+      }),
+  );
 });

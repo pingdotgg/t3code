@@ -91,6 +91,68 @@ fragment LinearPageInfo on PageInfo {
   endCursor
 }
 
+fragment LinearIssueRef on Issue {
+  id
+  identifier
+  title
+  url
+  team {
+    key
+  }
+  state {
+    ...LinearWorkflowState
+  }
+}
+
+fragment LinearProjectMilestone on ProjectMilestone {
+  id
+  name
+  description
+  targetDate
+}
+
+fragment LinearProject on Project {
+  id
+  name
+  slugId
+  url
+  description
+  status {
+    name
+  }
+}
+
+fragment LinearProjectRelation on ProjectRelation {
+  id
+  type
+  anchorType
+  relatedAnchorType
+  project {
+    id
+    name
+  }
+  projectMilestone {
+    id
+    name
+  }
+  relatedProject {
+    id
+    name
+  }
+  relatedProjectMilestone {
+    id
+    name
+  }
+}
+
+fragment LinearCycle on Cycle {
+  id
+  number
+  name
+  startsAt
+  endsAt
+}
+
 query T3Viewer {
   viewer {
     ...LinearUser
@@ -122,6 +184,44 @@ query T3Issue($id: String!, $comments: Int!) {
   issue(id: $id) {
     ...LinearIssue
     description
+    priority
+    estimate
+    dueDate
+    project {
+      ...LinearProject
+    }
+    projectMilestone {
+      ...LinearProjectMilestone
+    }
+    cycle {
+      ...LinearCycle
+    }
+    parent {
+      ...LinearIssueRef
+    }
+    children(first: 50) {
+      nodes {
+        ...LinearIssueRef
+      }
+    }
+    relations(first: 50) {
+      nodes {
+        id
+        type
+        relatedIssue {
+          ...LinearIssueRef
+        }
+      }
+    }
+    inverseRelations(first: 50) {
+      nodes {
+        id
+        type
+        issue {
+          ...LinearIssueRef
+        }
+      }
+    }
     team {
       states(first: 100) {
         nodes {
@@ -249,6 +349,66 @@ query T3Team($key: String!) {
   }
 }
 
+query T3TeamProjects($key: String!) {
+  teams(first: 1, filter: { key: { eq: $key } }) {
+    nodes {
+      id
+      projects(first: 50) {
+        nodes {
+          ...LinearProject
+          projectMilestones(first: 20) {
+            nodes {
+              ...LinearProjectMilestone
+            }
+          }
+          relations(first: 10) {
+            nodes {
+              ...LinearProjectRelation
+            }
+          }
+          inverseRelations(first: 10) {
+            nodes {
+              ...LinearProjectRelation
+            }
+          }
+        }
+        pageInfo {
+          ...LinearPageInfo
+        }
+      }
+      cycles(first: 25) {
+        nodes {
+          ...LinearCycle
+        }
+        pageInfo {
+          ...LinearPageInfo
+        }
+      }
+    }
+  }
+}
+
+query T3IssueLookup($id: String!) {
+  issue(id: $id) {
+    id
+    identifier
+  }
+}
+
+query T3ProjectRelations($id: String!, $first: Int!, $after: String) {
+  project(id: $id) {
+    id
+    relations(first: $first, after: $after) {
+      nodes {
+        ...LinearProjectRelation
+      }
+      pageInfo {
+        ...LinearPageInfo
+      }
+    }
+  }
+}
+
 mutation T3IssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
     success
@@ -279,6 +439,54 @@ mutation T3ReactionCreate($input: ReactionCreateInput!) {
 
 mutation T3ReactionDelete($id: String!) {
   reactionDelete(id: $id) {
+    success
+  }
+}
+
+mutation T3IssueRelationCreate($input: IssueRelationCreateInput!) {
+  issueRelationCreate(input: $input) {
+    success
+    issueRelation {
+      id
+    }
+  }
+}
+
+mutation T3IssueRelationDelete($id: String!) {
+  issueRelationDelete(id: $id) {
+    success
+  }
+}
+
+mutation T3ProjectCreate($input: ProjectCreateInput!) {
+  projectCreate(input: $input) {
+    success
+    project {
+      ...LinearProject
+    }
+  }
+}
+
+mutation T3ProjectMilestoneCreate($input: ProjectMilestoneCreateInput!) {
+  projectMilestoneCreate(input: $input) {
+    success
+    projectMilestone {
+      ...LinearProjectMilestone
+    }
+  }
+}
+
+mutation T3ProjectRelationCreate($input: ProjectRelationCreateInput!) {
+  projectRelationCreate(input: $input) {
+    success
+    projectRelation {
+      id
+    }
+  }
+}
+
+mutation T3ProjectRelationDelete($id: String!) {
+  projectRelationDelete(id: $id) {
     success
   }
 }
