@@ -1,9 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
-import type * as NodeOS from "node:os";
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
@@ -13,12 +14,14 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
+
+vi.mock("node:os", { spy: true });
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -270,7 +273,8 @@ describe("resolveBoundEndpoints", () => {
 });
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({
-  Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
+  BackendState: "Running",
+  Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2", "fd7a:115c:a1e0::1234"] },
 });
 
 const layerTailscaleUp = Layer.succeed(
@@ -314,14 +318,14 @@ const layerServeProbe = (status: number) =>
     HttpClient.make((request) => Effect.succeed(serveProbeResponse(request, status))),
   );
 
-const layerServeConfig = (host = "127.0.0.1") =>
+const layerServeConfig = (host = "127.0.0.1", tailscaleServeEnabled = true) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.map(ServerConfig.ServerConfig, (config) => ({
       ...config,
       host,
       port: 3773,
-      tailscaleServeEnabled: true,
+      tailscaleServeEnabled,
       tailscaleServePort: 443,
     })),
   ).pipe(
@@ -416,3 +420,76 @@ describe("DirectEndpoints Tailscale Serve", () => {
     }),
   );
 });
+
+effectIt.effect("advertises a bound IPv6 MagicDNS listener and drops a removed interface", () =>
+  Effect.gen(function* () {
+    using _interfaces = vi.spyOn(NodeOS, "networkInterfaces").mockReturnValue({
+      tailscale0: (INTERFACES.utun4 ?? []).flatMap((entry) =>
+        entry.family === "IPv6" ? [{ ...entry, address: "fd7a:115c:a1e0::1234" }] : [],
+      ),
+    });
+    const service = yield* DirectEndpoints.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerServeConfig("fd7a:115c:a1e0::1234", false),
+          layerTailscaleUp,
+          layerServeProbe(502),
+        ),
+      ),
+    );
+    expect(yield* service.resolve()).toEqual([
+      { kind: "tailnet", httpBaseUrl: "http://bb-1.tail1234.ts.net:3773/" },
+    ]);
+    _interfaces.mockReturnValue({});
+    expect(yield* service.resolveAvailable()).toEqual([]);
+  }),
+);
+
+effectIt.effect("keeps completed Self discovery when HTTPS exceeds the shared deadline", () =>
+  Effect.gen(function* () {
+    using _interfaces = vi
+      .spyOn(NodeOS, "networkInterfaces")
+      .mockReturnValue({ tailscale0: vpnInterface("100.64.1.2") });
+    const statusStarted = yield* Deferred.make<void>();
+    const probeStarted = yield* Deferred.make<void>();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner.pipe(
+      Effect.provide(layerTailscaleUp),
+    );
+    const service = yield* DirectEndpoints.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerServeConfig("0.0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              Deferred.succeed(statusStarted, undefined).pipe(
+                Effect.andThen(Effect.sleep("1 second")),
+                Effect.andThen(spawner.spawn(command)),
+              ),
+            ),
+          ),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+          ),
+        ),
+      ),
+    );
+    const resolving = yield* Effect.forkScoped(service.resolve());
+    yield* Deferred.await(statusStarted);
+    const numeric = [{ kind: "tailnet", httpBaseUrl: "http://100.64.1.2:3773/" }];
+    expect(yield* service.resolveAvailable()).toEqual(numeric);
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.await(probeStarted);
+    expect(yield* service.resolveAvailable()).toEqual(numeric);
+    yield* TestClock.adjust("2 seconds");
+    const endpoints = yield* Fiber.join(resolving);
+    expect(endpoints).toEqual([
+      ...numeric,
+      { kind: "tailnet", httpBaseUrl: "http://bb-1.tail1234.ts.net:3773/" },
+    ]);
+    expect(yield* service.resolveAvailable()).toEqual(endpoints);
+  }),
+);
