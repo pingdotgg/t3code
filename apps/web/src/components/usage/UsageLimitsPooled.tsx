@@ -605,6 +605,7 @@ function PoolWindowCard({
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
+  const m = useMessages();
   const nextRefill = pool.resets.find((reset) => reset.at > now && reset.restoresPercent > 0);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
@@ -624,8 +625,9 @@ function PoolWindowCard({
           </span>
         </span>
         {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+          <span className="text-xs text-muted-foreground tabular-nums">
+            <span className="font-medium text-foreground">↻ +{nextRefill.restoresPercent}%</span>{" "}
+            {formatResetsIn(nextRefill.member.window, now, m, "in")}
           </span>
         ) : null}
       </div>
