@@ -1685,6 +1685,45 @@ it.effect("a project update changes Settings and the project together or not at 
       code: "orchestration_error",
       message: expect.stringContaining("could not be put back"),
     });
+
+    // A read that fails after the row committed is retried with the same command, which replays
+    // the commit; the new overrides stay.
+    const attempts: Array<{ readonly commandId: unknown }> = [];
+    const reread = yield* run(
+      Layer.merge(
+        harness.dependencies,
+        Layer.mock(Project.ProjectService)({
+          update: (input) =>
+            Effect.suspend(() =>
+              attempts.push(input) === 1
+                ? Effect.fail(
+                    new Project.ProjectOperationError({
+                      operation: "read-project",
+                      projectId: input.projectId,
+                      cause: "read failed",
+                    }),
+                  )
+                : Effect.succeed({
+                    id: input.projectId,
+                    title: "Client target",
+                    workspaceRoot: "/projects/client-target",
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                    updatedAt: "2026-01-01T00:00:00.000Z",
+                    deletedAt: null,
+                  } as never),
+            ),
+        }),
+      ),
+      { projectId: harness.projectId, autoPull: true },
+    );
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]?.commandId).toBe(attempts[0]?.commandId);
+    expect(reread.result).toMatchObject({ autoPull: true });
+    expect(reread.settings.projectSettingsOverrides[harness.projectId]).toMatchObject({
+      defaultAutoPull: true,
+    });
   }),
 );
 

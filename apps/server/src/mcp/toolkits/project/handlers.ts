@@ -699,13 +699,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;
         // Settings first: a managed lock must refuse the update before the project row changes.
-        // Uninterruptible except for the row update, so an interruption always restores Settings.
-        return yield* Effect.uninterruptibleMask((interruptible) =>
+        // Uninterruptible, so a cancelled call can't separate the row from its Settings: the row
+        // commits and is read back, or the overrides are put back.
+        return yield* Effect.uninterruptible(
           Effect.gen(function* () {
             const restoreSettings = yield* saveProjectSettingsOverrides(input);
+            const updateRow = projects.update({ ...row, commandId });
             const exit = yield* Effect.exit(
-              interruptible(
-                projects.update({ ...row, commandId }).pipe(Effect.mapError(projectFailure)),
+              updateRow.pipe(
+                // This may fail after the row committed, reading it back. The same command id
+                // replays that commit instead of applying it twice, so one retry tells them apart.
+                Effect.catchTags({ ProjectOperationError: () => updateRow }),
+                Effect.mapError(projectFailure),
               ),
             );
             if (Exit.isSuccess(exit)) return exit.value;
