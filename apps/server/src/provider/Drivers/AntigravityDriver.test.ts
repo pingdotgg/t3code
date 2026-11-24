@@ -313,6 +313,43 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
+    "does not apply thinking to another model when restoring the original model fails",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          environment: [
+            { name: "T3_ACP_ANTIGRAVITY_RESET_THINKING", value: "1" },
+            { name: "T3_ACP_ANTIGRAVITY_FAIL_RESTORE", value: "1" },
+          ],
+        });
+        yield* h.refresh();
+        const requests = yield* h.readRequests;
+        const models = requests.filter((request) => request.params?.configId === "model");
+        expect(models.map((request) => request.params?.value)).toContain("gemini-test-high");
+        expect(models.at(-1)?.params?.value).toBe("gemini-test-low");
+        expect(requests.filter((request) => request.params?.configId === "thinking_level")).toEqual(
+          [],
+        );
+        yield* h.assertClosed;
+      }),
+  );
+  it.effect.skipIf(windowsHost)(
+    "preserves the current model thinking level while refreshing the catalog",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          environment: [{ name: "T3_ACP_ANTIGRAVITY_RESET_THINKING", value: "1" }],
+        });
+        yield* h.refresh();
+        const snapshot = yield* h.instance.snapshot.getSnapshot;
+        expect(
+          snapshot.models.find((model) => model.slug === "gemini-test-low")?.capabilities
+            ?.optionDescriptors?.[0],
+        ).toMatchObject({ currentValue: "high" });
+        yield* h.assertClosed;
+      }),
+  );
+  it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {

@@ -497,7 +497,7 @@ export const AntigravityDriver: ProviderDriver<
       started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
       runtime: Pick<
         AcpSessionRuntime.AcpSessionRuntime["Service"],
-        "getEvents" | "drainEvents" | "setModel"
+        "getEvents" | "drainEvents" | "setModel" | "setConfigOption"
       >,
     ) {
       yield* provider.onSessionStarted(started);
@@ -516,10 +516,17 @@ export const AntigravityDriver: ProviderDriver<
       // Thinking levels differ per model and are reported only for the selected one.
       const configOptions = started.sessionSetupResult.configOptions ?? [];
       const current = configOptions.find((option) => option.id === "model")?.currentValue;
-      if (antigravityThinkingConfig(configOptions) !== undefined && typeof current === "string") {
-        for (const model of [...antigravityModelOptions(configOptions), { value: current }]) {
+      const thinking = antigravityThinkingConfig(configOptions);
+      if (thinking !== undefined && typeof current === "string") {
+        for (const model of antigravityModelOptions(configOptions)) {
           yield* runtime.setModel(model.value).pipe(Effect.ignore);
         }
+        yield* runtime
+          .setModel(current)
+          .pipe(
+            Effect.andThen(runtime.setConfigOption(thinking.id, thinking.currentValue)),
+            Effect.ignore,
+          );
       }
       yield* runtime.drainEvents;
     }, Effect.scoped);

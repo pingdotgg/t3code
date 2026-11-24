@@ -18,6 +18,8 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const antigravityResetThinking = process.env.T3_ACP_ANTIGRAVITY_RESET_THINKING === "1";
+const antigravityFailRestore = process.env.T3_ACP_ANTIGRAVITY_FAIL_RESTORE === "1";
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -125,7 +127,7 @@ let currentModeId = antigravityProfile
     : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
-let currentReasoning = "medium";
+let currentReasoning = antigravityResetThinking ? "high" : "medium";
 let currentContext = "272k";
 let currentFast = false;
 let currentAgent = "";
@@ -177,6 +179,21 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         currentValue: currentModeId,
         options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
       },
+      ...(antigravityResetThinking
+        ? [
+            {
+              configId: "thinking_level",
+              name: "Thinking",
+              category: "thought_level",
+              type: "select" as const,
+              currentValue: currentReasoning,
+              options: [
+                { value: "medium", name: "Medium" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ]
+        : []),
     ];
   }
   if (parameterizedModelPicker) {
@@ -889,12 +906,23 @@ const program = Effect.gen(function* () {
         currentModeId = request.value;
       }
       if (request.configId === "model" && typeof request.value === "string") {
+        if (
+          antigravityFailRestore &&
+          request.value === "gemini-test-low" &&
+          currentModelId === "gemini-test-high"
+        ) {
+          return yield* AcpError.AcpRequestError.invalidParams("Mock model restore failed");
+        }
         currentModelId = request.value;
+        if (antigravityResetThinking) currentReasoning = "medium";
       }
       if (request.configId === "agent" && typeof request.value === "string") {
         currentAgent = request.value;
       }
-      if (request.configId === "reasoning" && typeof request.value === "string") {
+      if (
+        (request.configId === "reasoning" || request.configId === "thinking_level") &&
+        typeof request.value === "string"
+      ) {
         currentReasoning = request.value;
       }
       if (request.configId === "context" && typeof request.value === "string") {
