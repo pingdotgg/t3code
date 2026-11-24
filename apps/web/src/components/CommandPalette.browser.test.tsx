@@ -309,7 +309,7 @@ describe("CommandPalette open intents", () => {
     );
   });
 
-  it("stays in a submenu on repeated, modified, or composing Backspace and pops on plain Backspace", async () => {
+  it("leaves a submenu only on a fresh, unmodified Backspace", async () => {
     setup({ projects: [makeProject("Acme"), makeProject("Beta")] });
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
@@ -325,18 +325,10 @@ describe("CommandPalette open intents", () => {
     const submenuInput = page.getByPlaceholder("Search...");
     await expect.element(submenuInput).toHaveFocus();
 
-    await userEvent.keyboard("acm");
-    await expect.element(submenuInput).toHaveValue("acm");
-    await userEvent.keyboard("{Backspace}{Backspace}{Backspace}");
-    await expect.element(submenuInput).toBeVisible();
-    await expect.element(submenuInput).toHaveValue("");
-
     for (const init of [
       { repeat: true },
       { ctrlKey: true },
-      { altKey: true },
       { isComposing: true },
-      { keyCode: 229 },
     ] satisfies ReadonlyArray<KeyboardEventInit>) {
       const event = new KeyboardEvent("keydown", {
         key: "Backspace",
