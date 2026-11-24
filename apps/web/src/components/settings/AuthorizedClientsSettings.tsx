@@ -40,6 +40,7 @@ import { Input } from "../ui/input";
 import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
+  DialogClose,
   DialogFooter,
   DialogDescription,
   DialogHeader,
@@ -384,9 +385,9 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
-                <Button variant="outline" onClick={() => setIsRevealDialogOpen(false)}>
+                <DialogClose render={<Button variant="outline" />}>
                   <T>Done</T>
-                </Button>
+                </DialogClose>
                 {canCopyToClipboard ? (
                   <Button variant="outline" onClick={handleCopyCode}>
                     <T>Copy code</T>
@@ -829,13 +830,9 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
             </section>
           </DialogPanel>
           <DialogFooter variant="bare">
-            <Button
-              variant="outline"
-              disabled={isCreatingPairingLink}
-              onClick={() => setDialogOpen(false)}
-            >
+            <DialogClose disabled={isCreatingPairingLink} render={<Button variant="outline" />}>
               <T>Cancel</T>
-            </Button>
+            </DialogClose>
             <Button
               disabled={isCreatingPairingLink || selectedScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
