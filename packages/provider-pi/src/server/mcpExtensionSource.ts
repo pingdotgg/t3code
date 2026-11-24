@@ -430,8 +430,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         pi.registerTool({
           name: toolName,
           label: name,
-          description: tool.description ?? name,
-          parameters: jsonSchemaToTypebox(tool.inputSchema),
+          // Pi records active declarations in the transcript even when hidden, and
+          // estimates context from them. The model sees only the public schema;
+          // T3's server still validates the arguments.
+          description: isAlias ? "Same as mcp__t3-code__" + name + "." : (tool.description ?? name),
+          parameters: jsonSchemaToTypebox(isAlias ? { type: "object" } : tool.inputSchema),
           ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
           ...(supportsExposure ? { exposure } : {}),
           ...(isAlias ? { prepareLoadout: () => ({ hiddenDeclarations: [toolName] }) } : {}),

@@ -404,6 +404,37 @@ describe("Pi MCP tool schemas", () => {
       assert.deepEqual(tool.parameters, inputSchema);
     }
   });
+
+  it("records each T3 schema once on Pi, which keeps hidden alias declarations in the transcript", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: { depth: { type: "number", description: "Snapshot depth" } },
+      required: ["depth"],
+    };
+    const bridge = await loadMcpBridge({
+      modern: true,
+      inputSchema,
+      activatesOnRegistration: true,
+    });
+    await bridge.handlers.get("session_start")!(
+      { systemPrompt: "" },
+      { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+    );
+    const aliases = bridge.tools.filter((tool) => tool.name.startsWith("mcp__t3_code__"));
+    assert.isAbove(aliases.length, 0);
+    for (const alias of aliases) {
+      const label = alias.name.slice("mcp__t3_code__".length);
+      const publicTool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__" + label)!;
+      assert.deepEqual(publicTool.parameters, inputSchema);
+      assert.deepEqual(alias.parameters, { type: "object", properties: {} });
+      assert.equal(alias.description, "Same as mcp__t3-code__" + label + ".");
+    }
+    await bridge.callModelTool("mcp__t3_code__preview_snapshot", { depth: 2 });
+    assert.deepEqual(JSON.parse(JSON.stringify(bridge.requests.at(-1))).params, {
+      name: "preview_snapshot",
+      arguments: { depth: 2 },
+    });
+  });
 });
 
 describe("Pi tool discovery permissions", () => {
