@@ -161,6 +161,20 @@ export function clearAppleIntentsIndex(): Promise<void> {
   return enqueueAppleIntentsWork(clearNativeIndex);
 }
 
+// Between the opt-out's clear and its saved preference, preferences still read enabled.
+let optOutPending = false;
+
+/** Clears the index, then saves the opt-out; no sync writes in between. */
+export async function disableAppleIntents(saveOptOut: () => Promise<unknown>): Promise<void> {
+  optOutPending = true;
+  try {
+    await clearAppleIntentsIndex();
+    await saveOptOut();
+  } finally {
+    optOutPending = false;
+  }
+}
+
 async function syncNativeIndex(source: Atom.Type<typeof appleIntentsSourceAtom>): Promise<void> {
   if (!source.enabled) {
     if (nativeMayHoldData) await clearNativeIndex();
@@ -231,13 +245,17 @@ export function installAppleIntents(): () => void {
     retryAttempt += 1;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      flush(appAtomRegistry.get(appleIntentsSourceAtom));
+      flush();
     }, delay);
   };
 
-  const flush = (source: Atom.Type<typeof appleIntentsSourceAtom>) => {
+  const flush = () => {
     void enqueueAppleIntentsWork(async () => {
-      if (disposed || !source.preferencesReady) return;
+      if (disposed || optOutPending) return;
+      // Read when the work runs, not when it was queued, so a source captured before an opt-out
+      // never writes after it.
+      const source = appAtomRegistry.get(appleIntentsSourceAtom);
+      if (!source.preferencesReady) return;
       await syncNativeIndex(source);
     }).then(
       () => {
@@ -252,11 +270,11 @@ export function installAppleIntents(): () => void {
 
   const unsubscribe = appAtomRegistry.subscribe(
     appleIntentsSourceAtom,
-    (source) => {
+    () => {
       if (debounceTimer !== null) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        flush(source);
+        flush();
       }, SYNC_DEBOUNCE_MS);
     },
     { immediate: true },

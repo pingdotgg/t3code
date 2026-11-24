@@ -5,7 +5,10 @@ import { useEffect, useState } from "react";
 
 import { persistClientSettingsPatch, useClientSettings } from "../../hooks/useSettings";
 import { isMacPlatform } from "../../lib/utils";
-import { clearDesktopAppleIntentsIndex } from "../desktop/DesktopAppleIntentsCoordinator";
+import {
+  clearDesktopAppleIntentsIndex,
+  disableDesktopAppleIntents,
+} from "../desktop/DesktopAppleIntentsCoordinator";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
@@ -126,10 +129,9 @@ export function AppleIntentsSettingsSection() {
                 return;
               }
               // Save the opt-out only once the index is gone, so a cut-short clear stays visible.
-              void clearDesktopAppleIntentsIndex().then(
-                () => persistClientSettingsPatch({ appleIntentsEnabled: false }),
-                reportClearFailure,
-              );
+              void disableDesktopAppleIntents(() =>
+                persistClientSettingsPatch({ appleIntentsEnabled: false }),
+              ).catch(reportClearFailure);
             }}
             aria-label={gt("Index for Siri & Spotlight")}
           />

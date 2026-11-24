@@ -20,7 +20,12 @@ import { useEffect } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { readDesktopPrimaryBearerToken } from "../../environments/primary/desktopAuth";
-import { getClientSettings, subscribeClientSettings } from "../../hooks/useSettings";
+import {
+  getClientSettings,
+  isClientSettingsHydrated,
+  subscribeClientSettings,
+  subscribeClientSettingsHydration,
+} from "../../hooks/useSettings";
 import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThreadShell } from "../../state/entities";
@@ -132,10 +137,28 @@ export function clearDesktopAppleIntentsIndex(): Promise<void> {
   return enqueueAppleIntentsWork(() => clearNativeIndex(bridge));
 }
 
+// Between the opt-out's clear and its saved preference, settings still read enabled.
+let optOutPending = false;
+
+/** Clears the index, then saves the opt-out; no sync writes in between. */
+export async function disableDesktopAppleIntents(
+  persistOptOut: () => Promise<void>,
+): Promise<void> {
+  optOutPending = true;
+  try {
+    await clearDesktopAppleIntentsIndex();
+    await persistOptOut();
+  } finally {
+    optOutPending = false;
+  }
+}
+
 async function syncNativeIndex(
   bridge: DesktopAppleIntentsBridge,
   router: ReturnType<typeof useRouter>,
 ): Promise<void> {
+  // Before hydration the settings are defaults, which would re-index after a saved opt-out.
+  if (optOutPending || !isClientSettingsHydrated()) return;
   const settings = getClientSettings();
   const enabled = settings.appleIntentsEnabled;
 
@@ -278,6 +301,7 @@ export function DesktopAppleIntentsCoordinator() {
             immediate: true,
           }),
           subscribeClientSettings(scheduleFlush),
+          subscribeClientSettingsHydration(scheduleFlush),
           router.subscribe("onResolved", scheduleFlush),
         );
       })

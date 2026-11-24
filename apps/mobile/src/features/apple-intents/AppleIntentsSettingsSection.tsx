@@ -10,7 +10,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsRow } from "../settings/components/SettingsRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
-import { clearAppleIntentsIndex } from "./appleIntentsRuntime";
+import { clearAppleIntentsIndex, disableAppleIntents } from "./appleIntentsRuntime";
 import { isAppleIntentsSupported } from "./nativeBridge";
 
 export function AppleIntentsSettingsSection() {
@@ -67,8 +67,7 @@ export function AppleIntentsSettingsSection() {
             return;
           }
           // Save the opt-out only once the index is gone, so a cut-short clear stays visible.
-          void clearAppleIntentsIndex().then(
-            () => savePreferences({ appleIntentsEnabled: false }),
+          void disableAppleIntents(() => savePreferences({ appleIntentsEnabled: false })).catch(
             reportClearFailure,
           );
         }}
