@@ -114,10 +114,16 @@ public final class T3KeychainCredentialStore: T3CredentialProviding, @unchecked 
     if accessGroup != nil { groups.append(false) }
     for includeAccessGroup in groups {
       let status = SecItemDelete(baseQuery(account: account, includeAccessGroup: includeAccessGroup) as CFDictionary)
-      // Without the access group entitlement the scoped query fails; the unscoped one still runs.
-      if status == errSecSuccess || status == errSecItemNotFound { continue }
-      if includeAccessGroup && status == errSecMissingEntitlement { continue }
+      let scopedWithFallback = includeAccessGroup && accessGroup != nil
+      if Self.deleteSucceeded(status, scopedWithFallback: scopedWithFallback) { continue }
       throw T3KeychainError(status: status)
     }
+  }
+
+  /// Without the access group entitlement the group-scoped delete fails, but the unscoped delete
+  /// that follows it still runs; any other failure, or that one with no fallback, is real.
+  static func deleteSucceeded(_ status: OSStatus, scopedWithFallback: Bool) -> Bool {
+    if status == errSecSuccess || status == errSecItemNotFound { return true }
+    return scopedWithFallback && status == errSecMissingEntitlement
   }
 }

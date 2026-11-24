@@ -11,51 +11,61 @@ public enum T3SpotlightIndexer {
   static let deadline: TimeInterval = 20
 
   public static func removeEntities(threadIds: [String], projectIds: [String]) async throws {
-    guard #available(iOS 27.3, macOS 27.3, *) else { return }
     try await withDeadline {
-      let index = CSSearchableIndex.default()
-      if !threadIds.isEmpty {
-        try await index.deleteAppEntities(identifiedBy: threadIds, ofType: ThreadEntity.self)
-      }
-      if !projectIds.isEmpty {
-        try await index.deleteAppEntities(identifiedBy: projectIds, ofType: ProjectEntity.self)
-      }
+      try await deleteAppEntities(projectIds: projectIds, threadIds: threadIds)
     }
   }
 
-  public static func indexEntities(projects: [T3ProjectRecord], threads: [T3ThreadRecord]) async throws {
-    guard #available(iOS 27.3, macOS 27.3, *) else { return }
-    try await withDeadline {
-      try await indexAppEntities(projects: projects.map(ProjectEntity.init(record:)), threads: threads.map(ThreadEntity.init(record:)))
-    }
-  }
-
-  @available(iOS 27.3, macOS 27.3, *)
-  static func indexAppEntities(projects: [ProjectEntity] = [], threads: [ThreadEntity] = []) async throws {
-    let index = CSSearchableIndex.default()
-    if !projects.isEmpty {
-      try await index.indexAppEntities(projects)
-    }
-    if !threads.isEmpty {
-      try await index.indexAppEntities(threads)
-    }
-  }
-
-  /// System reindex callbacks can run in the extension while the host clears the shared store, and
-  /// the in-process queue cannot order the two. A clear empties the store before Spotlight, so
-  /// re-reading the store after writing finds, and deletes, anything that landed after that clear.
-  public static func reindex(
+  /// Writes each kind under its own deadline, then re-reads the store and deletes anything no
+  /// longer in it. A clear empties the store before Spotlight, so a write that outlives its
+  /// deadline and lands after a clear (in this process or another) is removed again.
+  public static func indexEntities(
     projects: [T3ProjectRecord] = [],
     threads: [T3ThreadRecord] = [],
     store: T3IndexStore
   ) async throws {
-    try await indexEntities(projects: projects, threads: threads)
-    let missing = missingRecordIds(
-      projectIds: projects.map(\.id),
-      threadIds: threads.map(\.id),
-      in: store
-    )
-    try await removeEntities(threadIds: missing.threadIds, projectIds: missing.projectIds)
+    guard #available(iOS 27.3, macOS 27.3, *) else { return }
+    if !projects.isEmpty {
+      let entities = projects.map(ProjectEntity.init(record:))
+      try await writeThenReconcile(projectIds: entities.map(\.id), threadIds: [], store: store) {
+        try await CSSearchableIndex.default().indexAppEntities(entities)
+      }
+    }
+    if !threads.isEmpty {
+      let entities = threads.map(ThreadEntity.init(record:))
+      try await writeThenReconcile(projectIds: [], threadIds: entities.map(\.id), store: store) {
+        try await CSSearchableIndex.default().indexAppEntities(entities)
+      }
+    }
+  }
+
+  static func writeThenReconcile(
+    projectIds: [String],
+    threadIds: [String],
+    store: T3IndexStore,
+    seconds: TimeInterval = deadline,
+    remove: @escaping @Sendable (_ projectIds: [String], _ threadIds: [String]) async throws -> Void = deleteAppEntities,
+    write: @escaping @Sendable () async throws -> Void
+  ) async throws {
+    try await withDeadline(seconds: seconds) {
+      try await write()
+      // Runs even after the deadline has passed, whenever a stalled write finally returns.
+      let missing = missingRecordIds(projectIds: projectIds, threadIds: threadIds, in: store)
+      if !missing.projectIds.isEmpty || !missing.threadIds.isEmpty {
+        try await remove(missing.projectIds, missing.threadIds)
+      }
+    }
+  }
+
+  static func deleteAppEntities(projectIds: [String], threadIds: [String]) async throws {
+    guard #available(iOS 27.3, macOS 27.3, *) else { return }
+    let index = CSSearchableIndex.default()
+    if !threadIds.isEmpty {
+      try await index.deleteAppEntities(identifiedBy: threadIds, ofType: ThreadEntity.self)
+    }
+    if !projectIds.isEmpty {
+      try await index.deleteAppEntities(identifiedBy: projectIds, ofType: ProjectEntity.self)
+    }
   }
 
   static func missingRecordIds(
@@ -78,14 +88,14 @@ public enum T3SpotlightIndexer {
   }
 
   /// Resumes with the operation's result or a timeout, whichever comes first. A stalled operation
-  /// is cancelled and left to finish on its own; nothing waits on it any longer.
+  /// is left to finish on its own, uncancelled, so whatever follows its write still runs.
   static func withDeadline<T: Sendable>(
     seconds: TimeInterval = deadline,
     _ operation: @escaping @Sendable () async throws -> T
   ) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in
       let gate = ResumeOnce(continuation)
-      let work = Task {
+      Task {
         do {
           gate.resume(with: .success(try await operation()))
         } catch {
@@ -94,7 +104,6 @@ public enum T3SpotlightIndexer {
       }
       let timer = Task {
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-        work.cancel()
         gate.resume(with: .failure(T3SpotlightTimeoutError()))
       }
       gate.onResume { timer.cancel() }

@@ -63,7 +63,8 @@ const desktopAppleIntentsSourceAtom = Atom.make((get) => {
       label: entry.target.label,
       httpBaseUrl,
       isLocal,
-      isConnected: connection?.phase === "connected",
+      // A reconnected shell still serves its cached snapshot until it is live again.
+      isConnected: connection?.phase === "connected" && shellState.status === "live",
       projects: snapshot?.projects ?? [],
       threads: snapshot?.threads ?? [],
     });

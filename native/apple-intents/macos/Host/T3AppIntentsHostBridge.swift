@@ -82,21 +82,22 @@ public func t3_apple_intents_sync_auth_credentials(_ jsonPtr: UnsafePointer<CCha
   }
 }
 
+private let resolvedURLLock = NSLock()
+nonisolated(unsafe) private var lastResolvedURL: UnsafeMutablePointer<CChar>?
+
+/// Returns a string the dylib owns until the next call, never null ("" when unresolved). ffi-rs
+/// copies it into a JS string before returning, and only Electron's main thread calls this, so the
+/// caller never frees anything.
 @_cdecl("t3_apple_intents_resolve_spotlight_url")
 public func t3_apple_intents_resolve_spotlight_url(
   _ identifierPtr: UnsafePointer<CChar>?
-) -> UnsafeMutablePointer<CChar>? {
-  guard let identifierPtr else { return nil }
-  let identifier = String(cString: identifierPtr)
-  guard let url = T3IntentsRuntime.shared.resolveDeepLink(forSpotlightIdentifier: identifier) else {
-    return nil
-  }
-  return strdup(url.absoluteString)
-}
-
-@_cdecl("t3_apple_intents_free_string")
-public func t3_apple_intents_free_string(_ ptr: UnsafeMutablePointer<CChar>?) {
-  if let ptr {
-    free(ptr)
+) -> UnsafePointer<CChar>? {
+  let url = identifierPtr
+    .flatMap { T3IntentsRuntime.shared.resolveDeepLink(forSpotlightIdentifier: String(cString: $0)) }?
+    .absoluteString ?? ""
+  return resolvedURLLock.withLock {
+    free(lastResolvedURL)
+    lastResolvedURL = strdup(url)
+    return UnsafePointer(lastResolvedURL)
   }
 }

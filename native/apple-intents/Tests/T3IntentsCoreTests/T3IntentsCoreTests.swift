@@ -93,6 +93,38 @@ private final class ManagedFlag: @unchecked Sendable {
   func set() { lock.withLock { flag = true } }
 }
 
+private actor AsyncGate {
+  private var released = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    if released { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func release() {
+    released = true
+    for waiter in waiters { waiter.resume() }
+    waiters = []
+  }
+}
+
+private actor AsyncValue<Value: Sendable> {
+  private var stored: Value?
+  private var waiters: [CheckedContinuation<Value, Never>] = []
+
+  func set(_ value: Value) {
+    stored = value
+    for waiter in waiters { waiter.resume(returning: value) }
+    waiters = []
+  }
+
+  func value() async -> Value {
+    if let stored { return stored }
+    return await withCheckedContinuation { waiters.append($0) }
+  }
+}
+
 private func makeTempStore() -> T3IndexStore {
   let dir = FileManager.default.temporaryDirectory
     .appendingPathComponent("t3-intents-tests-\(UUID().uuidString)", isDirectory: true)
@@ -311,6 +343,40 @@ struct T3IntentsCoreTests {
       in: store
     )
     #expect(afterClear.threadIds == ["env-1:thread-1"])
+  }
+
+  @Test(
+    "A Spotlight write that outlives its deadline and lands after a clear is removed again",
+    .timeLimit(.minutes(1))
+  )
+  func lateWriteAfterClearIsReconciled() async throws {
+    let store = makeTempStore()
+    try store.upsertThreadRecord(makeThread(id: "thread-1"))
+    let stalledWrite = AsyncGate()
+    let removed = AsyncValue<[String]>()
+
+    await #expect(throws: T3SpotlightTimeoutError.self) {
+      try await T3SpotlightIndexer.writeThenReconcile(
+        projectIds: [],
+        threadIds: ["env-1:thread-1"],
+        store: store,
+        seconds: 0.05,
+        remove: { _, threadIds in await removed.set(threadIds) },
+        write: { await stalledWrite.wait() }
+      )
+    }
+    try store.clearAll()
+    await stalledWrite.release()
+    #expect(await removed.value() == ["env-1:thread-1"])
+  }
+
+  @Test("Ignores a missing Keychain entitlement only when an unscoped delete follows")
+  func keychainDeleteStatus() {
+    #expect(T3KeychainCredentialStore.deleteSucceeded(errSecSuccess, scopedWithFallback: false))
+    #expect(T3KeychainCredentialStore.deleteSucceeded(errSecItemNotFound, scopedWithFallback: false))
+    #expect(T3KeychainCredentialStore.deleteSucceeded(errSecMissingEntitlement, scopedWithFallback: true))
+    #expect(!T3KeychainCredentialStore.deleteSucceeded(errSecMissingEntitlement, scopedWithFallback: false))
+    #expect(!T3KeychainCredentialStore.deleteSucceeded(errSecInteractionNotAllowed, scopedWithFallback: true))
   }
 
   private func makeThread(id: String, status: String = "idle") -> T3ThreadRecord {

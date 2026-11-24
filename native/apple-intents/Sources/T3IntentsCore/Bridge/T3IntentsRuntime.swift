@@ -3,8 +3,8 @@ import CoreSpotlight
 import Foundation
 
 /// Runs this process's index mutations one at a time, each store write together with its Spotlight
-/// update, so a clear never interleaves with an in-flight sync or reindex callback here. Reindex
-/// callbacks in another process are reconciled by `T3SpotlightIndexer.reindex` instead.
+/// update, so a clear never interleaves with an in-flight sync or reindex callback here. Writes that
+/// outlive their deadline, or run in another process, are reconciled by `T3SpotlightIndexer.indexEntities`.
 enum T3IndexOperationQueue {
   private static let lock = NSLock()
   nonisolated(unsafe) private static var tail: Task<Void, Never>?
@@ -77,7 +77,8 @@ public final class T3IntentsRuntime: @unchecked Sendable {
       try store.applyDelta(delta, plan: plan)
       try await T3SpotlightIndexer.indexEntities(
         projects: delta.upsertedProjects,
-        threads: delta.upsertedThreads
+        threads: delta.upsertedThreads,
+        store: store
       )
     }
     refreshOnscreenEntityIfNeeded()
