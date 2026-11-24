@@ -205,6 +205,7 @@ function LicenseHeaderAction({
         <InputGroupAddon>
           <SearchIcon aria-hidden className="size-3" />
         </InputGroupAddon>
+        {/* Native search inputs clear on Escape even during IME composition. */}
         <InputGroupInput
           aria-label={gt("Search open-source licenses")}
           autoFocus
@@ -213,7 +214,8 @@ function LicenseHeaderAction({
           }}
           onChange={(event) => onQueryChange(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
+            if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+              return;
             event.preventDefault();
             event.stopPropagation();
             // Unmounting the focused input lets the dialog move focus to a control whose
@@ -224,7 +226,9 @@ function LicenseHeaderAction({
           }}
           placeholder={gt("Search licenses")}
           size="sm"
-          type="search"
+          type="text"
+          role="searchbox"
+          enterKeyHint="search"
           value={query}
         />
       </InputGroup>
