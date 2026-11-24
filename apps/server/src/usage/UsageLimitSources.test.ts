@@ -115,16 +115,29 @@ it.effect("publishes validated HTTP quotas as display-only accounts", () => {
     { id: "account", label: "External plan", providerInstanceId: "work-codex", windows: [window] },
   ];
   let usedPercent = 35;
+  let oversized = false;
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
       expect(url.href).toBe("https://quota.test/v1");
       expect(request.headers.authorization).toBe("Bearer test-token");
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({
-          version: 1,
-          accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent }] }],
-        }),
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify({
+                    version: 1,
+                    accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent }] }],
+                  }),
+                ),
+              );
+              if (oversized) controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+              controller.close();
+            },
+          }),
+        ),
       );
     }),
   );
@@ -139,6 +152,13 @@ it.effect("publishes validated HTTP quotas as display-only accounts", () => {
     const [failed] = yield* sources.current;
     expect(failed).toMatchObject({ accounts: [], error: "Could not read the HTTP quota source." });
     expect(failed?.quotaAccounts).toBeUndefined();
+    usedPercent = 35;
+    oversized = true;
+    yield* sources.refresh;
+    expect((yield* sources.current)[0]).toMatchObject({
+      accounts: [],
+      error: "Could not read the HTTP quota source.",
+    });
   }).pipe(
     Effect.provide([
       Layer.succeed(SecretResolver.SecretResolver, {

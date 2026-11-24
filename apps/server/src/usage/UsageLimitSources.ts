@@ -21,8 +21,10 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -33,7 +35,32 @@ import * as Settings from "../serverSettings.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
-const decodeHttpQuotaResponse = HttpClientResponse.schemaBodyJson(HttpQuotaResponse);
+const decodeHttpQuotaJson = Schema.decodeUnknownEffect(Schema.fromJsonString(HttpQuotaResponse));
+const decodeHttpQuotaResponse = Effect.fn("UsageLimitSources.decodeHttpQuotaResponse")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  let bytes = 0;
+  const text = yield* response.stream.pipe(
+    Stream.mapEffect((chunk) => {
+      bytes += chunk.byteLength;
+      return bytes > 1024 * 1024
+        ? Effect.fail(
+            new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "HTTP quota response exceeds 1 MiB.",
+            }),
+          )
+        : Effect.succeed(chunk);
+    }),
+    Stream.decodeText(),
+    Stream.runFold(
+      () => "",
+      (text, chunk) => text + chunk,
+    ),
+  );
+  return yield* decodeHttpQuotaJson(text);
+});
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
