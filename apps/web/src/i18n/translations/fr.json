@@ -817,6 +817,7 @@
   "21872f69ccbc711d": "Démarrage des serveurs MCP de {provider}",
   "fedaa29ff8815a77": "Chargement des hooks de {provider}",
   "57025ae4de5beb57": "Chargement des règles et des skills de {provider}",
+  "1cbfbcad9f0d04fe": "Reprise de la session de {provider}",
   "4729a188600f1501": "Connexion à {provider}",
   "8c8977097681630f": "Démarrage de {provider}",
   "f1d27d127ab27ac6": "Démarrage",
@@ -6634,28 +6635,8 @@
   "a6d75a4380173c60": "Ouvrir les checks : {summary}",
   "be3d1766bad18693": "Checks : {summary}",
   "425e4a3d6c5c2867": "{count, plural, one {{count} en échec} other {{count} en échec}}",
+  "fd63b391898889f9": "{count, plural, one {{count} en attente d’action} other {{count} en attente d’action}}",
   "cb116c139cdace98": "Aucun check signalé",
-  "d84d09b4818c50b7": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "/",
-        {
-          "i": 3,
-          "k": "_gt_value_3",
-          "v": "v"
-        }
-      ]
-    },
-    " ",
-    "checks"
-  ],
   "60b56e201607c7ec": "Les détails des checks ne sont plus à jour. Actualisez la pull request pour les mettre à jour.",
   "e74cd4e960cbb5e5": "Les lignes inchangées ne sont pas disponibles dans un fichier aux lignes tronquées.",
   "38d6169e04a9a4ce": "Impossible de charger plus de commentaires",
@@ -7562,6 +7543,11 @@
   "03338c6aec8edacd": "Définissez la largeur maximale des messages et de la zone de saisie sur les grands écrans.",
   "92785adb251da88c": "Réinitialiser la largeur de la discussion à la valeur par défaut",
   "4d457bcce0c0e272": "Largeur de la discussion",
+  "7d7f65967cc821e3": "Largeur des aperçus HTML",
+  "70ce0af7f78d5957": "Permet aux aperçus HTML d’une discussion d’être plus larges que ses messages, qui restent centrés.",
+  "f2b119bf02ae2558": "Réinitialiser la largeur des aperçus HTML à la valeur par défaut",
+  "6287212fed0deec6": "Comme la discussion",
+  "dc8e85ea0364649c": "Comme la discussion (par défaut)",
   "81f3a196537bbee0": "Confortable (par défaut)",
   "e79e5388f669495f": "Afficher l’effort de raisonnement dans la zone de saisie par son nom, comme Élevé, ou sous forme de barres.",
   "7f0365c7e4e8bcbf": "Réinitialiser l’affichage de l’effort à la valeur par défaut",
@@ -11826,6 +11812,7 @@
   "9cf8308531b4ff31": "transparent transparence opaque menus boîtes de dialogue zone de saisie",
   "d8d6cfd630cff22d": "rouge vert bleu orange ajouts suppressions modifications compteurs palette daltonien",
   "717e49895cfee1c7": "large pleine largeur colonne mise en page messages zone de saisie écran",
+  "9d5c7430a7ff76cf": "large pleine largeur intégré page rendu graphique tableau de bord artefact centré",
   "88365077fd80787b": "personnaliser afficher masquer panneau carte environnement éditeur scripts branche pull request modifications git serveurs automatisations lignée utilisation limites 5 heures hebdomadaire quota jetons fenêtre de contexte",
   "d561f74efa5f3920": "effort de raisonnement réflexion barres graphique mot libellé niveau zone de saisie",
   "6113c17109ee0d57": "latex tex katex équations formules markdown",
@@ -12143,7 +12130,8 @@
   "f938bb483eb3d189": "redémarre en dernier",
   "9bca02be2b4d612a": "non connecté",
   "2dcc418b6a13b83c": "nécessite une mise à jour manuelle",
-  "5c8ebc36f84dee7a": "nécessite une version plus récente de l’app de bureau",
+  "f13e08bd3614112e": "mettez à jour T3 Code sur cette machine",
+  "3c3348c36a2695af": "changez le canal de mise à jour sur cette machine",
   "fa8faa732a2688ef": "sur le canal {channel}",
   "9b961309baafa09d": "pas d’autorisation",
   "9bafb2622c22d145": "déjà en cours de mise à jour",

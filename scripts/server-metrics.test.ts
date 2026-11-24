@@ -9,6 +9,7 @@ import {
   activityRenewalMissed,
   describeFailure,
   heapGrowth,
+  heapRetainers,
   loadWarnings,
   nextActivityReport,
   noiseReport,
@@ -16,6 +17,7 @@ import {
   parsePsCpuTime,
   profileMismatch,
   parseRunSelection,
+  retainerGrowth,
   pathRewrites,
   pathSpellings,
   ServerMetrics,
@@ -463,6 +465,87 @@ describe("heapGrowth", () => {
     expect(heapGrowth(before, after)).toEqual([
       { constructor: "New", count: 4, MB: 3 },
       { constructor: "Grew", count: 1, MB: 0 },
+    ]);
+  });
+});
+
+describe("heapRetainers", () => {
+  it("sums what each object alone keeps alive and names only code on the way to it", () => {
+    // root → Holder.cache → Map → [0] array → [0] string; Holder also points at the string weakly.
+    const node = (type: number, name: number, id: number, size: number, edges: number) => [
+      type,
+      name,
+      id,
+      size,
+      edges,
+    ];
+    const retainers = heapRetainers(
+      {
+        snapshot: {
+          meta: {
+            node_fields: ["type", "name", "id", "self_size", "edge_count"],
+            node_types: [["synthetic", "object", "array", "string"]],
+            edge_fields: ["type", "name_or_index", "to_node"],
+            edge_types: [["property", "element", "weak", "hidden"]],
+          },
+        },
+        nodes: [
+          ...node(0, 4, 1, 0, 1),
+          ...node(1, 1, 3, 100, 2),
+          ...node(1, 2, 5, 50, 1),
+          ...node(2, 0, 7, 1_000, 1),
+          ...node(3, 5, 9, 500, 0),
+        ],
+        edges: [0, 6, 5, 0, 3, 10, 2, 0, 20, 3, 0, 15, 1, 0, 20],
+        strings: ["", "Holder", "Map", "cache", "(GC roots)", "a secret", "holder"],
+      },
+      0,
+      0,
+    );
+    expect(retainers.get(5)).toEqual({
+      retained: 1_550,
+      dominator: 3,
+      path: "holder → Holder.cache → Map",
+    });
+    expect(retainers.get(3)?.retained).toBe(1_650);
+    expect(retainers.get(9)?.path).toBe("holder → Holder.cache → Map.[0] → (array).[0] → (string)");
+  });
+});
+
+describe("retainerGrowth", () => {
+  const at = (sizes: Record<number, number>) =>
+    new Map(
+      Object.entries(sizes).map(([id, retained]) => [
+        Number(id),
+        { retained, dominator: Number(id) === 3 ? undefined : 3, path: `node ${id}` },
+      ]),
+    );
+  it("reports the deepest object holding the growth, and only growth at every snapshot", () => {
+    const growth = retainerGrowth([
+      at({ 3: 1_000_000, 5: 900_000, 7: 2_000_000 }),
+      at({ 3: 3_000_000, 5: 2_900_000, 7: 4_000_000 }),
+      at({ 3: 5_000_000, 5: 4_900_000, 7: 3_500_000 }),
+    ]);
+    expect(growth).toEqual([{ path: "node 5", MB: 4, retainedMB: 4.9 }]);
+  });
+  it("keeps an ancestor its reported descendant does not account for", () => {
+    // A chain 1 → 2 → 3 growing by 7, 6 and 5 MB, and 4 under 1 growing by 2 MB.
+    const chain = (scale: number) =>
+      new Map(
+        [
+          [1, 7, undefined],
+          [2, 6, 1],
+          [3, 5, 2],
+          [4, 2, 1],
+        ].map(([id, mb, dominator]) => [
+          id!,
+          { retained: (10 + mb! * scale) * 1e6, dominator, path: `node ${id}` },
+        ]),
+      );
+    expect(retainerGrowth([chain(0), chain(0.5), chain(1)]).map(({ path }) => path)).toEqual([
+      "node 1",
+      "node 3",
+      "node 4",
     ]);
   });
 });

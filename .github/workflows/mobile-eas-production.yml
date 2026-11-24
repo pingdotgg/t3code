@@ -70,6 +70,9 @@ on:
       - .github/workflows/mobile-eas-production.yml
       - .github/workflows/mobile-eas-production-build.yml
 
+permissions:
+  contents: read
+
 jobs:
   production:
     name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
