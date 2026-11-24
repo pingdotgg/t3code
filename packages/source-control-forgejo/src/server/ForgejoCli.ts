@@ -381,16 +381,24 @@ export const make = Effect.gen(function* () {
       args: ["auth", "status", "--json", GT_ACCOUNT_FIELDS],
       allowNonZeroExit: true,
     });
-    // With --json gt exits 0 even signed out, so a failure is a broken gt or another program
-    // of that name, such as Graphite's CLI.
-    if (Number(accounts.exitCode) !== 0)
-      return yield* new ForgejoCliError({
-        command: "gt",
-        cwd: input.cwd,
-        reason: "missing-cli",
-        detail:
-          "The `gt` on this server's PATH is not a working Gitea CLI. Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`gt` 2.0 or later) and retry.",
-      });
+    if (Number(accounts.exitCode) !== 0) {
+      // With --json gt exits 0 even signed out. One that also rejects `version` is another
+      // program of that name, such as Graphite's CLI; a Gitea CLI that answers it is broken.
+      const version = yield* execute({ cwd: input.cwd, args: ["version"] }).pipe(Effect.result);
+      return yield* Result.isFailure(version)
+        ? new ForgejoCliError({
+            command: "gt",
+            cwd: input.cwd,
+            reason: "missing-cli",
+            detail:
+              "The `gt` on this server's PATH is not the Gitea CLI. Install Forgejo CLI (`fj` 0.6 or later) or Gitea CLI (`gt` 2.0 or later) and retry.",
+          })
+        : new ForgejoCliError({
+            command: "gt",
+            cwd: input.cwd,
+            detail: "`gt auth status` failed. Run it on the T3 Code server to see what gt reports.",
+          });
+    }
     const logins = parseForgejoLogins(accounts.stdout);
     const remote = input.remoteUrl ? parseForgejoRemote(input.remoteUrl) : null;
     if (!remote?.ssh) return logins;

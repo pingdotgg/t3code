@@ -1926,25 +1926,27 @@ it.effect("asks gt for the SSH alias of every server that is not named after the
   );
 });
 
-it.effect("treats a gt that is not the Gitea CLI as not installed", () =>
-  Effect.gen(function* () {
-    const cli = yield* ForgejoCli.make;
-    const resolved = yield* cli
-      .resolveRepository({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project" })
-      .pipe(Effect.result);
-    assert.strictEqual(resolved._tag, "Failure");
-    if (resolved._tag === "Failure") assert.strictEqual(resolved.failure.reason, "missing-cli");
-    const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
-      Effect.provideService(ForgejoCli.ForgejoCli, cli),
-    );
-    assert.strictEqual(spec.type, "managed-cli");
-    if (spec.type !== "managed-cli") return;
-    const probed = yield* spec.probe("/repo");
-    assert.strictEqual(probed.executable, "gt");
-    assert.strictEqual(probed.status, "missing");
-    assert.strictEqual(probed.installHint, ForgejoSourceControlProvider.discovery.installHint);
-    assert.isNull(
-      yield* spec.refineUnknownRemote({
+it.effect(
+  "treats a gt that is not the Gitea CLI as not installed, and a broken one as unknown",
+  () => {
+    let foreign = true;
+    return Effect.gen(function* () {
+      const cli = yield* ForgejoCli.make;
+      const resolved = yield* cli
+        .resolveRepository({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project" })
+        .pipe(Effect.result);
+      assert.strictEqual(resolved._tag, "Failure");
+      if (resolved._tag === "Failure") assert.strictEqual(resolved.failure.reason, "missing-cli");
+      const spec = yield* ForgejoSourceControlProvider.makeDiscovery.pipe(
+        Effect.provideService(ForgejoCli.ForgejoCli, cli),
+      );
+      assert.strictEqual(spec.type, "managed-cli");
+      if (spec.type !== "managed-cli") return;
+      const probed = yield* spec.probe("/repo");
+      assert.strictEqual(probed.executable, "gt");
+      assert.strictEqual(probed.status, "missing");
+      assert.strictEqual(probed.installHint, ForgejoSourceControlProvider.discovery.installHint);
+      const unknownRemote = {
         cwd: "/repo",
         context: {
           provider: {
@@ -1955,50 +1957,65 @@ it.effect("treats a gt that is not the Gitea CLI as not installed", () =>
           remoteName: "origin",
           remoteUrl: "http://forgejo.local:3000/maria/project.git",
         },
-      }),
-    );
-  }).pipe(
-    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
-    Effect.provideService(SpawnExecutableResolution, (command) =>
-      command === "gt" ? onPath(command) : undefined,
-    ),
-    Effect.provideService(
-      FileSystem.FileSystem,
-      FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
-    ),
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make(() => {
-        throw new Error("gt must handle its own HTTP request");
-      }),
-    ),
-    Effect.provide(
-      TestSourceControlHost.layer({
-        process: {
-          run: (input) => {
-            if (input.command === "git") return Effect.succeed(processOutput(""));
-            assert.strictEqual(input.command, "gt");
-            // Graphite's gt prints its help and exits 1 for every command gt is asked.
-            return input.allowNonZeroExit
-              ? Effect.succeed(
-                  processOutput("Graphite is a command line tool", {
-                    exitCode: ChildProcessSpawner.ExitCode(1),
-                  }),
-                )
-              : Effect.fail(
-                  new VcsProcessExitError({
-                    operation: input.operation,
-                    command: input.command,
-                    cwd: input.cwd,
-                    exitCode: 1,
-                    detail: "Process exited with a non-zero status.",
-                  }),
-                );
+      };
+      assert.isNull(yield* spec.refineUnknownRemote(unknownRemote));
+      // The Gitea CLI answers `version`, so its failing account list is a failure to report.
+      foreign = false;
+      const broken = yield* cli
+        .resolveRepository({ cwd: "/repo", repository: "http://forgejo.local:3000/maria/project" })
+        .pipe(Effect.result);
+      assert.strictEqual(broken._tag, "Failure");
+      if (broken._tag === "Failure") {
+        assert.isUndefined(broken.failure.reason);
+        assert.include(broken.failure.detail, "`gt auth status` failed");
+      }
+      const refined = yield* spec.refineUnknownRemote(unknownRemote).pipe(Effect.result);
+      assert.strictEqual(refined._tag, "Failure");
+    }).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+      Effect.provideService(SpawnExecutableResolution, (command) =>
+        command === "gt" ? onPath(command) : undefined,
+      ),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => {
+          throw new Error("gt must handle its own HTTP request");
+        }),
+      ),
+      Effect.provide(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              if (input.command === "git") return Effect.succeed(processOutput(""));
+              assert.strictEqual(input.command, "gt");
+              if (!foreign && input.args[0] === "version")
+                return Effect.succeed(processOutput("gt version 2.0.0 (2026-11-18)"));
+              // Graphite's gt prints its help and exits 1 for every command gt is asked.
+              return input.allowNonZeroExit
+                ? Effect.succeed(
+                    processOutput("Graphite is a command line tool", {
+                      exitCode: ChildProcessSpawner.ExitCode(1),
+                    }),
+                  )
+                : Effect.fail(
+                    new VcsProcessExitError({
+                      operation: input.operation,
+                      command: input.command,
+                      cwd: input.cwd,
+                      exitCode: 1,
+                      detail: "Process exited with a non-zero status.",
+                    }),
+                  );
+            },
           },
-        },
-      }),
-    ),
-  ),
+        }),
+      ),
+    );
+  },
 );
 
 it.effect("checks out a pull request with gt on the resolved server and account", () => {
@@ -2685,49 +2702,62 @@ it.effect(
     }),
 );
 
-it.effect("explains a slow fj instead of advising an install when gt is absent", () =>
-  Effect.gen(function* () {
-    const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
-    assert.strictEqual(spec.type, "managed-cli");
-    if (spec.type !== "managed-cli") return;
-    const result = yield* spec.probe("/repo");
-    assert.strictEqual(result.status, "missing");
-    assert.strictEqual(result.executable, "fj");
-    assert.include(result.installHint, "`fj version` timed out");
-    assert.notInclude(result.installHint, "Install");
-  }).pipe(
-    Effect.provideService(SpawnExecutableResolution, onPath),
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
-        TestSourceControlHost.layer({
-          process: {
-            run: (input) => {
-              const context = {
-                operation: input.operation,
-                command: input.command,
-                cwd: input.cwd,
-              };
-              if (input.command === "git") return Effect.succeed(processOutput(""));
-              if (input.command === "fj")
-                return Effect.fail(new VcsProcessTimeoutError({ ...context, timeoutMs: 5_000 }));
-              return Effect.fail(
-                new VcsProcessSpawnError({
-                  ...context,
-                  cause: PlatformError.systemError({
-                    _tag: "NotFound",
-                    module: "ChildProcess",
-                    method: "spawn",
-                    pathOrDescriptor: input.command,
+it.effect.each([
+  ["timed out", "`fj version` timed out"],
+  ["exited", "`fj version` exited with status 1"],
+] as const)(
+  "explains an fj that %s instead of advising an install when gt is absent",
+  ([failure, hint]) =>
+    Effect.gen(function* () {
+      const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+      assert.strictEqual(spec.type, "managed-cli");
+      if (spec.type !== "managed-cli") return;
+      const result = yield* spec.probe("/repo");
+      assert.strictEqual(result.status, "missing");
+      assert.strictEqual(result.executable, "fj");
+      assert.include(result.installHint, hint);
+      assert.notInclude(result.installHint, "Install");
+    }).pipe(
+      Effect.provideService(SpawnExecutableResolution, onPath),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) => {
+                const context = {
+                  operation: input.operation,
+                  command: input.command,
+                  cwd: input.cwd,
+                };
+                if (input.command === "git") return Effect.succeed(processOutput(""));
+                if (input.command === "fj")
+                  return Effect.fail(
+                    failure === "timed out"
+                      ? new VcsProcessTimeoutError({ ...context, timeoutMs: 5_000 })
+                      : new VcsProcessExitError({
+                          ...context,
+                          exitCode: 1,
+                          detail: "Process exited with a non-zero status.",
+                        }),
+                  );
+                return Effect.fail(
+                  new VcsProcessSpawnError({
+                    ...context,
+                    cause: PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      pathOrDescriptor: input.command,
+                    }),
                   }),
-                }),
-              );
+                );
+              },
             },
-          },
-        }),
+          }),
+        ),
       ),
     ),
-  ),
 );
 
 it.effect("does not call a valid fj login on an HTTP-only server unauthenticated", () =>

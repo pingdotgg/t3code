@@ -15,6 +15,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
+  isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
@@ -203,7 +204,11 @@ export const makeDiscovery = Effect.gen(function* () {
             remoteUrl: input.context.remoteUrl,
           }).pipe(
             Effect.catchIf(
-              (error) => error.reason === "missing-cli",
+              // An absent CLI holds no login, and neither does another program named gt, whose
+              // error carries no spawn failure. Any other failure leaves the remote unknown.
+              (error) =>
+                isMissingExecutable(error.cause) ||
+                (error.reason === "missing-cli" && error.cause === undefined),
               () => Effect.succeed([]),
             ),
             Effect.result,
