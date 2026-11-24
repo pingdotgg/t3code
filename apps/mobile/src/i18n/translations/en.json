@@ -182,6 +182,7 @@
   "81f613bb68d85bb7": "Kept out of chat, in a private file this agent's commands can read for 24 hours",
   "07b56c0c12bd2de1": "Kept out of chat, in private files this agent's commands can read for 24 hours",
   "8c2d901183b4e219": "Paste the secret",
+  "d8fb763eb069ba1d": "Optional",
   "610aea624f895a78": "Saved securely and kept private",
   "329b7854b7e0546e": "Use a 1Password reference like {example}.",
   "d68b539295c009d3": "{count, plural, one {Delegated {count} task} other {Delegated {count} tasks}}",

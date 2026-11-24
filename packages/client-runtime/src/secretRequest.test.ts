@@ -66,6 +66,24 @@ describe("secretRequestAnswerInput", () => {
     const named = { ...single, fields: [{ name: "constructor", label: "Key" }] } as const;
     expect(secretRequestAnswerInput(named as never, { type: "save", values: {} })).toBe(null);
   });
+
+  it("lets an optional field stay blank but never saves an empty card", () => {
+    const withOptional = {
+      ...login,
+      fields: [login.fields[0], { name: "password", label: "Password", optional: true }],
+    } as const;
+    expect(
+      secretRequestAnswerInput(withOptional as never, {
+        type: "save",
+        values: { email: "a@acme.dev", password: " " },
+      }),
+    ).toEqual({ ...ids, answer: { type: "save", values: { email: "a@acme.dev" } } });
+    expect(
+      secretRequestAnswerInput(withOptional as never, { type: "save", values: { password: "pw" } }),
+    ).toBe(null);
+    const allOptional = { ...single, fields: [{ name: "a", label: "A", optional: true }] } as const;
+    expect(secretRequestAnswerInput(allOptional as never, { type: "save", values: {} })).toBe(null);
+  });
 });
 
 describe("secretRequestPrivacyNote", () => {

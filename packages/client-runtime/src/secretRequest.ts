@@ -34,6 +34,7 @@ export const secretRequestPrivacyNote = (
           msg("Kept out of chat, in private files this agent's commands can read for 24 hours"),
         );
 const SECRET_REQUEST_DEFAULT_PLACEHOLDER = msg("Paste the secret");
+const SECRET_REQUEST_OPTIONAL = msg("Optional");
 
 export interface SecretRequestInput {
   /** Key in the card's values: the field name, or "" for a request without fields. */
@@ -42,6 +43,7 @@ export interface SecretRequestInput {
   readonly placeholder: string;
   /** Masked, with a toggle to show it. */
   readonly secret: boolean;
+  readonly optional: boolean;
 }
 
 export function secretRequestInputs(
@@ -55,14 +57,19 @@ export function secretRequestInputs(
         label: item.label,
         placeholder: item.placeholder ?? resolve(SECRET_REQUEST_DEFAULT_PLACEHOLDER),
         secret: true,
+        optional: false,
       },
     ];
   }
   return item.fields.map((field) => ({
     key: field.name,
-    label: field.label,
+    label:
+      field.optional === true
+        ? `${field.label} (${resolve(SECRET_REQUEST_OPTIONAL)})`
+        : field.label,
     placeholder: field.placeholder ?? "",
     secret: field.secret !== false,
+    optional: field.optional === true,
   }));
 }
 
@@ -258,7 +265,7 @@ export type SecretRequestReply =
   | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
   | { readonly type: "decline" };
 
-/** Null until every input has a value, or while a reference is not `source`'s syntax. */
+/** Null until every required input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
   item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
   answer: SecretRequestReply,
@@ -273,14 +280,25 @@ export function secretRequestAnswerInput(
     return reference === undefined ? null : { ...base, answer: { type: "reference", reference } };
   }
   const entries = secretRequestInputs(item).map(
-    (input) => [input.key, secretRequestValue(answer.values, input.key).trim()] as const,
+    (input) =>
+      [input.key, secretRequestValue(answer.values, input.key).trim(), input.optional] as const,
   );
-  if (entries.some(([, value]) => value.length === 0)) return null;
+  if (entries.some(([, value, optional]) => value.length === 0 && !optional)) return null;
+  // A card whose fields are all optional still needs one value to be worth saving.
+  if (entries.every(([, value]) => value.length === 0)) return null;
   if (item.fields === undefined) {
     return { ...base, answer: { type: "save", secret: entries[0]?.[1] ?? "" } };
   }
 
-  return { ...base, answer: { type: "save", values: Object.fromEntries(entries) } };
+  return {
+    ...base,
+    answer: {
+      type: "save",
+      values: Object.fromEntries(
+        entries.filter(([, value]) => value.length > 0).map(([key, value]) => [key, value]),
+      ),
+    },
+  };
 }
 
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);

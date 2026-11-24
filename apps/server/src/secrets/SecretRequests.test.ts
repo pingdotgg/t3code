@@ -567,6 +567,35 @@ it.effect("a fields request keeps each value apart and delivers one file per fie
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("an optional field left out of the answer is delivered as an empty file", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "secret-files-test-" });
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          yield* service.answer({
+            threadId,
+            turnItemId,
+            answer: { type: "save", values: { email: "qa@acme.dev" } },
+          });
+          const saved = yield* service.saveToFile({ threadId, turnItemId });
+          const files = "files" in saved ? saved.files : {};
+          assert.equal(yield* fs.readFileString(files.email ?? ""), "qa@acme.dev");
+          assert.equal(yield* fs.readFileString(files.token ?? ""), "");
+        }),
+      {
+        delivery: "file",
+        directory,
+        fields: [
+          { name: "email", label: "Email" },
+          { name: "token", label: "Token", optional: true },
+        ],
+      },
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("two racing answers to a fields card never mix their values", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
