@@ -2546,7 +2546,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             const name = path.relative(gitCommonDir, entryPath).split(path.sep).join("/");
             if (!packed.names.has(name)) looseNames.push(name);
           }
-          if (entry.name === "HEAD" && path.dirname(directory) === remotesDirectory) {
+          // A remote name may contain "/", so its HEAD can sit deeper than refs/remotes/<name>.
+          if (entry.name === "HEAD" && directory.startsWith(remotesDirectory + path.sep)) {
             remoteHeads.push(entryPath);
           }
         }
