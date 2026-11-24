@@ -43,7 +43,11 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
 } from "@t3tools/client-runtime/state/thread-inbox";
-import { activeThreadSortKey, sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  activeOrderFloorKey,
+  activeThreadSortKey,
+  sortSettledThreads,
+} from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
   threadSearchMatchKey,
@@ -631,6 +635,7 @@ function useSidebarThreads(input: {
         (thread) => [threadShellKey(thread), activeThreadSortKey(thread)] as const,
       ),
     ]),
+    activeFloorKey: activeOrderFloorKey(activeThreads),
   };
 }
 
@@ -1375,6 +1380,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeys,
     pinnedKeysById,
     activeKeysById,
+    activeFloorKey,
   } = useSidebarThreads({
     projectScopeKey,
     scopedProjectKeys,
@@ -2185,6 +2191,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeOrder: activeKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
+            activeFloorKey,
             activeTimeOrdered: workingShelfEnabled,
           }).kind !== "none"
         );
@@ -2289,6 +2296,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeOrder: activeKeys,
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
+      activeFloorKey,
       activeTimeOrdered: workingShelfEnabled,
     });
     if (plan.kind === "none") return;

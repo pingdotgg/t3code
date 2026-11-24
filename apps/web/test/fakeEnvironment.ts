@@ -739,6 +739,26 @@ export async function emitThreadShell(
   );
 }
 
+/** Delivers a project the server just added, as `extraProjects` would have listed it. */
+export async function emitProject(
+  added: Pick<OrchestrationProjectShell, "id" | "title" | "createdAt">,
+): Promise<void> {
+  if (shellSubscriber === null) throw new Error("No shell subscription");
+  sequence += 1;
+  await Effect.runPromise(
+    Queue.offer(shellSubscriber, {
+      kind: "project.updated",
+      sequence,
+      project: {
+        ...project,
+        ...added,
+        workspaceRoot: `/workspace/${added.title}`,
+        updatedAt: added.createdAt,
+      },
+    }),
+  );
+}
+
 /** Whether the app holds a live subscription to the thread, so events reach it. */
 export function isThreadSubscribed(threadId: ThreadId): boolean {
   return threadSubscribers.has(threadId);

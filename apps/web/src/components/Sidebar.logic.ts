@@ -47,6 +47,8 @@ import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
+import { getProjectOrderKey } from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
 import { isTerminalFocused, subscribeToTerminalFocusChanges } from "../lib/terminalFocus";
@@ -408,6 +410,8 @@ export function planSidebarThreadDrop(input: {
   readonly activeOrder: readonly string[];
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
+  /** From `activeOrderFloorKey`, so a thread created after the drop still lands above it. */
+  readonly activeFloorKey?: string | null;
   readonly activeTimeOrdered?: boolean;
 }): SidebarThreadDropPlan {
   const {
@@ -422,6 +426,7 @@ export function planSidebarThreadDrop(input: {
     activeOrder,
     activeKeysById,
     activeReorderableKeys,
+    activeFloorKey,
   } = input;
   if (activeSection === "working") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
@@ -431,13 +436,17 @@ export function planSidebarThreadDrop(input: {
     order: readonly string[],
     keysById: ReadonlyMap<string, string | null | undefined>,
     writable: ReadonlySet<string> | undefined,
+    floorKey?: string | null,
   ) => {
-    if (!writable) return planPinnedReorder({ orderedIds: order, keysById, movedId: activeKey });
+    if (!writable) {
+      return planPinnedReorder({ orderedIds: order, keysById, movedId: activeKey, floorKey });
+    }
     if (!writable.has(activeKey)) return null;
     const assignments = planPinnedReorder({
       orderedIds: order.filter((key) => writable.has(key) || keysById.get(key) != null),
       keysById,
       movedId: activeKey,
+      floorKey,
     });
     if (assignments.some(({ id }) => !writable.has(id))) return null;
 
@@ -484,7 +493,7 @@ export function planSidebarThreadDrop(input: {
       ) {
         return { kind: "none" };
       }
-      const assignments = arrange(order, activeKeysById, activeReorderableKeys);
+      const assignments = arrange(order, activeKeysById, activeReorderableKeys, activeFloorKey);
       if (assignments === null) return { kind: "none" };
       return {
         kind: "move-active",
@@ -913,6 +922,59 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   });
   const remaining = items.filter((_, index) => !emittedIndexes.has(index));
   return [...ordered, ...remaining];
+}
+
+/**
+ * Manual project order. Saved projects keep their saved order. A project whose group has no
+ * saved member is new, so it leads, newest first, and every saved project shifts down.
+ * Pass the grouping key so a project that joins an existing folder leaves that folder in place.
+ */
+export function orderProjectsByManualOrder<
+  TProject extends Pick<EnvironmentProject, "environmentId" | "workspaceRoot" | "createdAt">,
+>(input: {
+  readonly projects: readonly TProject[];
+  readonly projectOrder: readonly string[];
+  readonly groupKey?: ((project: TProject) => string) | undefined;
+}): TProject[] {
+  const preferenceIds = (project: TProject) => [
+    getProjectOrderKey(project),
+    legacyProjectCwdPreferenceKey(project.workspaceRoot),
+  ];
+  const ordered = orderItemsByPreferredIds({
+    items: input.projects,
+    preferredIds: input.projectOrder,
+    getId: getProjectOrderKey,
+    getPreferenceIds: preferenceIds,
+  });
+  const groupKey = input.groupKey ?? getProjectOrderKey;
+  const saved = new Set(input.projectOrder);
+  const savedGroups = new Set(
+    ordered.filter((project) => preferenceIds(project).some((id) => saved.has(id))).map(groupKey),
+  );
+  const newestByGroup = new Map<string, number>();
+  const firstIndexByGroup = new Map<string, number>();
+  for (const [index, project] of ordered.entries()) {
+    const group = groupKey(project);
+    if (savedGroups.has(group)) continue;
+    const createdAt = Date.parse(project.createdAt);
+    newestByGroup.set(
+      group,
+      Math.max(newestByGroup.get(group) ?? 0, Number.isFinite(createdAt) ? createdAt : 0),
+    );
+    if (!firstIndexByGroup.has(group)) firstIndexByGroup.set(group, index);
+  }
+  if (newestByGroup.size === 0) return ordered;
+  const fresh = ordered
+    .filter((project) => newestByGroup.has(groupKey(project)))
+    .toSorted((left, right) => {
+      const leftGroup = groupKey(left);
+      const rightGroup = groupKey(right);
+      return (
+        newestByGroup.get(rightGroup)! - newestByGroup.get(leftGroup)! ||
+        firstIndexByGroup.get(leftGroup)! - firstIndexByGroup.get(rightGroup)!
+      );
+    });
+  return [...fresh, ...ordered.filter((project) => !newestByGroup.has(groupKey(project)))];
 }
 
 export function resolveAdjacentThreadId<T>(input: {

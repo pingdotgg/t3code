@@ -16,6 +16,7 @@ import { getRouter } from "~/router";
 import { useUiStateStore } from "~/uiStateStore";
 import {
   dispatchedCommands,
+  emitProject,
   emitThreadShell,
   ENVIRONMENT_ID,
   installFakeEnvironment,
@@ -91,7 +92,7 @@ function folderTitles(name: string) {
 const folderNames = () =>
   Array.from(
     document.querySelectorAll("[data-sidebar-folder-group] button[data-sidebar-row]"),
-    (button) => button.textContent?.match(/render|other/)?.[0],
+    (button) => button.textContent?.match(/render|other|fresh/)?.[0],
   );
 
 const threadRow = (title: string) =>
@@ -180,10 +181,35 @@ it("keeps boring folders and their threads where the user put them", async () =>
   await vi.waitFor(() => expect(threadRow("Thread bravo").textContent).toMatch(/Done/));
   expect(folderTitles("render")).toEqual(["Thread charlie", "Thread alpha", "Thread bravo"]);
 
+  // A new thread enters above the one dragged to the top; the rest shift down in order.
+  const echoCreatedAt = DateTime.makeUnsafe("2026-03-18T10:00:00.000Z");
+  await emitThreadShell(threadWithHistory("echo", 1), {
+    createdAt: echoCreatedAt,
+    updatedAt: echoCreatedAt,
+  });
+  await vi.waitFor(() =>
+    expect(folderTitles("render")).toEqual([
+      "Thread echo",
+      "Thread charlie",
+      "Thread alpha",
+      "Thread bravo",
+    ]),
+  );
+  expect(activeReorders()).toHaveLength(1);
+
   // A dragged folder keeps its new place, which needs the manual project order.
   const [top, bottom] = folderNames() as [string, string];
   await dragTo(folderHeader(bottom).element(), pressPoint(folderHeader(top).element()));
   await vi.waitFor(() => expect(folderNames()).toEqual([bottom, top]));
   expect(getClientSettings().sidebarProjectSortOrder).toBe("manual");
   expect(useUiStateStore.getState().projectOrder[0]).toBe(`${ENVIRONMENT_ID}:/workspace/${bottom}`);
+
+  // A new project's folder enters above the arranged folders, which keep their order.
+  const fresh = ProjectId.make("project-fresh");
+  await emitProject({ id: fresh, title: "fresh", createdAt: "2026-03-18T11:00:00.000Z" });
+  await emitThreadShell(
+    { ...threadWithHistory("foxtrot", 1), projectId: fresh },
+    { createdAt: DateTime.makeUnsafe("2026-03-18T11:00:00.000Z") },
+  );
+  await vi.waitFor(() => expect(folderNames()).toEqual(["fresh", bottom, top]));
 });

@@ -196,7 +196,7 @@ vi.mock("react", () => ({
   useMemo: <T>(factory: () => T) => factory(),
 }));
 vi.mock("../components/Sidebar.logic", () => ({
-  orderItemsByPreferredIds: ({ items }: { items: unknown[] }) => items,
+  orderProjectsByManualOrder: ({ projects }: { projects: unknown[] }) => projects,
 }));
 vi.mock("../composerDraftStore", () => {
   const useComposerDraftStore = Object.assign(() => null, {

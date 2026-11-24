@@ -1,14 +1,17 @@
 import { useMessages } from "gt-react";
 
-import { orderItemsByPreferredIds, sortSidebarV2ProjectGroups } from "../components/Sidebar.logic";
 import {
-  getProjectOrderKey,
+  orderProjectsByManualOrder,
+  sortSidebarV2ProjectGroups,
+} from "../components/Sidebar.logic";
+import {
+  deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
 import { useDelegatedUnderParent, useProjects, useQuietThreadShells } from "../state/entities";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
 export function useSidebarProjectGroups() {
@@ -23,14 +26,13 @@ export function useSidebarProjectGroups() {
   const environments = useEnvironmentIdentities();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const resolve = useMessages();
-  const orderedProjects = orderItemsByPreferredIds({
-    items: projects,
-    preferredIds: projectOrder,
-    getId: getProjectOrderKey,
-    getPreferenceIds: (project) => [
-      getProjectOrderKey(project),
-      legacyProjectCwdPreferenceKey(project.workspaceRoot),
-    ],
+  const orderedProjects = orderProjectsByManualOrder({
+    projects,
+    projectOrder,
+    groupKey: (project) =>
+      deriveLogicalProjectKeyFromSettings(project, groupingSettings, {
+        groupScratchProjects: true,
+      }),
   });
   const labels = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),

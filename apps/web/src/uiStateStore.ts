@@ -346,12 +346,19 @@ export function reorderProjects(
   projectOrder.splice(insertIndex, 0, ...dragged);
   // Refill the saved slots of shown projects in their new order, so projects that are not
   // shown right now (for example on a disconnected environment) keep their saved place.
+  // Shown projects with no saved place were listed first, so they take room before the
+  // first saved slot.
   const loaded = new Set(currentProjectOrder);
-  let next = 0;
+  const firstSlot = state.projectOrder.findIndex((id) => loaded.has(id));
+  const insertAt = firstSlot === -1 ? 0 : firstSlot;
+  const unsavedCount =
+    projectOrder.length - state.projectOrder.filter((id) => loaded.has(id)).length;
+  let next = unsavedCount;
   const merged = state.projectOrder.map((id) => (loaded.has(id) ? projectOrder[next++]! : id));
+  merged.splice(insertAt, 0, ...projectOrder.slice(0, unsavedCount));
   return {
     ...state,
-    projectOrder: [...merged, ...projectOrder.slice(next)],
+    projectOrder: merged,
   };
 }
 

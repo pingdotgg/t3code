@@ -96,13 +96,38 @@ describe("uiStateStore pure functions", () => {
       [keyCLocal, keyCRemote],
     );
 
+    // None of the shown projects had a saved place, so they were listed above the saved
+    // (disconnected) one and keep that place once saved.
     expect(next.projectOrder).toEqual([
-      disconnected,
       keyB,
       keyCLocal,
       keyCRemote,
       keyALocal,
       keyARemote,
+      disconnected,
+    ]);
+  });
+
+  it("saves projects shown first without a saved place where they were shown", () => {
+    const state = makeUiState({ projectOrder: ["offline", "s1", "s2"] });
+    // A new project is listed above the saved ones.
+    expect(reorderProjects(state, ["new", "s1", "s2"], ["s2"], ["s1"]).projectOrder).toEqual([
+      "offline",
+      "new",
+      "s2",
+      "s1",
+    ]);
+    expect(reorderProjects(state, ["new", "s1", "s2"], ["new"], ["s1"]).projectOrder).toEqual([
+      "offline",
+      "s1",
+      "new",
+      "s2",
+    ]);
+    expect(reorderProjects(state, ["new", "s1", "s2"], ["s2"], ["new"]).projectOrder).toEqual([
+      "offline",
+      "s2",
+      "new",
+      "s1",
     ]);
   });
 

@@ -21,10 +21,9 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
-import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { orderProjectsByManualOrder } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
-  getProjectOrderKey,
   resolveGroupDefaultProject,
   selectProjectGroupingSettings,
   type ProjectGroupingSettings,
@@ -50,7 +49,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { getClientSettings, useClientSettings } from "./useSettings";
 import { getLocalStorageItem, useLocalStorage } from "./useLocalStorage";
 import * as Schema from "effect/Schema";
@@ -489,14 +488,13 @@ export function resolveDefaultProjectRef(
   if (lastUsed) return scopeProjectRef(lastUsed.environmentId, lastUsed.id);
   if (!fallbackReady) return null;
   const liveProjects = projects.filter((project) => project.archivedAt == null);
-  const [firstProject] = orderItemsByPreferredIds({
-    items: liveProjects,
-    preferredIds: projectOrder,
-    getId: getProjectOrderKey,
-    getPreferenceIds: (project) => [
-      getProjectOrderKey(project),
-      legacyProjectCwdPreferenceKey(project.workspaceRoot),
-    ],
+  const [firstProject] = orderProjectsByManualOrder({
+    projects: liveProjects,
+    projectOrder,
+    groupKey: groupingSettings
+      ? (project: EnvironmentProject) =>
+          deriveLogicalProjectKeyFromSettings(project, groupingSettings)
+      : undefined,
   });
   if (!firstProject) return null;
   const defaultProject = groupingSettings
