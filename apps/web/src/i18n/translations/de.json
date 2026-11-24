@@ -1788,7 +1788,6 @@
   "3a0bf3d17f31584e": "Neuer Thread in {project}",
   "4b4b64cc95acb8da": "Neuer Thread in...",
   "3f581e98c86df72a": "Neuer Thread ohne Projekt",
-  "e510d9a7b684fbfe": "Ein Issue einordnen",
   "44e13c9deb30e03c": "Im aktuellen Thread suchen",
   "2a5cc71a171eca12": "Auf der Seite im Browser suchen",
   "f496ce44f0581269": "Prompt-Link kopieren",
@@ -2874,11 +2873,6 @@
   "52163ddccc1eb594": "Einstellung in einigen Umgebungen gespeichert",
   "fee07035b4a2a1c3": "Gespeichert auf {environments}.",
   "2a1ecf7863e204aa": "In Seitenleiste öffnen",
-  "8a7ee5752bb91550": "Kopieren fehlgeschlagen. Gib stattdessen {command} ein.",
-  "7dfdfa116c6a9d86": "Einordnung konnte nicht gestartet werden",
-  "25fe0f5f3ef3bb02": "{description} Führe stattdessen {command} in einem Terminal auf diesem Rechner aus.",
-  "eb9ecb0cb72121a0": "Dieser Rechner kann keine Threads ohne Projekt starten.",
-  "32e2dbf6abe8c748": "Einordnung wird gestartet…",
   "ce5c66ae967fd7c8": "Thread-Aktionen nicht verfügbar",
   "d4f0043ab9348e2c": "Dieser Thread wurde noch nicht geladen.",
   "de2cfd4a757c656a": "Archivieren ist nicht möglich, während der Anbieter aktiv ist.",
@@ -4518,22 +4512,7 @@
   "ed3b9ada396031c5": "Normal",
   "75cdbffdefbbae3a": "Ultrafast-Modus an",
   "79c3a186139f8c86": "Fast-Modus an",
-  "a772b49a38a3db40": "Was ist schiefgelaufen?",
-  "b29e1856c4aab31f": "Dieser Rechner",
   "e7588632064e0364": "Kopiert",
-  "996f7752fa033da6": [
-    "oder führe aus:",
-    {
-      "t": "code",
-      "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
-    }
-  ],
-  "275a97b4af3c6482": "Befehl für ein Terminal kopieren",
   "2b07985d23563374": "Wird {time} fortgesetzt",
   "a4b4e5eb6d313af9": "Wurde {time} zurückgesetzt",
   "c0c3aa756405c1df": "Wird {time} zurückgesetzt",
@@ -12563,7 +12542,6 @@
   "44347a7fb8f70ef0": "Disconnected here, but Cloud Connect still lists it. Remove it in Account.",
   "a00d713209d15b3d": "Sign in to Cloud Connect before enabling this.",
   "6df9a53701b75aec": "This connection needs the relay configuration permission to configure Cloud Connect.",
-  "bb620277afbff4ce": "An agent investigates a PseudoCode problem and helps file an issue",
   "1703dd2beb008eaa": "Use PseudoCode in another app (MCP)",
   "9ee298a8c883a96a": "PseudoCode environment",
   "a80e0e94d2713773": "Browser previews are only available in the PseudoCode desktop app.",
@@ -12579,7 +12557,6 @@
   "a5f4ce3ef2b42aa1": "Install update and restart PseudoCode?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
   "23d4f6679393a4fc": "Sign in to Cloud Connect to connect this environment.",
   "bdc157deec345b0a": "The Cloud Connect session is unavailable.",
-  "b1cdaa8a36a20b22": "PseudoCode could not open a new thread.",
   "4b4266c5181a0128": "Open PseudoCode in the desktop app to use the in-app preview.",
   "84ec20b8f19ee279": "Sent by PseudoCode",
   "70a90b32d097f5b8": "Subagents: inherit",
@@ -12601,7 +12578,6 @@
       "v": "v"
     }
   ],
-  "dd5669b4f6acf6ef": "The agent reads PseudoCode's logs and source here, and asks before it applies a fix or posts anything.",
   "f12fb729099bd0f6": "Could not load the script.",
   "098882d04e22c027": "Loading script…",
   "73685ecd8455cd07": "Install PseudoCode on your phone and sign in to Cloud Connect to get push notifications and Live Activities.",

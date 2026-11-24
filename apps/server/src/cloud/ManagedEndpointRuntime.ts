@@ -150,7 +150,7 @@ const encodeHttp2Fallback = Schema.encodeSync(Http2Fallback);
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
 const RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS = 10 * 60_000;
-export const RELAY_CLIENT_LOG_FILE = "relay-client.ndjson";
+const RELAY_CLIENT_LOG_FILE = "relay-client.ndjson";
 
 /** Preserve user-chosen PATH binaries and overrides; CLI downloads require consent. */
 function needsPinnedRelayClient(executable: RelayClient.RelayClientStatus): boolean {
