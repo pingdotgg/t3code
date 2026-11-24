@@ -1299,6 +1299,45 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "serves an HTML page's sibling assets when it is linked by its real path under a symlinked workspace root",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-symroot-" });
+        const realRoot = path.join(base, "Documents", "project");
+        const reportDirectory = path.join(realRoot, "report");
+        yield* fileSystem.makeDirectory(reportDirectory, { recursive: true });
+        const linkedRoot = path.join(base, "project-link");
+        yield* fileSystem.symlink(realRoot, linkedRoot);
+        const realHtmlPath = path.join(reportDirectory, "index.html");
+        const realCssPath = path.join(reportDirectory, "style.css");
+        yield* fileSystem.writeFileString(realHtmlPath, '<link rel="stylesheet" href="style.css">');
+        yield* fileSystem.writeFileString(realCssPath, "body { color: red; }");
+        const canonicalCssPath = yield* fileSystem.realPath(realCssPath);
+
+        // The project is registered by its symlinked path and the agent links the real path,
+        // which the client cannot match against the root as a string, so it asks for media-file.
+        for (const resource of [
+          { _tag: "media-file" as const, threadId: ThreadId.make("thread-1"), path: realHtmlPath },
+          {
+            _tag: "workspace-file" as const,
+            threadId: ThreadId.make("thread-1"),
+            path: realHtmlPath,
+          },
+        ]) {
+          const url = yield* issueAssetUrl({ resource, workspaceRoot: linkedRoot });
+          const suffix = url.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const token = suffix.slice(0, suffix.indexOf("/"));
+          expect(yield* resolveAsset(token, "style.css")).toMatchObject({
+            kind: "file",
+            path: canonicalCssPath,
+          });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("moves an HTML preview's revision only for the page and the files it requested", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
