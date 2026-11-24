@@ -868,8 +868,8 @@ it.effect.each([
   { status: "completed" as const, followUp: "none", steer: "read-after", settles: false },
   { status: "completed" as const, followUp: "none", steer: "promoted-after", settles: false },
   { status: "completed" as const, followUp: "none", steer: "unread", settles: false },
-  // A wake steered in is automatic, like a notification run after it.
-  { status: "completed" as const, followUp: "none", steer: "wake-after", settles: true },
+  // A delegated question or other wake steered into the turn after the request.
+  { status: "completed" as const, followUp: "none", steer: "wake-after", settles: false },
 ])("settleAfterRun: $status, $followUp, $steer", ({ status, followUp, steer, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
