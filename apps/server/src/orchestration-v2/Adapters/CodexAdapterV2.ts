@@ -2461,6 +2461,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }),
           });
         }
+        // Commands settled as cancelled while their item/completed may still arrive.
+        const unknownOutcomeCommandItemIds = yield* Ref.make(new Set<string>());
         const terminalizedNonCompletedNativeTurns = yield* Ref.make(new Set<string>());
         // Keep the stream open until descendants settle to avoid stranding child projections.
         const deferredRootTerminals = yield* Ref.make(new Map<string, DeferredCodexRootTerminal>());
@@ -3194,6 +3196,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
                 // Keep the settled context: a late item/completed still routes its result and wake.
                 for (const itemId of exited) yield* clearRunningCommandItem(nativeTurnId, itemId);
+                yield* Ref.update(
+                  unknownOutcomeCommandItemIds,
+                  (current) => new Set([...current, ...exited]),
+                );
               }),
             );
           },
@@ -5962,6 +5968,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 const updated = new Set(current);
                 return [updated.delete(payload.item.id), updated] as const;
               });
+              // Its run stopped listening once the command settled, so the result is session-scoped.
+              const settledUnknown = yield* Ref.modify(unknownOutcomeCommandItemIds, (current) => {
+                const updated = new Set(current);
+                return [updated.delete(payload.item.id), updated] as const;
+              });
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
                 type: "node.updated",
@@ -5972,6 +5983,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 type: "turn_item.updated",
                 driver: CODEX_PROVIDER,
                 turnItem: artifacts.turnItem,
+                ...(settledUnknown ? { sessionScoped: true } : {}),
               });
               if (settled) {
                 if (

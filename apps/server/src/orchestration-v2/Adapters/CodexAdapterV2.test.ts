@@ -7837,6 +7837,148 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("records a command's late result after its run stopped listening", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-late-result-workspace-" });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-bg-late-result",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -1),
+          {
+            type: "expect_outbound",
+            label: "list-background-terminals",
+            frame: {
+              id: 4,
+              method: "thread/backgroundTerminals/list",
+              params: { threadId: BG_NATIVE_THREAD },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "list-background-terminals",
+            frame: { id: 4, result: { data: [], nextCursor: null } },
+          },
+          {
+            type: "emit_inbound",
+            label: "item/completed/command-late",
+            frame: {
+              method: "item/completed",
+              params: {
+                item: backgroundCommandItem("completed"),
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+              },
+            },
+          },
+        ],
+      });
+      const localTranscript = withConfigReads(
+        yield* decodeReplayTranscriptJson(
+          (yield* encodeReplayTranscriptJson(transcript)).replaceAll(
+            yield* encodeStringJson("/workspace"),
+            yield* encodeStringJson(cwd),
+          ),
+        ),
+        "Background late result",
+      );
+      const released = yield* Deferred.make<void>();
+      const replayDriver = yield* CodexReplay.makeReplayDriver(localTranscript, {
+        beforeEmitInbound: (entry) =>
+          entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+      });
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      for (const args of [
+        ["init", "--quiet"],
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "--quiet",
+          "-m",
+          "Initial commit",
+        ],
+      ]) {
+        assert.equal(Number(yield* spawner.exitCode(ChildProcess.make("git", args, { cwd }))), 0);
+      }
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:background-late-result");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-background-late-result"),
+          threadId,
+          projectId: ProjectId.make("project:background-late-result"),
+          title: "Background late result",
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const commandStatus = (status: string) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "turn-item.updated" &&
+                event.payload.type === "command_execution" &&
+                event.payload.status === status,
+            ),
+            Stream.runHead,
+            Effect.forkChild({ startImmediately: true }),
+          );
+        const cancelled = yield* commandStatus("cancelled");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start-background-late-result"),
+          threadId,
+          messageId: MessageId.make("message:background-late-result"),
+          text: BG_PROMPT,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* worker.drain();
+        yield* Fiber.join(cancelled);
+        yield* worker.drain();
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+          "completed",
+        );
+        assert.deepEqual(
+          (yield* orchestrator.getThreadShell(threadId))?.pendingBackgroundTasks,
+          [],
+        );
+        const completed = yield* commandStatus("completed");
+        yield* Deferred.succeed(released, undefined);
+        yield* Fiber.join(completed);
+        yield* worker.drain();
+        assert.isNull((yield* Ref.get(replayDriver.state)).failure);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).turnItems.flatMap((item) =>
+            item.type === "command_execution" ? [[item.status, item.exitCode, item.output]] : [],
+          ),
+          [["completed", 0, "CODEX_BG_WAKE_DONE\n"]],
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "codex-background-late-result", runtimePolicyOverride: { cwd } },
+            CodexAdapterV2Testkit.layer({ transcript: localTranscript, driver: replayDriver }),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   const INTERRUPT_SCENARIO = "codex-interrupt-mid-command";
   const INTERRUPT_NATIVE_THREAD = "native-codex-interrupt-thread";
   const INTERRUPT_NATIVE_TURN = "native-codex-interrupt-turn";
