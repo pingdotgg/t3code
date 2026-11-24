@@ -4760,6 +4760,7 @@ describe("orchestration v2 provider switching", () => {
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+      const backgroundWork = yield* Ref.make(false);
       const threadId = ThreadId.make("thread:runtime-mode-running-turn");
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4806,6 +4807,27 @@ describe("orchestration v2 provider switching", () => {
           before.providerSessions.map((session) => session.status),
           ["ready"],
         );
+
+        // Background work the turn started would end with the session, so the change is refused.
+        yield* Ref.set(backgroundWork, true);
+        const refused = yield* orchestrator
+          .dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make("command:runtime-mode-running-turn:refused"),
+            threadId,
+            runtimeMode: "approval-required",
+          })
+          .pipe(Effect.flip);
+        assert.include(
+          refused._tag === "OrchestratorDispatchError" ? String(refused.cause) : "",
+          "still running background agents or commands",
+        );
+        yield* worker.drain();
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.runtimeMode,
+          "full-access",
+        );
+        yield* Ref.set(backgroundWork, false);
 
         yield* orchestrator.dispatch({
           type: "thread.runtime-mode.set",
@@ -4872,6 +4894,7 @@ describe("orchestration v2 provider switching", () => {
                 capturedTurns,
                 holdFirstTurn: started,
                 releaseFirstTurn: release,
+                backgroundWork,
               }),
             ]),
           ),

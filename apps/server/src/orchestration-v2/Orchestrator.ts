@@ -4916,15 +4916,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           })
         : null;
 
-    // A running turn keeps the mode it started with; detachSessionsBehindRuntimeMode closes
-    // its session once the run ends.
-    const runtimeModeWaitsForRun =
-      command.type === "thread.runtime-mode.set" &&
-      (yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs"], {
-          runStatuses: ["preparing", "starting", "running", "waiting"],
-        })
-        .pipe(mapDispatchError(command))).runs.some(isActiveRun);
     // Archive and settle stop idle background work; serialized commands prevent starts racing detach.
     // Settlement rejects active or blocked runs.
     const detachSessionIds = new Set(
@@ -4935,7 +4926,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
-            ? (runtimeModeWaitsForRun ? [] : (providerContext?.providerSessions ?? []))
+            ? (providerContext?.providerSessions ?? [])
                 .filter(
                   (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
                 )
@@ -4971,6 +4962,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
     }
+    // A running turn keeps the mode it started with; detachSessionsBehindRuntimeMode closes
+    // its session once the run ends.
+    const runtimeModeWaitsForRun =
+      command.type === "thread.runtime-mode.set" &&
+      liveSessions.length > 0 &&
+      (yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"], {
+          runStatuses: ["preparing", "starting", "running", "waiting"],
+        })
+        .pipe(mapDispatchError(command))).runs.some(isActiveRun);
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -5918,7 +5919,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* closePendingLinkRequests({ command, events, threadId: command.threadId, now });
     }
 
-    if (liveSessions.length > 0) {
+    if (liveSessions.length > 0 && !runtimeModeWaitsForRun) {
       yield* Effect.forEach(
         liveSessions,
         (session) =>
