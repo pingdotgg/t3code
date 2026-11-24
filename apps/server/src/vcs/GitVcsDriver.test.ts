@@ -2629,6 +2629,7 @@ it.effect.each(["committed", "unborn"] as const)(
         ...(head === "committed" ? ["read-tree", "ls-files"] : []),
         "add",
         "write-tree",
+        "ls-files",
         "commit-tree",
         "update-ref",
       ]);
@@ -2688,6 +2689,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "ls-files",
         "add",
         "write-tree",
+        "ls-files",
         "commit-tree",
         "update-ref",
         // Without a parsed top level, capture cannot rule out submodules.
