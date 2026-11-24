@@ -60,6 +60,10 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       disablePointerDismissal
       onOpenChange={(nextOpen, eventDetails) => {
         if (nextOpen) return;
+        // Base UI's dismiss handler fires on held Esc repeats after a nested popup closes.
+        if (eventDetails.reason === "escape-key" && eventDetails.event.repeat) {
+          return eventDetails.cancel();
+        }
         // Esc from a layer outside Base UI (Clerk's modals) is that layer's to handle.
         const target = eventDetails.event.target;
         if (
