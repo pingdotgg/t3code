@@ -2,9 +2,8 @@ import {
   allWorkflowRunNodes,
   groupWorkflowRuns,
   workflowResultLines,
-  type WorkflowBeat,
 } from "@t3tools/client-runtime/workflows";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
 import { ScrollView, View } from "react-native";
@@ -15,7 +14,13 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { BeatCard, Card, Facts, useCanOpenThread, workflowRunFeedOf } from "./WorkflowStepCard";
+import {
+  BeatCard,
+  Card,
+  Facts,
+  useWorkflowThreadOpener,
+  workflowRunFeedOf,
+} from "./WorkflowStepCard";
 
 export type WorkflowStepParams = {
   readonly environmentId: string;
@@ -50,14 +55,11 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
   );
   const quickSteps = quick?.kind === "quick" ? quick.steps : [];
   // A thread or a run replaces the leaf sheet so workspace back navigation still works.
-  const openThread = (thread: NonNullable<WorkflowBeat["thread"]>) =>
-    navigation.dispatch(
-      StackActions.replace("Thread", {
-        environmentId: thread.environmentId ?? environmentId,
-        threadId: ThreadId.make(thread.threadId),
-      }),
-    );
-  const canOpenThread = useCanOpenThread(environmentId);
+  const threadOpener = useWorkflowThreadOpener(
+    environmentId,
+    (thread) => navigation.dispatch(StackActions.replace("Thread", thread)),
+    { replace: true },
+  );
   const openRun = (runId: string) =>
     navigation.dispatch(StackActions.replace("WorkflowRun", { environmentId, runId }));
   return (
@@ -108,7 +110,7 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
           ) : (
             <BeatCard
               beat={beat}
-              onOpenThread={beat.thread !== null && canOpenThread(beat.thread) ? openThread : null}
+              onOpenThread={beat.thread === null ? null : threadOpener(beat.thread)}
               onOpenRun={openRun}
             />
           )}

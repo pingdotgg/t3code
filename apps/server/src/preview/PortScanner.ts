@@ -26,6 +26,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -388,13 +389,22 @@ const parseProcEnvironThread = (raw: string): ThreadId | null => {
 };
 
 /**
- * A listener with an agent thread in its environment. An agent CLI is a direct child of this
- * server and has that environment too, but its own ports are not servers it started.
+ * A listener with an agent thread in its environment. An agent CLI is spawned directly by this
+ * server or its Linux process launcher and has that environment too, but its own ports are not
+ * servers it started.
  */
 interface AgentListener {
   readonly threadId: ThreadId;
   readonly isAgentCli: boolean;
 }
+
+const isServerSpawnedChild = (
+  parentPid: number | null,
+  serverPid: number,
+  launcherPid?: number,
+): boolean =>
+  parentPid !== null &&
+  (parentPid === serverPid || (launcherPid !== undefined && parentPid === launcherPid));
 
 /** Reads the parent pid from `/proc/<pid>/stat`, whose command field can hold spaces. */
 const parseProcStatParent = (raw: string): number | null => {
@@ -414,6 +424,7 @@ const parseProcStatParent = (raw: string): number | null => {
 const parsePsEnvironmentThreads = (
   raw: string,
   serverPid: number,
+  launcherPid?: number,
 ): ReadonlyMap<number, AgentListener | null> => {
   const threads = new Map<number, AgentListener | null>();
   for (const line of raw.split("\n")) {
@@ -423,11 +434,23 @@ const parsePsEnvironmentThreads = (
     threads.set(
       Number(match[1]),
       value && !DEVTOOLS_PORT_ARGUMENT.test(match[3]!)
-        ? { threadId: ThreadId.make(value), isAgentCli: Number(match[2]) === serverPid }
+        ? {
+            threadId: ThreadId.make(value),
+            isAgentCli: isServerSpawnedChild(Number(match[2]), serverPid, launcherPid),
+          }
         : null,
     );
   }
   return threads;
+};
+
+const parsePsCommandLines = (raw: string): ReadonlyMap<number, string> => {
+  const lines = new Map<number, string>();
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    if (match) lines.set(Number(match[1]), match[2]!);
+  }
+  return lines;
 };
 
 /** Splits `/proc/<pid>/environ` on NUL, or the environment macOS `ps -E` appends on spaces. */
@@ -480,16 +503,19 @@ const parseProcessTable = (raw: string): ReadonlyMap<number, ProcessTableRow> =>
 /**
  * The process group stopping `pid` signals. Shells with job control and agent tool shells give
  * every job its own group, so the group is the job. Null when the group also holds this server,
- * a direct child of it (agent CLIs and terminal shells), or one of its ancestors.
+ * a direct child of it or its process launcher (agent CLIs and terminal shells), or one of its
+ * ancestors.
  */
 export const stoppableProcessGroup = (
   table: ReadonlyMap<number, ProcessTableRow>,
   pid: number,
   serverPid: number,
+  launcherPid?: number,
 ): number | null => {
   const group = table.get(pid)?.pgid;
   if (group === undefined || group <= 1) return null;
   const guarded = new Set([serverPid]);
+  if (launcherPid !== undefined) guarded.add(launcherPid);
   for (
     let parent = table.get(serverPid)?.ppid;
     parent !== undefined && parent > 1 && !guarded.has(parent);
@@ -498,7 +524,12 @@ export const stoppableProcessGroup = (
     guarded.add(parent);
   }
   for (const row of table.values()) {
-    if (row.pgid === group && (guarded.has(row.pid) || row.ppid === serverPid)) return null;
+    if (
+      row.pgid === group &&
+      (guarded.has(row.pid) || isServerSpawnedChild(row.ppid, serverPid, launcherPid))
+    ) {
+      return null;
+    }
   }
   return group;
 };
@@ -542,6 +573,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const processLauncher = yield* ProcessLauncher.ProcessLauncher;
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
     terminalProcesses: new Map(),
@@ -572,6 +604,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   ) {
     const cached = yield* Ref.get(agentThreadsRef);
     const unread = pids.filter((pid) => !cached.has(pid));
+    const launcherPid = unread.length === 0 ? undefined : yield* processLauncher.currentPid;
     const readProcListener = Effect.fnUntraced(function* (pid: number) {
       const threadId = yield* fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
         Effect.map(parseProcEnvironThread),
@@ -587,7 +620,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         Effect.map(parseProcStatParent),
         Effect.orElseSucceed(() => null),
       );
-      return [pid, { threadId, isAgentCli: parent === process.pid }] as const;
+      return [
+        pid,
+        { threadId, isAgentCli: isServerSpawnedChild(parent, process.pid, launcherPid) },
+      ] as const;
     });
     const read: ReadonlyMap<number, AgentListener | null> =
       unread.length === 0
@@ -602,7 +638,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 maxOutputBytes: PS_MAX_OUTPUT_BYTES,
               })
               .pipe(
-                Effect.map((result) => parsePsEnvironmentThreads(result.stdout, process.pid)),
+                Effect.map((result) =>
+                  parsePsEnvironmentThreads(result.stdout, process.pid, launcherPid),
+                ),
                 Effect.orElseSucceed(() => {
                   agentScanPending = true;
                   return new Map();
@@ -1136,19 +1174,36 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return new Map(read.flatMap(Option.toArray));
     }
-    const result = yield* processRunner
-      .run({
-        command: "ps",
-        args: ["-E", "-ww", "-o", "pid=,command=", "-p", pids.join(",")],
-        timeout: Duration.millis(PS_TIMEOUT_MS),
-        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
-      })
-      .pipe(Effect.option);
+    const readCommandLines = (withEnvironment: boolean) =>
+      processRunner
+        .run({
+          command: "ps",
+          args: [
+            ...(withEnvironment ? ["-E"] : []),
+            "-ww",
+            "-o",
+            "pid=,command=",
+            "-p",
+            pids.join(","),
+          ],
+          timeout: Duration.millis(PS_TIMEOUT_MS),
+          maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+        })
+        .pipe(
+          Effect.map((result) => parsePsCommandLines(result.stdout)),
+          Effect.orElseSucceed(() => new Map<number, string>()),
+        );
+    // `ps -E` prints the environment after the arguments, so the arguments alone are read
+    // separately and only what follows them counts as environment.
+    const [withEnvironment, argumentsOnly] = yield* Effect.all(
+      [readCommandLines(true), readCommandLines(false)],
+      { concurrency: 2 },
+    );
     const variables = new Map<number, ReadonlyMap<string, string>>();
-    for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
-      const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
+    for (const [pid, line] of withEnvironment) {
+      const commandLine = argumentsOnly.get(pid);
+      if (commandLine !== undefined && line.startsWith(commandLine)) {
+        variables.set(pid, parseEnvironmentVariables(line.slice(commandLine.length), /\s+/, names));
       }
     }
     return variables;
@@ -1216,7 +1271,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const table = yield* readProcessTable;
     // It exited after the scan, so there is nothing left to stop.
     if (!table.has(input.pid)) return;
-    const group = stoppableProcessGroup(table, input.pid, process.pid);
+    const group = stoppableProcessGroup(
+      table,
+      input.pid,
+      process.pid,
+      yield* processLauncher.currentPid,
+    );
     if (group === null) return yield* new PreviewStopLocalServerError({ reason: "shared-group" });
     // False when the whole group already exited.
     const signalGroup = (signal: "SIGTERM" | "SIGKILL") =>

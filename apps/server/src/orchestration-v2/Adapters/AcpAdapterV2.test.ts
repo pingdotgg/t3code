@@ -5152,7 +5152,7 @@ describe("AcpAdapterV2", () => {
       const search = items.find((item) => item.type === "file_search");
       assert.deepEqual(
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
-        { title: "Searched TODO in web", pattern: "apps/web" },
+        { title: "Searched TODO in web", pattern: "TODO" },
       );
       const fileSearch = (nativeId: string) => {
         const item = items.find(
@@ -5171,6 +5171,13 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(fileSearch("structured-search-query-only"), {
         pattern: "TODO",
         results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-grep-output"), {
+        pattern: "needle",
+        results: [
+          { fileName: "src/a.ts", line: 3, preview: "const needle = 1;" },
+          { fileName: "src/b.ts", line: 9, preview: "needle();" },
+        ],
       });
       assert.deepEqual(fileSearch("structured-search-query-no-output"), {
         pattern: "FIXME",

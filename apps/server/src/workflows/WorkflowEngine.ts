@@ -26,8 +26,10 @@ import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
+import { DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT } from "@t3tools/contracts";
 
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
@@ -79,6 +81,8 @@ const END_AFTER = ["5 minutes", "20 minutes", "80 minutes", "5 hours"] as const;
 // An ended run's engine journal only answers replays that will not come; the run's own rows stay.
 const PRUNE_AFTER = Duration.hours(1);
 const PRUNE_BATCH = 100;
+// Skipped runs deleted per sweep, small enough that the writer lock is never held for long.
+const SKIPPED_PRUNE_BATCH = 500;
 // Delivery ids that common senders put on a request and keep when they send it again.
 const DELIVERY_HEADERS = [
   "x-github-delivery",
@@ -105,6 +109,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const trackers = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
   const messages = yield* Effect.serviceOption(MessageStorage.MessageStorage);
   const sharding = yield* Effect.serviceOption(Sharding.Sharding);
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   // The engine reads its own tables as BigInts. The rest of the server's queries must not.
   const plain =
     <Args extends ReadonlyArray<unknown>, A, E>(call: (...args: Args) => Effect.Effect<A, E>) =>
@@ -147,19 +152,19 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       .toSorted(([left], [right]) => right.version - left.version)[0];
 
   /** When the sweep resumes a paused run; undefined once it has used up its tries. */
-  const resumesAt = (row: WorkflowStore.RunRow) => {
+  const resumesAt = (row: WorkflowStore.RunSummaryRow) => {
     if (row.status !== "paused" || Number(row.held) === 1) return undefined;
     const rest = definitionByTag.get(row.engine_tag)?.resumeAfter[Number(row.pauses) - 1];
     return rest === undefined
       ? undefined
       : DateTime.addDuration(DateTime.makeUnsafe(row.updated_at), Duration.fromInputUnsafe(rest));
   };
-  const toRun = (row: WorkflowStore.RunRow): WorkflowStore.WorkflowRun => {
+  const toRun = (row: WorkflowStore.RunSummaryRow): WorkflowStore.WorkflowRun => {
     const resumes = resumesAt(row);
     return toRunAt(row, resumes === undefined ? null : DateTime.formatIso(resumes));
   };
   const toRunAt = (
-    row: WorkflowStore.RunRow,
+    row: WorkflowStore.RunSummaryRow,
     resumes: string | null,
   ): WorkflowStore.WorkflowRun => ({
     runId: row.run_id,
@@ -174,6 +179,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
+    // Left out of a run with none: most have none, and every run is sent on every change.
+    ...(row.tags_json === "[]"
+      ? {}
+      : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -720,6 +729,15 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ),
       );
     }
+    const kept = yield* Option.match(settings, {
+      onNone: () => Effect.succeed(DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT),
+      onSome: (service) =>
+        service.getSettings.pipe(
+          Effect.map((current) => current.workflowSkippedRunsKept),
+          Effect.orElseSucceed(() => DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT),
+        ),
+    });
+    yield* store.pruneSkipped(kept, SKIPPED_PRUNE_BATCH);
   });
 
   const sweep: Workflows["Service"]["sweep"] = Effect.gen(function* () {
@@ -786,13 +804,21 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     Effect.forEach(
       waits.filter((wait) => wait.request_json !== null),
       (wait) =>
-        Effect.map(store.latestThread(wait.run_id), (thread) => ({
-          runId: wait.run_id,
-          name: wait.name,
-          request: WorkflowStore.jsonValue(wait.request_json ?? "null"),
-          askedAt: wait.opened_at,
-          thread,
-        })),
+        Effect.map(store.latestThread(wait.run_id), (thread) => {
+          const request = WorkflowStore.jsonValue(wait.request_json ?? "null");
+          const kind =
+            request !== null && typeof request === "object" && !Array.isArray(request)
+              ? (request as { readonly kind?: unknown }).kind
+              : undefined;
+          return {
+            runId: wait.run_id,
+            name: wait.name,
+            request,
+            ...(typeof kind === "string" ? { kind } : {}),
+            askedAt: wait.opened_at,
+            thread,
+          };
+        }),
     ),
   );
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -814,7 +840,18 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const found = latest(name);
       return found === undefined
         ? []
-        : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
+        : [
+            {
+              name,
+              version: found[0].version,
+              triggers: found[0].triggers.map(triggerText),
+              ...(Object.keys(found[0].asks).length === 0
+                ? {}
+                : {
+                    asks: Object.entries(found[0].asks).map(([kind, label]) => ({ kind, label })),
+                  }),
+            },
+          ];
     },
   );
   const snapshot = Effect.all({
@@ -1009,6 +1046,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         title: row.title,
         status: row.status,
         detail: row.detail,
+        tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
@@ -1055,7 +1093,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      return (yield* store.runs(filter?.status)).map(toRun);
+      const rows =
+        filter?.tag === undefined
+          ? yield* store.runs(filter?.status)
+          : yield* store.runsWhere({ status: filter.status, tag: filter.tag });
+      return rows.map(toRun);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.
