@@ -27,7 +27,7 @@ index b95e1f86d2cd76d5dbaf1340fdc37f3f1990e9ee..e2b013a0969d512d7c9b5e6fe7d34876
      set$(ctx, "isNearEnd", isContentLess || distanceFromEnd <= onEndReachedThreshold * scrollLength);
      set$(
 diff --git a/react.js b/react.js
-index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb452be397 100644
+index 24cc6054d3fa59742c7f50457a18adf451128bbb..8704a0ff8374709f1db966fd77f6095bb3f67193 100644
 --- a/react.js
 +++ b/react.js
 @@ -6376,7 +6376,8 @@ function useOnLayoutSync({
@@ -81,7 +81,18 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
    return webExternalScroll ? { onLayout: onExternalLayout } : {};
  }
  function toLayout(rect) {
-@@ -7801,10 +7825,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
+@@ -6481,7 +6505,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // T3 patch: a list that follows the end takes a smaller row size at once. A
++  // deferred size leaves a gap under the last row for a frame.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && !peek$(ctx, "isFollowingEnd") && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       if (state.itemKey === currentItemKey) {
+@@ -7801,10 +7827,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
      [mapPropsRef, renderComponentRef]
    );
  }
@@ -94,7 +105,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
    return /* @__PURE__ */ React3__namespace.createElement("div", { ...rest, ref }, children);
  };
  var subscribeScreenReader = () => () => {
-@@ -7881,6 +7905,16 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7881,6 +7907,16 @@ var ListComponent = typedMemo(function ListComponent2({
    );
    const ScrollComponent = renderScrollComponent ? CustomScrollComponent : ListComponentScrollView;
    const SnapOrScroll = snapToIndices ? SnapWrapper : ScrollComponent;
@@ -111,7 +122,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
    const updateFooterSize = React3.useCallback(
      (size, afterSizeUpdate) => {
        var _a3;
-@@ -7956,7 +7990,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7956,7 +7992,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      Platform.OS !== "web",
@@ -120,7 +131,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React3__namespace.createElement(AlignItemsAtEndSpacer, { horizontal }),
      canRender && !ListEmptyComponent && /* @__PURE__ */ React3__namespace.createElement(
-@@ -7970,7 +8004,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7970,7 +8006,7 @@ var ListComponent = typedMemo(function ListComponent2({
          stickyHeaderConfig
        }
      ),
@@ -129,7 +140,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
      /* @__PURE__ */ React3__namespace.createElement(ScrollAdjust, null),
      IS_DEV && ENABLE_DEVMODE
    );
-@@ -8853,7 +8887,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -8853,7 +8889,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          runScrollRequest(
            pendingScroll.token,
            state.pendingScrollResolve,
@@ -144,7 +155,7 @@ index 24cc6054d3fa59742c7f50457a18adf451128bbb..32e59a03a4da96776f2690085ff3eebb
          );
        }
 diff --git a/react.mjs b/react.mjs
-index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df85187521c39518a 100644
+index 2cf1995d97cd101244b08b2b055265add859e064..0859ae9097c953a5f9dd3201def1fa7b32734346 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -6355,7 +6355,8 @@ function useOnLayoutSync({
@@ -198,7 +209,18 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
    return webExternalScroll ? { onLayout: onExternalLayout } : {};
  }
  function toLayout(rect) {
-@@ -7780,10 +7804,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
+@@ -6460,7 +6484,9 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // T3 patch: a list that follows the end takes a smaller row size at once. A
++  // deferred size leaves a gap under the last row for a frame.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && !peek$(ctx, "isFollowingEnd") && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       if (state.itemKey === currentItemKey) {
+@@ -7780,10 +7806,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
      [mapPropsRef, renderComponentRef]
    );
  }
@@ -211,7 +233,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
    return /* @__PURE__ */ React3.createElement("div", { ...rest, ref }, children);
  };
  var subscribeScreenReader = () => () => {
-@@ -7860,6 +7884,16 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7860,6 +7886,16 @@ var ListComponent = typedMemo(function ListComponent2({
    );
    const ScrollComponent = renderScrollComponent ? CustomScrollComponent : ListComponentScrollView;
    const SnapOrScroll = snapToIndices ? SnapWrapper : ScrollComponent;
@@ -228,7 +250,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
    const updateFooterSize = useCallback(
      (size, afterSizeUpdate) => {
        var _a3;
-@@ -7935,7 +7969,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7935,7 +7971,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      Platform.OS !== "web",
@@ -237,7 +259,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React3.createElement(AlignItemsAtEndSpacer, { horizontal }),
      canRender && !ListEmptyComponent && /* @__PURE__ */ React3.createElement(
-@@ -7949,7 +7983,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7949,7 +7985,7 @@ var ListComponent = typedMemo(function ListComponent2({
          stickyHeaderConfig
        }
      ),
@@ -246,7 +268,7 @@ index 2cf1995d97cd101244b08b2b055265add859e064..af2a2817af1873ab5b5f0d8df8518752
      /* @__PURE__ */ React3.createElement(ScrollAdjust, null),
      IS_DEV && ENABLE_DEVMODE
    );
-@@ -8832,7 +8866,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -8832,7 +8868,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          runScrollRequest(
            pendingScroll.token,
            state.pendingScrollResolve,

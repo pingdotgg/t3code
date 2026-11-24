@@ -667,6 +667,40 @@ describe("MessagesTimeline messages", () => {
     }
   });
 
+  it("leaves no gap under the last line when the chat gets wider at the bottom", async () => {
+    setup();
+    const size = { width: window.innerWidth, height: window.innerHeight };
+    onTestFinished(() => page.viewport(size.width, size.height));
+    await page.viewport(1200, 1400);
+    const props = baseProps();
+    const paragraphs = Array.from(
+      { length: 30 },
+      (_, index) =>
+        `Paragraph ${index + 1}. ${"A wider chat needs fewer lines for the same text. ".repeat(5)}`,
+    );
+    await using screen = await renderTimeline(
+      [message(paragraphs.join("\n\n"), { role: "assistant" })],
+      props,
+    );
+    screen.container.style.width = "500px";
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const last = page.getByText(paragraphs[29]!.trim(), { exact: true }).element();
+    const gap = () => viewport.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
+    let rest = 0;
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(2000);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      const settled = gap() === rest;
+      rest = gap();
+      expect(settled).toBe(true);
+    });
+
+    const resized = new Promise((resolve) => new ResizeObserver(resolve).observe(screen.container));
+    screen.container.style.width = "900px";
+    await resized;
+    expect(Math.abs(gap() - rest)).toBeLessThan(2);
+  });
+
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
     setup();
     const props = baseProps();
