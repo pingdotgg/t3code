@@ -27,10 +27,9 @@ const MAX_REFUSALS = 64;
 // Codex asks once before its first request, then retries the unauthenticated
 // request for a while before it reports the 401.
 const RECENT_REFUSAL_MS = 10 * 60_000;
-// Codex and the helper start the same wait before the request arrives. Answering with a
-// quarter of it to spare covers the helper's start, and a renewal already on the wire
-// (limited to 20 seconds of the 80) still finishes and saves on its own.
-const ANSWER_TIMEOUT_MS = (Protocol.COMMAND_TIMEOUT_MS * 3) / 4;
+// Reserve the socket-frame budget so the helper hears a timeout refusal before its
+// own deadline while keeping the lock (40s), OAuth (20s) and store headroom intact.
+const ANSWER_TIMEOUT_MS = Protocol.COMMAND_TIMEOUT_MS - Protocol.SOCKET_IDLE_MS;
 const TIMED_OUT: Protocol.Refusal = {
   kind: "timeout",
   message: "Timed out waiting for the managed ChatGPT connection. Try again.",

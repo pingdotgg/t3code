@@ -2185,19 +2185,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           context: ActiveCodexTurnContext,
           failure: OrchestrationV2ProviderFailure,
           errorInfo: CodexErrorInfo | null | undefined,
-          nativeText: string,
+          nativeMessage?: string | null,
           nativeDetails?: string | null,
         ) {
           const recentTokenRefusal = resolvedRuntime?.recentTokenRefusal;
-          if (recentTokenRefusal === undefined || !UNCREDENTIALED_REQUEST.test(nativeText))
-            return failure;
-          if (context.tokenRefusal === undefined && codexErrorHttpStatus(errorInfo) === 401) {
+          if (recentTokenRefusal === undefined) return failure;
+          const message = nativeMessage?.trim() ?? "";
+          const details = nativeDetails?.trim() ?? "";
+          const reported = UNCREDENTIALED_REQUEST.test(details)
+            ? details
+            : UNCREDENTIALED_REQUEST.test(message)
+              ? message
+              : undefined;
+          if (reported === undefined) return failure;
+          const status = codexErrorHttpStatus(errorInfo);
+          if (status !== null && status !== 401) return failure;
+          if (context.tokenRefusal === undefined && status === 401) {
             const refusal = yield* recentTokenRefusal;
             if (refusal !== undefined) context.tokenRefusal = refusal;
           }
-          const details = nativeDetails?.trim();
-          const reported =
-            details && !UNCREDENTIALED_REQUEST.test(failure.message) ? details : failure.message;
           return withManagedTokenRefusal(failure, context.tokenRefusal, reported);
         });
         const additionalContextByThread = yield* Ref.make(
@@ -5145,6 +5151,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
           Effect.gen(function* () {
+            if (payload.delta.length === 0) return;
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context !== undefined) {
               yield* completeProviderRetry(context, yield* DateTime.now);
@@ -5523,7 +5530,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     payload.error,
                   ),
                   payload.error.codexErrorInfo,
-                  `${payload.error.message}\n${payload.error.additionalDetails ?? ""}`,
+                  payload.error.message,
+                  payload.error.additionalDetails,
                 ),
               };
               return;
@@ -5559,7 +5567,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload.error,
               ),
               payload.error.codexErrorInfo,
-              `${payload.error.message}\n${payload.error.additionalDetails ?? ""}`,
+              payload.error.message,
+              payload.error.additionalDetails,
             );
             const itemOrdinal =
               previous?.itemOrdinal ??
@@ -6756,13 +6765,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 failure = { ...failure, class: "transport_error" };
               }
-              // A reused report was explained when Codex first sent it.
-              if (!reused)
+              // Keep an explanation already attached to a reused report, but still check
+              // when the completion adds 401 details the earlier notification lacked.
+              const alreadyExplained =
+                reused && previousFailure?.failure.code?.startsWith("managed_token_") === true;
+              if (!alreadyExplained)
                 failure = yield* explainTokenRefusal(
                   input.context,
                   failure,
-                  input.failureErrorInfo,
-                  `${input.failureMessage ?? ""}\n${input.failureDetails ?? ""}`,
+                  input.failureErrorInfo ?? (reused ? previousFailure?.errorInfo : undefined),
+                  input.failureMessage,
                   input.failureDetails,
                 );
               const failureItemId = codexFailureItemId(input.context);

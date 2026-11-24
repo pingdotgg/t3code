@@ -82,8 +82,9 @@ export const writeFrame = (socket: NodeNet.Socket, frame: string, maxBytes: numb
         fail();
       }
     });
-    socket.end(() => {
-      if (writeFailed || socket.errored != null) fail();
+    socket.end((error?: Error | null) => {
+      if (writeFailed || error != null || socket.errored != null || !socket.writableFinished)
+        fail();
       else resume(Effect.void);
     });
     return Effect.sync(() => {

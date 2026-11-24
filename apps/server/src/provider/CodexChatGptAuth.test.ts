@@ -25,7 +25,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
-import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
+import { COMMAND_TIMEOUT_MS, SOCKET_IDLE_MS } from "./CodexManagedTokenProtocol.ts";
 
 const assertSameCallback = (actual: string | null, expected: string | null) => {
   const left = new URL(actual!);
@@ -2045,8 +2045,13 @@ it.effect("the private broker refuses a request that outlasts the helper's wait 
       h.pause();
       const client = yield* brokerClient(h.endpoint, h.request);
       yield* Deferred.await(h.oauthEntered);
+      // Lock (40s) + OAuth (20s) + save can pass 60s; keep working until the IPC margin.
+      yield* TestClock.adjust("61 seconds");
+      assert.isUndefined(
+        yield* h.broker.recentRefusal(instanceId, h.request.profileKey, h.request.sessionKey),
+      );
       // Codex starts its wait before the helper starts and reaches the broker.
-      yield* TestClock.adjust(COMMAND_TIMEOUT_MS - 20_000);
+      yield* TestClock.adjust(COMMAND_TIMEOUT_MS - SOCKET_IDLE_MS - 61_000);
       const response = parseBrokerResponse(yield* Effect.promise(() => client.response));
       assert.equal(response.refusal?.kind, "timeout");
       assert.notProperty(response, "token");

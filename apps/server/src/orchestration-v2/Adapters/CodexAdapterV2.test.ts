@@ -8994,6 +8994,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
       explained: true,
     },
+    {
+      name: "an uncredentialed 401 message with generic additional details",
+      final: {
+        message: uncredentialedRequest,
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        additionalDetails: "Request failed after retries",
+      },
+      completion: {
+        message: uncredentialedRequest,
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        additionalDetails: "Request failed after retries",
+      },
+      explained: true,
+    },
+    {
+      name: "a generic 401 notice whose completion adds uncredentialed details",
+      final: {
+        message: "Request failed",
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+      },
+      completion: {
+        message: "Request failed",
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        additionalDetails: uncredentialedRequest,
+      },
+      explained: true,
+    },
     { name: "an uncredentialed 401 completion", completion: tokenRefusalFinal, explained: true },
     {
       name: "a revoked token 401",
@@ -9011,6 +9038,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       name: "a retried uncredentialed 401 that ends in another failure",
       retry: true,
       completion: { message: serverError, codexErrorInfo: "other" },
+      explained: false,
+      retryExplained: true,
+    },
+    {
+      name: "a retried uncredentialed 401 that ends in a 503 mentioning missing authentication",
+      retry: true,
+      completion: {
+        message: uncredentialedRequest.replace("401 Unauthorized", "503 Service Unavailable"),
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
+      },
       explained: false,
       retryExplained: true,
     },
@@ -9166,6 +9203,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
             {
               type: "emit_inbound",
+              label: "item/agentMessage/delta/empty",
+              frame: {
+                method: "item/agentMessage/delta",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "msg-recovered",
+                  delta: "",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-after-empty-delta",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... 2/5",
+                    codexErrorInfo: "other",
+                    additionalDetails: uncredentialedStream,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
               label: "item/started/recovered",
               frame: {
                 method: "item/started",
@@ -9266,6 +9333,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             : [],
         );
         assert.deepEqual(errorItems, [
+          { status: "running", code: "managed_token_refresh" },
           { status: "running", code: "managed_token_refresh" },
           { status: "completed", code: "managed_token_refresh" },
           { status: "running", code: "managed_token_timeout" },
