@@ -315,6 +315,7 @@ function claudeMessageInputTokens(usage: {
 
 export function claudeProviderTurnTokenUsage(
   usage: {
+    readonly iterations?: SDKAssistantMessage["message"]["usage"]["iterations"] | undefined;
     readonly input_tokens?: number | null | undefined;
     readonly cache_creation_input_tokens?: number | null | undefined;
     readonly cache_read_input_tokens?: number | null | undefined;
@@ -326,9 +327,11 @@ export function claudeProviderTurnTokenUsage(
   autoCompactWindow = "",
   requestedAt?: DateTime.Utc,
 ) {
-  const inputTokens = claudeMessageInputTokens(usage);
-  const outputTokens = optionalClaudeUsageTokenCount(usage.output_tokens) ?? 0;
-  const cachedInputTokens = optionalClaudeUsageTokenCount(usage.cache_read_input_tokens) ?? 0;
+  // After an advisor call, the response totals can count the same context twice.
+  const sample = usage.iterations?.findLast((iteration) => iteration.type === "message") ?? usage;
+  const inputTokens = claudeMessageInputTokens(sample);
+  const outputTokens = optionalClaudeUsageTokenCount(sample.output_tokens) ?? 0;
+  const cachedInputTokens = optionalClaudeUsageTokenCount(sample.cache_read_input_tokens) ?? 0;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
   // The cache lifetime starts with the request, not when its response ends.
   const promptCacheExpiresAt =
@@ -354,15 +357,11 @@ type ClaudeMessageUsage = Parameters<typeof claudeProviderTurnTokenUsage>[0];
 // message_delta usage is per-message cumulative; null or absent fields retain message_start values and zeros replace them.
 function mergeClaudeStreamUsage(
   current: ClaudeMessageUsage,
-  delta: {
-    readonly input_tokens?: number | null | undefined;
-    readonly cache_creation_input_tokens?: number | null | undefined;
-    readonly cache_read_input_tokens?: number | null | undefined;
-    readonly output_tokens?: number | null | undefined;
-  },
+  delta: ClaudeMessageUsage,
 ): ClaudeMessageUsage {
   return {
     ...current,
+    iterations: delta.iterations ?? current.iterations,
     input_tokens:
       optionalClaudeUsageTokenCount(delta.input_tokens) ??
       optionalClaudeUsageTokenCount(current.input_tokens) ??
@@ -6715,8 +6714,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   context.autoCompactWindow,
                   context.streamUsage?.requestedAt,
                 );
-          if (typeof usage !== "number") {
-            if (claudeMessageInputTokens(usage) <= 0) return;
+          if ("inputTokens" in tokenUsage) {
+            if (tokenUsage.inputTokens <= 0) return;
             context.compactionTokens = undefined;
           }
           yield* emitProviderEvent({
@@ -7651,9 +7650,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        // A `context: fork` skill has no Agent call and streams none of its own frames;
-        // only its transcript records the model, written after the fork reports its outcome.
-        const forkedSkillModel = Effect.fnUntraced(function* (
+        // A `context: fork` skill, or a foreground subagent whose replies were never streamed,
+        // leaves no model on any frame; only its transcript records it, written once it finishes.
+        const transcriptModel = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           nativeThreadId: string,
           taskId: string,
@@ -7661,7 +7660,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
           if (
             registered === undefined ||
-            registered.runToolUseId !== null ||
             registered.task.model !== null ||
             registered.task.status === "running"
           ) {
@@ -12425,7 +12423,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return next;
             });
             for (const taskId of context.subagentsByTaskId.keys()) {
-              const model = yield* forkedSkillModel(context, liveQuery.nativeThreadId, taskId);
+              const model = yield* transcriptModel(context, liveQuery.nativeThreadId, taskId);
               const status = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status;
               if (
                 model !== undefined &&

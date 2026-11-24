@@ -23,6 +23,7 @@ import {
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
 import { awaitDetachedSpawn } from "../process/windowsVerbatimSpawn.ts";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { findWindowsShim } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -281,7 +282,10 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     // Windows refuses to unlink this running executable; a detached shell removes it after exit.
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
-      const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
+      const comspec =
+        environment["ComSpec"] ??
+        environment["COMSPEC"] ??
+        windowsSystem32Path(environment, "cmd.exe");
       const notScheduled = () =>
         new CliUninstallError({
           reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,

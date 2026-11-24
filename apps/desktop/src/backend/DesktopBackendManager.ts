@@ -599,19 +599,35 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       ).pipe(Effect.forkScoped),
     );
   }
+  const readinessContext = {
+    executablePath: options.executablePath,
+    entryPath: options.entryPath,
+    cwd: options.cwd,
+    httpBaseUrl: options.httpBaseUrl,
+  };
+  const readinessTimeout = options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT;
+  // A backend with a control fd reports readiness there itself, after its HTTP server is up.
+  // Backends without the fd, such as WSL, are polled over HTTP.
+  const awaitReady =
+    options.bootstrap.desktopTelemetryControlFd === undefined
+      ? waitForHttpReady({ ...readinessContext, timeout: readinessTimeout })
+      : Deferred.await(serverReady).pipe(
+          Effect.timeoutOrElse({
+            duration: readinessTimeout,
+            orElse: () =>
+              Effect.fail(
+                new BackendReadinessTimeoutError({
+                  ...readinessContext,
+                  readinessUrl: new URL(BACKEND_READINESS_PATH, options.httpBaseUrl),
+                  timeoutMs: Duration.toMillis(readinessTimeout),
+                  cause: "The backend did not signal readiness on its control channel.",
+                }),
+              ),
+          }),
+        );
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
-  // HTTP polling stays as the fallback for backends without the control fd, such as WSL.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
-    Effect.raceFirst(
-      waitForHttpReady({
-        executablePath: options.executablePath,
-        entryPath: options.entryPath,
-        cwd: options.cwd,
-        httpBaseUrl: options.httpBaseUrl,
-        timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-      }),
-      Deferred.await(serverReady),
-    ).pipe(
+    awaitReady.pipe(
       Effect.flatMap(() => options.onReady?.(handle.pid) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({

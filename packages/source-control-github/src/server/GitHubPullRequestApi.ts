@@ -811,12 +811,14 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly replyToReviewThread: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -825,6 +827,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly resolved: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -1324,6 +1327,24 @@ export const make = Effect.gen(function* () {
       .PullRequestSubject({ owner, name, number: input.number, subjectId: input.subjectId })
       .pipe(graphql({ ...input, allowReserve: true }), Effect.map(isSubjectOfPullRequest));
   };
+
+  const requireThreadOfPullRequest = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+    readonly threadId: string;
+    readonly operation: string;
+  }) =>
+    subjectBelongsToPullRequest({ ...input, subjectId: input.threadId }).pipe(
+      Effect.flatMap((belongs) =>
+        belongs
+          ? Effect.void
+          : Effect.fail(
+              new GitHubSubjectScopeError({ cwd: input.cwd, operation: input.operation }),
+            ),
+      ),
+    );
 
   const decodeWith = <A>(
     cwd: string,
@@ -2732,15 +2753,58 @@ export const make = Effect.gen(function* () {
             .pipe(graphql(target));
         });
       }
-      if (input.stackNumber !== undefined)
-        return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
-          Effect.provideService(GitHubRest.GitHubRest, api),
-          Effect.provideService(GitHubAppAccess.GitHubAppAccess, appAccess),
-          Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
+      if (input.stackNumber !== undefined) {
+        const stackNumber = input.stackNumber;
+        const target = { ...input, operation: "runPullRequestAction" };
+        // A stack auto-merge request sits on the layer it was armed on and covers those below.
+        if (input.action === "disable-auto-merge")
+          return pullRequestNodeId(target).pipe(
+            Effect.flatMap((pullRequestId) =>
+              actionSummary(
+                client
+                  .DisableStackAutoMerge({ pullRequestId })
+                  .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
+              ).pipe(graphql(target)),
+            ),
+          );
+        const stackAction = (action: typeof input.action) =>
+          runGitHubStackAction({ ...input, action, stackNumber }).pipe(
+            Effect.provideService(GitHubRest.GitHubRest, api),
+            Effect.provideService(GitHubAppAccess.GitHubAppAccess, appAccess),
+            Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          );
+        if (input.action !== "enable-auto-merge") return stackAction(input.action);
+        const expectedHeadOid = input.expectedStackHeads?.find(
+          (layer) => layer.number === input.number,
+        )?.headSha;
+        return stackAction("enable-auto-merge").pipe(
+          Effect.andThen(pullRequestNodeId(target)),
+          Effect.flatMap((pullRequestId) =>
+            actionSummary(
+              client
+                .EnablePullRequestAutoMerge({
+                  input: {
+                    pullRequestId,
+                    mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",
+                    ...(expectedHeadOid === undefined ? {} : { expectedHeadOid }),
+                    includeStack: true,
+                  },
+                })
+                .pipe(Effect.map((result) => result.enablePullRequestAutoMerge?.pullRequest)),
+            ).pipe(graphql(target)),
+          ),
+          // Like `gh pr merge --auto`: a stack that can merge now merges, re-pinned to its heads.
+          Effect.catchIf(
+            (error) =>
+              error._tag === "GitHubApiResponseError" &&
+              (error.githubErrors ?? []).some((message) => message.includes("already mergeable")),
+            () => stackAction("merge"),
+          ),
         );
+      }
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
           Effect.flatMap((pullRequestId) =>
@@ -3119,15 +3183,21 @@ export const make = Effect.gen(function* () {
             verdict: input.verdict,
             body: input.body,
             comments: input.comments,
+            expectedHeadSha: input.expectedHeadSha,
           }),
         })
         .pipe(Effect.asVoid);
     }),
 
     replyToReviewThread: Effect.fn("GitHubPullRequestApi.replyToReviewThread")(function (input) {
-      return client
-        .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
-        .pipe(graphql({ ...input, operation: "replyToReviewThread" }), Effect.asVoid);
+      const target = { ...input, operation: "replyToReviewThread" };
+      return requireThreadOfPullRequest(target).pipe(
+        Effect.andThen(
+          client
+            .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
+            .pipe(graphql(target), Effect.asVoid),
+        ),
+      );
     }),
 
     getPullRequestFilesViewed: Effect.fn("GitHubPullRequestApi.getPullRequestFilesViewed")(
@@ -3214,11 +3284,15 @@ export const make = Effect.gen(function* () {
 
     setReviewThreadResolution: Effect.fn("GitHubPullRequestApi.setReviewThreadResolution")(
       function (input) {
-        return (
-          input.resolved
-            ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-            : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-        ).pipe(graphql({ ...input, operation: "setReviewThreadResolution" }));
+        const target = { ...input, operation: "setReviewThreadResolution" };
+        return requireThreadOfPullRequest(target).pipe(
+          Effect.andThen(
+            (input.resolved
+              ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+              : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+            ).pipe(graphql(target)),
+          ),
+        );
       },
     ),
 

@@ -799,7 +799,7 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
     ),
     stack: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge this PR and every open stack layer below it at once. Not with auto.",
+        description: "Merge this PR and every open stack layer below it at once.",
       }),
     ),
   }),

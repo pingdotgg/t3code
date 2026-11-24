@@ -5608,7 +5608,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           const completed = yield* orchestrator.streamDomainEvents.pipe(
             Stream.filter(
-              (event) => event.type === "run.updated" && event.payload.status === "waiting",
+              (event) => event.type === "run.updated" && event.payload.status === "completed",
             ),
             Stream.runHead,
             Effect.forkChild({ startImmediately: true }),
@@ -7435,9 +7435,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           createdBy: "user",
           creationSource: "web",
         });
-        const waiting = yield* orchestrator.streamDomainEvents.pipe(
+        const completed = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
-            (event) => event.type === "run.updated" && event.payload.status === "waiting",
+            (event) => event.type === "run.updated" && event.payload.status === "completed",
           ),
           Stream.runHead,
           Effect.forkChild({ startImmediately: true }),
@@ -7455,7 +7455,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         });
         yield* worker.drain();
         assert.isNull((yield* Ref.get(replayDriver.state)).failure);
-        yield* Fiber.join(waiting);
+        yield* Fiber.join(completed);
         yield* worker.drain();
         const projection = yield* orchestrator.getThreadProjection(threadId);
         const run = projection.runs.at(-1)!;
@@ -7558,9 +7558,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         });
         const settled = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
-            (event) =>
-              event.type === "run.updated" &&
-              (event.payload.status === "waiting" || event.payload.status === "completed"),
+            (event) => event.type === "run.updated" && event.payload.status === "completed",
           ),
           Stream.runHead,
           Effect.forkChild({ startImmediately: true }),
@@ -13139,6 +13137,120 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "\\ No newline at end of file",
             "",
           ].join("\n"),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("shows what an approval grants apart from the reason the model gave", () =>
+      Effect.gen(function* () {
+        const reason = "Needed to build the project.";
+        const permissions = {
+          fileSystem: {
+            write: ["/w/out"],
+            entries: [
+              { access: "write", path: { type: "path", path: "/w/out" } },
+              { access: "write", path: { type: "special", value: { kind: "root" } } },
+              { access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**/*.md" } },
+              { access: "write", path: { type: "special", value: { kind: "unknown", path: "" } } },
+            ],
+          },
+          network: { enabled: true },
+        } satisfies CodexSchema.PermissionsRequestApprovalParams["permissions"];
+        const request = (
+          id: number,
+          method: string,
+          params: Record<string, unknown>,
+          result: Record<string, unknown>,
+        ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "emit_inbound",
+            label: method,
+            frame: {
+              id,
+              method,
+              params: { threadId: nativeThreadId, turnId: nativeTurnId, startedAtMs: 2, ...params },
+            },
+          },
+          { type: "expect_outbound", label: method, frame: { id, result } },
+        ];
+        const manyFiles = Array.from({ length: 21 }, (_, index) => ({
+          ...addA,
+          path: `/w/${String(index).padStart(2, "0")}.ts`,
+        }));
+        const { harness, answerNext } = yield* startApprovalTurn("approval-scope", [
+          ...request(
+            0,
+            "item/permissions/requestApproval",
+            { itemId: "permissions", cwd: "/w", reason, permissions },
+            { permissions, scope: "turn" },
+          ),
+          ...request(
+            1,
+            "item/commandExecution/requestApproval",
+            {
+              itemId: "command",
+              cwd: "/w/app",
+              reason,
+              command: "pnpm install",
+              networkApprovalContext: { host: "example.com", protocol: "https" },
+            },
+            { decision: "accept" },
+          ),
+          fileChange("started", nativeTurnId, "patch", manyFiles),
+          ...request(
+            2,
+            "item/fileChange/requestApproval",
+            { itemId: "patch", reason, grantRoot: "/w" },
+            { decision: "accept" },
+          ),
+          fileChange("completed", nativeTurnId, "patch", manyFiles),
+          ...request(
+            3,
+            "execCommandApproval",
+            {
+              callId: "legacy",
+              conversationId: nativeThreadId,
+              command: ["pnpm", "run", "build"],
+              cwd: "/w/app",
+              parsedCmd: [],
+              reason,
+            },
+            { decision: "approved" },
+          ),
+          turnCompleted(nativeTurnId),
+        ]);
+        const requests = [
+          yield* answerNext,
+          yield* answerNext,
+          yield* answerNext,
+          yield* answerNext,
+        ];
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          requests.map((pending) => {
+            const item = approvalItem(harness.events, pending);
+            return [item?.prompt, item?.reason];
+          }),
+          [
+            [
+              "write /w/out\nwrite / (entire filesystem)\nread /w/docs/**/*.md\nwrite unknown path\nnetwork",
+              reason,
+            ],
+            ["pnpm install\ncwd /w/app\nnetwork https example.com", reason],
+            [[...manyFiles.map((file) => `add ${file.path}`), "write /w"].join("\n"), reason],
+            ["pnpm run build\ncwd /w/app", reason],
+          ],
         );
       }).pipe(
         Effect.scoped,
