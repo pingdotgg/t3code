@@ -238,9 +238,30 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }
     // The child's checkout and its setup script were made before this commits
     // (`EngineHost::provision_worktree`): a blocking script is done, an async one runs on.
-    cx.dispatch(command).await?;
-    // Armed once the task exists, so a wait dropped after this point still upgrades.
-    let upgrade = wait.then(|| WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id));
+    let upgrade = if wait {
+        // The dispatch runs on its own task holding the armed upgrade, then hands it back. A
+        // call dropped meanwhile (during a worktree's setup, say) leaves the upgrade with that
+        // task, which drops it once the child committed, so the parent still hears the result.
+        let guard = WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id);
+        let engine = cx.config().engine.clone();
+        let (back, handed) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let dispatched = super::dispatch_to(engine.as_ref(), command).await;
+            let _ = back.send((dispatched, guard));
+        });
+        let (dispatched, mut guard) = handed
+            .await
+            .map_err(|_| super::internal("delegate_task: the dispatch ended"))?;
+        if let Err(error) = dispatched {
+            // No task was made: nothing to upgrade.
+            guard.command = None;
+            return Err(error);
+        }
+        Some(guard)
+    } else {
+        cx.dispatch(command).await?;
+        None
+    };
 
     if let Some(upgrade) = upgrade {
         let deadline = tokio::time::Instant::now() + wait_timeout(args);

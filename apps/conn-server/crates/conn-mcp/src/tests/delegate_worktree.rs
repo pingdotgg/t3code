@@ -535,3 +535,28 @@ async fn a_folded_project_reset_to_empty_defaults_runs_no_setup_script() {
     .unwrap();
     assert_eq!(run.started, json!({ "status": "no-script" }));
 }
+
+/// `awaitTask` (`OrchestratorMcpService.ts:1984`): a blocking worktree delegate dropped while
+/// its checkout's setup script runs still upgrades the task's wake, so the parent hears the
+/// result. The dispatch goes on without the caller and commits the child after setup.
+#[tokio::test(flavor = "current_thread")]
+async fn a_blocking_worktree_delegate_dropped_during_setup_upgrades_the_wake() {
+    let host = GitHost::new("dropped-setup");
+    let f = fixture_with_host("delegate-worktree-dropped", Some(host.clone()));
+    git_project(&f).await;
+    let (parent, caller) = running_parent(&f).await;
+    let parent = parent["threadId"].as_str().unwrap().to_owned();
+    let mut agent = Client::open(&f.service, caller).await;
+    let script = host.setup.hold();
+    let wait = agent.ok(
+        "delegate_task",
+        json!({"task": "hang", "isolation": "worktree", "mode": "wait", "timeoutMs": 20000}),
+    );
+    tokio::select! {
+        task = wait => panic!("the wait ended before setup: {task}"),
+        () = host.setup.started.notified() => {}
+    }
+    // The call is gone; the blocking script now exits 0 and the child commits.
+    script.notify_one();
+    until_wake_upgraded(&f, &parent).await;
+}
