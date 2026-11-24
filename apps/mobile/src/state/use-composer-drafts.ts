@@ -32,7 +32,11 @@ import type {
   EnvironmentShellState,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { draftModelPickMatchesThread } from "@t3tools/shared/model";
+import {
+  draftModelPickMatchesThread,
+  modelSelectionWithoutUltracode,
+  withoutUltracode,
+} from "@t3tools/shared/model";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
@@ -784,8 +788,20 @@ export function decodePersistedComposerState(value: unknown): {
         // Queued-edit sessions are memory-only; persisted drafts would outlive their run association and become unreachable.
         .filter(([key]) => !isQueuedEditDraftKey(key)),
     ),
-    stickyModelSelection: parsed.stickyModelSelection ?? null,
-    modelOptionMemory: parsed.modelOptionMemory ?? {},
+    stickyModelSelection: parsed.stickyModelSelection
+      ? modelSelectionWithoutUltracode(parsed.stickyModelSelection)
+      : null,
+    modelOptionMemory: Object.fromEntries(
+      Object.entries(parsed.modelOptionMemory ?? {}).map(([instanceId, models]) => [
+        instanceId,
+        Object.fromEntries(
+          Object.entries(models).flatMap(([model, remembered]) => {
+            const options = withoutUltracode(remembered);
+            return options.length > 0 ? [[model, options]] : [];
+          }),
+        ),
+      ]),
+    ),
     cloudDrafts: {
       accountId: parsed.cloudAccountId ?? null,
       signedOut: Object.fromEntries(
@@ -1383,7 +1399,10 @@ function updateComposerDrafts(
 }
 
 export function setStickyComposerModelSelection(modelSelection: ModelSelection): void {
-  appAtomRegistry.set(stickyComposerModelSelectionAtom, modelSelection);
+  appAtomRegistry.set(
+    stickyComposerModelSelectionAtom,
+    modelSelectionWithoutUltracode(modelSelection),
+  );
   schedulePersistComposerState();
 }
 

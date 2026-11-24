@@ -1,4 +1,5 @@
 import type { ProviderOptionSelection } from "@t3tools/contracts";
+import { withoutUltracode } from "@t3tools/shared/model";
 import { appAtomRegistry } from "./atom-registry";
 import {
   modelOptionMemoryAtom,
@@ -35,8 +36,9 @@ function lookupModelOptionsInState(
 export function rememberModelOptions(
   instanceId: string,
   model: string,
-  options: ReadonlyArray<ProviderOptionSelection>,
+  selections: ReadonlyArray<ProviderOptionSelection>,
 ): void {
+  const options = withoutUltracode(selections);
   if (options.length === 0) {
     return;
   }
@@ -66,11 +68,18 @@ export function withRememberedModelOptions<
     readonly options?: ReadonlyArray<ProviderOptionSelection>;
   },
 >(selection: T): T {
-  const remembered = rememberedModelOptions(selection.instanceId, selection.model);
-  if (
-    remembered === undefined ||
-    JSON.stringify(remembered) === JSON.stringify(selection.options ?? [])
-  ) {
+  const stored = rememberedModelOptions(selection.instanceId, selection.model);
+  if (stored === undefined) {
+    return selection;
+  }
+  // Memory never holds Ultracode, so a selection keeps its own.
+  const remembered = [
+    ...stored,
+    ...(selection.options ?? []).filter(
+      (option) => option.id === "ultracode" && option.value === true,
+    ),
+  ];
+  if (JSON.stringify(remembered) === JSON.stringify(selection.options ?? [])) {
     return selection;
   }
   return { ...selection, options: remembered };

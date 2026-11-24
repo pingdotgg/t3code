@@ -15,6 +15,7 @@ import {
   modelSelectionsEqual,
   pickModelSelection,
   withImplicitFastModeDefault,
+  withoutUltracode,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -77,6 +78,27 @@ describe("descriptor helpers", () => {
     expect(buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, legacy)).toEqual([
       { id: "effort", value: "xhigh" },
       { id: "ultracode", value: true },
+    ]);
+  });
+
+  it("leaves Ultracode behind when options carry into another thread", () => {
+    const untouched = [
+      { id: "effort", value: "high" },
+      { id: "ultracode", value: false },
+    ];
+    expect(withoutUltracode(untouched)).toBe(untouched);
+    expect(
+      withoutUltracode([
+        { id: "effort", value: "high" },
+        { id: "ultracode", value: true },
+        { id: "fastMode", value: true },
+      ]),
+    ).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    expect(withoutUltracode([{ id: "effort", value: "ultracode" }])).toEqual([
+      { id: "effort", value: "xhigh" },
     ]);
   });
 

@@ -32,6 +32,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
+import { withoutUltracode } from "@t3tools/shared/model";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -319,7 +320,7 @@ const make = Effect.gen(function* () {
       const options =
         target.options ??
         (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
+          ? withoutUltracode(inherited.options)
           : undefined);
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
