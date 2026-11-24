@@ -167,6 +167,101 @@ describe("orderDiffFilesForReview", () => {
     ).toEqual(["src/a.ts", "src/b.ts"]);
   });
 
+  it("drains ready nodes before breaking cycles and never emits a broken cycle node twice", () => {
+    expect(
+      order([
+        file("src/a.ts", ['import { b } from "./b";']),
+        file("src/b.ts", ['import { a } from "./a";']),
+        file("src/c.ts", ['import { b } from "./b";']),
+        file("src/z.ts"),
+      ]),
+    ).toEqual(["src/z.ts", "src/a.ts", "src/b.ts", "src/c.ts"]);
+
+    expect(
+      order([
+        file("src/a.ts", ['import { c } from "./c";']),
+        file("src/b.ts", ['import { c } from "./c";']),
+        file("src/c.ts", ['import { b } from "./b";']),
+      ]),
+    ).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
+
+    expect(
+      order([
+        file("src/b.ts", ['import { d } from "./d";']),
+        file("src/c.ts", ['import { b } from "./b";']),
+        file("src/d.ts", ['import { b } from "./b";']),
+        file("src/e.ts", ['import { f } from "./f";']),
+        file("src/f.ts", ['import { e } from "./e";']),
+      ]),
+    ).toEqual(["src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts", "src/f.ts"]);
+  });
+
+  it("matches naive lexicographical topological ordering across random cyclic and acyclic graphs", () => {
+    function naiveOrderByImports(
+      paths: ReadonlyArray<string>,
+      imports: ReadonlyMap<string, ReadonlySet<string>>,
+    ): Array<string> {
+      const remaining = new Set(paths);
+      const ordered: Array<string> = [];
+      const sorted = [...paths].sort((left, right) => left.localeCompare(right));
+      while (remaining.size > 0) {
+        const candidates = sorted.filter((path) => remaining.has(path));
+        const next =
+          candidates.find((path) =>
+            [...(imports.get(path) ?? [])].every((dependency) => !remaining.has(dependency)),
+          ) ?? candidates[0]!;
+        remaining.delete(next);
+        ordered.push(next);
+      }
+      return ordered;
+    }
+
+    let seed = 0x5eed1234;
+    const nextRand = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+
+    for (let trial = 0; trial < 30; trial++) {
+      const count = 4 + (trial % 15);
+      const paths = Array.from({ length: count }, (_, index) => {
+        return `src/f${String(index).padStart(2, "0")}.ts`;
+      });
+      const imports = new Map<string, Set<string>>();
+      const files: Array<TestFile> = [];
+      const edgeProbability = trial % 3 === 0 ? 0.12 : trial % 3 === 1 ? 0.3 : 0.55;
+
+      for (let index = 0; index < count; index++) {
+        const deps = new Set<string>();
+        const lines: Array<string> = [];
+        for (let target = 0; target < count; target++) {
+          if (target === index) continue;
+          if (nextRand() < edgeProbability) {
+            deps.add(paths[target]!);
+            lines.push(`import "./f${String(target).padStart(2, "0")}";`);
+          }
+        }
+        imports.set(paths[index]!, deps);
+        files.push(file(paths[index]!, lines));
+      }
+
+      expect(order(files)).toEqual(naiveOrderByImports(paths, imports));
+    }
+  });
+
+  it("orders a large reverse dependency chain without losing exact order", () => {
+    const count = 1500;
+    const files = Array.from({ length: count }, (_, index) => {
+      const name = `src/f${String(index).padStart(4, "0")}.ts`;
+      const lines = index + 1 < count ? [`import "./f${String(index + 1).padStart(4, "0")}";`] : [];
+      return file(name, lines);
+    });
+    const expected = Array.from({ length: count }, (_, index) => {
+      return `src/f${String(count - 1 - index).padStart(4, "0")}.ts`;
+    });
+    expect(order(files)).toEqual(expected);
+  });
+
   it("keeps the tiers apart and orders tests by the source they cover", () => {
     expect(
       order([
