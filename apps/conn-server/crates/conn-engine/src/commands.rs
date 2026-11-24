@@ -71,6 +71,7 @@ pub(crate) enum Effect {
     #[serde(rename = "thread.closed")]
     ThreadClosed {
         thread_id: String,
+        #[serde(deserialize_with = "close_reason")]
         reason: crate::ThreadClose,
     },
     /// Asks the title generator; answers with `thread.title.regeneration.complete`.
@@ -80,6 +81,18 @@ pub(crate) enum Effect {
         request_id: String,
         regenerate: bool,
     },
+}
+
+/// A close's reason as an outbox row stores it. A row from before closes named their
+/// settlement holds the bare `"settled"`.
+fn close_reason<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::ThreadClose, D::Error> {
+    let reason = Value::deserialize(deserializer)?;
+    if reason == "settled" {
+        return Ok(crate::ThreadClose::SettledUnnamed);
+    }
+    serde_json::from_value(reason).map_err(serde::de::Error::custom)
 }
 
 pub(crate) enum CommandError {

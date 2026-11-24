@@ -328,6 +328,9 @@ pub enum ThreadClose {
     SettledAgain {
         settled_at: String,
     },
+    /// A settle close an earlier build stored without its settlement (`"settled"`). Its
+    /// terminals close, but nothing shows whether its settle script ran, so it does not run.
+    SettledUnnamed,
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
@@ -367,6 +370,16 @@ pub trait Engine: Send + Sync {
     fn provider_instance_enabled(&self, _project_id: &str, _instance_id: &str) -> bool {
         true
     }
+    /// Records, durably, that the settle script of `thread_id`'s settlement `settled_at`
+    /// starts: `true` the first time, `false` once any process recorded it.
+    fn claim_settle_script<'a>(
+        &'a self,
+        _thread_id: &'a str,
+        _settled_at: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(std::future::ready(Ok(true)))
+    }
+
     /// Whether a command already committed; retries must use its recorded target.
     fn has_receipt<'a>(&'a self, _command_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(std::future::ready(Ok(false)))

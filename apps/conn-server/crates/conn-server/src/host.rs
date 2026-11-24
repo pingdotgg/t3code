@@ -292,11 +292,17 @@ impl EngineHost for Host {
             // `settleActionRunAt`: the script runs once per settlement, so only on the
             // transition to settled.
             ThreadClose::Settled { settled_at } => {
-                self.clean_up_settled(thread_id, settled_at.clone(), true);
+                self.clean_up_settled(thread_id, Some(settled_at.clone()), true);
                 return Box::pin(std::future::ready(Ok(())));
             }
             ThreadClose::SettledAgain { settled_at } => {
-                self.clean_up_settled(thread_id, settled_at.clone(), false);
+                self.clean_up_settled(thread_id, Some(settled_at.clone()), false);
+                return Box::pin(std::future::ready(Ok(())));
+            }
+            // Its settle script may have run already: the terminals close for the thread's
+            // current settlement, and no script runs.
+            ThreadClose::SettledUnnamed => {
+                self.clean_up_settled(thread_id, None, false);
                 return Box::pin(std::future::ready(Ok(())));
             }
             ThreadClose::Archived | ThreadClose::Deleted => {}
@@ -377,12 +383,21 @@ impl Host {
     /// named by `settled_at`, one cleanup at a time. While that settlement is still the
     /// thread's, `closeOnSettle` closes its `stopOnSettle` terminals and then every idle one;
     /// then a new settlement (`first`) runs the project's settle script in the worktree.
-    fn clean_up_settled(&self, thread_id: &str, settled_at: String, first: bool) {
+    /// Without `settled_at`, the thread's current settlement is the one.
+    fn clean_up_settled(&self, thread_id: &str, settled_at: Option<String>, first: bool) {
         let (terminals, mcp) = (self.terminals.clone(), self.mcp.get().cloned());
         let cleanups = self.settle_cleanups.clone();
         let thread_id = thread_id.to_owned();
         tokio::spawn(async move {
             let _one_at_a_time = cleanups.lock().await;
+            let settled_at = match (settled_at, &mcp) {
+                (Some(settled_at), _) => settled_at,
+                (None, Some(mcp)) => match mcp.current_settlement(&thread_id).await {
+                    Some(settled_at) => settled_at,
+                    None => return,
+                },
+                (None, None) => String::new(),
+            };
             if let Some(mcp) = &mcp
                 && !mcp.is_current_settlement(&thread_id, &settled_at).await
             {
