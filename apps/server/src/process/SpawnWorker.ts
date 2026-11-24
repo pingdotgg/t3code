@@ -592,8 +592,11 @@ class SpawnWorkerPool {
     const taskkill = windowsSystem32Path(process.env, "taskkill.exe");
     const taskkillArgs = ["/pid", String(pid), "/T", "/F"];
     if (this.#closing) {
-      NodeChildProcess.execFile(taskkill, taskkillArgs, { windowsHide: true }, (error) =>
-        finish(error === null),
+      NodeChildProcess.execFile(
+        taskkill,
+        taskkillArgs,
+        { windowsHide: true, timeout: CLOSE_REAP_TIMEOUT_MS },
+        (error) => finish(error === null),
       );
       return;
     }
