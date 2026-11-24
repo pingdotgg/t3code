@@ -4627,6 +4627,7 @@
   "7f0f9b1ee42892db": "Output is no longer available.",
   "e470bb79fa74a6ae": "Tool output image",
   "e8c80b6d40c0944c": "Search result",
+  "76cf478e5674fd12": "{count, plural, one {{count} match} other {{count} matches}}",
   "8d1906900b5c95c7": [
     "exit ",
     {
