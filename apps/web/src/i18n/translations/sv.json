@@ -7567,6 +7567,11 @@
   "03338c6aec8edacd": "Ange hur breda meddelanden och inmatningsfältet kan bli på stora skärmar.",
   "92785adb251da88c": "Återställ chattbredd till standard",
   "4d457bcce0c0e272": "Chattbredd",
+  "7d7f65967cc821e3": "Bredd för HTML-förhandsvisning",
+  "70ce0af7f78d5957": "Låter HTML-förhandsvisningar i en chatt bli bredare än meddelandena, som förblir centrerade.",
+  "f2b119bf02ae2558": "Återställ bredd för HTML-förhandsvisning till standard",
+  "6287212fed0deec6": "Samma som chatten",
+  "dc8e85ea0364649c": "Samma som chatten (standard)",
   "81f3a196537bbee0": "Bekväm (standard)",
   "e79e5388f669495f": "Visa resonemangsnivån i inmatningsfältet som sitt namn, till exempel Hög, eller som staplar.",
   "7f0365c7e4e8bcbf": "Återställ visning av ansträngning till standard",
@@ -11834,6 +11839,7 @@
   "9cf8308531b4ff31": "transparent genomskinlighet solid menyer dialoger inmatningsfält",
   "d8d6cfd630cff22d": "röd grön blå orange tillägg borttagningar ändringar antal palett färgblind",
   "717e49895cfee1c7": "bred full bredd kolumn layout meddelanden inmatningsfält skärm",
+  "9d5c7430a7ff76cf": "bred full bredd inbäddad sida rendera diagram instrumentpanel artefakt centrerad",
   "88365077fd80787b": "anpassa visa dölj panel kort miljö redigerare skript gren pull request git ändringar servrar automatiseringar härkomst användning gränser 5 timmar vecka kvot token kontextfönster",
   "d561f74efa5f3920": "resonemang ansträngning tänkande staplar diagram ord etikett nivå inmatningsfält",
   "6113c17109ee0d57": "latex tex katex ekvationer formler markdown",
@@ -12151,7 +12157,8 @@
   "f938bb483eb3d189": "startar om sist",
   "9bca02be2b4d612a": "inte ansluten",
   "2dcc418b6a13b83c": "behöver uppdateras manuellt",
-  "5c8ebc36f84dee7a": "behöver en nyare skrivbordsapp",
+  "f13e08bd3614112e": "uppdatera T3 Code på den datorn",
+  "3c3348c36a2695af": "byt uppdateringsspår på den datorn",
   "fa8faa732a2688ef": "på kanalen {channel}",
   "9b961309baafa09d": "ingen behörighet",
   "9bafb2622c22d145": "uppdateras redan",
@@ -12796,5 +12803,24 @@
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
   "99963c0142e17f00": "För det nya {tracker}-kontot.",
-  "6d8e4ebc889bace9": "Lägg till konto"
+  "6d8e4ebc889bace9": "Lägg till konto",
+  "8a883c4fbc127b68": "Aktiverar automatisk merge för stacken...",
+  "5fb2a26ae31e8983": "Kunde inte aktivera automatisk merge för stacken",
+  "986d0dcbf4dd0098": "Automatisk merge för stacken aktiverad",
+  "f3ed1f63c8a3eef2": "{host} mergar stacken till och med #{number} när kraven är uppfyllda.",
+  "bd536a0a1754f6cb": "Kunde inte avbryta automatisk merge för stacken",
+  "bb90ac3b2f3a72d5": "Värden vägrade avbryta den automatiska mergen. Uppdatera och försök igen.",
+  "9c28753c777c37b7": "{count, plural, one {Merga {count} {term, select, mr {merge request} cr {ändringsbegäran} other {pull request}} automatiskt?} other {Merga {count} {term, select, mr {merge requests} cr {ändringsbegäranden} other {pull requests}} automatiskt?}}",
+  "a86b49982e18784d": "Merga #{number} och dess omergade lager under in i {base} med {method} när vart och ett uppfyller kraven på {host}. Det kan ske direkt.",
+  "b1afda5c964deee4": [
+    "Merga stacken automatiskt (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Avbryt automatisk merge för stacken",
+  "012c67c7f1a99e33": "Merga stacken automatiskt"
 }
