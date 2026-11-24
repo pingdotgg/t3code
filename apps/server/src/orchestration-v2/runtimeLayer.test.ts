@@ -64,6 +64,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
@@ -108,7 +109,10 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-const layerPlatformTest = Layer.merge(
+const layerPlatformTest = Layer.mergeAll(
+  Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+    runForThread: () => Effect.succeed({ status: "no-script" }),
+  }),
   Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
@@ -8159,6 +8163,145 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // Settling detaches the provider session, which ends work running inside it.
+  it.effect.each([
+    { name: "a native subagent", work: "subagent" as const, settles: false },
+    {
+      name: "a background command marked awaited",
+      work: "awaited-command" as const,
+      settles: false,
+    },
+    { name: "an unmarked background command", work: "command" as const, settles: true },
+    { name: "a task delegated to another thread", work: "delegated" as const, settles: true },
+  ])("settling a completed turn that left $name running settles: $settles", ({ work, settles }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`runtime-layer-settle-background-${work}`);
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Settle with background work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: `/tmp/${threadId}`,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:message`),
+        text: "Start the work in the background.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const run = before.runs[0];
+      const providerThread = before.providerThreads[0];
+      if (run === undefined || providerThread === undefined) {
+        return yield* Effect.die(new Error("Run or provider thread missing."));
+      }
+      const now = yield* DateTime.now;
+      const subagentItem = (origin: "provider_native" | "app_owned") => ({
+        id: EventId.make(`${threadId}:subagent`),
+        type: "turn-item.updated" as const,
+        threadId,
+        runId: run.id,
+        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`${threadId}:subagent`),
+          type: "subagent" as const,
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "running" as const,
+          title: "Review",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          subagentId: NodeId.make(`${threadId}:subagent`),
+          origin,
+          driver: providerThread.driver,
+          providerInstanceId: providerThread.providerInstanceId,
+          childThreadId: origin === "app_owned" ? ThreadId.make(`${threadId}:child`) : null,
+          prompt: "Review the change",
+          result: null,
+        },
+      });
+      const roster = (awaited: boolean) => ({
+        id: EventId.make(`${threadId}:roster`),
+        type: "provider-thread.updated" as const,
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...providerThread,
+          updatedAt: now,
+          pendingBackgroundTasks: [
+            {
+              taskId: "background-command",
+              kind: "command" as const,
+              ...(awaited ? { awaited: true as const } : {}),
+            },
+          ],
+        },
+      });
+      yield* eventSink.write({
+        events: [
+          work === "subagent"
+            ? subagentItem("provider_native")
+            : work === "delegated"
+              ? subagentItem("app_owned")
+              : roster(work === "awaited-command"),
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+
+      const settle = orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`${threadId}:settle`),
+        threadId,
+      });
+      if (settles) {
+        yield* settle;
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.settledOverride, "settled");
+        return;
+      }
+      const error = yield* settle.pipe(Effect.flip);
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.equal(
+        error.cause,
+        `Thread ${threadId} is still running background agents or commands, and settling would end them. Wait for them to finish, or press Stop, then settle.`,
+      );
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(projection.thread.settledOverride);
+    }),
+  );
+
   it.effect("settles past held automatic messages but preserves a held user queue", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -11698,6 +11841,96 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("starts an edited queued run on the provider and model it was edited to", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("queued-edit-model");
+      const claudeSelection = { instanceId: claudeInstanceId, model: "claude-test" };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queued model",
+        modelSelection: claudeSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      // Both queued runs reserve rows on codex, which has no conversation on this thread yet.
+      for (const [name, type, selection] of [
+        ["active", "start_immediately", claudeSelection],
+        ["edited", "queue_after_active", modelSelection],
+        ["next", "queue_after_active", modelSelection],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:${name}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${name}`),
+          text: name,
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type },
+        });
+      }
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const [active, queued, next] = before.runs;
+      const selection = {
+        instanceId: alternateInstanceId,
+        model: "changed-model",
+        options: [
+          { id: "reasoningEffort", value: "medium" },
+          { id: "fastMode", value: true },
+        ],
+      };
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`${threadId}:edit`),
+        threadId,
+        runId: queued!.id,
+        text: "Edited",
+        modelSelection: selection,
+      });
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
+            threadId,
+            runId: active!.id,
+            occurredAt: now,
+            payload: { ...active!, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const started = after.runs.find((run) => run.id === queued!.id)!;
+      const instanceOf = (providerThreadId: string | null | undefined) =>
+        after.providerThreads.find((row) => row.id === providerThreadId)?.providerInstanceId;
+      assert.equal(started.status, "starting");
+      assert.deepEqual(started.modelSelection, selection);
+      assert.equal(started.providerInstanceId, alternateInstanceId);
+      assert.equal(instanceOf(started.providerThreadId), alternateInstanceId);
+      assert.equal(
+        after.attempts.find((row) => row.id === started.activeAttemptId)?.providerInstanceId,
+        alternateInstanceId,
+      );
+      assert.equal(
+        instanceOf(after.runs.find((run) => run.id === next!.id)?.providerThreadId),
+        modelSelection.instanceId,
+      );
+    }),
+  );
+
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -11762,12 +11995,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const queuedRun = before.runs.find((run) => run.status === "queued");
       assert.isDefined(queuedRun);
 
+      const editedSelection = {
+        ...modelSelection,
+        model: "gpt-5.5",
+        options: [
+          { id: "reasoningEffort", value: "medium" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      };
       yield* orchestrator.dispatch({
         type: "queued-run.edit",
         commandId: CommandId.make("runtime-layer-queued-edit-edit"),
         threadId,
         runId: queuedRun.id,
         text: "Updated queued text.",
+        modelSelection: editedSelection,
       });
 
       const afterEdit = yield* orchestrator.getThreadProjection(threadId);
@@ -11775,6 +12017,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         afterEdit.messages.find((message) => message.id === queuedRun.userMessageId)?.text,
         "Updated queued text.",
       );
+      assert.deepEqual(
+        afterEdit.runs.find((run) => run.id === queuedRun.id)?.modelSelection,
+        editedSelection,
+      );
+      assert.deepEqual(afterEdit.thread.modelSelection, before.thread.modelSelection);
       const editedItem = afterEdit.turnItems.find(
         (item) => item.type === "user_message" && item.messageId === queuedRun.userMessageId,
       );
@@ -11831,6 +12078,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         "an edit without attachments must leave the stored attachments untouched",
       );
       assert.deepEqual(yield* effectRequests("runtime-layer-queued-edit-text-only"), []);
+      assert.deepEqual(
+        afterTextOnlyEdit.runs.find((run) => run.id === queuedRun.id)?.modelSelection,
+        editedSelection,
+      );
 
       const emptyEditError = yield* orchestrator
         .dispatch({

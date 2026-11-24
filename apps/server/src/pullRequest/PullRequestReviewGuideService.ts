@@ -22,6 +22,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
+import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
@@ -146,7 +147,7 @@ const make = Effect.gen(function* () {
     stack: PullRequestStack | null,
     runId: string,
   ) {
-    // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
+    // Identity names can be stale; the identity keeps a remote's URL before or after insteadOf.
     const names = yield* git
       .execute({
         operation: "PullRequestReviewGuideService.listRemotes",
@@ -157,16 +158,28 @@ const make = Effect.gen(function* () {
     const remote = yield* Effect.findFirst(
       [locator.remoteName, ...names.filter((name) => name !== locator.remoteName)],
       (name) =>
-        git
-          .execute({
-            operation: "PullRequestReviewGuideService.remoteUrl",
-            cwd: workspaceRoot,
-            args: ["remote", "get-url", "--", name],
-          })
-          .pipe(
-            Effect.map((result) => result.stdout.trim() === locator.remoteUrl),
-            Effect.orElseSucceed(() => false),
-          ),
+        Effect.forEach(
+          [
+            ["remote", "get-url", "--", name],
+            ["config", "--get-all", `remote.${name}.url`],
+          ],
+          (args) =>
+            git
+              .execute({
+                operation: "PullRequestReviewGuideService.remoteUrl",
+                cwd: workspaceRoot,
+                args,
+              })
+              .pipe(
+                Effect.map(
+                  (result) =>
+                    withoutRemoteUrlCredentials(result.stdout.split("\n")[0]?.trim() ?? "") ===
+                    locator.remoteUrl,
+                ),
+                Effect.orElseSucceed(() => false),
+              ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((matches) => matches.includes(true))),
     ).pipe(Effect.map(Option.getOrUndefined));
     if (remote === undefined) {
       return yield* new PullRequestOperationError({

@@ -8,14 +8,20 @@ import {
   ChatAttachmentId,
   ComposerContextId,
   MessageId,
+  EnvironmentId,
+  ThreadId,
+  ProviderInstanceId,
   RunId,
   type ChatAttachment,
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 
+import { selectThreadModel } from "./thread-model-selection";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import {
   activeComposerDraftKey,
+  startQueuedRunEditSave,
   beginQueuedRunEdit,
   getQueuedRunEdit,
   queuedEditDraftKey,
@@ -30,6 +36,13 @@ import {
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
+
+vi.mock("../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("./session", () => ({ readEnvironmentScope: () => false }));
+vi.mock("./threads", () => ({
+  environmentThreadShells: { threadShellAtom: () => Atom.make(null) },
+  threadEnvironment: { setModelSelection: {} },
+}));
 
 vi.mock("expo-file-system", () => ({
   Directory: class {
@@ -265,4 +278,28 @@ describe("activeComposerDraftKey", () => {
   it("falls back to the thread's draft once the edit has ended", () => {
     expect(activeComposerDraftKey(threadKey, editKey, null)).toBe(threadKey);
   });
+});
+
+it("blocks model and option picks while a queued edit save is in flight", () => {
+  const ref = {
+    environmentId: EnvironmentId.make("env-model-save"),
+    threadId: ThreadId.make("thread"),
+  };
+  const threadKey = scopedThreadKey(ref.environmentId, ref.threadId);
+  const originalSelection = { instanceId: ProviderInstanceId.make("codex"), model: "original" };
+  const edited = { ...edit([]), modelSelection: originalSelection };
+  const draftKey = queuedEditDraftKey(threadKey, edited.runId);
+  const runs = Atom.make([{ id: edited.runId, status: "queued" }]);
+  beginQueuedRunEdit(threadKey, edited, runs);
+  const finishSave = startQueuedRunEditSave(threadKey)!;
+  const changed = {
+    ...originalSelection,
+    model: "changed",
+    options: [{ id: "effort", value: "high" }],
+  };
+  selectThreadModel({ ...ref, draftKey }, changed);
+  expect(getComposerDraftSnapshot(draftKey).modelSelection).toEqual(originalSelection);
+  finishSave(false);
+  selectThreadModel({ ...ref, draftKey }, changed);
+  expect(getComposerDraftSnapshot(draftKey).modelSelection).toEqual(changed);
 });
