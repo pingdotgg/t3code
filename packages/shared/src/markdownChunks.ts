@@ -112,6 +112,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterBlankLine = false;
   let afterDefinition = false;
   let afterHeading = false;
+  let openedFence = false;
   let definitionChars = 0;
   let openWrappers = 0;
   let heldCut = 0;
@@ -136,8 +137,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
-      // another definition.
+      // An indented fence may sit in a list item, which this does not track.
+      openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
+      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
+      // a closing code fence or another definition.
       const definition: boolean =
         (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
       afterDefinition = definition;
@@ -160,7 +163,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = line.trim() === "";
-    afterHeading = closes === null && (ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+    afterHeading =
+      closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
   flush();
   return { chunks, definitions: definitions.join("\n") };
