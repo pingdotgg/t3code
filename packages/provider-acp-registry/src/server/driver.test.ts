@@ -1383,6 +1383,31 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
     }),
   );
 
+  it.effect("reads every model of a catalog larger than one discovery batch in one refresh", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acpRegistry_large_catalog");
+      const others = Array.from({ length: 30 }, (_, index) => `model-${index}`);
+      yield* (yield* TestProviderHost.TestProviderHostSettings).set({
+        ...DEFAULT_SERVER_SETTINGS,
+        providerModelPreferences: {
+          [instanceId]: { hiddenModels: [], modelOrder: [...others, "opus"] },
+        },
+      });
+      const agent = yield* makePerModelEffortAgent({
+        sonnet: ["medium"],
+        ...Object.fromEntries(others.map((slug) => [slug, ["low"]])),
+        opus: ["high", "max"],
+      });
+      const instance = yield* createRegistryInstance(instanceId, agent.spawn, "1.0.0");
+
+      yield* refreshUntilEffortLevels(
+        instance,
+        ["sonnet:medium", ...others.map((slug) => `${slug}:low`), "opus:high+max"].join(),
+      );
+      expect(yield* agent.modelSwitches).toEqual([...others, "opus", "sonnet"]);
+    }),
+  );
+
   it.effect("keeps discovered reasoning levels across restarts until the agent updates", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acpRegistry_persisted");

@@ -195,7 +195,6 @@ export function acpRegistryModelsToDiscover(input: {
   readonly provider: Pick<ServerProvider, "instanceId" | "models">;
   readonly settings: Pick<ServerSettings, "favorites" | "providerModelPreferences">;
   readonly learned: AcpRegistryLearnedModelOptions;
-  readonly limit: number;
 }): ReadonlyArray<string> {
   const { provider, settings, learned } = input;
   const preferences = settings.providerModelPreferences?.[provider.instanceId];
@@ -228,6 +227,5 @@ export function acpRegistryModelsToDiscover(input: {
         ranked(favoriteRank, a) - ranked(favoriteRank, b) ||
         ranked(orderRank, a) - ranked(orderRank, b) ||
         ranked(catalogRank, a) - ranked(catalogRank, b),
-    )
-    .slice(0, input.limit);
+    );
 }

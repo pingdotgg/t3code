@@ -53,7 +53,9 @@ const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 // settle it in seconds, not milliseconds; commands arrive much sooner.
 const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
-const MODEL_DISCOVERY_TIMEOUT = "30 seconds";
+const MODEL_DISCOVERY_BATCH_TIMEOUT = "30 seconds";
+// Large catalogs list well over a hundred models; batches let the picker fill in as they finish.
+const MODEL_DISCOVERY_BATCH_SIZE = 24;
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const boundedText = (value: string, maximumLength: number): string =>
@@ -379,7 +381,10 @@ export function acpRegistryProbeFailure(
  * probe opens each requested model once in its session to read them.
  */
 export interface AcpRegistryModelDiscovery {
-  /** Receives the probe result before discovery starts and answers which models to open. */
+  /**
+   * Publishes the probe result with what discovery has learned so far and answers the models
+   * still to open, in priority order; asked again after each batch until none are left.
+   */
   readonly onProbed: (
     result: AcpRegistryConfigurationProbeResult,
   ) => Effect.Effect<ReadonlyArray<string>>;
@@ -416,33 +421,50 @@ const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverMode
     const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
     if (modelOption === undefined || originalModelId === null) return;
     const offered = new Set(flattenSelectChoices(modelOption.options).map(({ value }) => value));
-    const modelIds = (yield* discovery.onProbed(result)).filter(
-      (modelId) => modelId !== originalModelId && offered.has(modelId),
-    );
-    if (modelIds.length === 0) return;
-    yield* Effect.forEach(
-      modelIds,
-      (modelId) =>
-        runtime.setConfigOption(modelOption.id, modelId).pipe(
-          Effect.andThen(Effect.all([runtime.getConfigOptions, runtime.getModeState])),
-          Effect.flatMap(([configOptions, modeState]) => {
-            const configuration = normalizeAcpRegistryLiveConfiguration(configOptions, modeState);
-            return configuration.currentModelId === modelId
-              ? discovery.onDiscovered(configuration)
-              : Effect.void;
-          }),
-          // A model the agent refuses keeps no options; the rest still count.
-          Effect.ignore,
-        ),
-      { discard: true },
-    ).pipe(
-      Effect.timeoutOption(MODEL_DISCOVERY_TIMEOUT),
+    const attempted = new Set([originalModelId]);
+    const discoverBatches = Effect.gen(function* () {
+      // Each answer is a bounded batch; asking again after it publishes progress and
+      // continues, and every model is tried at most once per probe.
+      while (true) {
+        const modelIds = (yield* discovery.onProbed(result))
+          .filter((modelId) => !attempted.has(modelId) && offered.has(modelId))
+          .slice(0, MODEL_DISCOVERY_BATCH_SIZE);
+        if (modelIds.length === 0) return;
+        for (const modelId of modelIds) attempted.add(modelId);
+        const finished = yield* Effect.forEach(
+          modelIds,
+          (modelId) =>
+            runtime.setConfigOption(modelOption.id, modelId).pipe(
+              Effect.andThen(Effect.all([runtime.getConfigOptions, runtime.getModeState])),
+              Effect.flatMap(([configOptions, modeState]) => {
+                const configuration = normalizeAcpRegistryLiveConfiguration(
+                  configOptions,
+                  modeState,
+                );
+                return configuration.currentModelId === modelId
+                  ? discovery.onDiscovered(configuration)
+                  : Effect.void;
+              }),
+              // A model the agent refuses keeps no options; the rest still count.
+              Effect.ignore,
+            ),
+          { discard: true },
+        ).pipe(Effect.timeoutOption(MODEL_DISCOVERY_BATCH_TIMEOUT));
+        // An agent too slow for one batch is left for a later probe.
+        if (Option.isNone(finished)) return;
+      }
+    });
+    yield* discoverBatches.pipe(
       // Some agents save the selected model as the user's default. A switch that timed out
       // may still have landed while the runtime reports the original, so always resend.
       Effect.ensuring(
-        runtime
-          .setConfigOption(modelOption.id, originalModelId, { resendCurrentValue: true })
-          .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+        Effect.suspend(() =>
+          attempted.size === 1
+            ? Effect.void
+            : runtime
+                .setConfigOption(modelOption.id, originalModelId, { resendCurrentValue: true })
+                .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+        ),
       ),
     );
   },
