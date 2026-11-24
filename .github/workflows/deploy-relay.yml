@@ -30,7 +30,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: none
       statuses: write
     environment:
       name: production
