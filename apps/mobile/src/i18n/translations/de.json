@@ -5616,5 +5616,8 @@
   "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
-  "892f08d21b8e48a9": "{layers} per {kind, select, squash {Squash} merge {Merge} rebase {Rebase} fastForward {Fast-Forward} other {{method}}} in {base} mergen, sobald die Anforderungen erfüllt sind. Das kann sofort passieren."
+  "892f08d21b8e48a9": "{layers} per {kind, select, squash {Squash} merge {Merge} rebase {Rebase} fastForward {Fast-Forward} other {{method}}} in {base} mergen, sobald die Anforderungen erfüllt sind. Das kann sofort passieren.",
+  "89bf40eb2503b6c5": "Neues Gerät bei {environment} angemeldet",
+  "c94b5fe9ef372bc0": "{device} hat sich über {product} verbunden. Warst du das nicht, entferne es in T3 Code auf diesem Computer unter Einstellungen → Zugriff.",
+  "bec67d0ed485f885": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht, entferne sie in T3 Code auf diesem Computer unter Einstellungen → Zugriff."
 }
