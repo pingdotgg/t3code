@@ -39,6 +39,10 @@ vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
   readEnvironmentScope: () => true,
 }));
+vi.mock("../state/environments", async (original) => ({
+  ...(await original<typeof import("../state/environments")>()),
+  readEnvironmentConnected: () => true,
+}));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useCallback: (callback: unknown) => callback,

@@ -12793,5 +12793,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancelar la fusión automática de la pila",
-  "012c67c7f1a99e33": "Fusión automática de la pila"
+  "012c67c7f1a99e33": "Fusión automática de la pila",
+  "b5173d5e30a38a09": "Sin conexión",
+  "a9a1556c12cf5d7a": "Este entorno no tiene conexión.",
+  "eb2bda8d9958f7fc": "{environment} no tiene conexión.",
+  "5098109944b557ba": "Este entorno no tiene conexión. Resuelve el hilo cuando se vuelva a conectar o quítalo en Ajustes.",
+  "c39cb74f8c9778ae": "{environment} no tiene conexión. Resuelve el hilo cuando se vuelva a conectar o quítalo en Ajustes."
 }

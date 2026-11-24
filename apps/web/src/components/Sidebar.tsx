@@ -142,6 +142,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import {
+  readEnvironmentConnected,
   useEnvironmentIdentities,
   useConnectedEnvironmentIds,
   useEnvironmentMachines,
@@ -161,7 +162,11 @@ import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import {
+  environmentOfflineMessage,
+  readEnvironmentCanOperate,
+  useOrchestrationCommand,
+} from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
@@ -884,19 +889,20 @@ function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }
 function canOperateThreads(
   threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
 ): boolean {
-  return threads.every((thread) =>
-    readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
-  );
+  return threads.every((thread) => readEnvironmentCanOperate(thread.environmentId));
 }
 
 function checkThreadOperations(
   threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
 ): boolean {
   if (canOperateThreads(threads)) return true;
+  const offline = threads.find((thread) => !readEnvironmentConnected(thread.environmentId));
   toastManager.add({
     type: "error",
     title: m(msg("Thread action unavailable")),
-    description: m(msg("This connection cannot change one or more selected threads.")),
+    description: offline
+      ? environmentOfflineMessage(offline.environmentId)
+      : m(msg("This connection cannot change one or more selected threads.")),
   });
   return false;
 }
@@ -1868,7 +1874,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return (
           thread !== undefined &&
           sectionByThreadKeyRef.current.get(key) === originSection &&
-          serverConfigs.has(thread.environmentId)
+          serverConfigs.has(thread.environmentId) &&
+          readEnvironmentConnected(thread.environmentId)
         );
       };
       let targetKey: string | null = null;
@@ -2710,10 +2717,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
-                threadRef.environmentId,
-                AuthOrchestrationOperateScope,
-              ),
+              canOperate: readEnvironmentCanOperate(threadRef.environmentId),
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

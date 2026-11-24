@@ -32,6 +32,7 @@ const state = vi.hoisted(() => ({
   dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
+    message?: string;
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
@@ -53,8 +54,8 @@ vi.mock("expo-haptics", () => ({
   ImpactFeedbackStyle: { Light: "light" },
 }));
 vi.mock("../../components/ui/Dialog", () => ({
-  alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
-    state.alerts.push({ title, buttons }),
+  alert: (title: string, message: string, buttons?: { text: string; onPress?: () => void }[]) =>
+    state.alerts.push({ title, message, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
@@ -259,6 +260,17 @@ describe("thread list operation permissions", () => {
       expect(state.requests).toEqual([]);
     },
   );
+
+  it.each(mutationCases)("%s says a disconnected environment is offline", async (handler) => {
+    state.connectedEnvironmentIds = [otherEnvironmentId];
+
+    await useThreadListActions()[handler](makeThread(), "2099-01-01T00:00:00.000Z");
+
+    expect(state.requests).toEqual([]);
+    expect(state.alerts).toEqual([
+      expect.objectContaining({ message: "This environment is offline." }),
+    ]);
+  });
 
   it.each(mutationCases)("%s requires the target environment's permission", async (handler) => {
     await useThreadListActions()[handler](

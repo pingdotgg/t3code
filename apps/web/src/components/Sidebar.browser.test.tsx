@@ -2,6 +2,7 @@ import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
+import * as environments from "../state/environments";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -478,6 +479,77 @@ describe("sidebar thread menu", () => {
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
     expect(show.mock.lastCall?.[2]).toBe("mouse");
   });
+});
+
+describe("sidebar offline environment", () => {
+  it.each([false, true])(
+    "offers Settle only on connected environments (boring sidebar: %s)",
+    async (boringSidebarEnabled) => {
+      using stack = new DisposableStack();
+      const previousSettings = getClientSettings();
+      stack.defer(() => __setClientSettingsForTests(previousSettings));
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled });
+      const local = project("local-app");
+      const remote = { ...project("remote-app"), environmentId: EnvironmentId.make("remote") };
+      const localThread = threadShell(local.id, 0);
+      const remoteThread = {
+        ...threadShell(remote.id, 1),
+        environmentId: remote.environmentId,
+        title: "Remote thread",
+      };
+      const routeThreadRef = scopeThreadRef(localThread.environmentId, localThread.id);
+      using _connected = vi
+        .spyOn(environments, "useEnvironmentConnected")
+        .mockImplementation((environmentId) => environmentId === local.environmentId);
+      vi.mocked(useEnvironmentScope).mockReturnValue(true);
+      vi.mocked(useProjects).mockReturnValue([local, remote]);
+      vi.mocked(useQuietThreadShells).mockReturnValue([localThread, remoteThread]);
+      vi.mocked(useThreadRouteTarget).mockReturnValue({
+        kind: "server",
+        threadRef: routeThreadRef,
+      });
+      vi.mocked(useHandleNewThread).mockReturnValue({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultProjectRef: { environmentId: local.environmentId, projectId: local.id },
+        defaultProjectFallbackReady: true,
+        handleNewThread: vi.fn().mockResolvedValue(null),
+        routeDraftId: null,
+        routeThreadRef,
+      });
+      const config = {
+        scratchWorkspaceRoot: null,
+        shellThreadFamilies: false,
+      } as unknown as EnvironmentServerConfig;
+      vi.mocked(useServerConfigs).mockReturnValue(
+        new Map([
+          [local.environmentId, config],
+          [remote.environmentId, config],
+        ]),
+      );
+      await using screen = await render(
+        <SidebarProvider>
+          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        </SidebarProvider>,
+      );
+      const rowOf = (title: string) =>
+        screen.getByText(title).first().element().closest<HTMLElement>("li[data-thread-item]")!;
+      await expect.element(screen.getByText("Remote thread").first()).toBeInTheDocument();
+      const localRow = rowOf("Thread 0");
+      const remoteRow = rowOf("Remote thread");
+
+      expect(localRow.querySelector('button[aria-label="Settle thread"]')).not.toBeNull();
+      expect(localRow.querySelector('button[aria-label="Offline"]')).toBeNull();
+      expect(remoteRow.querySelector('button[aria-label="Settle thread"]')).toBeNull();
+      const offline = remoteRow.querySelector<HTMLButtonElement>('button[aria-label="Offline"]');
+      expect(offline).not.toBeNull();
+
+      await act(() => offline!.click());
+      await vi.waitFor(() =>
+        expect(screen.router!.state.location.pathname).toBe("/settings/connections"),
+      );
+    },
+  );
 });
 
 describe("sidebar settled pagination", () => {

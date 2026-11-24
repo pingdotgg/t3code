@@ -12798,5 +12798,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
-  "012c67c7f1a99e33": "Fusion automatique de la pile"
+  "012c67c7f1a99e33": "Fusion automatique de la pile",
+  "b5173d5e30a38a09": "Hors ligne",
+  "a9a1556c12cf5d7a": "Cet environnement est hors ligne.",
+  "eb2bda8d9958f7fc": "{environment} est hors ligne.",
+  "5098109944b557ba": "Cet environnement est hors ligne. Vous pourrez clore le fil une fois la connexion rétablie, ou supprimer l’environnement dans les Paramètres.",
+  "c39cb74f8c9778ae": "{environment} est hors ligne. Vous pourrez clore le fil une fois la connexion rétablie, ou supprimer l’environnement dans les Paramètres."
 }

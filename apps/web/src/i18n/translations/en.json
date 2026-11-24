@@ -12807,5 +12807,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
-  "012c67c7f1a99e33": "Auto-merge stack"
+  "012c67c7f1a99e33": "Auto-merge stack",
+  "b5173d5e30a38a09": "Offline",
+  "a9a1556c12cf5d7a": "This environment is offline.",
+  "eb2bda8d9958f7fc": "{environment} is offline.",
+  "5098109944b557ba": "This environment is offline. Settle it once it reconnects, or remove it in Settings.",
+  "c39cb74f8c9778ae": "{environment} is offline. Settle it once it reconnects, or remove it in Settings."
 }

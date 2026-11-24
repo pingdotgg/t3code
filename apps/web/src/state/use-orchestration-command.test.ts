@@ -1,3 +1,4 @@
+import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
@@ -10,12 +11,17 @@ import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
+  offline: new Set<string>(),
   readScope: vi.fn(),
   run: vi.fn(),
 }));
 
 vi.mock("react", () => ({ useCallback: (callback: unknown) => callback }));
 vi.mock("./session", () => ({ readEnvironmentScope: state.readScope }));
+vi.mock("./environments", () => ({
+  readEnvironmentConnected: (environmentId: string) => !state.offline.has(environmentId),
+  readEnvironment: () => ({ label: "Build box" }),
+}));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => state.run }));
 
 import { useOrchestrationCommand } from "./use-orchestration-command";
@@ -31,6 +37,7 @@ const target = (environmentId: EnvironmentId): Target => ({
 
 beforeEach(() => {
   state.allowed.clear();
+  state.offline.clear();
   state.run.mockReset().mockResolvedValue(AsyncResult.success("receipt"));
   state.readScope
     .mockReset()
@@ -70,4 +77,16 @@ it("does not dispatch a later mutation after access changes while awaiting a rec
   expect((await pending)._tag).toBe("Success");
   expect((await mutate(target(second)))._tag).toBe("Failure");
   expect(state.run).toHaveBeenCalledTimes(1);
+});
+
+it("reports an offline environment instead of a permission problem", async () => {
+  state.allowed.add(second);
+  state.offline.add(second);
+  const mutate = useOrchestrationCommand(command, { reportFailure: false });
+  const result = await mutate(target(second));
+  assert(result._tag === "Failure");
+  const error = Cause.squash(result.cause);
+  expect(error).toBeInstanceOf(EnvironmentRpcUnavailableError);
+  expect(error).toMatchObject({ environmentId: second, message: "Build box is offline." });
+  expect(state.run).not.toHaveBeenCalled();
 });

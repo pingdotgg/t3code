@@ -87,6 +87,10 @@ function actionFailureTitle(action: ThreadListAction): string {
 }
 
 function checkThreadOperationPermission(thread: EnvironmentThreadShell, title: string): boolean {
+  if (!appAtomRegistry.get(connectedEnvironmentIdsAtom).includes(thread.environmentId)) {
+    Dialog.alert(title, m(msg("This environment is offline.")));
+    return false;
+  }
   if (readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return true;
   Dialog.alert(title, m(msg("This connection cannot change threads.")));
   return false;

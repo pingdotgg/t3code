@@ -137,3 +137,15 @@ export function useEnvironmentMachines() {
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
 }
+
+export function useEnvironmentConnected(environmentId: EnvironmentId): boolean {
+  return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom, (ids) =>
+    ids.includes(environmentId),
+  );
+}
+
+export function readEnvironmentConnected(environmentId: EnvironmentId): boolean {
+  return appAtomRegistry
+    .get(environmentSummaries.connectedEnvironmentIdsAtom)
+    .includes(environmentId);
+}

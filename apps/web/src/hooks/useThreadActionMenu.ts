@@ -9,12 +9,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  AuthOrchestrationOperateScope,
-  type ScopedThreadRef,
-  type ThreadId,
-  type ContextMenuSource,
-} from "@t3tools/contracts";
+import { type ScopedThreadRef, type ThreadId, type ContextMenuSource } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { msg } from "gt-react";
 
@@ -30,15 +25,18 @@ import { copyThreadReference } from "../lib/copyThreadReference";
 import { m } from "../i18n/messages";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { threadEnvironment } from "../state/threads";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope } from "../state/session";
+import {
+  environmentOfflineMessage,
+  readEnvironmentCanOperate,
+  useOrchestrationCommand,
+} from "../state/use-orchestration-command";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
   useProjects,
 } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { readEnvironmentConnected, usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import {
@@ -140,7 +138,7 @@ export function useThreadActionMenu(input: {
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
-        canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+        canOperate: readEnvironmentCanOperate(threadRef.environmentId),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         projectFilter: null,
@@ -162,11 +160,15 @@ export function useThreadActionMenu(input: {
       const action: ThreadActionMenuId = clicked.value;
       if (
         threadActionRequiresOperate(action) &&
-        !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
+        !readEnvironmentCanOperate(threadRef.environmentId)
       ) {
         failureToast(
           m(msg("Thread action unavailable")),
-          new Error(m(msg("This connection cannot change threads."))),
+          new Error(
+            readEnvironmentConnected(threadRef.environmentId)
+              ? m(msg("This connection cannot change threads."))
+              : environmentOfflineMessage(threadRef.environmentId),
+          ),
         );
         return;
       }
