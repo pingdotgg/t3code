@@ -922,7 +922,10 @@ export const layer = Layer.effect(
       value: string,
     ) {
       const instanceIds = yield* instanceRegistryMutator.applySecret(reference, value);
-      yield* Effect.forEach(instanceIds, refreshInstance, { discard: true });
+      yield* Effect.forEach(instanceIds, refreshInstance, {
+        concurrency: "unbounded",
+        discard: true,
+      });
       return yield* Ref.get(providersRef);
     });
 

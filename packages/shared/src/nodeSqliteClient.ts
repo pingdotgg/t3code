@@ -213,7 +213,7 @@ try {
     readOnly: workerData.readOnly,
     allowExtension: workerData.allowExtension,
   });
-  next.exec("PRAGMA busy_timeout = 5000;");
+  next.exec("PRAGMA busy_timeout = 5000; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -32000; PRAGMA mmap_size = 268435456;");
   // Reads the header, so a file that is not a database fails here rather than on first use.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
@@ -714,10 +714,14 @@ const run = (force) => {
 parentPort.on("message", () => run(false));
 `;
 
+let cachedSqliteVersion: string | undefined;
+
 const sqliteVersion = () => {
+  if (cachedSqliteVersion !== undefined) return cachedSqliteVersion;
   const db = new NodeSqlite.DatabaseSync(":memory:");
   try {
-    return String(db.prepare("SELECT sqlite_version() AS version").get()?.version);
+    cachedSqliteVersion = String(db.prepare("SELECT sqlite_version() AS version").get()?.version);
+    return cachedSqliteVersion;
   } finally {
     db.close();
   }

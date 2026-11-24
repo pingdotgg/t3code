@@ -783,7 +783,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ProviderInstallation.layer,
   ReplayMarkers.layer,
-  Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   // One hub, which the feeders above and the workflow store inside the runtime publish to.
@@ -1417,6 +1416,9 @@ const layerMakeServer = Layer.unwrap(
       withRootRequestSpans,
       Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
     );
+    const layerProjectSettingsOverrideSweep = Layer.effectDiscard(
+      ServerActivation.forkParked(ProjectSettingsOverrideSweep.sweep.pipe(Effect.ignore)),
+    );
     const layerServerApplication = Layer.mergeAll(
       layerRoutes,
       layerHttpListening,
@@ -1424,6 +1426,7 @@ const layerMakeServer = Layer.unwrap(
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,
       layerCloudDesiredLinkReconcile,
+      layerProjectSettingsOverrideSweep,
       HeapSnapshot.layer,
     );
 

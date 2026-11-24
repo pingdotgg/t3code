@@ -69,8 +69,7 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
-      yield* sql`PRAGMA busy_timeout = 5000;`;
-      yield* sql`PRAGMA foreign_keys = ON;`;
+      yield* sql.unsafe("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
       // Existing databases need doctor's offline VACUUM to add pointer maps for this mode.
       const tables = yield* sql<{
         readonly count: number;
@@ -85,6 +84,9 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
       // Keep statement journals and sort spills off the disk.
       // Large statements and open savepoints can increase peak memory use.
       yield* sql`PRAGMA temp_store = MEMORY;`;
+      // A 64 MiB page cache and a 256 MiB mmap window save repeated reads on thread switches and search.
+      yield* sql`PRAGMA cache_size = -64000;`;
+      yield* sql`PRAGMA mmap_size = 268435456;`;
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
       yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
       yield* migrate;
