@@ -1,4 +1,7 @@
-// Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456
+// Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456 [--repeats=N]
+// With --repeats, `elapsedMs` is the median, rows add `minMs` (fastest sample) and `repeats`, and
+// request counts and `points` are totals across all samples.
+
 // Real GitHub reads share repository-permission caches, excluding browser and service caches.
 // HTTP client request counts are exact; GraphQL cost uses changes in `x-ratelimit-used`,
 // which are approximate when other clients spend the same token's quota.
@@ -18,11 +21,22 @@ import * as GitHubAppAccess from "../src/server/GitHubAppAccess.ts";
 import * as GitHubPullRequestApi from "../src/server/GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "../src/server/GitHubPullRequestProvider.ts";
 import * as GitHubRest from "../src/server/GitHubRest.ts";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 
-const [repository, ...numbers] = process.argv.slice(2);
-if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.test(number))) {
+const repeatsFlag = process.argv.find((arg) => arg.startsWith("--repeats="));
+const repeats = repeatsFlag === undefined ? 1 : Number(repeatsFlag.slice("--repeats=".length));
+const [repository, ...numbers] = process.argv
+  .slice(2)
+  .filter((arg) => !arg.startsWith("--repeats="));
+if (
+  !repository ||
+  numbers.length === 0 ||
+  numbers.some((number) => !/^\d+$/.test(number)) ||
+  !Number.isInteger(repeats) ||
+  repeats < 1
+) {
   throw new Error(
-    "Usage: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo number...",
+    "Usage: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo number... [--repeats=N]",
   );
 }
 
@@ -106,6 +120,7 @@ const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(SourceControlRateLimit.layer),
   Layer.provideMerge(measuredHttp),
   Layer.provideMerge(sourceControlHost),
+  Layer.provideMerge(FeatureFlags.layer),
 );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -125,20 +140,33 @@ for (const mode of ["detail", "preview"] as const) {
         return yield* Effect.forEach(numbers.map(Number), (number) =>
           Effect.gen(function* () {
             const input = { cwd: process.cwd(), repository, host: "github.com", number };
-            reads.length = 0;
-            const start = performance.now();
-            const value = yield* mode === "detail"
-              ? provider.getChangeRequest(input)
-              : provider.getChangeRequestPreview!(input);
-            const elapsedMs = Math.round(performance.now() - start);
-            const measured = [...reads];
+            const samples: number[] = [];
+            let state: string | undefined;
+            const measured: Read[] = [];
+            for (let run = 0; run < repeats; run += 1) {
+              reads.length = 0;
+              const start = performance.now();
+              const value = yield* mode === "detail"
+                ? provider.getChangeRequest(input)
+                : provider.getChangeRequestPreview!(input);
+              samples.push(Math.round(performance.now() - start));
+              state = value.state;
+              measured.push(...reads);
+            }
+            const sorted = [...samples].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            const medianMs =
+              sorted.length % 2 === 1
+                ? (sorted[mid] ?? 0)
+                : Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
             const points = measured.reduce((total, read) => total + read.cost, 0);
             return {
               repository,
               number,
               mode,
-              state: value.state,
-              elapsedMs,
+              state,
+              elapsedMs: medianMs,
+              ...(repeatsFlag === undefined ? {} : { minMs: sorted[0] ?? 0, repeats }),
               points,
               graphqlRequests: measured.reduce((total, read) => total + read.graphqlRequests, 0),
               restRequests: measured.reduce((total, read) => total + read.restRequests, 0),
