@@ -782,7 +782,9 @@ export interface ToolResultPart extends BasePart<"tool-result", ToolResultPartOp
    */
   readonly isFailure: boolean
   /**
-   * The result returned by the tool execution.
+   * The result returned by the tool execution. Results of locally handled
+   * tools hold their JSON encoding; provider-executed tools keep the
+   * provider's payload.
    */
   readonly result: unknown
   /**
@@ -816,7 +818,9 @@ export interface ToolResultPartEncoded extends BasePartEncoded<"tool-result", To
    */
   readonly isFailure: boolean
   /**
-   * The result returned by the tool execution.
+   * The result returned by the tool execution. Results of locally handled
+   * tools hold their JSON encoding; provider-executed tools keep the
+   * provider's payload.
    */
   readonly result: unknown
   /**

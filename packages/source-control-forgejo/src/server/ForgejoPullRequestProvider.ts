@@ -318,6 +318,7 @@ export const make = Effect.gen(function* () {
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly mergeMethod?: PullRequestMergeMethod | undefined;
+      readonly expectedHeadSha?: string | undefined;
     },
     whenChecksSucceed: boolean,
   ) {
@@ -332,6 +333,7 @@ export const make = Effect.gen(function* () {
             ? "fast-forward-only"
             : (input.mergeMethod ?? "merge"),
         delete_branch_after_merge: deleteBranch,
+        ...(input.expectedHeadSha === undefined ? {} : { head_commit_id: input.expectedHeadSha }),
         ...(whenChecksSucceed ? { merge_when_checks_succeed: true } : {}),
       },
     }).pipe(
@@ -671,7 +673,7 @@ export const make = Effect.gen(function* () {
                 ? "REQUEST_CHANGES"
                 : "COMMENT",
           body: input.body,
-          commit_id: pr.head.sha,
+          commit_id: input.expectedHeadSha ?? pr.head.sha,
           comments: input.comments.map((comment) => {
             const position = comment.position;
             const old =
