@@ -2066,6 +2066,8 @@ const emptySnapshotState = (): SnapshotMessageState => ({
 
 /** How long a Stop waits for the agent to confirm before the user is offered Force stop. */
 const ACP_STOP_CONFIRM_TIMEOUT_MS = 10_000;
+
+const acpHeldPromptTaskId = (nativeSessionId: string) => `acp-held-prompt:${nativeSessionId}`;
 const TOOL_UPDATE_PERSIST_EVERY = 10;
 
 // Agents can resend whole calls while streaming arguments.
@@ -8918,7 +8920,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (settledStatus !== "failed" && heldPromptSessionId === context.nativeThreadId) {
             heldPromptSessionId = null;
           }
-          const heldPromptTaskId = `acp-held-prompt:${context.nativeThreadId}`;
+          const heldPromptTaskId = acpHeldPromptTaskId(context.nativeThreadId);
           const priorTasks = context.input.providerThread.pendingBackgroundTasks;
           const heldPrompt =
             settledStatus === "failed" && heldPromptSessionId === context.nativeThreadId;
@@ -10801,6 +10803,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         heldPromptSessionId !== null &&
                         heldPromptSessionId === (yield* Ref.get(activeSessionId))
                       ) {
+                        const heldSessionId = heldPromptSessionId;
                         heldPromptSessionId = null;
                         yield* cancelPendingRuntimeRequests();
                         // The agent ends a prompt it holds only on session/cancel.
@@ -10812,6 +10815,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         );
                         if (!Exit.isSuccess(cancelled) || Option.isNone(cancelled.value)) {
                           yield* Ref.set(runtimeRestartRequired, true);
+                        }
+                        const heldThread =
+                          (yield* Ref.get(providerThreadByNativeSessionId)).get(heldSessionId) ??
+                          turnInput.providerThread;
+                        const heldTaskId = acpHeldPromptTaskId(heldSessionId);
+                        if (
+                          heldThread.pendingBackgroundTasks?.some(
+                            (task) => task.taskId === heldTaskId,
+                          ) === true
+                        ) {
+                          const releasedThread: OrchestrationV2ProviderThread = {
+                            ...heldThread,
+                            pendingBackgroundTasks: heldThread.pendingBackgroundTasks.filter(
+                              (task) => task.taskId !== heldTaskId,
+                            ),
+                            updatedAt: yield* DateTime.now,
+                          };
+                          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                            new Map(current).set(heldSessionId, releasedThread),
+                          );
+                          yield* emitProviderEvent({
+                            type: "provider_thread.updated",
+                            driver,
+                            providerThread: releasedThread,
+                          });
                         }
                         return undefined;
                       }

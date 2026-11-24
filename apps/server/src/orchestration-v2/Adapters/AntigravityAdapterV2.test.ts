@@ -2507,6 +2507,13 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
       });
       yield* stop;
       assert.equal(opened.cancels(), held ? 1 : 0);
+      if (held) {
+        const released = (yield* opened.until(
+          (event) => event.type === "provider_thread.updated",
+        )).at(-1);
+        if (released?.type !== "provider_thread.updated") return assert.fail("Stop must publish");
+        assert.deepEqual(released.providerThread.pendingBackgroundTasks, []);
+      }
       yield* stop;
       assert.equal(opened.cancels(), held ? 1 : 0, "a second Stop has nothing left to cancel");
     }).pipe(Effect.provide(layerSession)),
