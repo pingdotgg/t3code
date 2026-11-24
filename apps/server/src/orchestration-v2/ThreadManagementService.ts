@@ -1742,6 +1742,7 @@ const make = Effect.gen(function* () {
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
   });
 
+  // Mirrors what Orchestrator's thread.stop would change; a clause missing here leaves that work running.
   const childNeedsStop = (
     child: ProjectionRecords<"runs" | "providerThreads" | "turnItems" | "subagents">,
   ): boolean => {
