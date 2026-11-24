@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -51,7 +52,11 @@ import {
   GROK_ACP_INITIALIZE_META,
 } from "@t3tools/provider-grok/testing";
 
-import { makeAcpReplayRuntime, type AcpReplayTranscript } from "./AcpAdapterV2.testkit.ts";
+import {
+  makeAcpReplayCompletenessAssertion,
+  makeAcpReplayRuntime,
+  type AcpReplayTranscript,
+} from "./AcpAdapterV2.testkit.ts";
 
 const LAUNCH_TEST_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({
   binaryPath: "grok-launch-test",
@@ -384,13 +389,126 @@ describe("Grok native questions", () => {
     layerHost,
   );
 
-  it.live("keeps x.ai multi-select questions live and returns all selected answers", () =>
+  const questionText = "Which changes should be included?";
+  const questionOptions = [
+    { label: "Tests", description: "Cover behavior" },
+    { label: "Docs", description: "Explain usage" },
+  ];
+  const consentMessage = "Allow access to FixtureApp?";
+  const consentOptions = [
+    { label: "Allow once", description: "Allow once", value: "once" },
+    { label: "Decline", description: "Decline", value: "decline" },
+  ];
+  const formParams = {
+    sessionId: "grok-multi-select-session",
+    toolCallId: "mcp-elicit-1",
+    serverName: "fixture",
+    mode: "form",
+    message: consentMessage,
+  };
+  const elicitation = (choice: string | undefined) => ({
+    method: "_x.ai/mcp/elicit",
+    params: {
+      ...formParams,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          choice: {
+            type: "string",
+            enum: ["once", "decline"],
+            enumNames: ["Allow once", "Decline"],
+          },
+        },
+        required: ["choice"],
+      },
+    },
+    question: {
+      id: "choice",
+      header: "fixture · Question 1",
+      question: consentMessage,
+      options: consentOptions,
+      allowCustomAnswer: false,
+    },
+    answers: choice === undefined ? undefined : { choice },
+    result:
+      choice === undefined ? { outcome: "cancel" } : { outcome: "accept", content: { choice } },
+  });
+
+  it.live.each([
+    {
+      name: "keeps x.ai multi-select questions live and returns all selected answers",
+      steps: [
+        {
+          method: "_x.ai/ask_user_question",
+          params: {
+            method: "x.ai/ask_user_question",
+            params: {
+              sessionId: "grok-multi-select-session",
+              toolCallId: "grok-question",
+              mode: "default",
+              questions: [
+                {
+                  id: "changes",
+                  question: questionText,
+                  multiSelect: true,
+                  options: questionOptions,
+                },
+              ],
+            },
+          },
+          question: {
+            id: "changes",
+            header: "Question",
+            question: questionText,
+            multiSelect: true,
+            options: questionOptions,
+          },
+          answers: { changes: ["Tests", "Docs"] },
+          result: { outcome: "accepted", answers: { [questionText]: ["Tests", "Docs"] } },
+        },
+      ],
+    },
+    {
+      name: "cancels a Grok MCP form the user dismisses",
+      steps: [elicitation(undefined)],
+    },
+    ...[
+      { answer: "accept", result: { outcome: "accept", content: {} } },
+      { answer: "decline", result: { outcome: "decline" } },
+    ].map(({ answer, result }) => ({
+      name: `handles ${answer} on a fieldless MCP form`,
+      steps: [
+        {
+          method: "_x.ai/mcp/elicit",
+          params: {
+            ...formParams,
+            requestedSchema: { type: "object", properties: {} },
+          },
+          question: {
+            id: "confirmation",
+            header: "fixture · Confirmation",
+            question: consentMessage,
+            options: [
+              { label: "Allow", description: "Allow", value: "accept" },
+              { label: "Decline", description: "Decline", value: "decline" },
+            ],
+            allowCustomAnswer: false,
+          },
+          answers: { confirmation: answer },
+          result,
+        },
+      ],
+    })),
+    {
+      name: "keeps a card for each form one MCP tool call asks and returns each choice",
+      steps: [elicitation("once"), elicitation("decline")],
+    },
+  ])("$name", ({ steps }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-multi-select-" });
-      const questionText = "Which changes should be included?";
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-question-" });
       const transcript: AcpReplayTranscript = {
         provider: GROK_PROVIDER,
         protocol: "acp.ndjson-jsonrpc",
@@ -440,42 +558,18 @@ describe("Grok native questions", () => {
             label: "prompt",
             frame: { kind: "request", method: "session/prompt", params: "<any>" },
           },
-          {
-            type: "emit_inbound",
-            label: "question",
-            frame: {
-              kind: "request",
-              method: "_x.ai/ask_user_question",
-              params: {
-                method: "x.ai/ask_user_question",
-                params: {
-                  sessionId: "grok-multi-select-session",
-                  toolCallId: "grok-question",
-                  mode: "default",
-                  questions: [
-                    {
-                      id: "changes",
-                      question: questionText,
-                      multiSelect: true,
-                      options: [
-                        { label: "Tests", description: "Cover behavior" },
-                        { label: "Docs", description: "Explain usage" },
-                      ],
-                    },
-                  ],
-                },
-              },
+          ...steps.flatMap(({ method, params, result }, index) => [
+            {
+              type: "emit_inbound" as const,
+              label: `question ${index + 1}`,
+              frame: { kind: "request" as const, method, params },
             },
-          },
-          {
-            type: "expect_outbound",
-            label: "selected answers",
-            frame: {
-              kind: "response",
-              method: "_x.ai/ask_user_question",
-              result: { outcome: "accepted", answers: { [questionText]: ["Tests", "Docs"] } },
+            {
+              type: "expect_outbound" as const,
+              label: `answers ${index + 1}`,
+              frame: { kind: "response" as const, method, result },
             },
-          },
+          ]),
           {
             type: "emit_inbound",
             label: "complete",
@@ -525,19 +619,26 @@ describe("Grok native questions", () => {
         modelSelection,
         runtimePolicy: policy,
       });
-      const question = yield* Deferred.make<OrchestrationV2UserInputQuestion>();
-      const request = yield* Deferred.make<OrchestrationV2RuntimeRequest>();
+      const questions = yield* Queue.unbounded<{
+        readonly turnItemId: string;
+        readonly question: OrchestrationV2UserInputQuestion;
+      }>();
+      const requests = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
       const terminal = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) => {
           if (
             event.type === "turn_item.updated" &&
             event.turnItem.type === "user_input_request" &&
+            event.turnItem.status === "waiting" &&
             event.turnItem.questions[0]
           )
-            return Deferred.succeed(question, event.turnItem.questions[0]);
-          if (event.type === "runtime_request.updated")
-            return Deferred.succeed(request, event.runtimeRequest);
+            return Queue.offer(questions, {
+              turnItemId: event.turnItem.id,
+              question: event.turnItem.questions[0],
+            });
+          if (event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending")
+            return Queue.offer(requests, event.runtimeRequest);
           if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
           return Effect.void;
         }),
@@ -585,24 +686,22 @@ describe("Grok native questions", () => {
         modelSelection,
         runtimePolicy: policy,
       });
-      assert.deepEqual(yield* Deferred.await(question), {
-        id: "changes",
-        header: "Question",
-        question: questionText,
-        multiSelect: true,
-        options: [
-          { label: "Tests", description: "Cover behavior" },
-          { label: "Docs", description: "Explain usage" },
-        ],
-      });
-      const pending = yield* Deferred.await(request);
-      assert.equal(pending.kind, "user_input");
-      assert.equal(pending.responseCapability.type, "live");
-      yield* runtime.respondToRuntimeRequest({
-        requestId: pending.id,
-        answers: { changes: ["Tests", "Docs"] },
-      });
+      const turnItemIds = new Set<string>();
+      for (const { question: expectedQuestion, answers } of steps) {
+        const { turnItemId, question } = yield* Queue.take(questions);
+        assert.deepEqual(question, expectedQuestion);
+        turnItemIds.add(turnItemId);
+        const pending = yield* Queue.take(requests);
+        assert.equal(pending.kind, "user_input");
+        assert.equal(pending.responseCapability.type, "live");
+        yield* runtime.respondToRuntimeRequest({
+          requestId: pending.id,
+          ...(answers === undefined ? {} : { answers }),
+        });
+      }
+      assert.equal(turnItemIds.size, steps.length);
       yield* Deferred.await(terminal);
+      yield* makeAcpReplayCompletenessAssertion(fs, statusPath, transcript);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });
