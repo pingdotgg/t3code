@@ -8,15 +8,18 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
 }> {}
 
 const makeMysqlContainer = () =>
-  new MySqlContainer("mysql:lts").withHealthCheck({
-    test: [
-      "CMD-SHELL",
-      "MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\" mysqladmin ping --protocol TCP --host 127.0.0.1 --user root --silent"
-    ],
-    interval: 250,
-    timeout: 1000,
-    retries: 1000
-  })
+  new MySqlContainer("mysql:lts")
+    // lets the non-root test user create the triggers some tests use to pause statements
+    .withCommand(["--log-bin-trust-function-creators=1"])
+    .withHealthCheck({
+      test: [
+        "CMD-SHELL",
+        "MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\" mysqladmin ping --protocol TCP --host 127.0.0.1 --user root --silent"
+      ],
+      interval: 250,
+      timeout: 1000,
+      retries: 1000
+    })
 
 export class MysqlContainer extends Context.Service<
   MysqlContainer,

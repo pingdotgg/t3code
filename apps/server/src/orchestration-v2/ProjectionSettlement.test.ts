@@ -349,7 +349,7 @@ it.effect(
             ...settings,
             thread: {
               ...expected,
-              latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+              latestResumingMessageAt: candidate.latestResumingMessageAt,
             },
           }),
         );
@@ -365,7 +365,7 @@ it.effect(
     }).pipe(Effect.provide(layerSql)),
 );
 
-it.effect("sql: the user-authored message time ignores agent notifications", () =>
+it.effect("sql: the resuming message time counts MCP sends and ignores agent notifications", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* createThread("agent-woken");
@@ -373,7 +373,7 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
     const message = (
       id: string,
       createdBy: "user" | "agent",
-      creationSource: "web" | "provider",
+      creationSource: "web" | "mcp" | "provider",
       at: DateTime.Utc,
     ) =>
       store.apply({
@@ -397,16 +397,15 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
         },
       });
     const written = DateTime.subtract(now, { hours: 2 });
+    const sent = DateTime.subtract(now, { hours: 1 });
     yield* message("written", "user", "web", written);
+    yield* message("sent", "agent", "mcp", sent);
     yield* message("notification", "agent", "provider", now);
 
     const [candidate] = yield* store.getSettlementCandidates(threadId);
     assert.isDefined(candidate);
     assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(now));
-    assert.equal(
-      DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
-      DateTime.formatIso(written),
-    );
+    assert.equal(DateTime.formatIso(candidate.latestResumingMessageAt!), DateTime.formatIso(sent));
     const shellThread = (yield* store.getShellSnapshot()).threads.find(
       (thread) => thread.id === threadId,
     );
@@ -433,7 +432,7 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
     const store = yield* ProjectionStore.ProjectionStoreV2;
     yield* createThread("no-links");
     yield* createThread("empty-links", { pullRequests: [] });
-    yield* createThread("archived-link", {
+    const archived = yield* createThread("archived-link", {
       archivedAt: old,
       pullRequests: [pullRequestLink(1)],
     });
@@ -459,6 +458,12 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
       (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
       [open],
     );
+    assert.deepEqual(
+      (yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true })).map(
+        (thread) => thread.id,
+      ),
+      [settled, archived, open],
+    );
   }).pipe(Effect.provide(layerSql)),
 );
 
@@ -476,5 +481,47 @@ it.effect("sql: an unsettled-only shell read skips settled threads", () =>
     assert.equal(shell.archivedThreads.length, 0);
     const all = yield* store.getShellSnapshot({ location: "active" });
     assert.equal(all.threads.length, 4);
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: a subagent thread becomes a candidate once its parent is done", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("subagent-parent");
+    const child = yield* createThread("subagent-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepEqual(yield* ids(), [parent]);
+
+    const parentThread = yield* store.getThread(parent);
+    for (const [type, overrides] of [
+      ["thread.settled", { settledOverride: "settled", settledAt: now }],
+      ["thread.archived", { archivedAt: now }],
+      ["thread.deleted", { deletedAt: now }],
+    ] satisfies ReadonlyArray<
+      readonly [
+        "thread.settled" | "thread.archived" | "thread.deleted",
+        Partial<OrchestrationV2AppThread>,
+      ]
+    >) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:subagent-parent:${type}`),
+        type,
+        threadId: parent,
+        occurredAt: now,
+        payload: { ...parentThread, ...overrides, updatedAt: now },
+      });
+      assert.deepEqual(yield* ids(), [child]);
+    }
+    const orphan = yield* createThread("orphan", {
+      lineage: {
+        parentThreadId: ThreadId.make("missing-parent"),
+        relationshipToParent: "subagent",
+        rootThreadId: parent,
+      },
+    });
+    assert.deepEqual(new Set(yield* ids()), new Set([child, orphan]));
   }).pipe(Effect.provide(layerSql)),
 );

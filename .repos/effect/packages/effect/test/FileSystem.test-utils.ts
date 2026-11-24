@@ -480,6 +480,25 @@ export const testLayer = <E>(layer: Layer.Layer<Fs.FileSystem, E>, options: Test
       )
     })))
 
+  it.each(["write", "writeAll"] as const)(
+    "%s writes a buffer view at the cursor after a backward seek",
+    (method) =>
+      runPromise(
+        Effect.gen(function*() {
+          const fs = yield* Fs.FileSystem
+          const path = yield* fs.makeTempFileScoped()
+          const file = yield* fs.open(path, { flag: "w+" })
+          yield* file.writeAll(new TextEncoder().encode("abcdefghij"))
+          yield* file.seek(BigInt(-7), "current")
+          yield* file[method](new TextEncoder().encode("__XYZ12_").subarray(2, 7))
+
+          assert.strictEqual(yield* fs.readFileString(path), "abcXYZ12ij")
+          assert.strictEqual(yield* file.seek(BigInt(0), "current"), BigInt(8))
+          assert.strictEqual((yield* file.stat).size, BigInt(10))
+        }).pipe(Effect.scoped)
+      )
+  )
+
   it("should maintain a read cursor in append mode", () =>
     runPromise(Effect.gen(function*() {
       const fs = yield* Fs.FileSystem

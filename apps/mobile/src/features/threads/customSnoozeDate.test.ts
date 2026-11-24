@@ -1,6 +1,12 @@
+import { resolveLocaleSelection, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { describe, expect, it } from "vite-plus/test";
 
-import { applySnoozePickerDate, snoozeDateToPickerDate } from "./customSnoozeDate";
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "../../i18n/locales";
+import {
+  applySnoozePickerDate,
+  snoozeDateToPickerDate,
+  snoozePickerLabels,
+} from "./customSnoozeDate";
 
 describe("custom snooze calendar conversion", () => {
   it("passes the local calendar day to Compose without shifting it across time zones", () => {
@@ -19,5 +25,23 @@ describe("custom snooze calendar conversion", () => {
       next.getMinutes(),
     ]).toEqual([2026, 8, 20, 23, 45]);
     expect(date.getDate()).toBe(16);
+  });
+
+  it.each([
+    { language: SYSTEM_LANGUAGE, catalog: "en", dateLabel: "5 May" },
+    { language: "fr", catalog: "fr", dateLabel: "5 mai" },
+  ])("labels the picked date and time for the $language preference", (test) => {
+    const date = new Date(2027, 4, 5, 14, 30);
+    const { catalogLocale, formattingLocale } = resolveLocaleSelection(
+      test.language,
+      ["it-IT", "en-GB"],
+      SUPPORTED_LOCALES,
+      DEFAULT_LOCALE,
+    );
+    expect(catalogLocale).toBe(test.catalog);
+    expect(snoozePickerLabels(date, formattingLocale, true)).toEqual({
+      date: test.dateLabel,
+      time: "14:30",
+    });
   });
 });
