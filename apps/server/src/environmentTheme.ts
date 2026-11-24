@@ -530,33 +530,25 @@ const make = Effect.gen(function* () {
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
         yield* requirePublished(themeId);
+        const removalError = (cause: unknown) =>
+          new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause });
+        const removeFile = (suffix: string) =>
+          fs
+            .remove(NodePath.join(environmentThemesDir, `${themeId}${suffix}`), { force: true })
+            .pipe(Effect.mapError(removalError));
         // Keep the JSON published until image cleanup succeeds so removal can be retried.
         yield* Effect.forEach(
           THEME_BACKGROUND_EXTENSIONS,
           (extension) => {
-            const file = NodePath.join(environmentThemesDir, `${themeId}.${extension}`);
+            const suffix = `.${extension}`;
+            const file = NodePath.join(environmentThemesDir, `${themeId}${suffix}`);
             return Effect.try({
               try: () => NodeFS.lstatSync(file, { throwIfNoEntry: false })?.isFile() ?? false,
-              catch: (cause) =>
-                new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),
-            }).pipe(
-              Effect.flatMap((isFile) => (isFile ? fs.remove(file, { force: true }) : Effect.void)),
-            );
+              catch: removalError,
+            }).pipe(Effect.flatMap((isFile) => (isFile ? removeFile(suffix) : Effect.void)));
           },
           { discard: true },
-        ).pipe(
-          Effect.andThen(
-            fs.remove(NodePath.join(environmentThemesDir, `${themeId}${THEME_FILE_SUFFIX}`), {
-              force: true,
-            }),
-          ),
-          Effect.ensuring(refresh),
-          Effect.mapError((cause) =>
-            cause instanceof EnvironmentThemeRefusedError
-              ? cause
-              : new EnvironmentThemeRefusedError({ themeId, problem: NOT_REMOVED, cause }),
-          ),
-        );
+        ).pipe(Effect.andThen(removeFile(THEME_FILE_SUFFIX)), Effect.ensuring(refresh));
       }),
     );
   });
