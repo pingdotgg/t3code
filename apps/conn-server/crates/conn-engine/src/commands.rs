@@ -988,8 +988,10 @@ pub(crate) fn hold_queued(tx: &mut Tx<'_>, thread_id: &str, held: Held) -> Store
 /// Starts the next queued run when nothing is active (`startNextQueuedRun`). `only` picks one
 /// queued run, as `queued-run.start` does. Returns the effect that starts it.
 /// Whether the next queued run the queue would start runs on the failed run's provider.
+/// Stale pull request wakes at the head of the queue are dropped first, as T3's
+/// `startNextQueuedRun` drops them before it compares providers.
 pub(crate) fn next_runs_on_failed_provider(
-    tx: &Tx<'_>,
+    tx: &mut Tx<'_>,
     thread_id: &str,
     failed_run_id: &str,
 ) -> StoreResult<bool> {
@@ -999,11 +1001,30 @@ pub(crate) fn next_runs_on_failed_provider(
     ) else {
         return Ok(false);
     };
-    let Some(next) = queued_runs(tx, thread_id)?
-        .into_iter()
-        .find(|run| run["queueHeld"] != true)
-    else {
-        return Ok(false);
+    let next = loop {
+        let Some(next) = queued_runs(tx, thread_id)?
+            .into_iter()
+            .find(|run| run["queueHeld"] != true)
+        else {
+            return Ok(false);
+        };
+        let message = match next["userMessageId"].as_str() {
+            Some(id) => tx.entity(thread_id, "messages", id)?,
+            None => None,
+        };
+        let stale = match message {
+            Some(message) => crate::pull_requests::stale_wake(
+                &thread,
+                &tx.entities(thread_id, "messages")?,
+                &message,
+            ),
+            None => false,
+        };
+        if !stale {
+            break next;
+        }
+        let id = next["id"].as_str().unwrap_or_default().to_owned();
+        finish_run(tx, thread_id, &id, "cancelled", None)?;
     };
     Ok(
         effective_selection(tx, thread_id, &thread, &next)?["instanceId"]
@@ -1098,6 +1119,21 @@ pub(crate) fn usage_limit_holds(
     let Some(failure) = failure.filter(|f| f["class"] == "usage_limit") else {
         return Ok(false);
     };
+    // A newer session error replaces the limit (`threadErrorSummary`).
+    let session_error = tx
+        .entities_where(
+            thread_id,
+            "providerSessions",
+            "providerInstanceId",
+            instance,
+        )?
+        .into_iter()
+        .max_by_key(|s| s["updatedAt"].as_str().unwrap_or_default().to_owned())
+        .map(|s| s["lastError"].clone())
+        .filter(|e| !e.is_null());
+    if session_error.is_some_and(|e| e != failure["message"]) {
+        return Ok(false);
+    }
     if latest_executed_run(tx, thread_id)?.is_some_and(|latest| latest["id"] == run_id) {
         return Ok(true);
     }
@@ -1216,10 +1252,8 @@ fn start_next_queued_as(
     if usage_limit_holds(tx, thread_id, &instance, now.as_deref())? {
         return Ok(None);
     }
-    if run["providerInstanceId"] != instance.as_str() {
-        run["modelSelection"] = selection;
-        run["providerInstanceId"] = json!(instance);
-    }
+    run["modelSelection"] = selection;
+    run["providerInstanceId"] = json!(instance);
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
     let now = tx.now().to_owned();

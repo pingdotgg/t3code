@@ -6553,3 +6553,104 @@ async fn a_provider_failure_holds_only_its_provider() {
     assert_eq!(run_for(&p, "b")["status"], "completed");
     assert_eq!(count(&codex.sessions), 1);
 }
+
+/// Pass-4 gate finding 1: a monitor wake queued on model A starts on model B after the user
+/// picks B on the same instance (T3's `startNextQueuedRun` copies the whole selection).
+#[tokio::test(flavor = "current_thread")]
+async fn a_monitor_wake_takes_a_new_model_on_the_same_instance() {
+    let db = TempDb::new("monitor-wake-same-instance");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "active", "Hello")).await;
+    let mut wake = queued("wake", "A watched pull request changed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("server");
+    wake["modelSelection"] = json!({"instanceId": "claudeAgent", "model": "model-a"});
+    wake["notification"] = json!({"source": {"kind": "monitor"}, "outcome": "updated",
+        "summary": "#7: checks failed"});
+    dispatch(&engine, wake).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.model-selection.set", "commandId": "select", "threadId": "t1",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "model-b"}}),
+    )
+    .await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_for(&p, "wake")["status"], "completed");
+    assert_eq!(run_for(&p, "wake")["modelSelection"]["model"], "model-b");
+}
+
+/// Pass-4 gate finding 2: a stale pull request wake at the head of the queue is dropped
+/// before a Claude failure decides what to hold, so queued Codex work still starts (T3 drops
+/// stale wakes, then compares `providerFailed` on the runnable run).
+#[tokio::test(flavor = "current_thread")]
+async fn a_stale_wake_does_not_hold_other_provider_work_after_a_failure() {
+    let db = TempDb::new("stale-wake-failure");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    let mut wake = queued("wake", "A watched pull request changed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("server");
+    wake["notification"] = json!({"source": {"kind": "monitor", "pullRequest": {
+            "host": "github.com", "repository": "o/r", "number": 7,
+            "watchStartedAt": "2026-01-01T00:00:00.000Z", "headSha": null}},
+        "outcome": "updated", "summary": "#7: checks failed"});
+    dispatch(&engine, wake).await;
+    let mut b = queued("b", "On Codex");
+    b["modelSelection"] = json!({"instanceId": "codex", "model": "m"});
+    dispatch(&engine, b).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_for(&p, "wake")["status"], "cancelled", "{}", p["runs"]);
+    let b_run = run_for(&p, "b")["id"].as_str().unwrap().to_owned();
+    let p = run_to_end(&engine, "t1", &b_run).await;
+    assert_eq!(run_for(&p, "b")["status"], "completed");
+    assert_eq!(count(&codex.sessions), 1);
+}
+
+/// Pass-4 gate finding 3: an old `usage_limit` item no longer holds the queue once the latest
+/// session reports another error (T3's `usageLimitHoldsQueue` reads the session's `lastError`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_newer_session_error_lifts_an_old_usage_limit() {
+    let db = TempDb::new("usage-limit-session-error");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
+    dispatch(&engine, queued("b", "Later")).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    engine
+        .inner()
+        .db(|s| {
+            let mut tx = s.tx()?;
+            let mut session = tx
+                .entities("t1", "providerSessions")?
+                .into_iter()
+                .next()
+                .expect("a session");
+            session["lastError"] = json!("The provider process exited.");
+            session["updatedAt"] = json!(tx.now());
+            tx.append(crate::store::Draft::new(
+                "t1",
+                "provider-session.updated",
+                session,
+            ))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type":"queue.resume","commandId":"resume","threadId":"t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_ne!(run_for(&p, "b")["status"], "queued", "{}", p["runs"]);
+}
