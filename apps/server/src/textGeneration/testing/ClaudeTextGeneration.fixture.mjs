@@ -36,8 +36,16 @@ if (process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE === "1") {
   fail("text generation must not save a resumable session", 16);
 }
 const settingsIndex = argv.indexOf("--settings");
-if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
+const settingsValue = settingsIndex === -1 ? "{}" : argv[settingsIndex + 1];
+// Like the CLI: a value starting with a brace is inline JSON, anything else a file path.
+const settingsText = settingsValue.startsWith("{")
+  ? settingsValue
+  : NodeFS.readFileSync(settingsValue, "utf8");
+if (JSON.parse(settingsText).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
+}
+if (process.env.T3_FAKE_CLAUDE_SETTINGS_LOG) {
+  NodeFS.writeFileSync(process.env.T3_FAKE_CLAUDE_SETTINGS_LOG, settingsText);
 }
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {

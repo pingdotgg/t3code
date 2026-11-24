@@ -41,7 +41,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         return yield* workflows.get(runId).pipe(Effect.mapError(refused));
       }),
     ),
-    McpToolAccess.writes((input) =>
+    McpToolAccess.writesOwnerWork("start or change workflow runs, or read hook paths", (input) =>
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         // A hook's path holds its secret, and posting to it starts a run.
@@ -58,6 +58,13 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         }
         if (input.action === "signal") {
           const value = yield* required(input.value, "value");
+          const byRun = input.runId !== undefined || input.wait !== undefined;
+          const byChannel = input.workflow !== undefined || input.channel !== undefined;
+          if (byRun && byChannel) {
+            return yield* invalid(
+              "Address a signal with `runId` and `wait`, or with `workflow` and `channel`, not both.",
+            );
+          }
           const address =
             input.runId !== undefined && input.wait !== undefined
               ? { runId: input.runId, wait: input.wait }

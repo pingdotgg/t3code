@@ -709,7 +709,6 @@ export const makeProviderInstanceRegistry = Effect.fn(
           ),
         { reference, value },
       );
-
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
     Ref.set(configMapRef, input.configMap).pipe(
