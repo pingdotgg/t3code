@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/pullRequestAnchor";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -80,7 +80,7 @@ import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
-import { vcsEnvironment } from "~/state/vcs";
+import { vcsBranchRevalidation, vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
 
@@ -132,6 +132,7 @@ import {
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
+  isPullRequestHeadCheckedOut,
   isStackedPullRequestBase,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
@@ -878,6 +879,19 @@ export function PullRequestDetailPanel({
     environmentId: actingEnvironmentId,
     cwd: checkoutRoot,
   });
+  const checkoutRootBranchTarget =
+    checkoutRoot === null ? null : { environmentId: actingEnvironmentId, cwd: checkoutRoot };
+  const checkoutRootBranch = useEnvironmentQuery(
+    checkoutRootBranchTarget === null
+      ? null
+      : vcsEnvironment.branch({
+          environmentId: checkoutRootBranchTarget.environmentId,
+          input: { cwd: checkoutRootBranchTarget.cwd },
+        }),
+  );
+  useAtomMount(vcsBranchRevalidation(checkoutRootBranchTarget));
+  const isCheckedOutAtRoot =
+    detail !== null && isPullRequestHeadCheckedOut(detail, checkoutRootBranch.data?.refName);
 
   const finishAction = async (
     action: PullRequestAction,
@@ -1529,7 +1543,8 @@ export function PullRequestDetailPanel({
         term={changeRequestTermKind(terminology)}
         handoff={handoff}
         checkoutRoot={checkoutRoot}
-        canPrepareWorktree={canPrepareWorktree}
+        canPrepareWorktree={canPrepareWorktree && !isCheckedOutAtRoot}
+        isCheckedOutHere={isCheckedOutAtRoot}
         canCheckoutHere={prepareThread.isAllowed}
         onCheckout={startCheckout}
         pickableEnvironments={pickableEnvironments}

@@ -31,6 +31,7 @@ import {
   buildPullRequestCommentContext,
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
+  isPullRequestHeadCheckedOut,
   buildFixFindingsHandoff,
   groupPullRequestTimelineConversations,
   filterPullRequestConversationItems,
@@ -1736,6 +1737,31 @@ describe("when the source branch can be deleted", () => {
   it("needs both the host capability and the viewer's permission", () => {
     expect(canDeletePullRequestBranch(branchDetail("merged", { deleteBranch: false }))).toBe(false);
     expect(canDeletePullRequestBranch(branchDetail("merged", { allowed: false }))).toBe(false);
+  });
+});
+
+describe("when the project folder already holds the head branch", () => {
+  const head = { headBranch: "feature/x", repository: "Acme/App" };
+
+  it("matches a same-repository head by name", () => {
+    expect(isPullRequestHeadCheckedOut(head, "feature/x")).toBe(true);
+    expect(
+      isPullRequestHeadCheckedOut(
+        { ...head, headRepositoryNameWithOwner: "acme/app" },
+        "feature/x",
+      ),
+    ).toBe(true);
+    expect(isPullRequestHeadCheckedOut(head, "main")).toBe(false);
+    expect(isPullRequestHeadCheckedOut(head, null)).toBe(false);
+  });
+
+  it("ignores a fork head whose name happens to match the local branch", () => {
+    expect(
+      isPullRequestHeadCheckedOut(
+        { ...head, headRepositoryNameWithOwner: "fork/app" },
+        "feature/x",
+      ),
+    ).toBe(false);
   });
 });
 

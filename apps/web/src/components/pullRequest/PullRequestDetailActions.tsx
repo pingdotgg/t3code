@@ -79,6 +79,7 @@ export function PullRequestCheckoutMenu({
   handoff,
   checkoutRoot,
   canPrepareWorktree,
+  isCheckedOutHere,
   canCheckoutHere,
   onCheckout,
   pickableEnvironments,
@@ -89,6 +90,7 @@ export function PullRequestCheckoutMenu({
   handoff: string | null;
   checkoutRoot: string | null;
   canPrepareWorktree: boolean;
+  isCheckedOutHere: boolean;
   canCheckoutHere: boolean;
   onCheckout: (mode: "worktree" | "local") => void;
   pickableEnvironments: ReadonlyArray<PickableEnvironment>;
@@ -139,7 +141,11 @@ export function PullRequestCheckoutMenu({
               <T>In a separate worktree</T>
             </span>
             <span className="text-xs text-muted-foreground">
-              <T>Its own folder and thread. Nothing you have open moves.</T>
+              {isCheckedOutHere ? (
+                <T>Already checked out in this repository. Use “In this repository” instead.</T>
+              ) : (
+                <T>Its own folder and thread. Nothing you have open moves.</T>
+              )}
             </span>
           </span>
         </MenuItem>

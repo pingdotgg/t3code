@@ -1647,6 +1647,22 @@ export function canDeletePullRequestBranch(
   );
 }
 
+/**
+ * Whether a checkout on `refName` holds this pull request's head, so Git cannot put that branch in
+ * another worktree. A fork's head is checked out under a T3 branch name, so only same-repository
+ * heads are matched by name.
+ */
+export function isPullRequestHeadCheckedOut(
+  detail: Pick<PullRequestDetail, "headBranch" | "headRepositoryNameWithOwner" | "repository">,
+  refName: string | null | undefined,
+): boolean {
+  const headRepository = detail.headRepositoryNameWithOwner?.toLowerCase();
+  return (
+    refName === detail.headBranch &&
+    (headRepository === undefined || headRepository === detail.repository.toLowerCase())
+  );
+}
+
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export function resolvePullRequestReferenceHost(

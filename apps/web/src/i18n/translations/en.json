@@ -6755,6 +6755,7 @@
     }
   ],
   "443742ebc45e90e4": "In a separate worktree",
+  "bc5516d96bfafc52": "Already checked out in this repository. Use “In this repository” instead.",
   "6035b70e92f126e3": "Its own folder and thread. Nothing you have open moves.",
   "0611af5c77d01f62": "In this repository",
   "aae4e44328ff5289": "Switches the branch you are working in.",
