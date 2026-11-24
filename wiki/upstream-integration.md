@@ -18,8 +18,8 @@ snapshot:
   last_main_integration: d978ce37d2fc8c12628046c847ee2bb32b8624eb
   last_main_upstream: fa2ee196b5b4d371aecdedbebc3cdbc0c20c8553
   missing_upstream_on_main: 284
-  branch_integration: 72c40a5254d9a1e596db390ca2dab055dc522486
-  branch_code_tip: 03aca524d1c001a8e5f127fb94c71619ddc6d972
+  branch_integration: 8c7ed57f4ad5b15812802eea3071b538674a67cb
+  branch_code_tip: 8c7ed57f4ad5b15812802eea3071b538674a67cb
   missing_upstream_on_branch: 0
 sources:
   - id: upstream-nov23-policy
