@@ -43,7 +43,9 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
       MOBILE_VERSION_POLICY: fingerprint
     steps:
-      # If a maintainer removed the label first, that removal wins.
+      # The label counts only from someone with write access, who could push a
+      # same-repo branch and get this build anyway. If a maintainer removed the
+      # label first, that removal wins.
       - id: consume
         name: Consume the deployment label
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
@@ -56,12 +58,23 @@ jobs:
                 issue_number: context.payload.pull_request.number,
                 name: context.payload.label.name,
               });
-              core.setOutput("consumed", "true");
             } catch (error) {
               if (error.status !== 404) throw error;
               core.info("The label was removed before this run could consume it. Skipping.");
               core.setOutput("consumed", "false");
+              return;
             }
+            const sender = context.payload.sender.login;
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: sender,
+            });
+            const authorized = ["admin", "maintain", "write"].includes(access.permission);
+            if (!authorized) {
+              core.warning(`${sender} has ${access.permission} access; a fork preview needs write access. Label removed, nothing built.`);
+            }
+            core.setOutput("consumed", String(authorized));
 
       - id: expo-token
         name: Check for EXPO_PREVIEW_TOKEN

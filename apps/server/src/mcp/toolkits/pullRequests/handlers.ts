@@ -308,10 +308,9 @@ const make = Effect.gen(function* () {
       | typeof PullRequestUnlinkFailedError
       | typeof PullRequestForgeError,
   ) =>
-    projects.getShell(thread.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.mapError((cause) => new Failure({ cause })),
-    );
+    pullRequests
+      .addressedProject(thread.projectId)
+      .pipe(Effect.mapError((cause) => new Failure({ cause })));
 
   const dispatchFailure =
     (Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError) =>
@@ -361,7 +360,12 @@ const make = Effect.gen(function* () {
     const known = yield* projects
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
-    const callerProject = known.find((project) => project.id === callerThread?.projectId);
+    const callerProject =
+      callerThread === undefined
+        ? undefined
+        : yield* pullRequests
+            .addressedProject(callerThread.projectId)
+            .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
     // A pull request named by host and repository builds its URL through the project that holds
     // it, which need not be the caller's.
     const urlProject = (input: PullRequestTargetInput) =>
@@ -417,10 +421,8 @@ const make = Effect.gen(function* () {
   // Layers below the target are pinned to the heads read here; the host refuses if any moved.
   const stackMergeScope = Effect.fnUntraced(function* (
     ref: PullRequestRef,
-    input: { readonly expectedHeadSha: string; readonly auto?: boolean | undefined },
+    input: { readonly expectedHeadSha: string },
   ) {
-    if (input.auto === true)
-      return yield* new PullRequestForgeError({ detail: "A stack merge cannot wait with auto." });
     const stack = yield* pullRequests
       .stack(ref, { bypassCache: true })
       .pipe(Effect.mapError(forgeFailure));
