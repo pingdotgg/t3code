@@ -182,6 +182,7 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import { ForkRolesListResult } from "./forkRoles.ts"; // fork: roles
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderMcpSignInCompleteInput,
@@ -607,6 +608,7 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  forkRolesList: "fork.roles.list", // fork: roles
   serverCheckSecretSource: "server.checkSecretSource",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
@@ -1033,6 +1035,13 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+  error: EnvironmentAuthorizationError,
+});
+
+// fork: roles
+const WsForkRolesListRpc = Rpc.make(WS_METHODS.forkRolesList, {
+  payload: Schema.Struct({}),
+  success: ForkRolesListResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2516,6 +2525,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksPairClientRpc,
   WsPeerLinksPairLinkRpc,
   WsServerDiscoverSourceControlRpc,
+  WsForkRolesListRpc, // fork: roles
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
