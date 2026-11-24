@@ -113,19 +113,46 @@ function latestMatchingRun(
   );
 }
 
+// Phases a provider can report while it prepares a turn; an unknown one keeps the plain label.
+function providerStartingPhase(phase: string | undefined, provider: string) {
+  switch (phase) {
+    case "plugins":
+      return msg("Loading {provider} plugins", { provider });
+    case "mcp":
+      return msg("Starting {provider} MCP servers", { provider });
+    case "hooks":
+      return msg("Loading {provider} hooks", { provider });
+    case "skills":
+      return msg("Loading {provider} rules and skills", { provider });
+    case "connecting":
+      return msg("Connecting to {provider}", { provider });
+    default:
+      return msg("Starting {provider}", { provider });
+  }
+}
+
 function providerStarting(
   projection: ThreadStructure,
   run: OrchestrationV2ThreadProjection["runs"][number],
-): Pick<ThreadRunSummary, "providerStartingLabel" | "providerStartingLabelMsg"> {
-  const driver = projection.providerSessions.findLast(
+): Pick<
+  ThreadRunSummary,
+  "providerStartingLabel" | "providerStartingLabelMsg" | "providerStarting"
+> {
+  const session = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === run.providerInstanceId,
-  )?.driver;
-  const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
+  );
+  const name = session === undefined ? undefined : PROVIDER_DISPLAY_NAMES[session.driver];
   const label =
     name === undefined
       ? msg("Starting", { $context: "a provider is launching" })
-      : msg("Starting {provider}", { provider: name });
-  return { providerStartingLabel: markedTextEnglish([label]), providerStartingLabelMsg: label };
+      : providerStartingPhase(session?.startupPhase, name);
+  return {
+    providerStartingLabel: markedTextEnglish([label]),
+    providerStartingLabelMsg: label,
+    ...(session === undefined
+      ? {}
+      : { providerStarting: { instanceId: run.providerInstanceId, driver: session.driver } }),
+  };
 }
 
 function summarizeThreadRun(
