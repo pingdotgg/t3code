@@ -856,7 +856,9 @@ export class VoiceInputController {
     const captured = this.capturedDraft;
     if (!captured || !this.expectedDraft || !this.transcription) return;
     if (!this.draftIsUnchanged()) {
-      this.failStreaming("The draft changed while voice input was running. Dictation stopped.");
+      this.failStreaming(
+        this.text(msg("The draft changed while voice input was running. Dictation stopped.")),
+      );
       return;
     }
     this.dependencies.onLiveTranscript?.(transcript);
