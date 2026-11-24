@@ -7,11 +7,15 @@ import {
   ProjectId,
   type TaskFolderError,
   type Project as ProjectRecord,
+  type ProjectSettingsOverrides,
+  type ProjectUpdatePayload,
+  type ServerSettingsError,
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -22,6 +26,7 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -206,10 +211,66 @@ const withSavedProjectSettings = Effect.gen(function* () {
         resolved.sources.defaultModelSelection === "project"
           ? resolved.settings.defaultModelSelection
           : null,
+      defaultThreadEnvMode:
+        resolved.sources.defaultThreadEnvMode === "project"
+          ? resolved.settings.defaultThreadEnvMode
+          : null,
+      autoPull: resolved.settings.defaultAutoPull,
       scripts: resolveProjectScripts(settings, project),
     };
   };
 });
+
+const PROJECT_SETTING_FIELDS = {
+  defaultModelSelection: "defaultModelSelection",
+  defaultThreadEnvMode: "defaultThreadEnvMode",
+  autoPull: "defaultAutoPull",
+} as const;
+
+/**
+ * The GUI keeps these in Settings' per-project overrides; the project row's copies apply only until
+ * folded. Only the keys given change. Returns how to put those keys back, which fails when it can't.
+ */
+const saveProjectSettingsOverrides = Effect.fn("mcp.saveProjectSettingsOverrides")(function* (
+  input: Omit<ProjectUpdatePayload, "scripts"> & { readonly projectId: ProjectId },
+) {
+  const changes = Object.entries(PROJECT_SETTING_FIELDS).flatMap(([field, key]) => {
+    const value = input[field as keyof typeof PROJECT_SETTING_FIELDS];
+    return value === undefined ? [] : [[key, value] as const];
+  });
+  if (changes.length === 0) return Effect.void;
+  const service = yield* ServerSettings.ServerSettingsService;
+  let previous: ReadonlyArray<readonly [string, unknown]> = [];
+  const write = (values: ReadonlyArray<readonly [string, unknown]>, remember: boolean) =>
+    service.updateProjectSettingsOverrides(input.projectId, (stored) => {
+      const next: Record<string, unknown> = { ...stored };
+      if (remember) previous = values.map(([key]) => [key, next[key]]);
+      for (const [key, value] of values) {
+        if (value === null || value === undefined) delete next[key];
+        else next[key] = value;
+      }
+      return Object.keys(next).length === 0 ? null : (next as ProjectSettingsOverrides);
+    });
+  yield* write(changes, true).pipe(Effect.mapError(settingsFailure));
+  return write(previous, false).pipe(
+    Effect.tapCause((cause) =>
+      Effect.logWarning("Could not restore project Settings overrides", cause),
+    ),
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message:
+            "The project update failed, and its Settings overrides could not be put back. Check the project's settings in Settings.",
+        }),
+    ),
+  );
+});
+
+const settingsFailure = (error: ServerSettingsError) =>
+  error.operation === "write-managed-setting" || error.operation === "use-disallowed-provider"
+    ? new OrchestratorMcpFailure({ code: "capability_denied", message: error.message })
+    : unavailable();
 
 // The project is already committed, so a failed Settings read must not report the create as failed.
 const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
@@ -543,7 +604,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         if (workspaceRoot === undefined) {
           // Only updates record model defaults; reject defaults that creation would silently drop.
           if (
-            input.scripts !== undefined ||
             input.trackedFolders !== undefined ||
             input.createWorkspaceRootIfMissing !== undefined ||
             input.defaultModelSelection !== undefined
@@ -551,7 +611,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
+                "A project started from its title takes only a title; set defaultModelSelection afterwards with t3_project_update.",
             });
           const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
           const created = yield* folders.createNamedProject({ name: input.title }).pipe(
@@ -592,12 +652,46 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     // registered workspace is still refused.
     { linkedCallers: "allowed" },
   ),
-  t3_project_update: McpToolAccess.writesEnvironment((input) =>
+  t3_project_update: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      const updated = yield* projects
-        .update({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const commandId = yield* newCommandId();
+      const {
+        defaultModelSelection: _defaultModelSelection,
+        defaultThreadEnvMode: _defaultThreadEnvMode,
+        autoPull: _autoPull,
+        ...row
+      } = input;
+      const update = Effect.gen(function* () {
+        // The turn may have ended, or the thread's modes changed, while this waited for the lock.
+        yield* check;
+        // Settings first: a managed lock must refuse the update before the project row changes.
+        // Uninterruptible, so a cancelled call can't separate the row from its Settings: the row
+        // commits and is read back, or the overrides are put back.
+        return yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const restoreSettings = yield* saveProjectSettingsOverrides(input);
+            const updateRow = projects.update({ ...row, commandId });
+            const exit = yield* Effect.exit(
+              updateRow.pipe(
+                // This may fail after the row committed, reading it back. The same command id
+                // replays that commit instead of applying it twice, so one retry tells them apart.
+                Effect.catchTags({ ProjectOperationError: () => updateRow }),
+                Effect.mapError(projectFailure),
+              ),
+            );
+            if (Exit.isSuccess(exit)) return exit.value;
+            // A failed restore replaces the row's error: the overrides kept their new values.
+            yield* restoreSettings;
+            return yield* Effect.failCause(exit.cause);
+          }),
+        );
+      });
+      const updated = yield* scope.thread === undefined
+        ? update
+        : executor.withLock(scope.thread.threadId, update);
       return (yield* withSavedProjectSettings)(updated);
     }),
   ),
