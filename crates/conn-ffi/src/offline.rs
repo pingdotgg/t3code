@@ -70,6 +70,33 @@ fn deadlines<'a>(
         .collect()
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SavedShell {
+    #[serde(flatten)]
+    snapshot: LinkedShellSnapshot,
+    #[serde(default)]
+    expires: HashMap<String, u64>,
+}
+
+impl SavedShell {
+    fn decode(bytes: &[u8], env: &str) -> Option<Self> {
+        let mut saved: Self = serde_json::from_slice(bytes).ok()?;
+        if saved.snapshot.version != LinkedShellSnapshot::VERSION
+            || saved.snapshot.environment_id != env
+        {
+            return None;
+        }
+        saved.expires.extend(deadlines(
+            saved
+                .snapshot
+                .threads
+                .iter()
+                .chain(&saved.snapshot.archived_threads),
+        ));
+        Some(saved)
+    }
+}
+
 impl OfflineReader {
     pub(crate) async fn open(
         dir: PathBuf,
@@ -83,12 +110,8 @@ impl OfflineReader {
         let saved = tokio::fs::read(dir.join("shell.json"))
             .await
             .ok()
-            .and_then(|bytes| LinkedShellSnapshot::from_json(&bytes));
-        let expires = saved
-            .as_ref()
-            .filter(|s| s.environment_id == env)
-            .map(|s| deadlines(s.threads.iter().chain(&s.archived_threads)))
-            .unwrap_or_default();
+            .and_then(|bytes| SavedShell::decode(&bytes, &env));
+        let expires = saved.map(|file| file.expires).unwrap_or_default();
         Ok(Arc::new(Self {
             expires: RwLock::new(expires),
             fetch_slots: tokio::sync::Semaphore::new(2),
@@ -105,9 +128,20 @@ impl OfflineReader {
             .is_ok_and(|map| map.get(thread).is_none_or(|at| *at > now_ms()))
     }
 
-    pub(crate) fn save_shell(&self, snapshot: LinkedShellSnapshot) -> std::io::Result<()> {
+    fn capture_shell(&self, state: &conn_state::ShellState) -> SavedShell {
+        SavedShell {
+            snapshot: LinkedShellSnapshot::capture(&self.env, "", state),
+            expires: self
+                .expires
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+        }
+    }
+
+    fn save_shell(&self, snapshot: SavedShell) -> std::io::Result<()> {
         let temp = self.dir.join("shell.tmp");
-        std::fs::write(&temp, snapshot.to_json()?)?;
+        std::fs::write(&temp, serde_json::to_vec(&snapshot)?)?;
         std::fs::rename(temp, self.dir.join("shell.json"))
     }
 
@@ -385,12 +419,12 @@ pub(crate) struct SyncState {
     reader: Arc<OfflineReader>,
     subscriptions: std::collections::HashMap<String, Subscription>,
     pruning: HashMap<String, (u64, tokio::task::JoinHandle<()>)>,
-    shell_updates: watch::Sender<Option<LinkedShellSnapshot>>,
+    shell_updates: watch::Sender<Option<SavedShell>>,
 }
 
 impl SyncState {
     pub(crate) fn new(reader: Arc<OfflineReader>) -> Self {
-        let (shell_updates, mut rx) = watch::channel(None::<LinkedShellSnapshot>);
+        let (shell_updates, mut rx) = watch::channel(None::<SavedShell>);
         let cache = reader.clone();
         tokio::spawn(async move {
             while rx.changed().await.is_ok() {
@@ -539,11 +573,7 @@ impl SyncState {
             );
         }
         self.shell_updates
-            .send_replace(Some(LinkedShellSnapshot::capture(
-                &self.reader.env,
-                "",
-                state,
-            )));
+            .send_replace(Some(self.reader.capture_shell(state)));
     }
 
     pub(crate) fn thread(&mut self, state: &ThreadState, snapshot: Option<i64>) {
@@ -593,6 +623,43 @@ mod tests {
             created_at: None,
             run_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn an_omitted_settled_child_expires_after_offline_reopen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let config = conn_client::ServerConfig {
+            http_base_url: "http://127.0.0.1:1".parse()?,
+            credential: conn_client::Credential::Bearer("fixture".into()),
+        };
+        let (connection, _events) = Connection::start(config, &tokio::runtime::Handle::current());
+        let open =
+            || OfflineReader::open(dir.path().to_owned(), "env".to_owned(), connection.clone());
+        let reader = open().await?;
+        reader.save_thread("child", &[message("old")]).await?;
+        reader.db.save_outline("env", "child", "{}").await?;
+        reader
+            .expires
+            .write()
+            .map_err(|_| "lock poisoned")?
+            .insert("child".into(), now_ms());
+        let shell = conn_state::ShellState::default();
+        reader.save_shell(reader.capture_shell(&shell))?;
+        drop(reader);
+        let reopened = open().await?;
+        let mut sync = SyncState::new(reopened.clone());
+        let (_, removal) = sync
+            .pruning
+            .remove("child")
+            .ok_or("omitted child's deadline was lost")?;
+        removal.await?;
+        if !reopened.db.recent("env", "child").await?.is_empty()
+            || reopened.db.outline("env", "child").await?.is_some()
+        {
+            return Err("expired child survived offline reopen".into());
+        }
+        Ok(())
     }
 
     #[test]
