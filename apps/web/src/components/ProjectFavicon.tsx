@@ -167,10 +167,14 @@ function ProjectFaviconImage({
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(() =>
     src.startsWith("data:image/") ? src : null,
   );
+  // One refresh per failure: a fresh URL for a file that cannot load would fail again.
+  const [refreshedAfterError, setRefreshedAfterError] = useState(false);
   const isLoading = displayedSrc !== src;
   const handleLoadError = (failedSrc: string) => {
     setDisplayedSrc((currentSrc) => (currentSrc === failedSrc ? null : currentSrc));
-    if (!failedSrc.startsWith("data:")) onRemoteLoadError();
+    if (failedSrc.startsWith("data:") || refreshedAfterError) return;
+    setRefreshedAfterError(true);
+    onRemoteLoadError();
   };
 
   return (
@@ -197,6 +201,7 @@ function ProjectFaviconImage({
           className="hidden"
           onLoad={() => {
             setDisplayedSrc(src);
+            setRefreshedAfterError(false);
           }}
           onError={() => handleLoadError(src)}
         />

@@ -90,3 +90,36 @@ it("asks for a new URL when a remote icon's URL stops loading", async () => {
     registry.dispose();
   }
 });
+
+it("asks for a new URL only once when the new URL fails too", async () => {
+  const registry = AtomRegistry.make();
+  const favicon = Atom.make<string | null>("http://127.0.0.1:9/api/assets/expired/favicon.svg");
+  const brokenUrl = "http://127.0.0.1:9/api/assets/broken/favicon.svg";
+  let refreshes = 0;
+  state.favicon = favicon;
+  state.refresh = () => {
+    refreshes += 1;
+    registry.set(favicon, brokenUrl);
+  };
+  const project: ProjectFaviconProject = {
+    environmentId: EnvironmentId.make("test"),
+    workspaceRoot: "/project",
+    title: "Project",
+    faviconPath: null,
+    projectIcon: null,
+  };
+  try {
+    await using screen = await render(
+      <RegistryContext value={registry}>
+        <ProjectFavicon project={project} />
+      </RegistryContext>,
+    );
+    await vi.waitFor(() => {
+      const image = screen.container.querySelector<HTMLImageElement>(`img[src="${brokenUrl}"]`);
+      expect(image?.complete).toBe(true);
+    });
+    expect(refreshes).toBe(1);
+  } finally {
+    registry.dispose();
+  }
+});
