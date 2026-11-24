@@ -53,6 +53,7 @@ const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 // settle it in seconds, not milliseconds; commands arrive much sooner.
 const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
+const MODEL_DISCOVERY_TIMEOUT = "30 seconds";
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const boundedText = (value: string, maximumLength: number): string =>
@@ -373,11 +374,24 @@ export function acpRegistryProbeFailure(
   });
 }
 
+/**
+ * Agents report model-specific options only for the session's current model, so the
+ * probe opens each requested model once in its session to read them.
+ */
+export interface AcpRegistryModelDiscovery {
+  /** Receives the probe result before discovery starts and answers which models to open. */
+  readonly onProbed: (
+    result: AcpRegistryConfigurationProbeResult,
+  ) => Effect.Effect<ReadonlyArray<string>>;
+  readonly onDiscovered: (configuration: AcpRegistryLiveConfiguration) => Effect.Effect<void>;
+}
+
 export interface AcpRegistryConfigurationProbeInput {
   readonly instanceId: ProviderInstanceId;
   readonly settings: AcpRegistrySettings;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly modelDiscovery?: AcpRegistryModelDiscovery;
 }
 
 type AcpRegistryManagementInput = AcpRegistryConfigurationProbeInput;
@@ -391,6 +405,47 @@ export interface AcpRegistryConfigurationProbeResult {
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
   input: AcpRegistryConfigurationProbeInput,
 ) => Effect.Effect<AcpRegistryConfigurationProbeResult, AcpRegistryOperationError, Requirements>;
+
+const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverModelOptions")(
+  function* (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    originalModelId: string | null,
+    result: AcpRegistryConfigurationProbeResult,
+    discovery: AcpRegistryModelDiscovery,
+  ) {
+    const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
+    if (modelOption === undefined || originalModelId === null) return;
+    const offered = new Set(flattenSelectChoices(modelOption.options).map(({ value }) => value));
+    const modelIds = (yield* discovery.onProbed(result)).filter(
+      (modelId) => modelId !== originalModelId && offered.has(modelId),
+    );
+    if (modelIds.length === 0) return;
+    yield* Effect.forEach(
+      modelIds,
+      (modelId) =>
+        runtime.setConfigOption(modelOption.id, modelId).pipe(
+          Effect.andThen(Effect.all([runtime.getConfigOptions, runtime.getModeState])),
+          Effect.flatMap(([configOptions, modeState]) => {
+            const configuration = normalizeAcpRegistryLiveConfiguration(configOptions, modeState);
+            return configuration.currentModelId === modelId
+              ? discovery.onDiscovered(configuration)
+              : Effect.void;
+          }),
+          // A model the agent refuses keeps no options; the rest still count.
+          Effect.ignore,
+        ),
+      { discard: true },
+    ).pipe(
+      Effect.timeoutOption(MODEL_DISCOVERY_TIMEOUT),
+      // Some agents (Mistral Vibe) save the selected model as the user's default.
+      Effect.ensuring(
+        runtime
+          .setConfigOption(modelOption.id, originalModelId)
+          .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+      ),
+    );
+  },
+);
 
 const isolateDeepSeekProbeHistory = Effect.fn("AcpRegistryProbe.isolateDeepSeekProbeHistory")(
   function* (commandPath: string, spawn: AcpSessionRuntime.AcpSpawnInput) {
@@ -445,7 +500,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
-    const result = yield* Effect.gen(function* () {
+    const openSession = Effect.gen(function* () {
       // Resolution may install packages; bound it by the probe deadline.
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
@@ -605,9 +660,9 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         started,
         commands: yield* Ref.get(commandsRef),
         liveConfiguration,
+        runtime,
       };
     }).pipe(
-      Effect.scoped,
       Effect.timeoutOrElse({
         duration: probeTimeoutMs,
         orElse: () =>
@@ -618,24 +673,39 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
             }),
           ),
       }),
+    );
+    return yield* Effect.gen(function* () {
+      const session = yield* openSession;
+      const result: AcpRegistryConfigurationProbeResult = {
+        probe: acpRegistryProbeResult(
+          input.instanceId,
+          session.started,
+          session.resolved.agent?.icon ?? null,
+          {
+            command: session.resolved.spawn.command,
+            args: session.resolved.spawn.args,
+          },
+          session.liveConfiguration,
+        ),
+        slashCommands: session.commands.slashCommands,
+        skills: session.commands.skills,
+      };
+      // Runs in the probe session before it is deleted, outside the setup deadline.
+      if (input.modelDiscovery !== undefined) {
+        yield* discoverAcpRegistryModelOptions(
+          session.runtime,
+          session.liveConfiguration.currentModelId,
+          result,
+          input.modelDiscovery,
+        );
+      }
+      return result;
+    }).pipe(
+      Effect.scoped,
       Effect.mapError((error) =>
         error._tag === "AcpRegistryOperationError" ? error : acpRegistryProbeFailure(error),
       ),
     );
-    return {
-      probe: acpRegistryProbeResult(
-        input.instanceId,
-        result.started,
-        result.resolved.agent?.icon ?? null,
-        {
-          command: result.resolved.spawn.command,
-          args: result.resolved.spawn.args,
-        },
-        result.liveConfiguration,
-      ),
-      slashCommands: result.commands.slashCommands,
-      skills: result.commands.skills,
-    };
   },
 );
 
