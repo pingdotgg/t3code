@@ -81,3 +81,43 @@ it("records the visit of the next thread at once after switching threads", async
   // within the throttle window would otherwise keep it unread.
   expect(visitedThreadIds()).toEqual(["a", "b"]);
 });
+
+it("does not mark a run that finishes in a background window as seen", async () => {
+  mocks.visitRun.mockReset();
+  mocks.visitRun.mockReturnValue(Effect.void);
+  const threadC: ScopedThreadRef = { environmentId: ENVIRONMENT, threadId: ThreadId.make("c") };
+  setShell(threadC, "2026-01-02T00:00:00.000Z");
+  let focused = true;
+  let visibility: DocumentVisibilityState = "visible";
+  using _focus = vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+  using _visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockImplementation(() => visibility);
+  using _timers = fakeTimers();
+  vi.setSystemTime(NOW);
+
+  await using _screen = await render(
+    <AppAtomRegistryProvider>
+      <ThreadVisitWatermark threadRef={threadC} />
+    </AppAtomRegistryProvider>,
+  );
+  expect(visitedThreadIds()).toEqual(["c"]);
+
+  // The user switches to another app while the run is still working.
+  focused = false;
+  visibility = "hidden";
+  window.dispatchEvent(new Event("blur"));
+  document.dispatchEvent(new Event("visibilitychange"));
+
+  const completedAt = "2026-01-03T00:00:00.000Z";
+  appAtomRegistry.set(shellAtom(shellKey(threadC)), {
+    environmentId: threadC.environmentId,
+    id: threadC.threadId,
+    updatedAt: completedAt,
+    lastVisitedAt: "2026-01-02T00:00:00.000Z",
+    latestRun: { completedAt },
+  });
+  vi.advanceTimersByTime(60_000);
+
+  expect(visitedThreadIds()).toEqual(["c"]);
+});
