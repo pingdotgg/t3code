@@ -1084,12 +1084,19 @@ describe("pending mobile thread moves", () => {
     expect(reconcilePendingThreadOrder(confirmed, rows)).toBeNull();
   });
 
-  it("preserves the hold for activity but releases for a reopened sort anchor", () => {
+  it("releases the hold when activity or a reopen moves the sort anchor", () => {
     const { rows, pending } = fixture();
+    // The fork sorts by latest activity, so newer activity is a sort anchor change.
     expect(
       reconcilePendingThreadOrder(
         pending,
         rows.map((row) => ({ ...row, updatedAt: NOW })),
+      ),
+    ).toBeNull();
+    expect(
+      reconcilePendingThreadOrder(
+        pending,
+        rows.map((row) => ({ ...row, updatedAt: row.createdAt })),
       ),
     ).toBe(pending);
     expect(
