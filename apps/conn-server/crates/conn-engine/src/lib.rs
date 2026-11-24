@@ -174,6 +174,13 @@ pub trait EngineHost: Send + Sync {
         true
     }
 
+    /// Whether a queued run may start on `instance_id`, by T3's queue rule
+    /// (`startNextQueuedRun`): only an explicit project override or a machine entry disables
+    /// it. Default: the dispatch rule.
+    fn queue_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        self.provider_instance_enabled(project_id, instance_id)
+    }
+
     /// Reloads settings whose last load failed in a way that may have passed, before work is
     /// admitted against them (T3 keeps a failed settings load for no time). Off the runtime
     /// thread when it reads files.

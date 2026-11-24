@@ -157,6 +157,12 @@ impl EngineHost for Host {
         )
     }
 
+    fn queue_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        self.environment
+            .settings
+            .queue_instance_enabled(project_id, instance_id)
+    }
+
     fn response_streaming_mode(
         &self,
         project_id: Option<&str>,

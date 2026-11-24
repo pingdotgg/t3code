@@ -8,6 +8,7 @@ pub mod hmac;
 pub mod home;
 pub mod ids;
 pub mod input;
+pub mod js_date;
 pub mod login_env;
 pub mod modes;
 pub mod secret_store;

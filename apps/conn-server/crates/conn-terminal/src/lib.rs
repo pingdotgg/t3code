@@ -184,6 +184,8 @@ struct Session {
     sequence: i64,
     /// Writes to the shell (`inputCount`): with `sequence`, the terminal's activity mark.
     input_count: u64,
+    /// Poller updates that cleared an ended job. They advance `sequence` but are not activity.
+    jobs_ended: i64,
     updated_at: String,
     touched: u64,
     cols: u16,
@@ -607,11 +609,15 @@ impl TerminalManager {
             let idle = state.sessions.get(&key).is_some_and(|s| {
                 s.activity_mark() == mark
                     && s.proc.as_ref().is_some_and(|p| {
-                        !table.has_running_subprocess(
-                            p.pid,
-                            s.shell.as_deref(),
-                            pty::foreground_group(&p.control),
-                        )
+                        // A job that started after the table was read holds the terminal now,
+                        // and output not yet read would be lost with it.
+                        pty::shell_in_foreground(&p.control, p.pid)
+                            && !pty::output_pending(&p.control)
+                            && !table.has_running_subprocess(
+                                p.pid,
+                                s.shell.as_deref(),
+                                pty::foreground_group(&p.control),
+                            )
                     })
             });
             if idle {
@@ -785,6 +791,7 @@ impl Inner {
                     utf8: Utf8Stream::default(),
                     sequence: 0,
                     input_count: 0,
+                    jobs_ended: 0,
                     updated_at: conn_support::time::now_iso(),
                     touched,
                     cols,
@@ -1048,8 +1055,20 @@ impl Inner {
             let Some(session) = state.sessions.get_mut(&key) else {
                 continue;
             };
-            if session.generation != generation || session.proc.is_none() || session.job == job {
+            // The name lookup awaits; a job that changed meanwhile waits for the next poll.
+            let current = session
+                .proc
+                .as_ref()
+                .and_then(|proc| pty::foreground_job(&proc.control, proc.pid));
+            if session.generation != generation
+                || session.proc.is_none()
+                || current != job.as_ref().map(|(group, _)| *group)
+                || session.job == job
+            {
                 continue;
+            }
+            if job.is_none() {
+                session.jobs_ended += 1;
             }
             session.job = job;
             session.advance();
@@ -1197,9 +1216,14 @@ impl State {
 }
 
 impl Session {
-    /// `terminalActivityMark`: changes with each output, resize, write and restart.
+    /// `terminalActivityMark`: changes with each output, resize, write and restart. A job that
+    /// ended is not activity: the poller may notice it while `close_idle` reads the table.
     fn activity_mark(&self) -> (u64, i64, u64) {
-        (self.generation, self.sequence, self.input_count)
+        (
+            self.generation,
+            self.sequence - self.jobs_ended,
+            self.input_count,
+        )
     }
 
     fn advance(&mut self) {

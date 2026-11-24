@@ -186,6 +186,11 @@ impl SettingsStore {
         &self.path
     }
 
+    /// [`queue_instance_enabled`] on the current settings, read under the lock without a copy.
+    pub fn queue_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
+        queue_instance_enabled(&self.lock().materialized, project_id, instance_id)
+    }
+
     /// The settings with their secrets, for the server's own use (`getSettings`).
     pub fn raw(&self) -> Map<String, Value> {
         self.lock().materialized.clone()
@@ -972,16 +977,7 @@ pub fn provider_instance_enabled(
     project_id: Option<&str>,
     instance_id: &str,
 ) -> bool {
-    let project_override = project_id.and_then(|project| {
-        settings
-            .get("projectSettingsOverrides")?
-            .get(project)?
-            .get("providerInstances")?
-            .get(instance_id)?
-            .get("enabled")?
-            .as_bool()
-    });
-    if let Some(enabled) = project_override {
+    if let Some(enabled) = project_override(settings, project_id, instance_id) {
         return enabled;
     }
     let Some(instance) = settings
@@ -1043,6 +1039,37 @@ pub fn provider_terminal_env(
         env.insert(name.to_owned(), value);
     }
     Some(env)
+}
+
+/// T3's queue start (`startNextQueuedRun`): only an explicit project override or a machine
+/// entry turns an instance off; one with neither stays on.
+pub fn queue_instance_enabled(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+    instance_id: &str,
+) -> bool {
+    if let Some(enabled) = project_override(settings, project_id, instance_id) {
+        return enabled;
+    }
+    settings
+        .get("providerInstances")
+        .and_then(|instances| instances.get(instance_id))
+        .is_none_or(|_| provider_instance_enabled(settings, None, instance_id))
+}
+
+/// A project's explicit `enabled` for an instance, when it sets one.
+fn project_override(
+    settings: &Map<String, Value>,
+    project_id: Option<&str>,
+    instance_id: &str,
+) -> Option<bool> {
+    settings
+        .get("projectSettingsOverrides")?
+        .get(project_id?)?
+        .get("providerInstances")?
+        .get(instance_id)?
+        .get("enabled")?
+        .as_bool()
 }
 
 #[cfg(test)]
@@ -2335,5 +2362,13 @@ mod tests {
         assert!(!provider_instance_enabled(&project_off, Some("p"), "grok"));
         assert!(provider_instance_enabled(&project_off, Some("q"), "grok"));
         assert!(provider_instance_enabled(&project_off, None, "grok"));
+        // The queue start's rule (`startNextQueuedRun`): an instance with no entry stays on;
+        // only an explicit project override or a machine entry turns it off.
+        assert!(queue_instance_enabled(&empty, None, "grok"));
+        assert!(!queue_instance_enabled(&grok_default, None, "grok"));
+        assert!(!queue_instance_enabled(&config_off, None, "grok"));
+        assert!(queue_instance_enabled(&grok_on, Some("p"), "grok"));
+        assert!(!queue_instance_enabled(&project_off, Some("p"), "grok"));
+        assert!(queue_instance_enabled(&project_off, Some("q"), "grok"));
     }
 }

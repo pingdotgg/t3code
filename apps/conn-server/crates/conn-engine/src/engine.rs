@@ -18,7 +18,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
-use crate::store::{Store, StoreResult, Tx};
+use crate::store::{Receipt, ReceiptKey, ReceiptOwner, Store, StoreResult, StoredOwner, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
 
 /// A folder the engine offers as a project at start. Clients add more at runtime.
@@ -66,6 +66,9 @@ pub struct EngineConfig {
     /// Every stored timestamp and the idle release read it. Default: the system clock. A
     /// replay sets a [`crate::ManualClock`], as T3's tests run on Effect's `TestClock`.
     pub clock: Arc<dyn crate::Clock>,
+    /// The zone a command time without one is read in, as V8 reads the host's zone once at
+    /// start. Default: the system's.
+    pub zone: jiff::tz::TimeZone,
     /// Recover the runs and rollbacks a previous process left active at open
     /// ([`SqliteEngine::recover_runs`]), as the T3 server does at start. Default on. The server
     /// turns it off and recovers once `/mcp` listens. An inert rehearsal copy
@@ -133,6 +136,7 @@ impl EngineConfig {
             runtime_policy_override: None,
             command_output_tap: None,
             clock: Arc::new(crate::SystemClock),
+            zone: jiff::tz::TimeZone::system(),
             recover_runs: true,
             attention: false,
         }
@@ -277,6 +281,8 @@ impl SqliteEngine {
         });
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
+        store.zone = config.zone.clone();
+        store.host = config.host.clone();
         store.generates_titles = config.title_generator.is_some();
         let providers = config
             .provider_set
@@ -932,16 +938,33 @@ impl Inner {
         };
         let host = self.host.clone();
         let inner = self.clone();
+        let receipt_thread = receipt_thread_id(&command);
         let outcome = self
             .db(move |store| {
-                if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
-                    if guard.is_some() {
-                        // A guarded caller never gets a second accept for one command.
-                        return Err(CommandError::Rejected(
-                            "The command was already accepted.".into(),
-                        ));
-                    }
-                    return Ok((vec![], seq, true));
+                let key = ReceiptKey {
+                    command_id: &command_id,
+                    command_type: &command_type,
+                    owner: ReceiptOwner::Thread(&receipt_thread),
+                };
+                if let Some(receipt) = store.outcome(&command_id).map_err(CommandError::Store)? {
+                    let seq = replay(&key, receipt, guard.is_some())?;
+                    // T3's `replayCommandReceipt` checks the queue again for these two.
+                    let only = command["runId"].as_str();
+                    let effects = match command_type.as_str() {
+                        "queue.resume" | "queued-run.start" => {
+                            let mut tx = store.tx().map_err(CommandError::Store)?;
+                            let started =
+                                commands::start_next_queued(&mut tx, &receipt_thread, only)
+                                    .map_err(CommandError::Store)?;
+                            tx.commit(None).map_err(CommandError::Store)?;
+                            started
+                                .into_iter()
+                                .map(|effect| inner.reserve_effect(effect))
+                                .collect()
+                        }
+                        _ => vec![],
+                    };
+                    return Ok((effects, seq, true, store.high_water()));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
                 if let Some(guard) = &guard
@@ -964,17 +987,14 @@ impl Inner {
                 match handler(&mut tx, command) {
                     Ok(effects) => {
                         let seq = match &commit_gate {
-                            None => tx
-                                .commit(Some((&command_id, &command_type)))
-                                .map_err(CommandError::Store)?,
+                            None => tx.commit(Some(&key)).map_err(CommandError::Store)?,
                             Some(commit_gate) => {
                                 // The access decision and the commit are one step.
                                 let mut pending = Some(tx);
                                 let mut committed = None;
                                 let decision = commit_gate.commit_if_open(&mut || {
                                     if let Some(tx) = pending.take() {
-                                        committed =
-                                            Some(tx.commit(Some((&command_id, &command_type))));
+                                        committed = Some(tx.commit(Some(&key)));
                                     }
                                 });
                                 if let Some(tx) = pending.take() {
@@ -1003,22 +1023,36 @@ impl Inner {
                             .into_iter()
                             .map(|effect| inner.reserve_effect(effect))
                             .collect::<Vec<_>>();
-                        Ok((reserved, seq, false))
+                        Ok((reserved, seq, false, store.high_water()))
                     }
                     Err(e) => {
                         tx.rollback();
+                        // T3 records the refusal, so a retry gets it again instead of a second
+                        // try. Refusals made before the decision (access, a disabled provider)
+                        // stay open, as T3's mode-limit refusals do.
+                        if let CommandError::Rejected(refusal) = &e {
+                            store
+                                .record_refusal(&key, refusal)
+                                .map_err(CommandError::Store)?;
+                        }
                         Err(e)
                     }
                 }
             })
             .await;
-        let (effects, seq, replayed) = outcome.map_err(|e| match e {
+        let (effects, seq, replayed, high) = outcome.map_err(|e| match e {
             CommandError::Rejected(message) => DispatchError::Rejected(message),
             CommandError::Store(message) => DispatchError::Internal(message),
         })?;
-        if !replayed {
-            self.notify.send_replace(seq);
-        }
+        // Subscribers follow the store's high-water mark; a quiet command's answer may be
+        // older (its thread's latest sequence).
+        self.notify.send_if_modified(|current| {
+            let moved = high > *current;
+            if moved {
+                *current = high;
+            }
+            moved
+        });
         for effect in effects {
             effect.start();
         }
@@ -1319,6 +1353,65 @@ const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
 
 /// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
 /// is both the `message` and the `detail`; without one, the generic message and no `detail`.
+/// The thread a command's receipt is kept for: T3's `commandThreadId`.
+fn receipt_thread_id(command: &Value) -> String {
+    let field = match command["type"].as_str().unwrap_or_default() {
+        "thread.fork" | "thread.merge_back" => "targetThreadId",
+        "delegated_task.request"
+        | "delegated_task.remote.request"
+        | "delegated_task.remote.complete"
+        | "delegated_task.remote.stop"
+        | "delegated_task.wake-policy"
+        | "delegated_task.completion-delivery.acknowledge"
+        | "delegated_task.completion-delivery.dispose"
+        | "thread.created.record" => "parentThreadId",
+        _ => "threadId",
+    };
+    command[field].as_str().unwrap_or_default().to_owned()
+}
+
+/// A retried command's answer from its receipt (`replayCommandReceipt`): the refusal again,
+/// or a conflict when the id was handled for something else, else the sequence it answered.
+/// A receipt from before owners (schema 4) is refused, never run again.
+fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, CommandError> {
+    if let Some(refusal) = receipt.refusal {
+        return Err(CommandError::Rejected(format!(
+            "Command {} was previously rejected: {refusal}",
+            key.command_id
+        )));
+    }
+    let ReceiptOwner::Thread(thread) = key.owner else {
+        return Ok(receipt.sequence);
+    };
+    match receipt.owner {
+        Some(StoredOwner::Thread(handled)) if handled == thread => {}
+        Some(StoredOwner::Thread(handled)) => {
+            return Err(CommandError::Rejected(format!(
+                "Command {} was already handled for thread {handled} and cannot be replayed for {thread}.",
+                key.command_id
+            )));
+        }
+        Some(StoredOwner::Project(_)) => {
+            return Err(CommandError::Rejected(
+                "Conflicting receipt is not a thread command receipt.".into(),
+            ));
+        }
+        None => {
+            return Err(CommandError::Rejected(format!(
+                "Command {} was handled before receipts named their owner; it cannot be replayed for {thread}.",
+                key.command_id
+            )));
+        }
+    }
+    if guarded {
+        // A guarded caller never gets a second accept for one command.
+        return Err(CommandError::Rejected(
+            "The command was already accepted.".into(),
+        ));
+    }
+    Ok(receipt.sequence)
+}
+
 fn dispatch_error_body(command_id: &str, command_type: &str, reason: &str) -> Value {
     let reason = reason.trim();
     let user_facing = (!reason.is_empty()
