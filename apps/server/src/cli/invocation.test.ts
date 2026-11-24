@@ -6,7 +6,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { posixLauncherScript } from "../cloud/pinnedRuntime.ts";
 import {
+  hostShellWord,
   resolveHostCliCommand,
   resolveRootCliCommand,
   resolveServerInstallation,
@@ -186,6 +188,40 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
       );
     }),
   );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "names the absolute path of a t3 found through a relative PATH entry",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const bin = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(path.join(bin, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+        const hostCommand = (searchPath: string) =>
+          resolveHostCliCommand("doctor").pipe(
+            Effect.provideService(HostProcess.ExecutablePath, "/usr/bin/node"),
+            Effect.provideService(HostProcess.Arguments, [
+              "/usr/bin/node",
+              "/opt/t3/lib/node_modules/t3/dist/bin.mjs",
+            ]),
+            Effect.provideService(HostProcess.IsExecutable, false),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, { PATH: searchPath }),
+          );
+
+        // A relative entry was searched from this process's directory, unlike the user's shell.
+        expect(yield* hostCommand(path.relative(process.cwd(), bin))).toEqual({
+          command: `${hostShellWord("linux", path.join(bin, "t3"))} doctor`,
+          launcher: false,
+        });
+        // An empty entry makes the shell search its own directory first, wherever that is.
+        expect(yield* hostCommand(`:${bin}`)).toEqual({
+          command: `${hostShellWord("linux", path.join(bin, "t3"))} doctor`,
+          launcher: false,
+        });
+        expect(yield* hostCommand(bin)).toEqual({ command: "t3 doctor", launcher: false });
+      }),
+  );
 });
 
 it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
@@ -291,7 +327,7 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
     }),
   );
 
-  it.effect("names the launcher symlink that started a downloaded runtime", () =>
+  it.effect("names the launcher that started a downloaded runtime", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -310,13 +346,14 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       yield* fs.makeDirectory(path.join(root, "shadow-dir/t3"), { recursive: true });
       yield* fs.makeDirectory(path.join(root, "shadow-file"));
       yield* fs.writeFileString(path.join(root, "shadow-file/t3"), "");
-      const resolve = (invokedAs: string) =>
+      const resolve = (invokedAs: string, PATH = "shadow-dir:shadow-file:bin") =>
         resolveServerInstallation.pipe(
           Effect.provideService(HostProcess.ExecutablePath, executable),
           Effect.provideService(HostProcess.IsExecutable, true),
           Effect.provideService(HostProcess.InvokedAs, invokedAs),
           Effect.provideService(HostProcess.WorkingDirectory, root),
-          Effect.provideService(HostProcess.Environment, { PATH: "shadow-dir:shadow-file:bin" }),
+          Effect.provideService(HostProcess.Environment, { PATH }),
+          Effect.provideService(HostProcess.HomeDirectory, root),
           Effect.provideService(HostProcess.Platform, "linux"),
         );
       const baseDir = path.join(root, ".t3");
@@ -325,6 +362,19 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
       expect(yield* resolve(launcher)).toEqual({ kind: "t3-launcher", launcher, baseDir });
       expect(yield* resolve(executable)).toBeNull();
       expect(yield* resolve(copy)).toBeNull();
+
+      // The script launcher execs the runtime by absolute path, so argv0 names the runtime.
+      yield* fs.remove(launcher);
+      yield* fs.writeFileString(
+        launcher,
+        posixLauncherScript(path.join(root, ".t3/runtime/versions/1.0.0/t3")),
+        { mode: 0o755 },
+      );
+      expect(yield* resolve(executable, path.join(root, "bin"))).toEqual({
+        kind: "t3-launcher",
+        launcher,
+        baseDir,
+      });
     }),
   );
 

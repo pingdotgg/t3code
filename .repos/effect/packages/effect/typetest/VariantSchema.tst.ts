@@ -3,6 +3,64 @@ import { Model, VariantSchema } from "effect/schema"
 import { describe, expect, it } from "tstyche"
 
 describe("VariantSchema", () => {
+  it("validates symbol fields and accepts object type aliases", () => {
+    const Test = VariantSchema.make({ variants: ["a", "b"], defaultVariant: "a" })
+    const key = Symbol()
+    type Fields = {
+      name: Schema.String
+      [key]: Schema.Number
+    }
+    const fields: Fields = { name: Schema.String, [key]: Schema.Number }
+    const struct = Test.Struct(fields)
+    const extracted = Test.extract(struct, "a")
+    expect<Schema.Schema.Type<typeof extracted>>().type.toBe<{ readonly name: string; readonly [key]: number }>()
+
+    class User extends Test.Class<User>("User")(fields) {}
+    expect(User).type.toBeConstructableWith({ name: "Alice", [key]: 1 })
+    expect(Test.Class<{}>("Invalid")).type.not.toBeCallableWith({ [key]: 42 })
+    expect(User.extend<{}>("Invalid")).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Test.Struct).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Test.Struct).type.not.toBeCallableWith(42)
+    expect(Test.Struct).type.not.toBeCallableWith("value")
+    expect(Test.Struct).type.not.toBeCallableWith([Schema.Number])
+    expect(Test.Class<{}>("Invalid")).type.not.toBeCallableWith(42)
+    expect(Test.Class<{}>("Invalid")).type.not.toBeCallableWith([Schema.Number])
+    expect(User.extend<{}>("Invalid")).type.not.toBeCallableWith(42)
+    expect(User.extend<{}>("Invalid")).type.not.toBeCallableWith([Schema.Number])
+    expect(Test.Struct).type.not.toBeCallableWith({ name: Schema.String, [key]: 42 })
+
+    type IndexedFields = {
+      [key: string]: Schema.String
+    }
+    const indexed: IndexedFields = { name: Schema.String }
+    expect(Test.Struct).type.toBeCallableWith(indexed)
+    expect(Test.Class<{}>("Indexed")).type.toBeCallableWith(indexed)
+    expect(User.extend<{}>("Indexed")).type.toBeCallableWith(indexed)
+
+    const extra = Symbol()
+    type ExtraFields = {
+      [extra]: Schema.Boolean
+    }
+    const extraFields: ExtraFields = { [extra]: Schema.Boolean }
+    class Extended extends User.extend<Extended>("Extended")(extraFields) {}
+    expect(Extended).type.toBeConstructableWith({ name: "Alice", [key]: 1, [extra]: true })
+    expect<Schema.Schema.Type<typeof Extended.a>>().type.toBe<
+      { readonly name: string; readonly [key]: number; readonly [extra]: boolean }
+    >()
+    class ExtendedWithSchema extends User.extend<ExtendedWithSchema>("ExtendedWithSchema")(
+      Schema.Struct({ [extra]: Schema.Boolean })
+    ) {}
+    expect<Schema.Schema.Type<typeof ExtendedWithSchema.b>>().type.toBe<
+      { readonly name: string; readonly [key]: number; readonly [extra]: boolean }
+    >()
+
+    const Other = VariantSchema.make({ variants: ["other"], defaultVariant: "other" })
+    expect(Test.Struct).type.not.toBeCallableWith({ [key]: Other.Field({ other: Schema.String }) })
+    const nested = Test.Struct({ [key]: Test.FieldOnly(["a"])(Schema.Number) })
+    const parent = Test.extract(Test.Struct({ nested }), "a")
+    expect<Schema.Schema.Type<typeof parent>>().type.toBe<{ readonly nested: { readonly [key]: number } }>()
+  })
+
   it("FieldOnly and FieldExcept take key arrays", () => {
     const Test = VariantSchema.make({
       variants: ["a", "b"],

@@ -22,7 +22,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
@@ -180,6 +180,21 @@ describe("CloudManagedEndpointRuntime", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
     ).toBe("warning");
+    for (const prefix of ["", "Request failed "]) {
+      expect(
+        ManagedEndpointRuntime.classifyRelayClientOutput(
+          `2026-06-17T02:00:00Z ERR ${prefix}error="Incoming request ended abruptly: context canceled" connIndex=0`,
+        ),
+      ).toBe("debug");
+    }
+    for (const line of [
+      '2026-06-17T02:00:00Z ERR error="Incoming request ended abruptly: context deadline exceeded" connIndex=0',
+      '2026-06-17T02:00:00Z ERR Failed to serve tunnel connection error="context canceled"',
+      '2026-06-17T02:00:00Z FTL error="Incoming request ended abruptly: context canceled"',
+      '2026-06-17T02:00:00Z PNC error="Incoming request ended abruptly: context canceled"',
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("warning");
+    }
   });
 
   it("classifies connection unregistration apart from registration and routine output", () => {
@@ -256,6 +271,68 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* runtime.requestRecovery(config);
 
       expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+    }),
+  );
+
+  it.effect("reads the public hostname and its origin from cloudflared's remote config", () =>
+    Effect.gen(function* () {
+      let ingress: unknown = [
+        { hostname: "env.example.t3.codes", service: "http://127.0.0.1:3773" },
+        { service: "http_status:404" },
+      ];
+      const httpClient = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              request.url.endsWith("/config")
+                ? { config: ingress === undefined ? {} : { ingress } }
+                : { readyConnections: 4 },
+            ),
+          ),
+        ),
+      );
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 702,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        layerRelayClientAvailable,
+        httpClient,
+      );
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "connector-token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-06T00:00:01Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
+            "2026-10-06T00:00:01Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      expect(yield* runtime.inspectConnector).toMatchObject({
+        readyConnections: 4,
+        hostname: "env.example.t3.codes",
+        origin: "http://127.0.0.1:3773",
+      });
+      // Before the edge pushes a config, the origin is unknown rather than wrong.
+      for (const missing of [null, undefined]) {
+        ingress = missing;
+        expect(yield* runtime.inspectConnector).toMatchObject({ hostname: null, origin: null });
+      }
     }),
   );
 

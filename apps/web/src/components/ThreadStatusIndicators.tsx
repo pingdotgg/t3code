@@ -1,4 +1,5 @@
 import { pipe } from "effect/Function";
+import { changeRequestTermKind, type ChangeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import {
   scopeProjectRef,
   scopedThreadKey,
@@ -17,7 +18,9 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { TerminalIcon } from "lucide-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
@@ -50,7 +53,6 @@ import {
 } from "./Sidebar.logic";
 
 import type { SidebarThreadSummary } from "../types";
-import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
@@ -70,7 +72,7 @@ export interface PrStatusIndicator {
 }
 
 export interface TerminalStatusIndicator {
-  label: "Terminal process running";
+  label: string;
   colorClass: string;
   pulse: boolean;
 }
@@ -127,6 +129,7 @@ export function useThreadDisplayedPullRequest(
   branchPr: ThreadPr = null,
   branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"],
 ) {
+  const m = useMessages();
   const supportsLinks = useSupportsMultiplePullRequests(environmentId);
   const linkedStatus = useLinkedThreadPullRequest(
     environmentId,
@@ -146,6 +149,7 @@ export function useThreadDisplayedPullRequest(
     status: prStatusIndicator(
       pr,
       linkedStatus?.sourceControlProvider ?? branchSourceControlProvider,
+      m,
     ),
     number: currentLink?.number ?? pr?.number,
     url: currentLink?.url ?? pr?.url,
@@ -197,36 +201,187 @@ export interface ThreadPullRequestBadgePresentation {
   readonly text: string | number;
 }
 
-function resolveThreadPullRequestBadgePresentation({
-  badge,
-  number,
-  url,
-  status,
-}: {
-  readonly badge: ThreadPullRequestBadge | null;
-  readonly number?: number | undefined;
-  readonly url?: string | undefined;
-  readonly status: PrStatusIndicator | null;
-}): ThreadPullRequestBadgePresentation | null {
+type PullRequestBadgeState = ThreadPullRequestBadge["state"];
+
+function stackBadgeLabel(
+  state: PullRequestBadgeState,
+  count: number,
+  term: ChangeRequestTermKind,
+  resolve: MessageResolver,
+): string {
+  switch (state) {
+    case "open":
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, open} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, open}}",
+          { count, term },
+        ),
+      );
+    case "draft":
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, draft} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, draft}}",
+          { count, term },
+        ),
+      );
+    case "closed":
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, closed} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, closed}}",
+          { count, term },
+        ),
+      );
+    case "merged":
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, merged} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, merged}}",
+          { count, term },
+        ),
+      );
+  }
+}
+
+function moreLinkedBadgeLabel(
+  state: PullRequestBadgeState,
+  tooltip: string,
+  others: number,
+  resolve: MessageResolver,
+): string {
+  switch (state) {
+    case "open":
+      return resolve(
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall open} other {{tooltip}, and {others} more linked; overall open}}",
+          { tooltip, others },
+        ),
+      );
+    case "draft":
+      return resolve(
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall draft} other {{tooltip}, and {others} more linked; overall draft}}",
+          { tooltip, others },
+        ),
+      );
+    case "closed":
+      return resolve(
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall closed} other {{tooltip}, and {others} more linked; overall closed}}",
+          { tooltip, others },
+        ),
+      );
+    case "merged":
+      return resolve(
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall merged} other {{tooltip}, and {others} more linked; overall merged}}",
+          { tooltip, others },
+        ),
+      );
+  }
+}
+
+function prStatusLabels(
+  state: PullRequestBadgeState,
+  term: ChangeRequestTermKind,
+  number: number,
+  resolve: MessageResolver,
+): { readonly label: string; readonly tooltipLead: string } {
+  switch (state) {
+    case "open":
+      return {
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} open", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Open", {
+            term,
+            number,
+          }),
+        ),
+      };
+    case "draft":
+      return {
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} draft", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Draft", {
+            term,
+            number,
+          }),
+        ),
+      };
+    case "closed":
+      return {
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} closed", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Closed", {
+            term,
+            number,
+          }),
+        ),
+      };
+    case "merged":
+      return {
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} merged", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Merged", {
+            term,
+            number,
+          }),
+        ),
+      };
+  }
+}
+
+function resolveThreadPullRequestBadgePresentation(
+  {
+    badge,
+    number,
+    url,
+    status,
+  }: {
+    readonly badge: ThreadPullRequestBadge | null;
+    readonly number?: number | undefined;
+    readonly url?: string | undefined;
+    readonly status: PrStatusIndicator | null;
+  },
+  resolve: MessageResolver = m,
+): ThreadPullRequestBadgePresentation | null {
   const terminology = changeRequestTerminologyForUrl(url);
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} ${terminology.plural}, ${aggregate.label.toLowerCase()}`,
+      label: stackBadgeLabel(
+        badge.state,
+        badge.layers,
+        changeRequestTermKind(terminology),
+        resolve,
+      ),
       text: badge.layers,
     };
   }
   if (number === undefined || url === undefined) return null;
 
-  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
+  const tooltip =
+    status?.tooltip ??
+    resolve(
+      msg("{term, select, mr {MR} cr {change request} other {PR}} #{number}, status pending", {
+        term: changeRequestTermKind(terminology),
+        number,
+      }),
+    );
   if (badge?.kind === "pull-request" && badge.others > 0) {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
+      label: moreLinkedBadgeLabel(badge.state, tooltip, badge.others, resolve),
       text: `+${badge.others + 1}`,
     };
   }
@@ -257,7 +412,8 @@ export function ThreadPullRequestBadgeControl({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
-  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
+  const m = useMessages();
+  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status }, m);
   if (presentation === null) return null;
   return (
     <PullRequestBadge
@@ -323,7 +479,7 @@ function PullRequestBadge({
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          <span className="text-secondary-label">{presentation.text}</span>
+          <span>{presentation.text}</span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
@@ -388,7 +544,12 @@ export function ThreadPullRequestsMiniList({
           >
             {line.stack ? (
               <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
+                {line.stack.kind === "native" ? (
+                  <T context="a native stack of pull requests">stack</T>
+                ) : (
+                  <T context="a chain of pull requests based on each other">chain</T>
+                )}{" "}
+                · {line.stack.size}
               </span>
             ) : null}
           </ThreadPullRequestMiniListItem>
@@ -450,17 +611,22 @@ function ThreadPullRequestMiniListItem({
 export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  resolve: MessageResolver = m,
 ): PrStatusIndicator | null {
   if (!pr) return null;
-  const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
-
-  const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
+  const term = changeRequestTermKind(sourceControlClients.get(provider?.kind).changeRequest);
+  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true }, resolve);
+  const { label, tooltipLead } = prStatusLabels(
+    pr.state === "open" && pr.isDraft === true ? "draft" : pr.state,
+    term,
+    pr.number,
+    resolve,
+  );
   return {
-    label: `${shortLabel} ${state.label.toLowerCase()}`,
+    label,
     colorClass: state.toneClassName,
     Icon: state.Icon,
-    tooltip: `${tooltipLead}: ${pr.title}`,
+    tooltip: resolve(msg("{tooltipLead}: {title}", { tooltipLead, title: pr.title })),
     tooltipLead,
     tooltipTitle: pr.title,
     url: pr.url,
@@ -530,12 +696,13 @@ export function resolveDisplayedThreadPrProvider(input: {
 
 export function terminalStatusFromRunningIds(
   runningTerminalIds: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
 ): TerminalStatusIndicator | null {
   if (runningTerminalIds.length === 0) {
     return null;
   }
   return {
-    label: "Terminal process running",
+    label: resolve(msg("Terminal process running")),
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
@@ -560,13 +727,15 @@ export function ThreadTerminalStatusButton({
   terminalIds: readonly string[];
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const terminalId = terminalIds[0];
   if (terminalId === undefined) return null;
-  const status = terminalStatusFromRunningIds(terminalIds);
-  const label =
-    terminalIds.length === 1
-      ? "1 terminal process running. Open terminal"
-      : `${terminalIds.length} terminal processes running. Open terminal`;
+  const status = terminalStatusFromRunningIds(terminalIds, messages);
+  const label = gt(
+    "{count, plural, one {{count} terminal process running. Open terminal} other {{count} terminal processes running. Open terminal}}",
+    { count: terminalIds.length },
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -600,40 +769,6 @@ export function ThreadTerminalStatusButton({
   );
 }
 
-export function ThreadWorktreeIndicator({
-  thread,
-}: {
-  thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
-}) {
-  const worktreePath = thread.worktreePath?.trim();
-  if (!worktreePath) {
-    return null;
-  }
-
-  const displayPath = formatWorktreePathForDisplay(worktreePath);
-  const tooltip = thread.branch
-    ? `Worktree: ${displayPath} (${thread.branch})`
-    : `Worktree: ${displayPath}`;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={tooltip}
-            data-testid={`thread-worktree-${thread.id}`}
-            className="inline-flex items-center justify-center"
-          />
-        }
-      >
-        <FolderGit2Icon className="size-3.5 shrink-0 text-icon-muted" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 function ThreadStatusLabel({
   status,
   compact = false,
@@ -641,6 +776,8 @@ function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const m = useMessages();
+  const label = m(status.label);
   if (compact) {
     return (
       <Tooltip>
@@ -648,7 +785,7 @@ function ThreadStatusLabel({
           render={
             <span
               role="img"
-              aria-label={status.label}
+              aria-label={label}
               className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
             />
           }
@@ -659,7 +796,7 @@ function ThreadStatusLabel({
             }`}
           />
         </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
+        <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -670,7 +807,7 @@ function ThreadStatusLabel({
         render={
           <span
             role="img"
-            aria-label={status.label}
+            aria-label={label}
             className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
           />
         }
@@ -680,14 +817,16 @@ function ThreadStatusLabel({
             status.pulse ? "motion-safe:animate-status-pulse" : ""
           }`}
         />
-        <span className="hidden md:inline">{status.label}</span>
+        <span className="hidden md:inline">{label}</span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{status.label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }
 
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const gt = useGT();
+  const m = useMessages();
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
   // A new ref callback would detach and reattach the row, and each reattach sets lease state.
   const statusRef = useStableCallback((node: HTMLSpanElement | null) =>
@@ -733,6 +872,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const prStatus = prStatusIndicator(
     pr,
     linkedPullRequest?.sourceControlProvider ?? resolveDisplayedThreadPrProvider(displayedPrInput),
+    m,
   );
   const threadStatus = resolveThreadStatusPill({
     thread: {
@@ -774,7 +914,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, status pending`}
+          aria-label={gt(
+            "{term, select, mr {MR} cr {change request} other {PR}} #{number}, status pending",
+            {
+              term: changeRequestTermKind(changeRequestTerminologyForUrl(pendingLink.url)),
+              number: pendingLink.number,
+            },
+          )}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
@@ -783,6 +929,8 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
 }
 
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const gt = useGT();
+  const m = useMessages();
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -791,9 +939,11 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
-  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
+  const threadEnvironmentLabel = isRemoteThread
+    ? (remoteEnvLabel ?? gt("Remote", { $context: "machine location" }))
+    : null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
-  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, m);
 
   if (!terminalStatus && !isRemoteThread) {
     return null;
@@ -825,7 +975,9 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
           <TooltipTrigger
             render={
               <span
-                aria-label={threadEnvironmentLabel ?? "Remote"}
+                aria-label={
+                  threadEnvironmentLabel ?? gt("Remote", { $context: "machine location" })
+                }
                 className="inline-flex items-center justify-center"
               />
             }
@@ -876,6 +1028,7 @@ export function ThreadSearchPullRequestNumber({
     thread.pullRequests,
     thread.branchPullRequest,
   );
+  const m = useMessages();
   if (!matched) return null;
   const badge = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
@@ -891,12 +1044,15 @@ export function ThreadSearchPullRequestNumber({
       (reference) =>
         reference != null && pullRequestMatchesSearchQuery({ linkedPullRequest: reference }, query),
     );
-  const presentation = resolveThreadPullRequestBadgePresentation({
-    badge,
-    number: pr?.number ?? stored?.number,
-    url: pr?.url ?? stored?.url,
-    status: prStatusIndicator(pr, linked?.sourceControlProvider),
-  });
+  const presentation = resolveThreadPullRequestBadgePresentation(
+    {
+      badge,
+      number: pr?.number ?? stored?.number,
+      url: pr?.url ?? stored?.url,
+      status: prStatusIndicator(pr, linked?.sourceControlProvider, m),
+    },
+    m,
+  );
   if (presentation === null) return null;
   const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);
   const state = aggregate

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import * as BigInt from "effect/BigInt"
-import { assertNone, assertSome } from "./utils/assert.ts"
+import { assertNone, assertSome, throws } from "./utils/assert.ts"
 
 describe("BigInt", () => {
   it("re-exports the global BigInt constructor", () => {
@@ -17,6 +17,26 @@ describe("BigInt", () => {
   it("sqrt returns integer square roots", () => {
     assertSome(BigInt.sqrt(4n), 2n)
     assertNone(BigInt.sqrt(-1n))
+  })
+
+  it("nthRoot returns integer n-th roots rounded toward zero", () => {
+    assertSome(BigInt.nthRoot(26n, 3), 2n)
+    assertSome(BigInt.nthRoot(3)(27n), 3n)
+    assertSome(BigInt.nthRoot(28n, 3), 3n)
+    assertSome(BigInt.nthRoot(-26n, 3), -2n)
+    assertSome(BigInt.nthRoot(0n, 4), 0n)
+    assertSome(BigInt.nthRoot(-7n, 1), -7n)
+    assertSome(BigInt.nthRoot(2n ** 100n, 2 ** 40), 1n)
+    assertSome(BigInt.nthRoot(2n ** 262144n, 8192), 2n ** 32n)
+    assertNone(BigInt.nthRoot(-16n, 4))
+  })
+
+  it("nthRoot and nthRootUnsafe require a positive safe integer degree", () => {
+    for (const degree of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      for (const root of [BigInt.nthRoot, BigInt.nthRootUnsafe]) {
+        throws(() => root(0n, degree), new RangeError(`Degree must be a positive safe integer, got ${degree}`))
+      }
+    }
   })
 
   it("toNumber converts bigints in the safe integer range", () => {
@@ -143,6 +163,13 @@ describe("BigInt", () => {
 
   it("sqrtUnsafe returns integer square roots and throws for negatives", () => {
     assert.strictEqual(BigInt.sqrtUnsafe(17n), 4n)
+    assert.strictEqual(BigInt.sqrtUnsafe(2n ** 65536n), 2n ** 32768n)
+    assert.strictEqual(BigInt.sqrtUnsafe(2n ** 65536n - 1n), 2n ** 32768n - 1n)
     assert.throws(() => BigInt.sqrtUnsafe(-1n), RangeError)
+  })
+
+  it("nthRootUnsafe returns integer n-th roots and throws when there is none", () => {
+    assert.strictEqual(BigInt.nthRootUnsafe(10)(1023n), 1n)
+    assert.throws(() => BigInt.nthRootUnsafe(-16n, 4), RangeError)
   })
 })

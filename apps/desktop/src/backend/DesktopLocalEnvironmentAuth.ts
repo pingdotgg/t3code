@@ -17,7 +17,8 @@ import * as HttpClient from "effect/http/HttpClient";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
-const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
+// Each /oauth/token attempt may take 10 s, so a backend busy after ready needs several attempts.
+const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(60);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 
@@ -101,25 +102,32 @@ export const make = Effect.gen(function* () {
         if (!credential) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
-        const session = yield* bootstrapRemoteBearerSession({
-          httpBaseUrl: config.httpBaseUrl.href,
-          credential,
-          clientMetadata: {
-            label: "T3 Code Desktop",
-            deviceType: "desktop",
-          },
-        }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
+        const exchange = Effect.gen(function* () {
+          // Each attempt goes only to a backend that is currently ready.
+          if (!(yield* primary.waitForReady(Duration.infinity))) {
+            return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+          }
+          return yield* bootstrapRemoteBearerSession({
+            httpBaseUrl: config.httpBaseUrl.href,
+            credential,
+            clientMetadata: {
+              label: "T3 Code Desktop",
+              deviceType: "desktop",
+            },
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        });
+        const session = yield* exchange.pipe(
           Effect.retry({
-            while: isTransientBearerBootstrapError,
+            while: (error) =>
+              error._tag !== "DesktopLocalEnvironmentAuthBackendNotConfiguredError" &&
+              isTransientBearerBootstrapError(error),
             schedule: Schedule.spaced(BOOTSTRAP_TRANSIENT_RETRY_INTERVAL),
           }),
           Effect.timeout(BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT),
-          Effect.mapError(
-            (cause) =>
-              new DesktopLocalEnvironmentAuthSessionBootstrapError({
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            cause._tag === "DesktopLocalEnvironmentAuthBackendNotConfiguredError"
+              ? cause
+              : new DesktopLocalEnvironmentAuthSessionBootstrapError({ cause }),
           ),
         );
         yield* Ref.set(tokenRef, Option.some(session.access_token));
