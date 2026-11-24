@@ -46,7 +46,8 @@ PersistedQueueTest.suite(
   PersistedQueue.layerStoreRedis({
     pollInterval: "50 millis",
     lockRefreshInterval: "100 millis"
-  }).pipe(Layer.provide(RedisLayer))
+  }).pipe(Layer.provide(RedisLayer)),
+  { cleanupUsesClock: true }
 )
 
 RateLimiterTest.suite(

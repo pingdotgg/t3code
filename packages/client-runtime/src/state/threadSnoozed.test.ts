@@ -13,6 +13,7 @@ import {
   hasUnseenRunFailure,
   pickSnoozePreset,
   resolveSnoozePresets,
+  snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -420,6 +421,17 @@ describe("resolveSnoozePresets", () => {
     ).toEqual(["In 3 hours 23:00", "In 6 hours Thu 2:00", "Tomorrow 21:00", "Next week Mon 18:00"]);
   });
 
+  it("uses the German weekday with the caller's clock format", () => {
+    const options = {
+      locale: "de",
+      formatTime,
+      presets: [{ kind: "at", day: "monday", time: "18:00" }] as const,
+    };
+    const [preset] = resolveSnoozePresets(localDate(2026, 4, 8, 20), options);
+
+    expect(preset?.whenLabel).toMatch(/^Mo\.? 18:00$/);
+  });
+
   it("drops a today preset once its time passes and moves a weekday on that day to next week", () => {
     // Monday 18:30.
     const now = localDate(2026, 4, 13, 18, 30);
@@ -501,6 +513,18 @@ describe("pickSnoozePreset", () => {
       now: localDate(2026, 8, 31, 0, 1),
     });
     expect(picked?.snoozedUntil).toBe(localDate(2026, 8, 31, 9).toISOString());
+  });
+});
+
+describe("snoozeWakeLabel", () => {
+  it("reads a one-hour snooze as 1h on minute and live clocks", () => {
+    const wake = "2026-04-10T13:00:30.000Z";
+    expect(snoozeWakeLabel(wake, { now: NOW })).toBe("1h");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:00:40.000Z" })).toBe("1h");
+    expect(snoozeWakeLabel("2026-04-10T15:00:30.000Z", { now: NOW })).toBe("3h");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:01:00.000Z" })).toBe("59m");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:10.000Z" })).toBe("1m");
+    expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:30.000Z" })).toBe("now");
   });
 });
 

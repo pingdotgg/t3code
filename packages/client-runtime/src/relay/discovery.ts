@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -75,7 +77,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Relay returned status for a different environment.",
+        ...translatableDetail(msg("Relay returned status for a different environment.")),
       }),
     );
   }
@@ -87,7 +89,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Relay returned status for a different environment endpoint.",
+        ...translatableDetail(msg("Relay returned status for a different environment endpoint.")),
       }),
     );
   }
@@ -98,7 +100,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Relay returned a descriptor for a different environment.",
+        ...translatableDetail(msg("Relay returned a descriptor for a different environment.")),
       }),
     );
   }

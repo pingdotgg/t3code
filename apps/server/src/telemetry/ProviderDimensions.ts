@@ -6,19 +6,6 @@ import type {
 
 import { BUNDLED_MODEL_MANIFEST } from "../provider/ModelManifest.ts";
 
-/**
- * Drivers whose model catalogs are published by the vendor. Other drivers
- * (OpenCode, Pi, ACP agents) list models from the user's own configuration,
- * such as local Ollama tags, so their model names stay out of analytics.
- */
-const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "antigravity",
-]);
-
 export interface ProviderDimensions {
   readonly provider: string;
   readonly model?: string;
@@ -26,8 +13,7 @@ export interface ProviderDimensions {
 
 /**
  * Anonymous provider and model for a model selection. Instance ids are
- * user-defined, so only the driver kind is reported. The model is reported
- * only when it comes from a vendor catalog and is not a user-added custom model.
+ * user-defined, so only the driver kind is reported.
  */
 export function providerDimensions(
   providers: ReadonlyArray<ServerProvider>,
@@ -35,16 +21,16 @@ export function providerDimensions(
 ): ProviderDimensions {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (provider === undefined) return { provider: "unknown" };
-  const model = provider.models.find((candidate) => candidate.slug === selection.model);
-  return VENDOR_CATALOG_DRIVERS.has(provider.driver) && model !== undefined && !model.isCustom
-    ? { provider: provider.driver, model: model.slug }
-    : { provider: provider.driver };
+  return { provider: provider.driver, model: modelLabel(providers, selection.model) };
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
+// Absolute, home, relative, or Windows paths, such as a local GGUF file. Directories can name the user.
+const FILE_PATH = /^(?:[/~]|\.{1,2}[/\\]|[A-Za-z]:[\\/])|\\/u;
 
-// The bundled manifest is reviewed in this repo. Codex lists whatever its configured
-// model provider serves, so only the manifest vouches for Codex, Claude, and Antigravity.
+const fileName = (model: string) =>
+  FILE_PATH.test(model) ? model.slice(model.search(/[^/\\]*$/u)) : model;
+
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
     catalog.models.flatMap((model) =>
@@ -52,17 +38,18 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
     ),
   ),
 );
-const REGISTRY_LABEL_DRIVERS: ReadonlySet<string> = new Set(["cursor", "grok"]);
 
 /**
- * The vendor catalog slug that a native or routed model id names, such as
- * `anthropic/claude-opus-5-5` or a dated snapshot. Models outside the bundled
- * manifest and the Cursor and Grok catalogs, including user-added ones, return undefined.
+ * The model name analytics reports. A routed id, alias, or dated snapshot that the
+ * bundled manifest or a provider's model list knows, such as `anthropic/claude-opus-5-5`
+ * or `antigravity-default`, maps to its catalog slug. A file path reports only its file
+ * name. Any other id is reported as is.
  */
-export function catalogModelLabel(
-  providers: ReadonlyArray<ServerProvider>,
-  model: string,
-): string | undefined {
+export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: string): string {
+  return fileName(catalogSlug(providers, model) ?? model);
+}
+
+function catalogSlug(providers: ReadonlyArray<ServerProvider>, model: string) {
   const leaf = model.slice(model.lastIndexOf("/") + 1);
   const candidates = [model, leaf, leaf.replace(DATED_SNAPSHOT, "")];
   for (const candidate of candidates) {
@@ -70,9 +57,10 @@ export function catalogModelLabel(
     if (label !== undefined) return label;
   }
   for (const provider of providers) {
-    if (!REGISTRY_LABEL_DRIVERS.has(provider.driver)) continue;
     const match = provider.models.find(
-      (entry) => !entry.isCustom && candidates.includes(entry.slug),
+      (entry) =>
+        candidates.includes(entry.slug) ||
+        entry.aliases?.some((alias) => candidates.includes(alias)) === true,
     );
     if (match !== undefined) return match.slug;
   }
