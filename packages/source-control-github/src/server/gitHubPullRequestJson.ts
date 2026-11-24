@@ -280,7 +280,9 @@ export function isSubjectOfPullRequest(result: PullRequestSubject.Result): boole
           ? node.reviewCommentPullRequest.id
           : node.__typename === "PullRequestReview"
             ? node.reviewPullRequest.id
-            : node.id;
+            : node.__typename === "PullRequestReviewThread"
+              ? node.threadPullRequest.id
+              : node.id;
   return expected !== null && actual !== null && expected === actual;
 }
 

@@ -305,7 +305,9 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     const sortedEntries = entries.toSorted();
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
     if (skillFileName !== undefined) {
-      yield* addSkillFile(path.join(directory, skillFileName), scope);
+      if (matchesSkillFilter(path.basename(directory), filter)) {
+        yield* addSkillFile(path.join(directory, skillFileName), scope);
+      }
       return;
     }
     if (scanChildren) {
