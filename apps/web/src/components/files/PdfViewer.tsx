@@ -6,6 +6,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import { msg, useGT } from "gt-react";
@@ -25,6 +27,7 @@ import {
   pdfPageScrollTop,
   pdfPageText,
   pdfPageWidth,
+  pdfResizedScrollTop,
   pdfRestoredScrollTop,
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
@@ -41,6 +44,21 @@ type PdfPosition = PdfViewState & { width: number; ratios: readonly number[] };
 // Thread switches unmount the preview; retain only the most recent documents.
 const positions = new Map<string, PdfPosition>();
 
+type PdfLink = { box: readonly [number, number, number, number] } & (
+  | { url: string }
+  | { page: number }
+);
+
+// Resolves a link annotation's destination, named or explicit, to a page index.
+async function pdfLinkPage(pdf: PDFDocumentProxy, dest: unknown): Promise<number | null> {
+  const explicit: unknown = typeof dest === "string" ? await pdf.getDestination(dest) : dest;
+  if (!Array.isArray(explicit)) return null;
+  const [ref] = explicit as unknown[];
+  if (Number.isInteger(ref)) return ref as number;
+  if (typeof ref !== "object" || ref === null) return null;
+  return pdf.getPageIndex(ref as Parameters<PDFDocumentProxy["getPageIndex"]>[0]);
+}
+
 export type PdfViewState = {
   page: number;
   offset: number;
@@ -55,10 +73,14 @@ function PdfPage(props: {
   query: string;
   onSize: (index: number, ratio: number) => void;
   onError: (error: string) => void;
+  onPageLink: (index: number) => void;
+  onOpenLink: ((url: string, event: MouseEvent) => void) | undefined;
 }) {
   const gt = useGT();
+  const [links, setLinks] = useState<readonly PdfLink[]>([]);
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
+  const painted = useRef<PDFDocumentProxy>(null);
   const { document: pdf, index, width, onSize, onError } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Render the PDF page canvas and text layer, cancelling tasks and releasing pdf.js page resources on cleanup.
   useEffect(() => {
@@ -66,7 +88,11 @@ function PdfPage(props: {
     let paint: ReturnType<Awaited<ReturnType<PDFDocumentProxy["getPage"]>>["render"]> | undefined;
     let layer: TextLayer | undefined;
     let loadedPage: Awaited<ReturnType<PDFDocumentProxy["getPage"]>> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
+      // A drag changes the width every frame. CSS scales the painted page until the width settles.
+      if (painted.current === pdf)
+        await new Promise((resolve) => (timer = setTimeout(resolve, 150)));
       const page = await pdf.getPage(index + 1);
       loadedPage = page;
       if (cancelled || !canvas.current || !text.current) {
@@ -81,10 +107,12 @@ function PdfPage(props: {
         window.devicePixelRatio || 1,
         Math.sqrt((8 * 1024 * 1024) / (viewport.width * viewport.height)),
       );
-      canvas.current.width = Math.ceil(viewport.width * ratio);
-      canvas.current.height = Math.ceil(viewport.height * ratio);
+      // Resizing a canvas blanks it, so the page paints off screen and replaces the old one whole.
+      const buffer = document.createElement("canvas");
+      buffer.width = Math.ceil(viewport.width * ratio);
+      buffer.height = Math.ceil(viewport.height * ratio);
       paint = page.render({
-        canvas: canvas.current,
+        canvas: buffer,
         viewport,
         transform: [ratio, 0, 0, ratio, 0, 0],
         background: "white",
@@ -96,13 +124,46 @@ function PdfPage(props: {
         viewport,
         textContentSource: page.streamTextContent(),
       });
-      await Promise.all([paint.promise, layer.render()]);
+      const shown = paint.promise.then(() => {
+        if (cancelled || !canvas.current) return;
+        canvas.current.width = buffer.width;
+        canvas.current.height = buffer.height;
+        canvas.current.getContext("2d", { alpha: false })?.drawImage(buffer, 0, 0);
+        buffer.width = 0;
+        painted.current = pdf;
+      });
+      const linked = page.getAnnotations({ intent: "display" }).then(async (annotations) => {
+        const found: PdfLink[] = [];
+        for (const annotation of annotations) {
+          if (annotation.subtype !== "Link") continue;
+          const [x1, y1] = viewport.convertToViewportPoint(annotation.rect[0], annotation.rect[1]);
+          const [x2, y2] = viewport.convertToViewportPoint(annotation.rect[2], annotation.rect[3]);
+          const box = [
+            Math.min(x1, x2) / viewport.width,
+            Math.min(y1, y2) / viewport.height,
+            Math.abs(x2 - x1) / viewport.width,
+            Math.abs(y2 - y1) / viewport.height,
+          ] as const;
+          if (typeof annotation.url === "string" && /^https?:\/\//i.test(annotation.url)) {
+            found.push({ box, url: annotation.url });
+            continue;
+          }
+          const target = await pdfLinkPage(pdf, annotation.dest).catch(() => null);
+          if (target !== null && target >= 0 && target < pdf.numPages)
+            found.push({ box, page: target });
+        }
+        if (!cancelled) setLinks(found);
+      });
+      // A page whose annotations cannot be read still renders, without links.
+      const linkedOrNone = linked.catch(() => undefined);
+      await Promise.all([shown, layer.render(), linkedOrNone]);
     })().catch((cause: unknown) => {
       if (!cancelled)
         onError(thrownErrorMessage(cause, m) ?? m(msg("This PDF page could not render.")));
     });
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       paint?.cancel();
       layer?.cancel();
       // Release operator lists when virtual pages leave the viewport.
@@ -134,6 +195,48 @@ function PdfPage(props: {
         className="block h-full w-full"
       />
       <div ref={text} data-pdf-text-layer />
+      {links.length ? (
+        <div className="pointer-events-none absolute inset-0">
+          {links.map((link) => {
+            const [left, top, width, height] = link.box;
+            const key = `${link.box.join()}:${"url" in link ? link.url : link.page}`;
+            const style = {
+              left: `${left * 100}%`,
+              top: `${top * 100}%`,
+              width: `${width * 100}%`,
+              height: `${height * 100}%`,
+            };
+            return "url" in link ? (
+              <a
+                key={key}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={link.url}
+                className="pointer-events-auto absolute"
+                style={style}
+                onClick={(event) => {
+                  if (!props.onOpenLink) return;
+                  event.preventDefault();
+                  props.onOpenLink(link.url, event);
+                }}
+              />
+            ) : (
+              <a
+                key={key}
+                href={`#page=${link.page + 1}`}
+                aria-label={gt("Page {number}", { number: String(link.page + 1) })}
+                className="pointer-events-auto absolute"
+                style={style}
+                onClick={(event) => {
+                  event.preventDefault();
+                  props.onPageLink(link.page);
+                }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
     </>
   );
 }
@@ -144,6 +247,8 @@ export default function PdfViewer(props: {
   positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
+  onOpenLink?: (url: string, event: MouseEvent) => void;
+  actions?: ReactNode;
 }) {
   const gt = useGT();
   const [savedPosition] = useState(() =>
@@ -159,7 +264,7 @@ export default function PdfViewer(props: {
   const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
-  const [scrollTop, setScrollTop] = useState(0);
+  const [scrolled, setScrolled] = useState({ top: 0, width: 0, pdf });
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<number[]>([]);
   const [finding, setFinding] = useState(false);
@@ -234,6 +339,9 @@ export default function PdfViewer(props: {
   }, []);
   const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
   const offsets = pdfPageOffsets(ratios, width);
+  // A new page width moves every page, so the place in view has a new offset before the DOM scrolls.
+  const resized = pdf !== null && scrolled.pdf === pdf && scrolled.width !== width;
+  const scrollTop = resized ? pdfResizedScrollTop(ratios, scrolled, width) : scrolled.top;
   const current = currentPdfPage(offsets, ratios.length, scrollTop);
   const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
   // Stable callbacks let page canvases survive scroll and find updates.
@@ -270,7 +378,7 @@ export default function PdfViewer(props: {
       top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
       left: initialView.left,
     });
-    setScrollTop(node.scrollTop);
+    setScrolled({ top: node.scrollTop, width, pdf });
     saveView(node);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
@@ -288,7 +396,7 @@ export default function PdfViewer(props: {
     };
     setZoom(value);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after a zoom or resize has committed the new page width.
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
     zoomAnchor.current = null;
@@ -298,7 +406,7 @@ export default function PdfViewer(props: {
       node.scrollTo({
         top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
       });
-    }
+    } else if (resized) node.scrollTo({ top: scrollTop });
     saveView(node, anchor !== null);
   });
   const firstMatch = matches[0];
@@ -414,10 +522,12 @@ export default function PdfViewer(props: {
           <ScanIcon className="size-3.5" />
         </FileSurfaceAction>
         <div className="w-28">
+          {/* Native search inputs clear on Escape even during IME composition. */}
           <Input
             ref={find}
             size="compact"
-            type="search"
+            type="text"
+            role="searchbox"
             aria-label={gt("Find in PDF")}
             placeholder={gt("Find in PDF")}
             value={query}
@@ -425,6 +535,13 @@ export default function PdfViewer(props: {
               setQuery(event.target.value);
               setMatches([]);
               setFindError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+                return;
+              if (!query && !event.repeat) return;
+              event.stopPropagation();
+              setQuery("");
             }}
           />
         </div>
@@ -448,6 +565,7 @@ export default function PdfViewer(props: {
             </FileSurfaceAction>
           </>
         ) : null}
+        {props.actions}
       </div>
       <div
         ref={scroll}
@@ -456,8 +574,7 @@ export default function PdfViewer(props: {
         tabIndex={0}
         className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto scrollbar-gutter-stable bg-muted/40"
         onScroll={(event) => {
-          const top = event.currentTarget.scrollTop;
-          setScrollTop(top);
+          setScrolled({ top: event.currentTarget.scrollTop, width, pdf });
           saveView(event.currentTarget);
         }}
         onKeyDown={(event) => {
@@ -508,6 +625,8 @@ export default function PdfViewer(props: {
                   query={query}
                   onSize={onSize}
                   onError={setError}
+                  onPageLink={showPage}
+                  onOpenLink={props.onOpenLink}
                 />
               </div>
             ))}
