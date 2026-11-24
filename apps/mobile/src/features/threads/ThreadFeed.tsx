@@ -113,6 +113,8 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import {
   contextCompactionTokenCounts,
   resolveViewedImageAsset,
+  viewedImageOutputResource,
+  type ViewedImage,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
@@ -261,6 +263,7 @@ import {
   ThreadWorkGroupToggle,
   ThreadThinkingRow,
   ThreadWorkLog,
+  type ViewedImageRenderer,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import {
@@ -277,7 +280,12 @@ import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
-import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
+import {
+  assetEnvironment,
+  useAssetUrl,
+  useAssetUrlState,
+  useRefreshAssetUrl,
+} from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
@@ -1996,7 +2004,7 @@ function renderFeedEntry(
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
-    readonly renderViewedImage: MarkdownImageRenderer;
+    readonly renderViewedImage: ViewedImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly replyActionSize: { readonly button: number; readonly icon: number };
@@ -2136,9 +2144,9 @@ function renderFeedEntry(
     const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
     return (
       <View className="flex-row flex-wrap pb-2" style={{ gap: VIEWED_IMAGE_GAP }}>
-        {entry.paths.map((path) => (
-          <View key={path} style={{ width: thumbnailWidth }}>
-            {props.renderViewedImage({ href: path, alt: null, title: null })}
+        {entry.images.map((image) => (
+          <View key={image.path} style={{ width: thumbnailWidth }}>
+            {props.renderViewedImage(image)}
           </View>
         ))}
       </View>
@@ -3673,35 +3681,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       />
     );
   };
-  const renderViewedImage: MarkdownImageRenderer = (image) => {
-    const viewedImage = resolveViewedImageAsset(image.href, {
-      threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
-    });
-    const media = viewedImage
-      ? resolveMarkdownMediaPreview(image.href, {
-          environmentId: props.environmentId,
-          threadId: props.threadId,
-          workspaceRoot: props.workspaceRoot,
-          imageEmbed: true,
-        })
-      : null;
-    const actionsSource = media?.source.actionsSource;
-    return viewedImage ? (
-      <ThreadMarkdownImage
-        environmentId={props.environmentId}
-        resource={viewedImage.resource}
-        alt={viewedImage.alt}
-        srcFragment={viewedImage.srcFragment}
-        actionsSource={
-          actionsSource && "resource" in actionsSource
-            ? { ...actionsSource, resource: viewedImage.resource }
-            : undefined
-        }
-        onPressPreview={onPressPreview}
-      />
-    ) : null;
-  };
+  const renderViewedImage: ViewedImageRenderer = (image) => (
+    <ThreadViewedImage
+      image={image}
+      environmentId={props.environmentId}
+      threadId={props.threadId}
+      workspaceRoot={props.workspaceRoot}
+      onPressPreview={onPressPreview}
+    />
+  );
   const markdownStyles = useMarkdownStyles();
   const renderReasoning = (text: string) => (
     <AssistantMarkdownContent
@@ -4436,6 +4424,42 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     </PresentationSource>
   );
 });
+
+/** Shows the picture the call returned, not the file's current contents at its path. */
+function ThreadViewedImage(props: {
+  readonly image: ViewedImage;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot?: string | null | undefined;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const output = viewedImageOutputResource(props.image, props.threadId);
+  const outputUrl = useAssetUrlState(props.environmentId, output);
+  const viewedImage = resolveViewedImageAsset(props.image.path, {
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+  });
+  if (!viewedImage) return null;
+  const resource = output && outputUrl._tag !== "Failure" ? output : viewedImage.resource;
+  const actionsSource = resolveMarkdownMediaPreview(props.image.path, {
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+    imageEmbed: true,
+  })?.source.actionsSource;
+  return (
+    <ThreadMarkdownImage
+      environmentId={props.environmentId}
+      resource={resource}
+      alt={viewedImage.alt}
+      srcFragment={viewedImage.srcFragment}
+      actionsSource={
+        actionsSource && "resource" in actionsSource ? { ...actionsSource, resource } : undefined
+      }
+      onPressPreview={props.onPressPreview}
+    />
+  );
+}
 
 function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
   const gt = useGT();

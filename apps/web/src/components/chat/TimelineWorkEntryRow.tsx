@@ -18,7 +18,10 @@ import {
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   toolGroupAction,
+  viewedImageOutputResource,
+  workEntryViewedImage,
   workEntryViewedImagePath,
+  type ViewedImage,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { t3ToolResultIndicatesFailure } from "@t3tools/client-runtime/t3ToolSummary";
 import {
@@ -41,7 +44,7 @@ import { McpSignInAction } from "./McpSignInAction";
 import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
-import { useAssetUrls } from "../../assets/assetUrls";
+import { useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { observeResize } from "../../lib/observeResize";
 import { useThreadShell } from "../../state/entities";
 import {
@@ -255,29 +258,51 @@ export function ViewedImagesTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "viewed-images" }>;
 }) {
-  const { threadRef, workspaceRoot, onImageExpand } = use(TimelineRowCtx);
+  const { threadRef, onImageExpand } = use(TimelineRowCtx);
   if (!threadRef) return null;
   return (
     <div className="flex flex-wrap items-start gap-2 px-0.5" data-image-gallery>
-      {row.paths.map((path) => {
-        const image = resolveViewedImageAsset(path, {
-          threadId: threadRef.threadId,
-          workspaceRoot,
-        });
-        return image ? (
-          <ChatMarkdownAssetImage
-            key={path}
-            environmentId={threadRef.environmentId}
-            resource={image.resource}
-            alt={image.alt}
-            srcFragment={image.srcFragment}
-            workspaceRoot={workspaceRoot}
-            maxHeightRem={10}
-            onImageExpand={onImageExpand}
-          />
-        ) : null;
-      })}
+      {row.images.map((image) => (
+        <ViewedImagePreview
+          key={image.path}
+          image={image}
+          maxHeightRem={10}
+          onImageExpand={onImageExpand}
+        />
+      ))}
     </div>
+  );
+}
+
+/** Shows the picture the call returned, not the file's current contents at its path. */
+function ViewedImagePreview({
+  image,
+  maxHeightRem,
+  onImageExpand,
+}: {
+  image: ViewedImage;
+  maxHeightRem: number;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+}) {
+  const { threadRef, workspaceRoot } = use(TimelineRowCtx);
+  const output = threadRef ? viewedImageOutputResource(image, threadRef.threadId) : null;
+  const outputUrl = useAssetUrlState(threadRef?.environmentId ?? null, output);
+  if (!threadRef) return null;
+  const asset = resolveViewedImageAsset(image.path, {
+    threadId: threadRef.threadId,
+    workspaceRoot,
+  });
+  if (!asset) return null;
+  return (
+    <ChatMarkdownAssetImage
+      environmentId={threadRef.environmentId}
+      resource={output && outputUrl._tag !== "Failure" ? output : asset.resource}
+      alt={asset.alt}
+      srcFragment={asset.srcFragment}
+      workspaceRoot={workspaceRoot}
+      maxHeightRem={maxHeightRem}
+      onImageExpand={onImageExpand}
+    />
   );
 }
 
@@ -454,6 +479,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : skill
         ? (skill.args ?? null)
         : undefined;
+  const viewedImageSource = workEntryViewedImage(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
       ? resolveViewedImageAsset(viewedImagePath, {
@@ -682,14 +708,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </>
       }
     >
-      {expanded && viewedImage && threadRef ? (
+      {expanded && viewedImage && viewedImageSource ? (
         <WorkLogDetails kind="media">
-          <ChatMarkdownAssetImage
-            environmentId={threadRef.environmentId}
-            resource={viewedImage.resource}
-            alt={viewedImage.alt}
-            srcFragment={viewedImage.srcFragment}
-            workspaceRoot={workspaceRoot}
+          <ViewedImagePreview
+            image={viewedImageSource}
             maxHeightRem={16}
             onImageExpand={expandImage}
           />

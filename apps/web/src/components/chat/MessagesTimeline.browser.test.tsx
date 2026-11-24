@@ -168,6 +168,10 @@ function work(id: string, entry: Record<string, unknown>): Entry {
   } as Entry;
 }
 
+function viewedImage(path: string) {
+  return { path, itemId: path, threadId: undefined, hasOutput: false };
+}
+
 function v2Item(type: string, fields: Record<string, unknown>) {
   const id = (fields.id as string | undefined) ?? type;
   return {
@@ -1907,7 +1911,7 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
+            images: ["/repo/first.png", "/repo/second.png", "/repo/third.png"].map(viewedImage),
           }}
         />
       </TimelineRowCtx>,
@@ -1942,7 +1946,7 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/step-1.jpg", "/repo/step-3.jpg"],
+            images: ["/repo/step-1.jpg", "/repo/step-3.jpg"].map(viewedImage),
           }}
         />
       </TimelineRowCtx>,

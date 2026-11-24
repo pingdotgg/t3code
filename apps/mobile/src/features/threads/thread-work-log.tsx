@@ -93,10 +93,10 @@ import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
   type ToolGroupSummaryKind,
-  workEntryViewedImagePath,
+  type ViewedImage,
+  workEntryViewedImage,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
-import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
@@ -485,10 +485,12 @@ interface ThreadWorkLogProps {
   readonly onCopyRow: (rowId: string, value: string) => void;
   /** `groupId` is the group a lone call stands in for; it opens and closes with the row. */
   readonly onToggleRow: (rowId: string, anchorKey: string, groupId?: string) => void;
-  readonly renderImage: MarkdownImageRenderer;
+  readonly renderImage: ViewedImageRenderer;
   readonly renderReasoning: (text: string) => ReactNode;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }
+
+export type ViewedImageRenderer = (image: ViewedImage) => ReactNode;
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
   const renderRow = (row: ThreadFeedActivity) => (
@@ -1050,7 +1052,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         : row.getFullDetail()
       : null;
   const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
-  const viewedImagePath = workEntryViewedImagePath(row.workEntry);
+  const viewedImage = workEntryViewedImage(row.workEntry);
+  const viewedImagePath = viewedImage?.path ?? null;
   const fetchedOutput =
     !expanded || streamsOutput
       ? null
@@ -1269,11 +1272,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               answer={row.workEntry.questionAnswer}
             />
           ) : null}
-          {viewedImagePath ? (
-            <View className="pb-1.5">
-              {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
-            </View>
-          ) : null}
+          {viewedImage ? <View className="pb-1.5">{props.renderImage(viewedImage)}</View> : null}
           <FilePreviewGallery
             value={outputImages.map((resource) => ({
               kind: "image",
