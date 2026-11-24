@@ -370,6 +370,7 @@ const cleanupFixture = (
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
     let scheduledThreadIds: string[] = [];
+    let branchPullRequests: Record<string, GitManager.GitBranchPullRequest> = {};
     let fullStatusCalls = 0;
     let statusCommands = 0;
     let gitInspections = 0;
@@ -525,6 +526,8 @@ const cleanupFixture = (
       ),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
+        branchPullRequest: (input: { branch: string }) =>
+          Effect.sync(() => branchPullRequests[input.branch] ?? null),
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {
         subscribeMetadata: (
@@ -588,6 +591,9 @@ const cleanupFixture = (
       },
       setThreads: (next: typeof threads) => {
         threads = next;
+      },
+      setBranchPullRequests: (next: typeof branchPullRequests) => {
+        branchPullRequests = next;
       },
       threadBranches: () => threads.map((thread) => thread.branch),
       setOnLiveCheck: (hook: Effect.Effect<void>) => {
@@ -1425,6 +1431,87 @@ describe("subagent worktree ownership", () => {
                   : "Not settled",
       });
     }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect.each(["merge", "squash"] as const)(
+    "removes an isolated subagent worktree whose branch reached the default branch through its parent's merged pull request (%s)",
+    (strategy) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeOnMerge: true,
+          worktreeOnDelete: true,
+          worktreeAfterDays: 30,
+        });
+        const { repo, worktree, command, fs } = fixture;
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "main"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        yield* command(repo, ["push", "origin", "main"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "subagent work\n");
+        yield* command(worktree, ["commit", "-am", "subagent work"]);
+        // The parent merges the subagent's branch into its own and ships one pull request.
+        yield* command(repo, ["branch", "parent-branch", "main"]);
+        yield* command(repo, ["checkout", "parent-branch"]);
+        yield* command(repo, ["merge", "--no-ff", "-m", "merge subagent", "feature"]);
+        yield* command(repo, ["checkout", "main"]);
+        if (strategy === "merge") {
+          yield* command(repo, [
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge parent pull request",
+            "parent-branch",
+          ]);
+        } else {
+          yield* command(repo, ["merge", "--squash", "parent-branch"]);
+          yield* command(repo, ["commit", "-m", "squash parent pull request"]);
+        }
+        yield* command(repo, ["push", "origin", "main"]);
+        const parentHead = (yield* command(repo, ["rev-parse", "parent-branch"])).stdout.trim();
+        fixture.setBranchPullRequests({
+          "parent-branch": {
+            number: 7,
+            title: "Parent work",
+            url: "https://github.com/example/repo/pull/7",
+            baseRef: "main",
+            headRef: "parent-branch",
+            headSha: parentHead,
+            state: "merged",
+            repositoryKey: null,
+            updatedAt: "2026-06-08T12:00:00.000Z",
+          } as GitManager.GitBranchPullRequest,
+        });
+        const parent = shell({
+          branch: "parent-branch",
+          status: "completed",
+          settledAt: at(-DAY_MS),
+          createdAt: at(-3 * DAY_MS),
+          updatedAt: at(-DAY_MS),
+        });
+        const child = shell({
+          id: ThreadId.make("child"),
+          branch: "feature",
+          worktreePath: worktree,
+          status: "completed",
+          createdAt: at(-3 * DAY_MS),
+          latestRunCompletedAt: at(-2 * DAY_MS),
+          updatedAt: at(-2 * DAY_MS),
+          lineage: {
+            parentThreadId: parent.id,
+            rootThreadId: parent.id,
+            relationshipToParent: "subagent",
+          },
+        });
+        fixture.setThreads([child, parent]);
+
+        const report = yield* fixture.service.runNow;
+        expect(report.entries.find((entry) => entry.threadId === child.id)).toMatchObject({
+          outcome: "removed",
+        });
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect.each([

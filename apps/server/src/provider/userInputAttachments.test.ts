@@ -367,6 +367,26 @@ describe("question answer paths", () => {
       "ملاحظة: café, Ça",
     ],
     [
+      "ANSI font under another code page",
+      String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
+      "€5 café",
+    ],
+    [
+      "font code page",
+      String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
+      "Привет",
+    ],
+    [
+      "ANSI font in a Macintosh document",
+      String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
+      "pridržana",
+    ],
+    [
+      "Macintosh font code page",
+      String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0\cpg10000 Geneva;}\f0 Caf\'8e}`,
+      "Café",
+    ],
+    [
       "font character set outside the font table",
       String.raw`{\rtf1\ansi{\fonttbl{\f0\fcharset178 A;}{\f0\fcharset0 B;}{\f1\fcharset0 C;}{\f2\fcharset178 D;}{\f2 E;}}{\stylesheet{\s0\f1\fcharset178 N;}}\f0 \'e3\f1\'e3\f2\'e3}`,
       "ããã",
@@ -721,6 +741,44 @@ describe("question answer paths", () => {
           ],
           absent: ["[Extracted text truncated"],
         },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><item id="ch1" href="q%3F1.xhtml?x=1#sec1"/><itemref idref="ch1"/></package>',
+            "q?1.xhtml": "<html><p>Encoded question mark chapter text.</p></html>",
+          },
+          expected: ["Encoded question mark chapter text."],
+          absent: ["[Skipped document part", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml":
+              '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
+            "My Book/book 1.opf":
+              '<package><item id="ch1" href="ch1.xhtml"/><itemref idref="ch1"/></package>',
+            "My Book/ch1.xhtml": "<html><p>Percent-encoded rootfile chapter text.</p></html>",
+          },
+          expected: ["Percent-encoded rootfile chapter text."],
+          absent: ["[Skipped document part", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml":
+              '<container><rootfile full-path="OPS/book%201.opf"/></container>',
+            "OPS/book%201.opf":
+              '<package><item id="ch1" href="correct.xhtml"/><itemref idref="ch1"/></package>',
+            "ops/book 1.opf":
+              '<package><item id="ch1" href="other.xhtml"/><itemref idref="ch1"/></package>',
+            "OPS/correct.xhtml": "<html><p>Correct primary chapter</p></html>",
+            "ops/other.xhtml": "<html><p>Wrong alternate chapter</p></html>",
+          },
+          expected: ["Correct primary chapter"],
+          absent: ["Wrong alternate chapter", "[Skipped document part"],
+        },
         ...[false, true].flatMap((bom) =>
           [false, true].map((bigEndian) => {
             const encode = (source: string) => {
@@ -933,9 +991,9 @@ describe("question answer paths", () => {
             "xl/workbook.xml":
               '<workbook><sheets><sheet name="Inventory" r:id="a"/><sheet name="Budget" r:id="b"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
-              '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="../catalog/items.xml"/></Relationships>',
+              '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="../catalog/items.xml"/><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../Formatting/Cells.xml"/></Relationships>',
             "catalog/items.xml": "<sst><si><t>Lantern</t></si></sst>",
-            "xl/styles.xml":
+            "formatting/cells.xml":
               '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="9"/><xf numFmtId="164"/></cellXfs></styleSheet>',
             "xl/worksheets/second.xml":
               '<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="C1"><v>37</v></c></row></sheetData></worksheet>',
@@ -951,6 +1009,27 @@ describe("question answer paths", () => {
             "0.25 [Excel numFmtId=9; date system 1900]",
             "45293 [Excel numFmtId=164; format=yyyy-mm-dd; date system 1900]",
           ],
+        },
+        {
+          ext: "xlsx",
+          bounded: true,
+          parts: {
+            "_rels/.rels":
+              '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="docs/book.xml"/></Relationships>',
+            "docs/book.xml": '<workbook><sheets><sheet name="Data" r:id="a"/></sheets></workbook>',
+            "docs/_rels/book.xml.rels":
+              '<Relationships><Relationship Id="a" Target="sheets/data.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="strings.xml"/></Relationships>',
+            "docs/strings.xml": "<sst><si><t>Harbor</t></si></sst>",
+            "docs/styles.xml":
+              '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>',
+            "docs/sheets/data.xml":
+              '<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1" s="1"><v>45293</v></c></row></sheetData></worksheet>',
+          },
+          expected: [
+            "## Sheet: Data",
+            "Harbor\t45293 [Excel numFmtId=164; format=yyyy-mm-dd; date system 1900]",
+          ],
+          absent: ["[Skipped document part"],
         },
         {
           ext: "xlsx",
@@ -1078,6 +1157,28 @@ describe("question answer paths", () => {
           expected: ["Slide text"],
           absent: ["Notes:", "57"],
         },
+        ...[
+          { target: "deck/main.xml", prefix: "deck/" },
+          { target: "/main.xml", prefix: "" },
+        ].map(({ target, prefix }) => ({
+          ext: "pptx",
+          bounded: true,
+          parts: {
+            "_rels/.rels": `<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/></Relationships>`,
+            [`${prefix}main.xml`]:
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            [`${prefix}_rels/main.xml.rels`]:
+              '<Relationships><Relationship Id="a" Target="slides/one.xml"/></Relationships>',
+            [`${prefix}slides/one.xml`]:
+              "<p:sld><a:p><a:r><a:t>Harbor launch</a:t></a:r></a:p></p:sld>",
+            [`${prefix}slides/_rels/one.xml.rels`]:
+              '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notes/n1.xml"/></Relationships>',
+            [`${prefix}notes/n1.xml`]:
+              "<p:notes><a:p><a:r><a:t>Check tide table</a:t></a:r></a:p></p:notes>",
+          },
+          expected: ["## Slide 1", "Harbor launch\nNotes:\nCheck tide table"],
+          absent: ["[Skipped document part"],
+        })),
         ...[false, true].map((missing) => ({
           ext: "pptx",
           bounded: true,

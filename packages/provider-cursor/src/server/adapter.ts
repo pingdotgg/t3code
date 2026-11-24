@@ -309,6 +309,17 @@ const CURSOR_AGENT_SETTING_SOURCES = [
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/** Whether the checkout's own Cursor config (settings, hooks, MCP servers) may load: only unrestricted turns. */
+function cursorLoadsProjectConfig(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  platform: NodeJS.Platform,
+): boolean {
+  const policy = cursorRuntimeAgentPolicy(runtimePolicy, platform);
+  return (
+    runtimePolicy.runtimeMode === "full-access" && !policy.autoReview && !policy.sandboxEnabled
+  );
+}
+
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
@@ -332,12 +343,9 @@ export function makeCursorAgentOptions(input: {
         ? {}
         : { dirs: [...input.runtimePolicy.workspace.extraRoots] }),
       autoReview: policy.autoReview,
-      settingSources:
-        input.runtimePolicy.runtimeMode === "full-access" &&
-        !policy.autoReview &&
-        !policy.sandboxEnabled
-          ? [...CURSOR_AGENT_SETTING_SOURCES]
-          : CURSOR_AGENT_SETTING_SOURCES.filter((source) => source !== "project"),
+      settingSources: cursorLoadsProjectConfig(input.runtimePolicy, input.platform)
+        ? [...CURSOR_AGENT_SETTING_SOURCES]
+        : CURSOR_AGENT_SETTING_SOURCES.filter((source) => source !== "project"),
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
@@ -2731,10 +2739,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
-        const resolveWorkspaceMcpServers = (cwd: string | null) =>
-          cwd === null
+        const resolveWorkspaceMcpServers = (
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) => {
+          const { cwd } = runtimePolicy;
+          return cwd === null
             ? Effect.succeed({})
-            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment).pipe(
+            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment, {
+                includeProject: cursorLoadsProjectConfig(runtimePolicy, platform),
+              }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -2746,6 +2759,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   }).pipe(Effect.as({})),
                 ),
               );
+        };
 
         const openAgent = Effect.fnUntraced(function* (openInput: {
           readonly operation: "create" | "resume";
@@ -3030,7 +3044,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             // A send-time set replaces the create-time set, so the workspace servers go only here and are
             // read again each turn from mcp.json and mcp-disabled.json; both merge with settingSources.
             const turnMcpServers = {
-              ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy.cwd)),
+              ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy)),
               ...mcpServers,
             };
             let starting = true;
