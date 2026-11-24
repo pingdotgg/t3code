@@ -82,8 +82,8 @@ workspace when a session starts. Git does not track empty folders, so they never
 appear in commits.
 
 Use Antigravity's native `/plan` command for planning. Tool approvals follow [Permission modes](./permission-modes.md).
-Questions with fixed choices still need one of the offered answers, even in
-**Full access**.
+When Antigravity asks a question, pick one of its options or type your own reply.
+Questions still need an answer, even in **Full access**.
 
 On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
 Antigravity. Antigravity cannot rewind its own conversation, so the next turn
