@@ -726,69 +726,6 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a task saved with a carried-over Ultracode launches its thread without it", () =>
-  Effect.gen(function* () {
-    const launched = yield* Ref.make<Array<unknown>>([]);
-    const layer = ScheduledTaskService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          ManagedPolicy.layerTest(),
-          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: (input) =>
-              Ref.update(launched, (all) => [...all, input.modelSelection]).pipe(
-                Effect.as({
-                  threadId: ThreadId.make("thread:ultracode-task"),
-                  resumed: false,
-                } as never),
-              ),
-          }),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadShell: () => Effect.succeed({ deletedAt: null } as never),
-          }),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
-          }),
-          NodeCrypto.layer,
-          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
-        ),
-      ),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const id = ScheduledTaskId.make("task:ultracode");
-      yield* service.upsert({
-        id,
-        title: "Triage",
-        prompt: "Triage new issues",
-        enabled: true,
-        schedule: { type: "interval", everyMs: 60_000 },
-        projectId: ProjectId.make("project:test"),
-        workspaceStrategy: { type: "root" },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: "claude-opus-5-5",
-          options: [
-            { id: "effort", value: "high" },
-            { id: "ultracode", value: true },
-          ],
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-      });
-      yield* service.runNow({ id });
-      assert.deepEqual(yield* Ref.get(launched), [
-        {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: "claude-opus-5-5",
-          options: [{ id: "effort", value: "high" }],
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
-);
-
 it.effect("a fresh-session task launches one thread, then starts each later run fresh in it", () =>
   Effect.gen(function* () {
     const launches = yield* Ref.make(0);

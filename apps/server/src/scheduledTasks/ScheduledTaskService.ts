@@ -36,7 +36,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
-import { modelSelectionWithoutUltracode } from "@t3tools/shared/model";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
@@ -1129,8 +1128,7 @@ export const layer = Layer.effect(
                     commandId,
                     projectId: active.projectId,
                     title: active.title,
-                    // Tasks saved before Ultracode stopped carrying over may still hold it.
-                    modelSelection: modelSelectionWithoutUltracode(active.modelSelection),
+                    modelSelection: active.modelSelection,
                     runtimeMode: active.runtimeMode,
                     interactionMode: active.interactionMode,
                     workspaceStrategy: active.workspaceStrategy,
