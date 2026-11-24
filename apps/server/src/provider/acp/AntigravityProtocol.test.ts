@@ -732,4 +732,38 @@ describe("Antigravity served reads", () => {
       status: "completed",
     });
   });
+
+  it("drops agy's toolSummary from T3 MCP call arguments only", () => {
+    const t3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_send",
+            title: "Run mcp_t3-code_send_to_user",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { message: "Hello", toolSummary: "Send greeting" },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const foreignCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_other",
+          title: "Run mcp_other_send_to_user",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { message: "Hello", toolSummary: "Send greeting" },
+        },
+      }).toolCall,
+    );
+    expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
+  });
 });

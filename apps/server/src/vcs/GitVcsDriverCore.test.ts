@@ -4503,6 +4503,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "loads working-tree contents in a repository whose folder name ends in a space",
+      () =>
+        Effect.gen(function* () {
+          const pathService = yield* Path.Path;
+          const cwd = pathService.join(yield* makeTmpDir(), "repo ");
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* writeTextFile(cwd, "app/.keep", "");
+          yield* writeTextFile(cwd, "README.md", "# changed\n");
+
+          const contents = yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(pathService.join(cwd, "app")),
+          );
+
+          assert.strictEqual(contents.newContents, "# changed\n");
+        }),
+    );
+
     it.effect.each([
       { scenario: "kept", before: "\uFEFFold\n", after: "\uFEFFnew\n" },
       { scenario: "added", before: "same\n", after: "\uFEFFsame\n" },
@@ -7165,6 +7184,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["commit", "-m", "more files"]);
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "fresh");
+        // A refresh still inside the checkout's second finishes in the background.
+        const worktreesDir = path.join(cwd, ".git", "worktrees");
+        yield* fs.makeDirectory(worktreesDir, { recursive: true });
+        const indexChanges = yield* Queue.unbounded<void>();
+        yield* fs.watch(worktreesDir, { recursive: true }).pipe(
+          Stream.runForEach(() => Queue.offer(indexChanges, undefined)),
+          Effect.forkScoped,
+        );
 
         // The refresh waits on the clock that stamps the files.
         yield* TestClock.withLive(
@@ -7181,17 +7208,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           worktreePath,
           yield* git(worktreePath, ["rev-parse", "--git-path", "index"]),
         );
-        const indexMtime = Option.getOrThrow((yield* fs.stat(indexPath)).mtime);
-        const indexSecond = Math.floor(indexMtime.getTime() / 1000);
-        const entrySeconds = Array.from(
-          (yield* git(worktreePath, ["ls-files", "--debug"])).matchAll(/^ {2}mtime: (\d+):/gm),
-          ([, seconds]) => Number(seconds),
-        );
-        assert.equal(entrySeconds.length, 51);
-        assert.deepEqual(
-          entrySeconds.filter((seconds) => seconds >= indexSecond),
-          [],
-        );
+        const racyEntries = Effect.gen(function* () {
+          const indexMtime = Option.getOrThrow((yield* fs.stat(indexPath)).mtime);
+          const indexSecond = Math.floor(indexMtime.getTime() / 1000);
+          const entrySeconds = Array.from(
+            (yield* git(worktreePath, ["ls-files", "--debug"])).matchAll(/^ {2}mtime: (\d+):/gm),
+            ([, seconds]) => Number(seconds),
+          );
+          assert.equal(entrySeconds.length, 51);
+          return entrySeconds.filter((seconds) => seconds >= indexSecond);
+        });
+        while ((yield* racyEntries).length > 0 || (yield* fs.exists(`${indexPath}.t3-refresh`))) {
+          yield* Queue.take(indexChanges);
+        }
+        assert.isFalse(yield* fs.exists(`${indexPath}.lock`));
       }),
     );
     it.effect("returns the worktree when its index refresh fails", () =>

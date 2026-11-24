@@ -1564,23 +1564,14 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
-/* T3 Chat renders inline code and compact chat artifacts with its translucent
+/* T3 Chat renders inline code with its translucent
    secondary surface flattened over the light chat canvas. The raw muted and
    secondary tokens are substantially darker than those visible pixels. */
 html[data-theme-id="t3-chat"] {
   @variant light {
-    & .chat-markdown :not(pre) > code,
-    & [data-changed-files-state],
-    & [data-changed-files-header] {
-      background-color: var(--message-surface);
-    }
-
-    & .chat-markdown :not(pre) > code,
-    & [data-changed-files-state] {
-      border-color: transparent;
-    }
-
     & .chat-markdown :not(pre) > code {
+      background-color: var(--message-surface);
+      border-color: transparent;
       color: var(--contrast-message-foreground);
     }
   }
@@ -2070,9 +2061,11 @@ code {
 }
 
 /* Triple-click selection stops at block-level boxes, flex items included, so file chips in
-   prose stay inline-level down to the icon and label. */
+   prose stay inline-level down to the icon and label. Chromium also stops it at
+   draggable="true" (desktop native file drags) unless user-select is set back to text. */
 .chat-markdown-file-link {
   display: inline-block;
+  user-select: text;
   overflow-x: clip;
   text-overflow: ellipsis;
   white-space: nowrap;

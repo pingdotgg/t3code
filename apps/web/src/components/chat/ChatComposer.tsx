@@ -6,6 +6,7 @@ import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
+  draftSupportedRuntimeModes,
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
   resolveRuntimeModeOptions,
@@ -1000,7 +1001,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
-      selectedProviderEntry?.snapshot.supportedRuntimeModes,
+      draftSupportedRuntimeModes(
+        selectedProviderEntry?.snapshot.supportedRuntimeModes,
+        multipleModelSelections,
+        providerStatuses,
+      ),
     );
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(

@@ -8,6 +8,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import packageJson from "../../package.json" with { type: "json" };
 import {
@@ -24,6 +26,7 @@ import {
   type ServiceLauncherParentMessage,
   type SupportedLauncherProtocol,
 } from "./serviceProtocol.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./userManagerOom.ts";
 
 export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
   "ServiceLauncherClientError",
@@ -264,6 +267,22 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
   const path = yield* Path.Path;
   const environment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // The launcher that commits a remote update is the old one; its reload after commit
+  // keeps oomd's watch only if the policy is mirrored before it.
+  const keepOomdWatch =
+    platform === "linux"
+      ? spawner
+          .exitCode(
+            ChildProcess.make("/bin/sh", ["-c", RESTORE_OOMD_WATCH_SCRIPT], {
+              env: environment,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+            }),
+          )
+          .pipe(Effect.timeout("30 seconds"), Effect.ignore)
+      : Effect.void;
 
   const exchange = (
     message: ServiceLauncherChildMessage,
@@ -343,28 +362,31 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
       : context.update;
   const prepareTrial = (input: { readonly baseDir: string }) =>
     pending !== undefined
-      ? exchange(
-          { type: "prepared", updateId: pending.id },
-          (reply) => reply.type === "committed" && reply.updateId === pending.id,
-        ).pipe(
-          Effect.flatMap((reply) =>
-            reply.type !== "committed"
-              ? Effect.die("service launcher returned an impossible prepared response")
-              : repointLaunchers({
-                  baseDir: input.baseDir,
-                  targetVersion: pending.targetVersion,
-                }).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fs),
-                  Effect.provideService(Path.Path, path),
-                  Effect.provideService(HostProcess.Environment, environment),
-                  Effect.provideService(HostProcess.Platform, platform),
-                  Effect.as({
-                    id: pending.id,
-                    fromVersion: pending.fromVersion,
+      ? Effect.andThen(
+          keepOomdWatch,
+          exchange(
+            { type: "prepared", updateId: pending.id },
+            (reply) => reply.type === "committed" && reply.updateId === pending.id,
+          ).pipe(
+            Effect.flatMap((reply) =>
+              reply.type !== "committed"
+                ? Effect.die("service launcher returned an impossible prepared response")
+                : repointLaunchers({
+                    baseDir: input.baseDir,
                     targetVersion: pending.targetVersion,
-                    status: "committed" as const,
-                  }),
-                ),
+                  }).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                    Effect.provideService(HostProcess.Environment, environment),
+                    Effect.provideService(HostProcess.Platform, platform),
+                    Effect.as({
+                      id: pending.id,
+                      fromVersion: pending.fromVersion,
+                      targetVersion: pending.targetVersion,
+                      status: "committed" as const,
+                    }),
+                  ),
+            ),
           ),
         )
       : Effect.succeed(outcome);

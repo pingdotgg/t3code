@@ -5459,6 +5459,8 @@ interface ActiveClaudeSubagent {
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
+  // Clients group cards by launching turn; later updates can arrive during another turn.
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly runToolUseId: string | null;
   readonly effort: string | undefined;
   nextChildItemOrdinal: number;
@@ -7758,6 +7760,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resume.context,
               `task:${resume.taskId}:subagent`,
             ),
+            providerTurnId: resume.context.providerTurnId,
             runToolUseId: launchToolUseId,
             effort: undefined,
             nextChildItemOrdinal: 100,
@@ -8409,6 +8412,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     )
                   : undefined));
           const model = input.model ?? priorTask?.model ?? null;
+          const movesToCurrentRun =
+            input.reopen === true && input.status === "running" && existingSubagent !== undefined;
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -8433,11 +8438,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               startedAt: now,
             }),
             status: input.status,
-            ...(input.reopen === true &&
-            input.status === "running" &&
-            existingSubagent !== undefined
-              ? { runId: input.context.input.runId }
-              : {}),
+            ...(movesToCurrentRun ? { runId: input.context.input.runId } : {}),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
             model,
@@ -8472,6 +8473,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             childRootNodeId,
             turnItemId: existingSubagent?.turnItemId ?? derivedIds.turnItemId,
             turnItemOrdinal,
+            providerTurnId:
+              existingSubagent === undefined || movesToCurrentRun
+                ? input.context.providerTurnId
+                : existingSubagent.providerTurnId,
             runToolUseId:
               existingSubagent === undefined
                 ? (input.toolUseId ?? null)
@@ -8659,7 +8664,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runId: task.runId,
               nodeId: task.id,
               providerThreadId: input.context.input.providerThread.id,
-              providerTurnId: input.context.providerTurnId,
+              providerTurnId: subagent.providerTurnId,
               nativeItemRef: task.nativeTaskRef,
               parentItemId: null,
               ordinal: subagent.turnItemOrdinal,

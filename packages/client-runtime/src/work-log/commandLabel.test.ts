@@ -65,6 +65,17 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
+  // regression: #41718 a leading env-setup eval hid the real program behind "Running command"
+  it.each([
+    [
+      'cd /path/to/repo && eval "$(fnm env --shell zsh)" && fnm use 26.13.1 && git commit -m "msg"',
+      "fnm",
+    ],
+    ['eval "$(/opt/homebrew/bin/brew shellenv)" && pnpm test', "pnpm"],
+  ])("skips leading env-setup eval segments: %s", (command, program) => {
+    expect(commandProgramName(command)).toBe(program);
+  });
+
   it.each([
     ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
     ["unset DEBUG; node app.js", "node"],
