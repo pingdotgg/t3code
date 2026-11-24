@@ -30,9 +30,19 @@ const QUOTA_ERROR = errorPayload(
 const RATE_LIMIT_ERROR = errorPayload(
   "Error 429, Message: Resource has been exhausted (e.g. check quota)., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:cloudcode-pa.googleapis.com reason:RATE_LIMIT_EXCEEDED] map[@type:type.googleapis.com/google.rpc.RetryInfo retryDelay:42s]]",
 );
+const RETIRED_QUOTA_ERROR = errorPayload(
+  "Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s quotaResetTimeStamp:2026-11-09T01:05:00Z] reason:QUOTA_EXHAUSTED]]",
+);
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// The harness renders a gateway failure with its HTTP status line in place of a gRPC status.
+const BAD_GATEWAY_ERROR = Buffer.concat([
+  errorPayload(
+    "Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: 502 Bad Gateway, Details: []",
+  ),
+  Buffer.from("\nThe model is currently unreachable."),
+]);
 // Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
 const MISSING_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0.thinking.signature: Field required"},"request_id":"req_vrtx_test"}, Status: INVALID_ARGUMENT, Details: []',
@@ -82,11 +92,12 @@ describe("watchAntigravityPromptOutcome", () => {
       const turn = (
         steps: ReadonlyArray<readonly [number, Uint8Array]>,
         result: EffectAcpSchema.PromptResponse = { stopReason: "end_turn" },
+        options?: { readonly retired?: boolean },
       ) =>
         Effect.gen(function* () {
           const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
           appendSteps(steps);
-          return yield* check(result);
+          return yield* check(result, options);
         });
       const input = Buffer.from("Run the fixture.");
       const reply = Buffer.from("FIXTURE_OK");
@@ -148,6 +159,40 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "INVALID_ARGUMENT",
           retryable: false,
         }),
+      );
+      assert.deepInclude(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, BAD_GATEWAY_ERROR],
+        ]))?.failure,
+        {
+          class: "provider_error",
+          message: "Bad Gateway: Failed to connect to backend API",
+          retryable: true,
+        },
+      );
+      // A prompt the watchdog retired keeps an absolute reset time but drops a relative one.
+      assert.deepEqual(
+        (yield* turn(
+          [
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, RATE_LIMIT_ERROR],
+          ],
+          undefined,
+          { retired: true },
+        ))?.failure.resetAt,
+        undefined,
+      );
+      assert.equal(
+        (yield* turn(
+          [
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, RETIRED_QUOTA_ERROR],
+          ],
+          undefined,
+          { retired: true },
+        ))?.failure.resetAt,
+        "2026-11-09T01:05:00.000Z",
       );
       // A 404 after the turn already reached the model is a transient edge error, not a bad model.
       for (const error of [NOT_FOUND_ERROR, STATUS_NOT_FOUND_ERROR]) {

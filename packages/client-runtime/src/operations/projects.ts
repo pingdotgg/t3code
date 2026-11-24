@@ -3,6 +3,7 @@ import type {
   CommandId,
   EnvironmentId,
   ProjectMutation,
+  ProjectTrackedFolder,
   ProjectId,
   ServerConfig,
   ServerSettings,
@@ -11,7 +12,12 @@ import type {
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
-import { isAbsolutePath, isExplicitRelativePath, newProjectFolderName } from "@t3tools/shared/path";
+import {
+  isAbsolutePath,
+  isExplicitRelativePath,
+  isHostPath,
+  newProjectFolderName,
+} from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -233,7 +239,11 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
 }
 
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
-  const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0]?.trim() ?? "";
+  const trimmed = (repositoryOrRemoteUrl ?? "").trim();
+  // A local path keeps `#` and `?` in its name; in a URL they start a query or fragment.
+  const isLocalPath =
+    !trimmed.includes("://") && (isHostPath(trimmed) || isExplicitRelativePath(trimmed));
+  const withoutQuery = isLocalPath ? trimmed : (trimmed.split(/[?#]/)[0] ?? "");
   const schemeIndex = withoutQuery.indexOf("://");
   const hasHost = schemeIndex >= 0 || /^[^/\\:]+@[^/\\:]+:/.test(withoutQuery);
   const pathPart = schemeIndex >= 0 ? withoutQuery.slice(schemeIndex + "://".length) : withoutQuery;
@@ -408,6 +418,7 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }): Extract<ProjectMutation, { type: "project.create" }> {
   return {
     type: "project.create",
@@ -417,5 +428,8 @@ export function buildProjectCreateCommand(input: {
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,
+    ...(input.trackedFolders === undefined || input.trackedFolders.length === 0
+      ? {}
+      : { trackedFolders: input.trackedFolders }),
   };
 }
