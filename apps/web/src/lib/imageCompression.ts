@@ -240,16 +240,15 @@ function startImageWorker(): Worker | null {
  * `null` means the caller should do the work on the main thread.
  */
 async function runInImageWorker<Task extends ImageWorkerTask>(
-  task: Task | (() => Promise<Task>),
-  transfer: (task: Task) => Transferable[] = () => [],
+  task: Task,
+  transfer: Transferable[] = [],
 ): Promise<{ value: ImageWorkerResults[Task["kind"]] } | null> {
   const worker = startImageWorker();
   if (!worker) return null;
-  const message = typeof task === "function" ? await task() : task;
   const id = nextImageWorkerId++;
   const response = await new Promise<ImageWorkerResponse | null>((resolve) => {
     pendingImageWorkerTasks.set(id, resolve);
-    worker.postMessage({ id, task: message }, transfer(message));
+    worker.postMessage({ id, task }, transfer);
   });
   return response && "value" in response
     ? { value: response.value as ImageWorkerResults[Task["kind"]] }
@@ -257,18 +256,19 @@ async function runInImageWorker<Task extends ImageWorkerTask>(
 }
 
 const encodeCanvas: EncodeCanvas = async (canvas, colorSpace, quality, mimeType) => {
-  if (typeof OffscreenCanvas === "function" && canvas instanceof OffscreenCanvas) {
+  if (
+    typeof OffscreenCanvas === "function" &&
+    canvas instanceof OffscreenCanvas &&
+    startImageWorker()
+  ) {
+    const bitmap = await createImageBitmap(canvas);
+    // The worker may have failed during the snapshot; then this falls back below.
     const encoded = await runInImageWorker(
-      async () => ({
-        kind: "encode" as const,
-        bitmap: await createImageBitmap(canvas),
-        colorSpace,
-        mimeType,
-        quality,
-      }),
-      (task) => [task.bitmap],
+      { kind: "encode", bitmap, colorSpace, mimeType, quality },
+      [bitmap],
     );
     if (encoded) return encoded.value;
+    bitmap.close();
   }
   return encodeCanvasOnThisThread(canvas, colorSpace, quality, mimeType);
 };
