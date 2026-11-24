@@ -40,6 +40,7 @@ import {
   composerMathRanges,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 
 const isMessageContext = Schema.is(OrchestrationMessageContext);
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
@@ -73,7 +74,7 @@ export function composerMentionPath(source: string, context?: OrchestrationMessa
     const record = context?.records.find((entry) => entry.contextId === reference.contextId);
     return record?.kind === "mention" && "path" in record ? record.path : null;
   }
-  const token = collectComposerInlineTokens(`${source} `)[0];
+  const token = collectComposerInlineTokens(`${source} `, { findMath: markdownMathRanges })[0];
   return token?.type === "mention" && token.source === source ? token.value : null;
 }
 
@@ -222,7 +223,12 @@ export function composerContextEditorTokens(
       !references.some((ref) => token.start < ref.end && token.end > ref.start) &&
       !citations.some((ref) => token.start < ref.end && token.end > ref.start),
   );
-  const taken = [...inlineTokens, ...references, ...citations, ...composerMathRanges(text)];
+  const taken = [
+    ...inlineTokens,
+    ...references,
+    ...citations,
+    ...composerMathRanges(text, markdownMathRanges),
+  ];
   const models = modelTokens.filter(
     (mention) => !taken.some((range) => mention.start < range.end && mention.end > range.start),
   );

@@ -1,4 +1,5 @@
 import type { PullRequestAction } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { T } from "gt-react";
 import { SearchIcon } from "lucide-react";
@@ -25,6 +26,7 @@ import {
   PullRequestRowGlyph,
   PullRequestRowLines,
 } from "./PullRequestListRow";
+import { PullRequestPrivateMark } from "./PullRequestDetailLayout";
 import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
 import { textDirection } from "~/textDirection";
 
@@ -153,6 +155,7 @@ function PullRequestRowImpl({
                   url: entry.url,
                   openLabel: openOnHostLabel(sourceControlClients.get(entry.provider)),
                   position: { x: event.clientX, y: event.clientY },
+                  source: contextMenuSourceOf(event),
                 });
               }}
             >
@@ -162,6 +165,9 @@ function PullRequestRowImpl({
           title={<span dir={textDirection(entry.title)}>{entry.title}</span>}
           signals={
             <>
+              {entry.visibility === "private" ? (
+                <PullRequestPrivateMark className="size-3 text-muted-foreground" />
+              ) : null}
               {entry.checksState === undefined ? null : (
                 <PullRequestChecksPopover
                   checksState={entry.checksState}
