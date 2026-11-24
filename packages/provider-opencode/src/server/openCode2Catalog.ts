@@ -16,6 +16,18 @@ const listProviders = (client: OpenCodeClient, directory: string | undefined) =>
     Effect.map((list) => list.data),
   );
 
+// Optional like provider names: without them models fall back to OpenCode's built-in agents.
+const listPrimaryAgents = (client: OpenCodeClient, directory: string | undefined) =>
+  client.agent.list(locationOf(directory)).pipe(
+    Effect.timeout(PROVIDER_NAME_TIMEOUT),
+    Effect.map((list) =>
+      list.data
+        .filter((agent) => !agent.hidden && agent.mode !== "subagent")
+        .map((agent): string => agent.id),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 const readCatalog = <E>(
   client: OpenCodeClient,
   directory: string | undefined,
@@ -26,10 +38,11 @@ const readCatalog = <E>(
       // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
       models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
       providers,
+      agents: listPrimaryAgents(client, directory),
     },
     { concurrency: "unbounded" },
   ).pipe(
-    Effect.map(({ models, providers }) => {
+    Effect.map(({ models, providers, agents }) => {
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
       return models.map((model) => {
         const providerName = providerNames.get(model.providerID);
@@ -40,6 +53,7 @@ const readCatalog = <E>(
           name: model.name,
           ...(providerName ? { providerName } : {}),
           variants: model.variants.map((variant) => ({ id: variant.id })),
+          ...(agents ? { agents } : {}),
           family: model.family,
           released: model.time.released,
           deprecated: model.status === "deprecated",
