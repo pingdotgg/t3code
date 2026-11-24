@@ -671,7 +671,10 @@ export function ThreadRelationshipsPanel(props: {
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+    ).length ?? 0) +
+    // The parent records a delegated subagent as running while its child is still starting.
+    active.filter(({ edge }) => ["preparing", "starting", "running"].includes(edge.status ?? ""))
+      .length;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
