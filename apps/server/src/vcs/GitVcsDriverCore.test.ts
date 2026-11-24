@@ -1123,6 +1123,40 @@ it.effect("rereads the base after a nested remote's HEAD is retargeted", () =>
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("keeps the base cached when a remote branch has a HEAD path component", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", cwd]);
+      yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+      // A valid ref whose path has a directory named HEAD under refs/remotes.
+      yield* git(cwd, ["update-ref", "refs/remotes/origin/topic/HEAD/child", "HEAD"]);
+      yield* git(cwd, ["checkout", "-b", "feature/x"]);
+      const lookups = () => {
+        const count = spawnedArgs.filter((args) =>
+          args.includes("branch.feature/x.t3-merge-base-ref"),
+        ).length;
+        spawnedArgs.length = 0;
+        return count;
+      };
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 0);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("keeps one cached base per branch however often its refs change", () =>
   Effect.scoped(
     Effect.gen(function* () {

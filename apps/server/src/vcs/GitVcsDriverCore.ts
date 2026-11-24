@@ -2541,11 +2541,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
         for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
           const entryPath = path.join(directory, entry.name);
-          if (entry.type === "Directory") directories.push(entryPath);
-          else {
-            const name = path.relative(gitCommonDir, entryPath).split(path.sep).join("/");
-            if (!packed.names.has(name)) looseNames.push(name);
+          if (entry.type === "Directory") {
+            directories.push(entryPath);
+            continue;
           }
+          const name = path.relative(gitCommonDir, entryPath).split(path.sep).join("/");
+          if (!packed.names.has(name)) looseNames.push(name);
           // A remote name may contain "/", so its HEAD can sit deeper than refs/remotes/<name>.
           if (entry.name === "HEAD" && directory.startsWith(remotesDirectory + path.sep)) {
             remoteHeads.push(entryPath);
