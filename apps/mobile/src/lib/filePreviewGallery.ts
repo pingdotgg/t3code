@@ -54,15 +54,44 @@ export function filePreviewGallery(source: FilePreviewSource, group: readonly Fi
   return items;
 }
 
+const IMAGE_FILENAME_EXTENSION = /\.(png|jpe?g|gif|webp|heic|heif|avif|svg)$/i;
+const PREVIEW_FILENAME_EXTENSION =
+  /\.(png|jpe?g|gif|webp|heic|heif|avif|svg|pdf|docx?|xlsx?|pptx?|txt|rtf)$/i;
+
+export function imagePreviewName(
+  url: string,
+  label: string | null | undefined,
+  fallback: string,
+): string {
+  const trimmed = label?.trim();
+  const isDefaultImageLabel =
+    trimmed !== undefined && (trimmed === fallback || trimmed.toLowerCase() === "image");
+  if (trimmed && !isDefaultImageLabel) return trimmed;
+  if (!/^data:/i.test(url)) {
+    const basename = url.split(/[?#]/)[0]?.split("/").pop();
+    if (basename && IMAGE_FILENAME_EXTENSION.test(basename)) return basename;
+  }
+  return fallback;
+}
+
 export function filePreviewName(source: FilePreviewItem): string {
-  const uriName = "uri" in source ? source.uri.split(/[?#]/)[0]?.split("/").pop() : undefined;
+  const rawUriName =
+    "uri" in source && !/^data:/i.test(source.uri)
+      ? source.uri.split(/[?#]/)[0]?.split("/").pop()
+      : undefined;
+  const uriName = rawUriName || undefined;
+  const fallbackUriName =
+    source.kind === "image"
+      ? uriName && IMAGE_FILENAME_EXTENSION.test(uriName)
+        ? uriName
+        : undefined
+      : uriName;
   const name =
-    source.name ?? ("attachment" in source ? source.attachment.name : uriName) ?? "Preview";
-  const extension = /\.(png|jpe?g|gif|webp|heic|heif|avif|svg|pdf|docx?|xlsx?|pptx?|txt|rtf)$/i;
+    source.name ?? ("attachment" in source ? source.attachment.name : fallbackUriName) ?? "Preview";
   const filename =
-    source.kind !== "image" || extension.test(name)
+    source.kind !== "image" || PREVIEW_FILENAME_EXTENSION.test(name)
       ? name
-      : uriName && extension.test(uriName)
+      : uriName && /\.svg$/i.test(uriName)
         ? uriName
         : name.replace(/\./g, "_");
   return Array.from(filename, (character) =>

@@ -22,7 +22,7 @@ import { useAssetUrlState } from "../../state/assets";
 import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
-import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
+import { filePreviewSourceIdentifier, imagePreviewName } from "../../lib/filePreviewGallery";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
   type MarkdownImageDisplaySize,
@@ -105,7 +105,6 @@ export function ThreadMarkdownImageView(props: {
   const gt = useGT();
   const withGallery = useFilePreviewGallery();
   const localSourceIdentifier = useId();
-  const sourceIdentifier = props.sourceIdentifier ?? localSourceIdentifier;
   const mediaActions = useMediaActions(props.actionsSource);
   const contextWidth = useContext(MarkdownImageAvailableWidthContext);
   const [measuredWidth, setMeasuredWidth] = useState(0);
@@ -117,6 +116,12 @@ export function ThreadMarkdownImageView(props: {
     props.format === "svg" && props.uri !== null ? svgDocumentAtom(props.uri) : noSvgDocumentAtom,
   );
   const svgDocument = AsyncResult.isSuccess(svg) ? svg.value : null;
+  const imageKey = props.uri ? (props.cacheKey ?? props.uri) : null;
+  const [loadedImageKey, setLoadedImageKey] = useState<string | null>(null);
+  const ready =
+    props.format === "svg"
+      ? svgDocument !== null
+      : imageKey !== null && loadedImageKey === imageKey;
   // Keyed by source so a new source drops the previous image's decoded dimensions.
   const [decoded, setDecoded] = useState<{ sourceKey: string; size: ImageSize } | null>(null);
   const decodedSize =
@@ -141,6 +146,7 @@ export function ThreadMarkdownImageView(props: {
   const placeholderWidth: ViewStyle["width"] =
     availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
   const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
+  const previewName = props.actionsSource?.name ?? props.alt;
 
   return (
     <View
@@ -170,7 +176,11 @@ export function ThreadMarkdownImageView(props: {
           </Pressable>
         </MediaActionsMenu>
       ) : (
-        <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "flex-start" }}>
+        <PresentationSource
+          identifier={ready ? localSourceIdentifier : ""}
+          fallbackIdentifier={ready ? (props.sourceIdentifier ?? "") : ""}
+          style={{ alignSelf: "flex-start" }}
+        >
           <MediaActionsMenu media={mediaActions}>
             <ZoomableImagePressable
               key={props.sourceKey}
@@ -184,8 +194,8 @@ export function ThreadMarkdownImageView(props: {
                   withGallery({
                     kind: "image",
                     uri: props.uri!,
-                    name: props.actionsSource?.name ?? props.alt ?? gt("Image"),
-                    sourceIdentifier,
+                    name: imagePreviewName(props.uri!, previewName, gt("Image")),
+                    sourceIdentifier: localSourceIdentifier,
                     actionsSource: props.actionsSource,
                   }),
                 )
@@ -199,7 +209,8 @@ export function ThreadMarkdownImageView(props: {
                 <ThreadMarkdownImageRequest
                   uri={props.uri}
                   cacheKey={props.cacheKey}
-                  onLoad={(size) =>
+                  onLoad={(size) => {
+                    setLoadedImageKey(imageKey);
                     // Only the first decode counts: later loads report the bitmap
                     // downsampled for the current frame (969 vs 970 wide), so keeping
                     // them resizes the frame, which reloads the image, and so on.
@@ -207,9 +218,12 @@ export function ThreadMarkdownImageView(props: {
                       current?.sourceKey === props.sourceKey
                         ? current
                         : { sourceKey: props.sourceKey, size },
-                    )
-                  }
-                  onError={() => setFailure({ uri: props.uri, failed: true })}
+                    );
+                  }}
+                  onError={() => {
+                    setLoadedImageKey(null);
+                    setFailure({ uri: props.uri, failed: true });
+                  }}
                 />
               )}
             </ZoomableImagePressable>

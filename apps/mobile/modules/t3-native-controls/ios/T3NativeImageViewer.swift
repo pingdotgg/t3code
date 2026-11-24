@@ -126,8 +126,10 @@ final class T3NativeImageViewer: NSObject {
 
   private func decode(_ index: Int) {
     guard !finished, let file = file(at: index), !decoded.contains(index), decodes[index] == nil else { return }
-    let source = sourceView(index)
-    let previous = decodeQueue
+    // ImageIO reads SVG poorly or not at all; the thumbnail is vector, so redraw it at full-screen size
+    // without blocking the serial raster decode queue while waiting for reveal.
+    let isSVG = file.pathExtension.lowercased() == "svg"
+    let previous = isSVG ? nil : decodeQueue
     let task = Task { @MainActor [self] in
       await previous?.value
       var settled = false
@@ -137,8 +139,6 @@ final class T3NativeImageViewer: NSObject {
         if !settled, !finished, isNearCurrent(index), !decoded.contains(index) { decode(index) }
       }
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
-      // ImageIO reads SVG poorly or not at all; the thumbnail is vector, so redraw it at full-screen size.
-      let isSVG = file.pathExtension.lowercased() == "svg"
       let image = isSVG ? nil : await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       if isSVG {
@@ -147,7 +147,7 @@ final class T3NativeImageViewer: NSObject {
         guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       }
       settled = true
-      if let image = image ?? (isSVG ? source.flatMap(Self.render(_:)) : nil) {
+      if let image = image ?? (isSVG ? sourceView(index).flatMap(Self.render(_:)) : nil) {
         decoded.insert(index)
         controller?.setImage(image, at: index, full: true)
       } else {
@@ -161,7 +161,7 @@ final class T3NativeImageViewer: NSObject {
       }
     }
     decodes[index] = task
-    decodeQueue = task
+    if !isSVG { decodeQueue = task }
   }
 
   private func finish() {
@@ -184,9 +184,8 @@ final class T3NativeImageViewer: NSObject {
     try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
   }
 
-  /// The decoded image a thumbnail already shows, uncropped, or a snapshot of a view that draws one.
-  /// The largest image view wins, so an overlaid icon is never mistaken for the picture.
-  private static func thumbnail(of view: UIView) -> UIImage? {
+  /// The largest decoded image already shown in `view`, uncropped at its native aspect ratio.
+  private static func decodedImage(in view: UIView) -> UIImage? {
     var queue = [view]
     var best: (image: UIImage, area: CGFloat)?
     while let candidate = queue.popLast() {
@@ -196,10 +195,19 @@ final class T3NativeImageViewer: NSObject {
       if area > best?.area ?? 0 { best = (image, area) }
     }
     if let best, best.area >= view.bounds.width * view.bounds.height / 2 { return best.image }
+    return nil
+  }
+
+  /// The decoded image a thumbnail already shows, uncropped, or a snapshot of a view that draws one.
+  /// The largest image view wins, so an overlaid icon is never mistaken for the picture.
+  private static func thumbnail(of view: UIView) -> UIImage? {
+    if let image = decodedImage(in: view) { return image }
     return snapshot(view, scale: view.window?.screen.scale ?? 2)
   }
 
   private static func render(_ view: UIView) -> UIImage? {
+    // Strip cards decode SVGs into an image view inside a fixed landscape box; keep the image's own aspect ratio.
+    if let image = decodedImage(in: view) { return image }
     let screen = view.window?.screen.bounds.size ?? CGSize(width: 1024, height: 1024)
     let fit = min(screen.width / max(view.bounds.width, 1), screen.height / max(view.bounds.height, 1))
     // The thumbnail was shown again after the open transition, in a frame not yet on screen.
@@ -211,9 +219,11 @@ final class T3NativeImageViewer: NSObject {
     let format = UIGraphicsImageRendererFormat()
     format.scale = scale
     format.opaque = false
-    return UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
-      view.drawHierarchy(in: view.bounds, afterScreenUpdates: afterScreenUpdates)
+    var drew = false
+    let image = UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
+      drew = view.drawHierarchy(in: view.bounds, afterScreenUpdates: afterScreenUpdates)
     }
+    return drew ? image : nil
   }
 
   /// Decodes off the main thread at no more than zooming needs, and keeps GIFs animated.
@@ -644,9 +654,9 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
 
   private func visibleSource(_ index: Int) -> UIView? {
-    guard !reduceMotion, let source = sourceView(index), source.window === view.window, !source.isHidden else { return nil }
-    let frame = source.convert(source.bounds, to: view)
-    guard frame.width > 1, frame.height > 1, view.bounds.intersects(frame) else { return nil }
+    guard !reduceMotion, let source = sourceView(index), source.window === view.window,
+      isVisiblePresentationTarget(source, in: view)
+    else { return nil }
     return source
   }
 

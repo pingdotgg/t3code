@@ -6,10 +6,15 @@ import {
 } from "./PullRequestMedia";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { T, useGT, useMessages } from "gt-react-native";
-import { useContext, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { useContext, useId, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { pullRequestImageSource } from "./pullRequestMediaSource";
+import {
+  pullRequestImageName,
+  pullRequestImageSource,
+  pullRequestScopedSourceIdentifier,
+} from "./pullRequestMediaSource";
+import { filePreviewKey } from "../../lib/filePreviewGallery";
 import { markdownReferenceDefinitions, parseMarkdownDocument } from "../../lib/markdownDocument";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -35,7 +40,9 @@ export function PullRequestDescription(props: {
   const { collapse } = props;
   const expanded = collapse?.expanded ?? true;
   const gt = useGT();
+  const imageFallback = gt("Image");
   const messages = useMessages();
+  const stripScope = `pr-attachment:${useId()}`;
   const [bodyHeight, setBodyHeight] = useState(0);
   const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
@@ -52,14 +59,30 @@ export function PullRequestDescription(props: {
       attachments: content.attachments.filter((attachment) => !isBotBadgeImage(attachment.uri)),
     };
   }, [props.markdown, messages]);
-  const gallery: FilePreviewItem[] = content.attachments
-    .filter((attachment) => attachment.kind === "image")
-    .map((attachment) => {
-      return {
-        ...pullRequestImageSource(attachment.uri, mediaContext),
-        name: new URL(attachment.uri).pathname.split("/").pop() || gt("Image"),
+  const { gallery, galleryByUri } = useMemo(() => {
+    const byUri = new Map<string, FilePreviewItem>();
+    const byKey = new Map<string, FilePreviewItem>();
+    const items: FilePreviewItem[] = [];
+    for (const attachment of content.attachments) {
+      if (attachment.kind !== "image") continue;
+      const name = pullRequestImageName(attachment.uri, attachment.caption, imageFallback);
+      const source = pullRequestImageSource(attachment.uri, mediaContext, name);
+      const key = filePreviewKey(source);
+      const existing = byKey.get(key);
+      if (existing) {
+        byUri.set(attachment.uri, existing);
+        continue;
+      }
+      const item: FilePreviewItem = {
+        ...source,
+        sourceIdentifier: pullRequestScopedSourceIdentifier(stripScope, source),
       };
-    });
+      items.push(item);
+      byKey.set(key, item);
+      byUri.set(attachment.uri, item);
+    }
+    return { gallery: items, galleryByUri: byUri };
+  }, [content.attachments, mediaContext, imageFallback, stripScope]);
   const canCollapse = collapse !== undefined && bodyHeight > COLLAPSED_HEIGHT;
   const collapsed = canCollapse && !expanded;
   return (
@@ -183,13 +206,7 @@ export function PullRequestDescription(props: {
                   key={attachment.uri}
                   url={attachment.uri}
                   caption={attachment.caption}
-                  source={
-                    gallery[
-                      content.attachments
-                        .filter((item) => item.kind === "image")
-                        .indexOf(attachment)
-                    ]!
-                  }
+                  source={galleryByUri.get(attachment.uri)!}
                   gallery={gallery}
                 />
               ),

@@ -1,20 +1,24 @@
 import { useGT } from "gt-react-native";
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useId, useState } from "react";
 import {
+  pullRequestImageName,
   pullRequestMediaSource,
   pullRequestImageSource,
+  pullRequestScopedSourceIdentifier,
+  pullRequestVideoMimeType,
   type PullRequestMediaLocation,
 } from "./pullRequestMediaSource";
 import { useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
-import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
+import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
+import { PresentationSource } from "../../components/ui/NativePresentation";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import {
   FilePreviewModal,
@@ -25,6 +29,8 @@ import {
 export const PullRequestMediaVisibleContext = createContext(true);
 
 export const PullRequestMediaContext = createContext<PullRequestMediaLocation | null>(null);
+
+export const PullRequestGalleryScopeContext = createContext<string | null>(null);
 
 export function usePullRequestMediaUrl(url: string) {
   const context = useContext(PullRequestMediaContext);
@@ -51,24 +57,31 @@ export function PullRequestMedia(props: {
   const gt = useGT();
   const visible = useContext(PullRequestMediaVisibleContext);
   const context = useContext(PullRequestMediaContext);
+  const galleryScope = useContext(PullRequestGalleryScopeContext);
   const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
   const [video, setVideo] = useState<VideoPreviewSource | null>(null);
-  const name = props.caption || new URL(props.url).pathname.split("/").pop() || gt("Attachment");
-  if (props.kind === "image")
+  const name = props.caption || props.url.split(/[?#]/)[0]?.split("/").pop() || gt("Attachment");
+  if (props.kind === "image") {
+    const imageName = pullRequestImageName(props.url, props.caption, gt("Image"));
+    const previewSource = pullRequestImageSource(props.url, context, imageName);
+    const sourceIdentifier = galleryScope
+      ? pullRequestScopedSourceIdentifier(galleryScope, previewSource)
+      : filePreviewSourceIdentifier(previewSource);
     return (
       <>
         <ThreadMarkdownImageView
           uri={media.uri}
           sourceKey={props.url}
+          sourceIdentifier={sourceIdentifier}
           cacheKey={media.cacheKey}
           unavailable={media.unavailable}
-          alt={name}
+          alt={props.caption ?? null}
+          actionsSource={previewSource.actionsSource}
           onPressPreview={(source) =>
             setImage(
               withGallery({
-                ...pullRequestImageSource(props.url, context),
-                name,
+                ...previewSource,
                 sourceIdentifier: source.sourceIdentifier,
               }),
             )
@@ -77,6 +90,7 @@ export function PullRequestMedia(props: {
         <FilePreviewModal source={image} onRequestClose={() => setImage(null)} />
       </>
     );
+  }
   return (
     <View style={props.compact ? { width: 176 } : undefined}>
       {props.compact ? (
@@ -90,9 +104,7 @@ export function PullRequestMedia(props: {
               type: "media",
               ...media.source,
               name,
-              mimeType:
-                videoMimeType({ name: props.url.split(/[?#]/)[0] ?? props.url, mimeType: "" }) ??
-                "video/mp4",
+              mimeType: pullRequestVideoMimeType(props.url) ?? "video/mp4",
             })
           }
         />
@@ -120,24 +132,41 @@ export function PullRequestImageAttachment(props: {
 }) {
   const media = usePullRequestMediaUrl(props.url);
   const gt = useGT();
+  const localSourceIdentifier = useId();
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
+  const imageKey = media.uri ? (media.cacheKey ?? media.uri) : null;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loaded = imageKey !== null && loadedKey === imageKey;
   return (
     <>
       <Pressable
         accessibilityRole="imagebutton"
         accessibilityLabel={gt("View attachment: {caption}", { caption: props.caption })}
-        onPress={() => setPreview({ ...props.source, gallery: props.gallery })}
+        onPress={() =>
+          setPreview({
+            ...props.source,
+            sourceIdentifier: localSourceIdentifier,
+            gallery: props.gallery,
+          })
+        }
         className="gap-2 active:opacity-70"
         style={{ width: 176 }}
       >
-        <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
-          <Image
-            source={media.uri ? { uri: media.uri, cacheKey: media.cacheKey } : null}
-            style={{ width: 174, height: 112 }}
-            contentFit="contain"
-            cachePolicy="memory-disk"
-          />
-        </View>
+        <PresentationSource
+          identifier={loaded ? localSourceIdentifier : ""}
+          fallbackIdentifier={loaded ? filePreviewSourceIdentifier(props.source) : ""}
+        >
+          <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
+            <Image
+              source={media.uri ? { uri: media.uri, cacheKey: media.cacheKey } : null}
+              style={{ width: 174, height: 112 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              onLoad={() => setLoadedKey(imageKey)}
+              onError={() => setLoadedKey(null)}
+            />
+          </View>
+        </PresentationSource>
         <AppText numberOfLines={1} className="text-xs text-foreground-muted">
           {props.caption}
         </AppText>

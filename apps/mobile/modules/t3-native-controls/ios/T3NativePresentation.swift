@@ -1,6 +1,34 @@
 import ExpoModulesCore
 import UIKit
 
+/// Visible portion of `view` inside `container`, clipped by every `clipsToBounds` ancestor.
+func clippedVisibleRect(of view: UIView, in container: UIView) -> CGRect {
+  guard let window = view.window, !view.isHidden, view.alpha > 0.01 else { return .null }
+  var rect = view.bounds
+  guard !rect.isEmpty else { return .null }
+  var current: UIView = view
+  while let parent = current.superview {
+    if parent.isHidden || parent.alpha <= 0.01 { return .null }
+    rect = current.convert(rect, to: parent)
+    if parent.clipsToBounds {
+      rect = rect.intersection(parent.bounds)
+      if rect.isNull || rect.isEmpty { return .null }
+    }
+    current = parent
+    if parent === window { break }
+  }
+  let inContainer = current.convert(rect, to: container)
+  return inContainer.intersection(container.bounds)
+}
+
+/// Whether enough of `view` is visible inside `container` to serve as a zoom transition target.
+func isVisiblePresentationTarget(_ view: UIView, in container: UIView) -> Bool {
+  let fullArea = view.bounds.width * view.bounds.height
+  guard fullArea > 1 else { return false }
+  let visible = clippedVisibleRect(of: view, in: container)
+  return visible.width > 1 && visible.height > 1 && visible.width * visible.height >= fullArea * 0.25
+}
+
 final class T3PresentationSources {
   private class Entry {
     weak var view: UIView?
@@ -23,11 +51,12 @@ final class T3PresentationSources {
 
   func view(for identifier: String) -> UIView? {
     let views = (entries[identifier] ?? []).compactMap(\.view)
-    // Prefer an on-screen copy, the latest first; use the child bounds, not the wrapper's stretched ones.
+    // Prefer a visible copy, the latest first; use the child bounds, not the wrapper's stretched ones.
     let source = views.last(where: { view in
-      guard let window = view.window else { return false }
-      return window.bounds.intersects(view.convert(view.bounds, to: window))
-    }) ?? views.last
+      guard let window = view.window, let target = view.subviews.first else { return false }
+      return isVisiblePresentationTarget(target, in: window)
+    }) ?? views.last(where: { $0.window != nil && !$0.subviews.isEmpty })
+      ?? views.last(where: { !$0.subviews.isEmpty })
     return source?.subviews.first
   }
 }
@@ -35,14 +64,23 @@ final class T3PresentationSources {
 final class T3PresentationSourceView: ExpoView {
   weak var sources: T3PresentationSources?
   var identifier = "" {
-    didSet {
-      sources?.remove(self, identifier: oldValue)
-      if !identifier.isEmpty { sources?.register(self, identifier: identifier) }
+    didSet { updateRegistration(old: oldValue, new: identifier) }
+  }
+  var fallbackIdentifier = "" {
+    didSet { updateRegistration(old: oldValue, new: fallbackIdentifier) }
+  }
+
+  private func updateRegistration(old: String, new: String) {
+    guard old != new else { return }
+    if !old.isEmpty, old != identifier, old != fallbackIdentifier {
+      sources?.remove(self, identifier: old)
     }
+    if !new.isEmpty { sources?.register(self, identifier: new) }
   }
 
   deinit {
-    sources?.remove(self, identifier: identifier)
+    if !identifier.isEmpty { sources?.remove(self, identifier: identifier) }
+    if !fallbackIdentifier.isEmpty { sources?.remove(self, identifier: fallbackIdentifier) }
   }
 }
 

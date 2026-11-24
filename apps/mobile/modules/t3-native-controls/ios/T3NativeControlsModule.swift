@@ -134,6 +134,10 @@ public final class T3NativeControlsModule: Module {
         view.sources = self.presentationSources
         view.identifier = identifier
       }
+      Prop("fallbackIdentifier") { (view: T3PresentationSourceView, identifier: String?) in
+        view.sources = self.presentationSources
+        view.fallbackIdentifier = identifier ?? ""
+      }
     }
 
     View(T3FrostedCutoutView.self) {

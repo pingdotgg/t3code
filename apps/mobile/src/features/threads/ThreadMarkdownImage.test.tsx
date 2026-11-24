@@ -11,6 +11,7 @@ const harness = vi.hoisted(() => ({
   failImage: () => {},
   loadImage: (_event: { source: { width: number; height: number } }) => {},
   Passthrough: ({ children }: { children?: unknown }) => children,
+  presentationSources: [] as { identifier: string; fallbackIdentifier?: string }[],
   pressable: {} as HandlerProps,
   gestures: {} as Record<string, GestureHandlers>,
   contentStyle: () => ({}) as { transform?: Transform },
@@ -87,7 +88,19 @@ vi.mock("../../components/ui/AppText", () => ({
 }));
 vi.mock("../../components/MediaActionsMenu", () => ({ MediaActionsMenu: harness.Passthrough }));
 vi.mock("../../components/ui/NativePresentation", () => ({
-  PresentationSource: harness.Passthrough,
+  PresentationSource: (props: {
+    identifier: string;
+    fallbackIdentifier?: string;
+    children?: ReactNode;
+  }) => {
+    harness.presentationSources.push({
+      identifier: props.identifier,
+      ...(props.fallbackIdentifier !== undefined
+        ? { fallbackIdentifier: props.fallbackIdentifier }
+        : {}),
+    });
+    return props.children;
+  },
 }));
 vi.mock("../../state/mediaActions", () => ({ useMediaActions: () => ({ actions: [] }) }));
 vi.mock("../../state/assets", () => ({ useAssetUrlState: vi.fn() }));
@@ -444,6 +457,46 @@ it("zooms the inline image around the pinch and keeps it until the source or fra
       await act(async () => harness.gestures.pan!.onUpdate!({ translationX: 20, translationY: 0 }));
       expect(zoom()).toEqual({ scale: 3, x: 10, y: 0 });
     }
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("registers its presentation source only after the image finishes decoding", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  harness.presentationSources.length = 0;
+  const root = createRoot(document.createElement("div"));
+  const openPreview = vi.fn<(source: FilePreviewSource) => void>();
+  try {
+    await act(async () =>
+      root.render(
+        <ThreadMarkdownImageView
+          uri="https://example.test/shot.png"
+          sourceKey="https://example.test/shot.png"
+          sourceIdentifier="shared:shot"
+          unavailable={false}
+          alt="Before"
+          onPressPreview={openPreview}
+        />,
+      ),
+    );
+    expect(harness.presentationSources.at(-1)).toEqual({
+      identifier: "",
+      fallbackIdentifier: "",
+    });
+
+    await act(async () => harness.loadImage({ source: { width: 400, height: 200 } }));
+    const registered = harness.presentationSources.at(-1)!;
+    expect(registered.identifier).not.toBe("");
+    expect(registered.fallbackIdentifier).toBe("shared:shot");
+
+    await act(async () => harness.pressable.onPress?.({ nativeEvent: {} }));
+    expect(openPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Before",
+        sourceIdentifier: registered.identifier,
+      }),
+    );
   } finally {
     await act(async () => root.unmount());
   }

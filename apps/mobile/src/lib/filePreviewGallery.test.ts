@@ -5,7 +5,12 @@ import type { DraftComposerAttachment } from "./composerImages";
 import { composerImageGallery } from "./composerImageGallery";
 import { contextImageGallery } from "./contextImageGallery";
 import { messageImageGallery } from "../features/threads/messageImageGallery";
-import { filePreviewGallery, filePreviewKey } from "./filePreviewGallery";
+import {
+  filePreviewGallery,
+  filePreviewKey,
+  filePreviewName,
+  imagePreviewName,
+} from "./filePreviewGallery";
 
 vi.mock("./uuid", () => ({}));
 
@@ -147,5 +152,49 @@ describe("image preview groups", () => {
     };
     expect(filePreviewKey(a)).toBe(filePreviewKey(b));
     expect(filePreviewGallery(b, [a])).toEqual([b]);
+  });
+
+  it("keeps explicit image titles instead of replacing them with direct-URI filenames", () => {
+    expect(
+      filePreviewName({
+        kind: "image",
+        uri: "https://user-images.githubusercontent.com/123/106598434-9e719e00.png",
+        name: "Before",
+      }),
+    ).toBe("Before");
+    expect(
+      filePreviewName({
+        kind: "image",
+        uri: "https://drop.example.com/shot.png?sig=1",
+      }),
+    ).toBe("shot.png");
+    expect(
+      filePreviewName({
+        kind: "image",
+        uri: "file:///tmp/diagram.svg",
+        name: "Diagram",
+      }),
+    ).toBe("diagram.svg");
+    expect(
+      filePreviewName({
+        kind: "image",
+        uri: "data:image/png;base64,iVBORw0KGgo=",
+      }),
+    ).toBe("Preview");
+    expect(
+      filePreviewName({
+        kind: "image",
+        uri: "https://github.com/user-attachments/assets/8c809121-7a99-412e-ad09-c3c7615226a9",
+      }),
+    ).toBe("Preview");
+    expect(imagePreviewName("data:image/png;base64,iVBORw0KGgo=", null, "Image")).toBe("Image");
+    expect(imagePreviewName("https://example.com/render?id=5", null, "Image")).toBe("Image");
+    expect(
+      imagePreviewName(
+        "https://github.com/user-attachments/assets/8c809121-7a99-412e-ad09-c3c7615226a9",
+        null,
+        "Image",
+      ),
+    ).toBe("Image");
   });
 });

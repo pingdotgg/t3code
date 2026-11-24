@@ -5,6 +5,7 @@ import type { ViewProps } from "react-native";
 export interface PresentationSourceProps extends ViewProps {
   readonly children: ReactElement;
   readonly identifier: string;
+  readonly fallbackIdentifier?: string;
 }
 
 const NativeSource: ComponentType<PresentationSourceProps> = requireNativeView(

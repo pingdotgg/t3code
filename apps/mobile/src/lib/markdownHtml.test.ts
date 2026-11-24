@@ -7,7 +7,7 @@ import {
   parseMarkdownDocument,
   type MarkdownNode,
 } from "./markdownDocument";
-import { markdownImageSources } from "./markdownImageSources";
+import { markdownImages, markdownImageSources } from "./markdownImageSources";
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "./markdownMedia";
 import { resolveMarkdownLinkPresentation } from "./markdownLinks";
 import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
@@ -70,6 +70,21 @@ describe("HTML in native Markdown", () => {
     const markdown =
       '```html\n<img src="literal.png">\n```\n\nUse `<img src="inline.png">` here.\n\n<img src="one.png">\n\n![Two](two.png)\n\n<img src="one.png">';
     expect(markdownImageSources(markdown)).toEqual(["one.png", "two.png"]);
+    expect(markdownImages(markdown)).toEqual([
+      { url: "one.png", alt: null },
+      { url: "two.png", alt: "Two" },
+    ]);
+    expect(markdownImages('![](same.png)\n\n![Captured](same.png "Ignored")')).toEqual([
+      { url: "same.png", alt: "Captured" },
+    ]);
+    expect(
+      markdownImages(
+        '![Before][shot-1]\n\n![][shot-2]\n\n[shot-1]: https://example.com/1.png\n[shot-2]: https://example.com/2.png "After"',
+      ),
+    ).toEqual([
+      { url: "https://example.com/1.png", alt: "Before" },
+      { url: "https://example.com/2.png", alt: "After" },
+    ]);
     const result = markdownWithHtml(markdown);
     expect(result).toContain('```html\n<img src="literal.png">\n```');
     expect(result).toContain('`<img src="inline.png">`');
