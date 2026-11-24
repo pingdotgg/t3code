@@ -135,7 +135,8 @@ const decodeKiroReviewFiles = Schema.decodeUnknownOption(
 
 /**
  * Kiro's end-of-turn "Review changes" request names its files only in
- * `_meta.kiro.files`; they become the request's ACP `locations`.
+ * `_meta.kiro.files`; they become the request's ACP `locations`, and the
+ * request, which accepts those edits, takes the `edit` kind.
  */
 export function kiroNormalizePermissionRequest(
   request: EffectAcpSchema.RequestPermissionRequest,
@@ -145,7 +146,11 @@ export function kiroNormalizePermissionRequest(
   if (files === undefined || files.length === 0) return request;
   return {
     ...request,
-    toolCall: { ...request.toolCall, locations: files.map(({ path }) => ({ path })) },
+    toolCall: {
+      ...request.toolCall,
+      kind: request.toolCall.kind ?? "edit",
+      locations: files.map(({ path }) => ({ path })),
+    },
   };
 }
 

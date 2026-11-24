@@ -17,5 +17,6 @@ describe("kiroNormalizePermissionRequest", () => {
     });
 
     expect(request.toolCall.locations).toEqual([{ path: "/workspace/kiro-permission-probe.txt" }]);
+    expect(request.toolCall.kind).toBe("edit");
   });
 });

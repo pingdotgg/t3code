@@ -580,7 +580,10 @@ describe("AcpRuntimeModel", () => {
       },
     );
 
-    expect(parsePermissionRequest(request).detail).toContain("kiro-permission-probe.txt");
+    expect(parsePermissionRequest(request)).toMatchObject({
+      kind: "edit",
+      detail: expect.stringContaining("kiro-permission-probe.txt"),
+    });
   });
 
   it("names the command an execute permission request asks to run", () => {
