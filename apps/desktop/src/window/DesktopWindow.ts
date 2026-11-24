@@ -633,7 +633,7 @@ export const make = Effect.gen(function* () {
       webPreferences.sandbox = true;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
+      webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
@@ -773,12 +773,19 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
+    // Popups from every frame in this window arrive here without a caller, so only web links
+    // pass. The app opens editors and other applications over IPC.
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+      if (Option.isSome(ElectronShell.parseWebExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
       return { action: "deny" };
     });
+    // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
+    // when nothing answers. External links are opened through ElectronShell only.
+    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
+      callback(permission !== "openExternal"),
+    );
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({

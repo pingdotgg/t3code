@@ -3,6 +3,7 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -53,6 +54,35 @@ describe("KeybindingsSettings.logic", () => {
     expect(after.find((row) => row.command === "chat.new")?.id).not.toBe(
       before.find((row) => row.command === "chat.new")?.id,
     );
+  });
+
+  it("resets an edited shortcut to the built-in one its command no longer has", () => {
+    const rows = buildKeybindingRows(
+      mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          { command: "chat.new", key: "mod+n", when: "!terminalFocus" },
+          { command: "chat.new", key: "f8", when: "!terminalFocus" },
+        ]),
+      ),
+    );
+    expect(
+      rows
+        .filter((row) => row.command === "chat.new")
+        .map(({ key, defaultKey }) => ({ key, defaultKey })),
+    ).toEqual([
+      { key: "f8", defaultKey: "mod+shift+o" },
+      { key: "mod+n", defaultKey: "mod+n" },
+    ]);
+    const unassigned = buildKeybindingRows(
+      mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          { command: "chat.new", key: "mod+n", when: "!terminalFocus" },
+          { command: "chat.new", key: "mod+shift+o", when: "false" },
+          { command: "chat.new", key: "f8", when: "!terminalFocus" },
+        ]),
+      ),
+    );
+    expect(unassigned.find((row) => row.key === "f8")?.defaultKey).toBe("mod+n");
   });
 
   it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
