@@ -357,6 +357,17 @@ layer("GitLabCli.layer", (it) => {
       args: ["api", "--hostname", "gitlab.com", "projects/group%2Fproject"],
       env: {},
     },
+    { repository: "group/project.git", args: ["api", "projects/group%2Fproject"], env: {} },
+    {
+      repository: "git@gitlab.com:group/sub/project.git",
+      args: ["api", "--hostname", "gitlab.com", "projects/group%2Fsub%2Fproject"],
+      env: {},
+    },
+    {
+      repository: "ssh://git@gitlab.example.com:2222/group/project.git",
+      args: ["api", "--hostname", "gitlab.example.com", "projects/group%2Fproject"],
+      env: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
+    },
   ])("looks up $repository by its project path", ({ repository, args, env }) =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(
