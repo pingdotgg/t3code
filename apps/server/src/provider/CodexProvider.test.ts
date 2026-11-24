@@ -349,6 +349,10 @@ it("offers only the modes whose sandbox Codex's managed requirements allow", () 
     }),
     ["approval-required", "auto-accept-edits", "auto"],
   );
+  assert.deepStrictEqual(
+    codexSupportedRuntimeModes({ requirements: { allowedSandboxModes: ["workspace-write"] } }),
+    ["auto-accept-edits", "auto"],
+  );
   assert.strictEqual(codexSupportedRuntimeModes({ requirements: null }), undefined);
   assert.strictEqual(codexSupportedRuntimeModes({ requirements: {} }), undefined);
   assert.strictEqual(codexSupportedRuntimeModes(undefined), undefined);

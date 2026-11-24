@@ -50,7 +50,8 @@ by the permission mode. See [ACP Registry permissions](./providers-acp.md#permis
 
 Codex offers only the modes its managed requirements allow. When your organization's
 `requirements.toml` or device management rules out `danger-full-access`, Codex offers no
-**Full access**, and a Codex thread already set to it runs in **Supervised**.
+**Full access**, and a Codex thread already set to it runs in **Supervised**. If the requirements
+also rule out `read-only`, choose a mode Codex offers for that thread.
 
 In **Full access**, commands that Codex's dangerous-command check would ask about run without
 asking. Codex still asks before network access its managed network settings don't allow, unless
