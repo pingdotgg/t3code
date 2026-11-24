@@ -2854,6 +2854,31 @@ const recordsThreadCreated = (threadId: ThreadId) =>
     },
   }) as never;
 
+const snapshotsReadDeletedThreadAsMissing = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = ThreadId.make("thread:records:deleted-snapshot");
+  const created: { readonly payload: object } = recordsThreadCreated(threadId);
+  yield* store.apply(created as never);
+  assert.equal((yield* store.getThreadSnapshot(threadId)).projection.thread.id, threadId);
+  yield* store.apply({
+    id: EventId.make(`event:${threadId}:deleted`),
+    type: "thread.deleted",
+    threadId,
+    providerInstanceId,
+    occurredAt: recordsAt(1),
+    payload: { ...created.payload, deletedAt: recordsAt(1) },
+  } as never);
+
+  for (const read of [
+    store.getThreadSnapshot(threadId),
+    store.getThreadSnapshotWindow(threadId, { rowLimit: 10 }),
+  ]) {
+    assert.equal((yield* Effect.flip(read))._tag, "ProjectionStoreThreadNotFoundError");
+  }
+  // Forks of the thread still read its rows.
+  assert.equal((yield* store.getThreadProjection(threadId)).thread.id, threadId);
+});
+
 const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefined) {
   assert.isDefined(statement);
   const sql = yield* SqlClient.SqlClient;
@@ -3940,6 +3965,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "SQL recovery selects unfinished runless native subagents",
     () => runlessNativeSubagentNeedsRecovery,
+  );
+  it.effect(
+    "snapshot reads report a deleted thread as missing",
+    () => snapshotsReadDeletedThreadAsMissing,
   );
   it.effect(
     "worktree path and title lookups skip deleted threads, and can include archived ones",

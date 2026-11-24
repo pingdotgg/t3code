@@ -1,13 +1,7 @@
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
-import { T, useGT } from "gt-react";
-import {
-  ArrowLeftIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ImageIcon,
-  TextIcon,
-} from "lucide-react";
+import { useGT } from "gt-react";
+import { ChevronLeftIcon, ChevronRightIcon, ImageIcon, TextIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -200,14 +194,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         <Button
           type="button"
           ref={closeButtonRef}
-          size="sm"
+          size="icon"
           variant="media-close"
-          className="absolute left-0 top-0 z-20 max-[8rem]:left-1/2 max-[8rem]:-translate-x-1/2"
+          className="absolute end-0 top-0 z-20 max-[8rem]:end-auto max-[8rem]:left-1/2 max-[8rem]:-translate-x-1/2"
           onClick={close}
-          aria-label={isVideo ? gt("Back, close video preview") : gt("Back, close image preview")}
+          aria-label={isVideo ? gt("Close video preview") : gt("Close image preview")}
         >
-          <ArrowLeftIcon aria-hidden="true" />
-          <T>Back</T>
+          <XIcon aria-hidden="true" />
         </Button>
         {preview.images.length > 1 && (
           <Button
