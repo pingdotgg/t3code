@@ -92,6 +92,9 @@ struct Entry {
     /// The next poll reads remote status even when fetching is off or work is paused
     /// (`needsInitialRefresh`).
     remote_initial: bool,
+    /// The next poll rereads remote status after a checkout, with no fetch and no pull
+    /// (`reconcileCheckedOutRef`).
+    remote_reread: bool,
 }
 
 impl Entry {
@@ -122,6 +125,11 @@ impl Entry {
     fn remote_now(&mut self) {
         self.next_remote = Some(Instant::now());
         self.remote_initial = true;
+    }
+
+    fn reread_now(&mut self) {
+        self.next_remote = Some(Instant::now());
+        self.remote_reread = true;
     }
 
     fn publish_status(&mut self, event: &VcsStatusStreamEvent) {
@@ -393,7 +401,7 @@ impl VcsHub {
                     },
                 ));
                 if entry.wants_remote() {
-                    entry.remote_now();
+                    entry.reread_now();
                 }
             }
             if entry.local.as_ref() != Some(local) {
@@ -589,7 +597,8 @@ impl VcsHub {
                                 && e.next_remote.is_none_or(|t| t <= now);
                             let remote = remote_due.then(|| {
                                 e.remote_busy = true;
-                                (e.demand_cwds(), e.remote_initial)
+                                let reread = std::mem::take(&mut e.remote_reread);
+                                (e.demand_cwds(), e.remote_initial, reread)
                             });
                             (
                                 cwd.clone(),
@@ -624,19 +633,30 @@ impl VcsHub {
                         });
                     }
                 }
-                if let Some((demand, initial)) = remote {
+                if let Some((demand, initial, reread)) = remote {
                     let hub = self.clone();
-                    tokio::spawn(async move { hub.poll_remote(cwd, demand, initial).await });
+                    tokio::spawn(
+                        async move { hub.poll_remote(cwd, demand, initial, reread).await },
+                    );
                 }
             }
         }
     }
 
-    async fn poll_remote(&self, cwd: PathBuf, demand: Vec<String>, initial: bool) {
-        let policy = self.policy(&demand).await;
+    async fn poll_remote(&self, cwd: PathBuf, demand: Vec<String>, initial: bool, reread: bool) {
+        // A reread after a checkout runs whatever the gate says, but fetches and pulls nothing.
+        let policy = if reread && !initial {
+            RemotePolicy {
+                fetch_interval: Duration::ZERO,
+                auto_pull: false,
+                background: true,
+            }
+        } else {
+            self.policy(&demand).await
+        };
         // `refreshRemoteStatusIfEnabled`: after the first read, nothing while fetching is off
         // or no client lets the work run.
-        if !initial && !(policy.fetches() && policy.background) {
+        if !initial && !reread && !(policy.fetches() && policy.background) {
             self.with(|s| {
                 if let Some(entry) = s.entries.get_mut(&cwd) {
                     entry.remote_busy = false;
@@ -676,6 +696,7 @@ impl VcsHub {
         self.with(|s| {
             if let Some(entry) = s.entries.get_mut(&cwd) {
                 entry.remote_busy = false;
+                entry.remote_reread |= reread && !ok;
                 if ok {
                     entry.remote_failures = 0;
                     entry.remote_initial = false;
@@ -686,6 +707,10 @@ impl VcsHub {
                         .saturating_mul(1 << (entry.remote_failures - 1).min(10))
                         .min(REMOTE_MAX_BACKOFF);
                     entry.next_remote = Some(Instant::now() + backoff.max(interval));
+                }
+                if entry.remote_reread && !reread {
+                    // A checkout while this poll ran.
+                    entry.next_remote = Some(Instant::now());
                 }
             }
         });

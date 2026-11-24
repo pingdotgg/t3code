@@ -518,13 +518,31 @@ fn performance_profile(deps: &Deps) -> bool {
     is_performance(&environment.settings.raw())
 }
 
+/// `resolveServerBackgroundActivitySettings(..).profile == "performance"`: a custom profile
+/// resolves to its `baseProfile`; the default `backgroundActivity` defers to the legacy
+/// `backgroundActivityProfile`.
 fn is_performance(settings: &serde_json::Map<String, Value>) -> bool {
-    let performance = |value: Option<&Value>| value.and_then(Value::as_str) == Some("performance");
-    performance(
+    let activity = settings.get("backgroundActivity");
+    let field = |key: &str| activity.and_then(|a| a.get(key));
+    let profile = field("profile")
+        .and_then(Value::as_str)
+        .unwrap_or("balanced");
+    let base = field("baseProfile").and_then(Value::as_str);
+    let is_default = profile == "balanced"
+        && base.is_none()
+        && field("overrides")
+            .and_then(Value::as_object)
+            .is_none_or(|o| o.is_empty());
+    let resolved = if is_default {
         settings
-            .get("backgroundActivity")
-            .and_then(|activity| activity.get("profile")),
-    ) || performance(settings.get("backgroundActivityProfile"))
+            .get("backgroundActivityProfile")
+            .and_then(Value::as_str)
+    } else if profile == "custom" {
+        base
+    } else {
+        Some(profile)
+    };
+    resolved == Some("performance")
 }
 
 /// The periodic probe (`refreshOnInterval`): only the providers a client wants
@@ -864,6 +882,22 @@ mod tests {
             (json!({"backgroundActivityProfile": "performance"}), true),
             (
                 json!({"backgroundActivity": {"profile": "balanced"}}),
+                false,
+            ),
+            // What the Background activity dialog saves for its Performance choice.
+            (
+                json!({"backgroundActivity": {"profile": "custom", "baseProfile": "performance",
+                       "overrides": {"automaticGitFetchInterval": 15000}}}),
+                true,
+            ),
+            (
+                json!({"backgroundActivity": {"profile": "custom", "overrides": {}}}),
+                false,
+            ),
+            // A set `backgroundActivity` wins over the legacy field.
+            (
+                json!({"backgroundActivity": {"profile": "battery-saver"},
+                       "backgroundActivityProfile": "performance"}),
                 false,
             ),
             (json!({"backgroundActivity": "performance"}), false),

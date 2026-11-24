@@ -1791,8 +1791,49 @@ async fn the_remote_poll_waits_for_fetching_and_client_activity() {
 
     // Active and fetching: the poll pulls.
     reply.send(policy(10, true, true)).unwrap();
-    let _reply = ask().await;
+    let reply = ask().await;
     assert_eq!(head(), upstream);
+
+    // `reconcileCheckedOutRef`: a terminal checkout rereads remote status while paused, but
+    // fetches nothing and pulls nothing, even onto a clean default branch that is behind.
+    write(&other, "second.txt", "second\n");
+    let second = commit_all(&other, "second");
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(&fx.work, &["fetch", "-q", "origin"]);
+    write(&other, "third.txt", "third\n");
+    commit_all(&other, "third");
+    git(&other, &["push", "-q", "origin", "main"]);
+    reply.send(policy(10, true, false)).unwrap();
+    tokio::spawn(async move {
+        while let Some((_, reply)) = asked.recv().await {
+            let _ = reply.send(policy(10, true, false));
+        }
+    });
+    let mut switch_to = async |branch: &str, args: &[&str]| {
+        git(&fx.work, args);
+        let mut switched = false;
+        while let Some(event) = events.recv().await {
+            match event {
+                conn_contract::VcsStatusStreamEvent::LocalUpdated(e) => {
+                    switched |= e.local.ref_name.as_deref() == Some(branch);
+                }
+                conn_contract::VcsStatusStreamEvent::RemoteUpdated(e)
+                    if switched && e.remote.is_some() =>
+                {
+                    return;
+                }
+                _ => {}
+            }
+        }
+    };
+    switch_to("side", &["checkout", "-q", "-b", "side"]).await;
+    switch_to("main", &["checkout", "-q", "main"]).await;
+    assert_eq!(
+        tracking(),
+        second,
+        "no fetch on a branch switch while paused"
+    );
+    assert_eq!(head(), upstream, "no pull on a branch switch while paused");
 }
 
 /// The Git settings a project can carry that change what a plain `git diff` reports.
