@@ -5,7 +5,8 @@ do not need to keep a terminal open.
 
 ## Manage the service
 
-Install the `t3` CLI first ([Install HYR Code](./install.md#command-line)), then
+Use a `t3` CLI from your HYR Code desktop app or a source build. The command-line
+installers install upstream T3 Code ([Install](./install.md#command-line)). Then
 run these commands on the machine that will host HYR Code:
 
 | Task                                  | Command                |

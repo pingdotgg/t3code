@@ -389,7 +389,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       yield* Console.log(`Keeping installed service version t3@${installedVersion}.`);
     }
     if (update && !interactive) {
-      yield* Console.log("Updating HYR Code. Running agent turns will stop.");
+      yield* Console.log("Updating t3. Running agent turns will stop.");
     }
     const result = newer
       ? ({ changed: false } as const)

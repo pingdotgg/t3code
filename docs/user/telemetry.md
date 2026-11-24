@@ -1,6 +1,7 @@
 # Product usage data
 
-The HYR Code server sends product usage events to HYR Code's own endpoint at `ingest.t3.codes`,
+HYR Code release builds do not send product usage events. A server built from source without
+the release patch sends them by default to upstream T3 Code's endpoint at `ingest.t3.codes`,
 associated with a hashed account or installation identifier. To count how many installations one person
 uses, the server also sends hashed account identifiers: your T3 Connect account, your OpenAI and
 Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each

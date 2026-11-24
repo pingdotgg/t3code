@@ -3,6 +3,9 @@
 Connect a phone, browser, or another desktop app to HYR Code running on a different
 machine. That machine must stay running and reachable while you work.
 
+HYR Code release builds do not include T3 Connect. Use the local network or
+Tailscale. The T3 Connect section below applies only to upstream T3 Code.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting
