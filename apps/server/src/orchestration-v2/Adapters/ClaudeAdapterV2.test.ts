@@ -7499,13 +7499,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "asks to sign in to an MCP server once, even after an idle release reopens Claude",
+    "asks to sign in to an MCP server once per lost sign-in, even after an idle release reopens Claude",
     () =>
       Effect.gen(function* () {
+        let linearStatus: "needs-auth" | "connected" = "needs-auth";
         const harness = yield* makeWakeHarnessWithOptions({
           freshQueueOnReopen: true,
           mcp: {
-            mcpServerStatus: Effect.succeed([{ name: "linear", status: "needs-auth" }]),
+            mcpServerStatus: Effect.sync(() => [{ name: "linear", status: linearStatus }]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
           },
@@ -7533,7 +7534,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               subtype: "init",
               uuid: `mcp-sign-in-once-init-${ordinal}`,
               session_id: WAKE_NATIVE_SESSION,
-              mcp_servers: [{ name: "linear", status: "needs-auth" }],
+              mcp_servers: [{ name: "linear", status: linearStatus }],
             }),
           );
           yield* harness.offerAndWait(
@@ -7569,7 +7570,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
           Effect.forkScoped,
         );
-        yield* runTurn(reopened, yield* reopened.resumeThread({ providerThread }), 2);
+        const resumed = yield* reopened.resumeThread({ providerThread });
+        yield* runTurn(reopened, resumed, 2);
+        linearStatus = "connected";
+        yield* runTurn(reopened, resumed, 3);
+        linearStatus = "needs-auth";
+        yield* runTurn(reopened, resumed, 4);
 
         const signIns = harness.events.flatMap((event) =>
           event.type === "turn_item.updated" &&
@@ -7578,7 +7584,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [event.turnItem.mcpSignIn.server]
             : [],
         );
-        assert.deepEqual(signIns, ["linear"]);
+        assert.deepEqual(signIns, ["linear", "linear"]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
