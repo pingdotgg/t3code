@@ -132,18 +132,3 @@ export async function renderSpeechCatalog(catalog: SpeechCatalog) {
   if (result.errors.length > 0) throw new Error("Could not format speech catalog.");
   return result.code;
 }
-
-export function renderIosParakeetUltra(catalog: SpeechCatalog) {
-  const model = catalog.models.find(({ id }) => id === "handy-computer/parakeet-ultra-gguf");
-  if (model?.filename !== "parakeet-ultra-Q8_0.gguf" || !model.supportsLanguageDetection) {
-    throw new Error("Review iOS support for the pinned Parakeet Ultra model.");
-  }
-  return `enum ParakeetUltraArtifact {
-  static let repository = "${model.id}"
-  static let revision = "${model.revision}"
-  static let filename = "${model.filename}"
-  static let byteCount = ${model.size.toLocaleString("en-US").replaceAll(",", "_")}
-  static let sha256 = "${model.sha256}"
-}
-`;
-}

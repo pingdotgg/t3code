@@ -133,8 +133,6 @@ const ThreadProject = Schema.Struct({
 });
 const isThreadProject = Schema.is(ThreadProject);
 
-export type DeviceVoiceEngine = "apple-speech" | "parakeet-ultra";
-
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
@@ -171,7 +169,7 @@ export interface Preferences {
   /** The client `language` setting: a locale code or "system". Unset means English. */
   readonly language?: string;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
-  readonly deviceVoiceEngine?: DeviceVoiceEngine;
+  readonly deviceVoiceModelId?: string | null;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
@@ -264,7 +262,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     followUpBehavior?: FollowUpBehavior;
     language?: string;
     microphones?: ReadonlyArray<MicrophoneEntry>;
-    deviceVoiceEngine?: DeviceVoiceEngine;
+    deviceVoiceModelId?: string | null;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
@@ -392,11 +390,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.followUpBehavior = parsed.followUpBehavior;
   }
   if (typeof parsed.language === "string") preferences.language = parsed.language;
-  if (
-    parsed.deviceVoiceEngine === "apple-speech" ||
-    parsed.deviceVoiceEngine === "parakeet-ultra"
-  ) {
-    preferences.deviceVoiceEngine = parsed.deviceVoiceEngine;
+  if (typeof parsed.deviceVoiceModelId === "string" || parsed.deviceVoiceModelId === null) {
+    preferences.deviceVoiceModelId = parsed.deviceVoiceModelId;
+  } else if ("deviceVoiceEngine" in parsed && parsed.deviceVoiceEngine === "parakeet-ultra") {
+    preferences.deviceVoiceModelId = "handy-computer/parakeet-ultra-gguf";
   }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {

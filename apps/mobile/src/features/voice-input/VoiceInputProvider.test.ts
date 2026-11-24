@@ -2,21 +2,40 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const native = vi.hoisted(() => ({
+  models: [
+    {
+      id: "handy-computer/parakeet-ultra-gguf",
+      name: "Parakeet Ultra",
+      description: "Multilingual dictation",
+      size: 740_363_168,
+      languages: ["uk", "en"],
+    },
+    {
+      id: "handy-computer/whisper-small-gguf",
+      name: "Whisper Small",
+      description: "Multilingual dictation",
+      size: 269_751_136,
+      languages: ["uk", "en"],
+    },
+  ] as const,
   snapshot: vi.fn<() => Promise<unknown>>(),
   listen: vi.fn<(name: string, listener: (snapshot: unknown) => void) => { remove(): void }>(
     () => ({ remove() {} }),
   ),
-  transcribe: vi.fn<(id: string, uri: string) => Promise<string>>(),
+  transcribe:
+    vi.fn<
+      (modelId: string, id: string, uri: string) => Promise<{ text: string; language?: string }>
+    >(),
   cancel: vi.fn<(id: string) => Promise<void>>(async () => {}),
 }));
 
 vi.mock("expo", () => ({
   requireOptionalNativeModule: () => ({
-    getParakeetUltraSize: () => 740_363_168,
-    getParakeetUltraState: native.snapshot,
+    getDeviceSpeechCatalog: () => native.models,
+    getDeviceSpeechModelStates: native.snapshot,
     addListener: native.listen,
-    transcribeWithParakeetUltra: native.transcribe,
-    cancelParakeetUltraTranscription: native.cancel,
+    transcribeWithDeviceSpeechModel: native.transcribe,
+    cancelDeviceSpeechInference: native.cancel,
   }),
 }));
 vi.mock("react-native", () => ({
@@ -54,7 +73,10 @@ vi.mock("./voiceDestination", async () => {
 });
 
 import { setAudioModeAsync } from "expo-audio";
-import { parakeetUltraStateAtom, parakeetUltraTranscriber } from "../../native/parakeetUltra";
+import {
+  deviceSpeechModelStatesAtom,
+  deviceSpeechTranscriber,
+} from "../../native/deviceSpeechModels";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import type { Preferences } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom } from "../../state/preferences";
@@ -69,6 +91,14 @@ const preferences = mobilePreferencesAtom as Atom.Writable<
   AsyncResult.AsyncResult<Preferences>,
   AsyncResult.AsyncResult<Preferences>
 >;
+const [parakeet, whisper] = native.models;
+
+function modelSnapshot(revision: number, first: "ready" | "missing") {
+  return {
+    revision,
+    states: { [parakeet.id]: { kind: first }, [whisper.id]: { kind: "ready" } },
+  };
+}
 
 function mockRecorder() {
   const setInput = vi.fn();
@@ -138,11 +168,13 @@ it("uses the loaded microphone order when recording starts before preferences hy
   }
 });
 
-it("binds the hydrated engine until that recording ends, then honors an engine switch", async () => {
+it("keeps the chosen model for the recording, then uses the next selection", async () => {
   const registry = AtomRegistry.make();
   mockRecorder();
-  native.snapshot.mockResolvedValue({ revision: 1, state: { kind: "ready" } });
-  native.transcribe.mockResolvedValue("Світ.");
+  native.snapshot.mockResolvedValue(modelSnapshot(1, "ready"));
+  native.transcribe.mockImplementation(async (modelId) =>
+    modelId === parakeet.id ? { text: "Світ.", language: "uk" } : { text: "Hi.", language: "en" },
+  );
   registry.set(localVoiceTranscriberAtom, {
     prepare: async () => ({ locale: "en-US", transcribe: async () => "Hello." }),
   });
@@ -165,27 +197,36 @@ it("binds the hydrated engine until that recording ends, then honors an engine s
     expect(registry.get(voiceInputAvailableAtom)).toBe(false);
     const start = session.start(ukrainianDraft);
     await hydrating.promise;
-    registry.set(preferences, AsyncResult.success({ deviceVoiceEngine: "parakeet-ultra" }));
+    registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: parakeet.id }));
     await start;
     expect(session.controller.currentState.phase).toBe("recording");
-    registry.set(preferences, AsyncResult.success({ deviceVoiceEngine: "apple-speech" }));
+    registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: whisper.id }));
     await session.controller.stop();
     expect(commit.mock.calls.map(([text]) => text)).toEqual(["Вітаю Світ."]);
 
     await session.start(target);
     await session.controller.stop();
-    expect(commit.mock.calls.map(([text]) => text)).toEqual(["Вітаю Світ.", "Hello."]);
+    expect(commit.mock.calls.map(([text]) => text)).toEqual(["Вітаю Світ.", "Hi."]);
+    expect(native.transcribe.mock.calls.slice(-2).map(([id]) => id)).toEqual([
+      parakeet.id,
+      whisper.id,
+    ]);
+
+    registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: null }));
+    await session.start(target);
+    await session.controller.stop();
+    expect(commit.mock.lastCall?.[0]).toEqual("Hello.");
   } finally {
     session.controller.cancel();
     registry.dispose();
   }
 });
 
-it("keeps a selected engine unavailable after its model is removed", async () => {
+it("keeps a removed selection unavailable until a different model or Apple Speech is chosen", async () => {
   const registry = AtomRegistry.make();
   const initial = Promise.withResolvers<unknown>();
   native.snapshot.mockReturnValue(initial.promise);
-  registry.set(preferences, AsyncResult.success({ deviceVoiceEngine: "parakeet-ultra" }));
+  registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: parakeet.id }));
   registry.set(localVoiceTranscriberAtom, {
     prepare: async () => ({ locale: "en-US", transcribe: async () => "Hello." }),
   });
@@ -193,32 +234,37 @@ it("keeps a selected engine unavailable after its model is removed", async () =>
     expect(registry.get(voiceInputAvailableAtom)).toBe(false);
     const emit = native.listen.mock.lastCall?.[1];
     expect(emit).toBeDefined();
-    emit?.({ revision: 2, state: { kind: "ready" } });
+    emit?.(modelSnapshot(2, "ready"));
     expect(registry.get(voiceInputAvailableAtom)).toBe(true);
-    initial.resolve({ revision: 1, state: { kind: "missing" } });
+    initial.resolve(modelSnapshot(1, "missing"));
     await initial.promise;
-    expect(registry.get(parakeetUltraStateAtom).kind).toBe("ready");
+    expect(registry.get(deviceSpeechModelStatesAtom)).toMatchObject({
+      kind: "ready",
+      states: modelSnapshot(2, "ready").states,
+    });
 
-    emit?.({ revision: 3, state: { kind: "missing" } });
+    emit?.(modelSnapshot(3, "missing"));
     expect(registry.get(voiceInputAvailableAtom)).toBe(false);
-    registry.set(preferences, AsyncResult.success({ deviceVoiceEngine: "apple-speech" }));
+    registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: whisper.id }));
+    expect(registry.get(voiceInputAvailableAtom)).toBe(true);
+    registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: null }));
     expect(registry.get(voiceInputAvailableAtom)).toBe(true);
   } finally {
     registry.dispose();
   }
 });
 
-it("discards a cancelled Parakeet transcript after the native operation settles", async () => {
-  native.snapshot.mockResolvedValue({ revision: 1, state: { kind: "ready" } });
-  const recording = Promise.withResolvers<string>();
+it("discards a cancelled local transcript after the native operation settles", async () => {
+  native.snapshot.mockResolvedValue(modelSnapshot(1, "ready"));
+  const recording = Promise.withResolvers<{ text: string }>();
   native.transcribe.mockReturnValue(recording.promise);
   const controller = new AbortController();
   const options = { signal: controller.signal };
-  const prepared = await parakeetUltraTranscriber.prepare(options);
+  const prepared = await deviceSpeechTranscriber(parakeet).prepare(options);
   const result = prepared.transcribe("file:///voice.m4a", options);
-  const id = native.transcribe.mock.lastCall?.[0];
+  const id = native.transcribe.mock.lastCall?.[1];
   controller.abort();
   expect(native.cancel).toHaveBeenCalledWith(id);
-  recording.resolve("Late transcript.");
+  recording.resolve({ text: "Late transcript." });
   await expect(result).rejects.toMatchObject({ code: "cancelled" });
 });

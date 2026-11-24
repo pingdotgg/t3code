@@ -9,11 +9,7 @@ import { format } from "vite-plus/fmt";
 import * as Schema from "effect/Schema";
 
 import manifest from "../package.json" with { type: "json" };
-import {
-  generateSpeechCatalog,
-  renderIosParakeetUltra,
-  renderSpeechCatalog,
-} from "./speech-catalog.ts";
+import { generateSpeechCatalog, renderSpeechCatalog } from "./speech-catalog.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
 const source = require.resolve("@handy-computer/models/catalog.json");
@@ -29,11 +25,6 @@ const generated = generateSpeechCatalog(
   sourceManifest.version,
   manifest.dependencies["transcribe-cpp"],
 );
-const iosTarget = new URL(
-  "../../mobile/modules/t3-voice-transcription/ios/ParakeetUltraArtifact.generated.swift",
-  import.meta.url,
-);
-const iosExpected = renderIosParakeetUltra(generated);
 const expected = await renderSpeechCatalog(generated);
 const policyTarget = new URL(
   "../../../packages/shared/src/speechRecommendationPolicy.json",
@@ -48,8 +39,7 @@ if (policy.errors.length > 0) throw new Error("Could not format speech recommend
 if (process.argv.includes("--check")) {
   if (
     NodeFS.readFileSync(target, "utf8") !== expected ||
-    NodeFS.readFileSync(policyTarget, "utf8") !== policy.code ||
-    NodeFS.readFileSync(iosTarget, "utf8") !== iosExpected
+    NodeFS.readFileSync(policyTarget, "utf8") !== policy.code
   ) {
     throw new Error("Speech catalog differs; run vp run speech:catalog:sync in apps/server.");
   }
@@ -57,6 +47,5 @@ if (process.argv.includes("--check")) {
 } else {
   NodeFS.writeFileSync(target, expected);
   NodeFS.writeFileSync(policyTarget, policy.code);
-  NodeFS.writeFileSync(iosTarget, iosExpected);
   console.log(`Generated speech catalog from @handy-computer/models@${sourceManifest.version}.`);
 }

@@ -17,10 +17,13 @@ import {
   rememberMicrophones,
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
-import { parakeetUltraStateAtom, parakeetUltraTranscriber } from "../../native/parakeetUltra";
+import {
+  deviceSpeechCatalog,
+  deviceSpeechModelStatesAtom,
+  deviceSpeechTranscriber,
+} from "../../native/deviceSpeechModels";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { m } from "../../i18n/messages";
-import type { DeviceVoiceEngine } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
@@ -71,19 +74,22 @@ export const localVoiceTranscriberAtom = makePermissionStatusAtom<
   read: () => getLocalVoiceTranscriber().catch(() => null),
 }).pipe(Atom.keepAlive);
 
-export const iosVoiceEngineAtom = Atom.make((get): DeviceVoiceEngine | "checking" => {
+export const iosVoiceModelAtom = Atom.make((get): string | null | undefined => {
   const preferences = get(mobilePreferencesAtom);
-  if (!AsyncResult.isSuccess(preferences)) return "checking";
-  return preferences.value.deviceVoiceEngine ?? "apple-speech";
+  if (!AsyncResult.isSuccess(preferences)) return undefined;
+  return preferences.value.deviceVoiceModelId ?? null;
 });
 
 export const voiceInputAvailableAtom = Atom.make((get) => {
   const route = get(voiceRouteAtom);
   if (route) return route.transcriber !== null;
   if (Platform.OS === "ios") {
-    const engine = get(iosVoiceEngineAtom);
-    if (engine === "checking") return false;
-    if (engine === "parakeet-ultra") return get(parakeetUltraStateAtom).kind === "ready";
+    const id = get(iosVoiceModelAtom);
+    if (id === undefined) return false;
+    if (id !== null) {
+      const catalog = get(deviceSpeechModelStatesAtom);
+      return catalog.kind === "ready" && catalog.states[id]?.kind === "ready";
+    }
   }
   const transcriber = get(localVoiceTranscriberAtom);
   return transcriber !== null && transcriber !== "checking";
@@ -100,8 +106,11 @@ export const voiceInputAtom = Atom.make((get) => {
     const transcriber = registry.get(localVoiceTranscriberAtom);
     return transcriber === "checking" ? null : transcriber;
   };
-  const iosTranscriber = (engine: DeviceVoiceEngine) =>
-    engine === "parakeet-ultra" ? parakeetUltraTranscriber : systemTranscriber();
+  const iosTranscriber = (id: string | null) => {
+    if (id === null) return systemTranscriber();
+    const model = deviceSpeechCatalog.find((entry) => entry.id === id);
+    return model ? deviceSpeechTranscriber(model) : null;
+  };
   const audioLevels = makeMutable<ReadonlyArray<number>>(
     Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0),
   );
@@ -145,15 +154,15 @@ export const voiceInputAtom = Atom.make((get) => {
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
       if (Platform.OS !== "ios") return systemTranscriber();
-      const engine = registry.get(iosVoiceEngineAtom);
-      if (engine !== "checking") return iosTranscriber(engine);
+      const id = registry.get(iosVoiceModelAtom);
+      if (id !== undefined) return iosTranscriber(id);
       return {
         prepare: async (options) => {
           const preferences = await Effect.runPromise(
             AtomRegistry.getResult(registry, mobilePreferencesAtom),
             { signal: options.signal },
           );
-          const transcriber = iosTranscriber(preferences.deviceVoiceEngine ?? "apple-speech");
+          const transcriber = iosTranscriber(preferences.deviceVoiceModelId ?? null);
           if (!transcriber) {
             throw new VoiceTranscriptionError({
               code: "unavailable",

@@ -15,39 +15,62 @@ import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
 import { voiceSpeechBenchmarksAtom } from "../voice-input/voiceDestination";
 import { PullRequestSearchSheet } from "../pull-requests/PullRequestSearchSheet";
-import { useVoiceModels, VoiceModelRow } from "./VoiceModelSection";
+import { useDeviceVoiceModels } from "./DeviceVoiceEngineSection";
+import { useVoiceModels, VoiceModelRow, type VoiceModelList } from "./VoiceModelSection";
 
-export function SettingsVoiceModelsRouteScreen({
-  route,
-}: StaticScreenProps<{ readonly environmentId: EnvironmentId }>) {
+type VoiceModelsSource =
+  | { readonly source: "device" }
+  | { readonly source: "environment"; readonly environmentId: EnvironmentId };
+
+export function SettingsVoiceModelsRouteScreen({ route }: StaticScreenProps<VoiceModelsSource>) {
+  return route.params.source === "device" ? (
+    <DeviceVoiceModelsSheet />
+  ) : (
+    <EnvironmentVoiceModelsSheet environmentId={route.params.environmentId} />
+  );
+}
+
+function DeviceVoiceModelsSheet() {
+  const { voice } = useDeviceVoiceModels();
+  return <VoiceModelsSheet voice={voice} />;
+}
+
+function EnvironmentVoiceModelsSheet({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
   const { environments } = useEnvironments();
   const label =
-    environments.find((environment) => environment.environmentId === route.params.environmentId)
-      ?.label ?? gt("This environment");
-  const voice = useVoiceModels(route.params.environmentId, label);
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    gt("This environment");
+  const voice = useVoiceModels(environmentId, label);
   const benchmarks = new Map(
     (
-      AsyncResult.getOrElse(
-        useAtomValue(voiceSpeechBenchmarksAtom(route.params.environmentId)),
-        () => null,
-      )?.models ?? []
+      AsyncResult.getOrElse(useAtomValue(voiceSpeechBenchmarksAtom(environmentId)), () => null)
+        ?.models ?? []
     ).map((model) => [model.id, model.benchmark]),
   );
+  const models = voice.models.map((model) => {
+    const benchmark = benchmarks.get(model.id);
+    return benchmark ? { ...model, benchmark } : model;
+  });
+  return <VoiceModelsSheet voice={{ ...voice, models }} label={label} />;
+}
+
+function VoiceModelsSheet({
+  voice,
+  label,
+}: {
+  readonly voice: VoiceModelList;
+  readonly label?: string;
+}) {
+  const gt = useGT();
   const language = new Intl.DateTimeFormat().resolvedOptions().locale.split("-")[0]!.toLowerCase();
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
-  // Catalog order, not state order: re-sorting when a download finishes would move rows under a tap.
-  const models = voice.models
-    .map((model) => {
-      const benchmark = benchmarks.get(model.id);
-      return benchmark ? { ...model, benchmark } : model;
-    })
-    .filter((model) =>
-      `${model.name} ${model.description} ${model.languages.join(" ")}`
-        .toLowerCase()
-        .includes(needle),
-    );
+  const models = voice.models.filter((model) =>
+    `${model.name} ${model.description} ${model.languages.join(" ")}`
+      .toLowerCase()
+      .includes(needle),
+  );
   return (
     <PullRequestSearchSheet
       title={gt("Transcription models")}
@@ -73,7 +96,7 @@ export function SettingsVoiceModelsRouteScreen({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
-            voice.canManage ? undefined : (
+            label === undefined || voice.canManage ? undefined : (
               <Text className="pb-3 text-xs text-foreground-muted">
                 <T>
                   This connection can’t change settings on <Var>{label}</Var>.
@@ -101,7 +124,9 @@ export function SettingsVoiceModelsRouteScreen({
                 detail={
                   needle
                     ? gt("Try another name or language.")
-                    : gt("{environment} has no models to list.", { environment: label })
+                    : label === undefined
+                      ? gt("Transcription unavailable")
+                      : gt("{environment} has no models to list.", { environment: label })
                 }
                 variant="plain"
               />

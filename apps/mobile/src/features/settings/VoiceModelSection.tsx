@@ -33,8 +33,28 @@ import {
   voiceSpeechStatusAtom,
 } from "../voice-input/voiceDestination";
 
-const isDownloading = (model: EnvironmentSpeechModel) =>
-  model.state === "downloading" || model.state === "verifying";
+export type VoiceModel = Pick<
+  EnvironmentSpeechModel,
+  "id" | "name" | "description" | "size" | "languages" | "benchmark" | "active" | "downloaded"
+> & {
+  readonly state: EnvironmentSpeechModel["state"] | "cancelling" | "failed";
+};
+
+export type VoiceModelList = {
+  readonly models: ReadonlyArray<VoiceModel>;
+  readonly loading: boolean;
+  readonly canManage: boolean;
+  readonly requested?: string | null;
+  readonly busy: boolean;
+  readonly downloading: boolean;
+  download(model: VoiceModel): void;
+  select(model: VoiceModel): void;
+  cancel(model: VoiceModel): void;
+  remove?(model: VoiceModel): void;
+};
+
+export const isDownloading = (model: VoiceModel) =>
+  model.state === "downloading" || model.state === "verifying" || model.state === "cancelling";
 
 export function useVoiceModels(environmentId: EnvironmentId, label: string) {
   const gt = useGT();
@@ -86,7 +106,7 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
     busy,
     downloading,
     label,
-    download: (model: EnvironmentSpeechModel) => {
+    download: (model: VoiceModel) => {
       if (!ready) return;
       Dialog.confirm({
         title: gt("Download {model}?", { model: model.name }),
@@ -103,13 +123,13 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
           ),
       });
     },
-    select: (model: EnvironmentSpeechModel) => {
+    select: (model: VoiceModel) => {
       if (!ready || model.active) return;
       void run(gt("Could not select the model"), () =>
         runSpeech(selectEnvironmentSpeechModel(connection, model.id)),
       );
     },
-    cancel: (model: EnvironmentSpeechModel) => {
+    cancel: (model: VoiceModel) => {
       if (!ready) return;
       void run(gt("Could not cancel the download"), () =>
         runSpeech(cancelEnvironmentSpeechModelDownload(connection, model.id)),
@@ -117,8 +137,6 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
     },
   };
 }
-
-export type VoiceModels = ReturnType<typeof useVoiceModels>;
 
 const languageNames = new Map<string, Intl.DisplayNames>();
 function languageLabel(code: string, locale: string) {
@@ -129,7 +147,7 @@ function languageLabel(code: string, locale: string) {
   return names.of(code) ?? code.toUpperCase();
 }
 
-function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly language: string }) {
+function ModelStats(props: { readonly model: VoiceModel; readonly language: string }) {
   const { model, language } = props;
   const locale = useLocale();
   const data = model.benchmark;
@@ -226,8 +244,8 @@ function DownloadedGlyph() {
 }
 
 export function VoiceModelRow(props: {
-  readonly model: EnvironmentSpeechModel;
-  readonly voice: VoiceModels;
+  readonly model: VoiceModel;
+  readonly voice: VoiceModelList;
   readonly separated: boolean;
   /** The language whose benchmark score to show, when the model has one. */
   readonly language: string;
@@ -235,8 +253,8 @@ export function VoiceModelRow(props: {
   const gt = useGT();
   const { model, voice, separated } = props;
   const meta = <ModelStats model={model} language={props.language} />;
-  if (model.state === "installed")
-    return (
+  if (model.state === "installed") {
+    const choice = (
       <ListChoiceRow
         leading={<DownloadedGlyph />}
         label={model.name}
@@ -248,6 +266,23 @@ export function VoiceModelRow(props: {
         onPress={() => voice.select(model)}
       />
     );
+    return voice.remove ? (
+      <View>
+        {choice}
+        <View className="border-t border-border-subtle">
+          <ListActionRow
+            icon="trash"
+            label={gt("Remove {model}", { model: model.name })}
+            tone="danger"
+            disabled={!voice.canManage || voice.busy}
+            onPress={() => voice.remove?.(model)}
+          />
+        </View>
+      </View>
+    ) : (
+      choice
+    );
+  }
   const progress = model.downloaded === undefined ? undefined : model.downloaded / model.size;
   if (isDownloading(model) || voice.requested === model.id)
     return (
@@ -258,11 +293,13 @@ export function VoiceModelRow(props: {
           description={
             model.state === "verifying"
               ? gt("Verifying download…")
-              : gt("{percent}% downloaded · Tap to cancel", {
-                  percent: Math.round((progress ?? 0) * 100),
-                })
+              : model.state === "cancelling"
+                ? gt("Cancelling download…")
+                : gt("{percent}% downloaded · Tap to cancel", {
+                    percent: Math.round((progress ?? 0) * 100),
+                  })
           }
-          disabled={!voice.canManage || voice.busy}
+          disabled={!voice.canManage || voice.busy || model.state === "cancelling"}
           onPress={() => voice.cancel(model)}
         />
         <Progress
@@ -277,7 +314,9 @@ export function VoiceModelRow(props: {
       <ListActionRow
         icon="tray.and.arrow.down"
         label={model.name}
-        description={model.description}
+        description={
+          model.state === "failed" ? gt("Download failed. Try again.") : model.description
+        }
         meta={meta}
         disabled={!voice.canManage || voice.busy || voice.downloading}
         onPress={() => voice.download(model)}
@@ -298,7 +337,10 @@ export function LocalModelChoice(props: {
   const voice = useVoiceModels(props.environmentId, props.label);
   const { status } = voice;
   const open = () =>
-    navigation.navigate("SettingsVoiceModels", { environmentId: props.environmentId });
+    navigation.navigate("SettingsVoiceModels", {
+      source: "environment",
+      environmentId: props.environmentId,
+    });
   if (!voice.connection || !status || !status.supported)
     return (
       <ListChoiceRow

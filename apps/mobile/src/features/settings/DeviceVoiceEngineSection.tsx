@@ -1,112 +1,114 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
-import type { ReactNode } from "react";
-import { View } from "react-native";
+
 import * as Dialog from "../../components/ui/Dialog";
-import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
-import { Progress } from "../../components/ui/Progress";
+import { ListRow } from "../../components/ui/ListRow";
 import { formatBytes } from "../../lib/formatBytes";
 import {
-  parakeetUltraActions,
-  parakeetUltraSize,
-  parakeetUltraStateAtom,
-} from "../../native/parakeetUltra";
-import type { DeviceVoiceEngine } from "../../persistence/mobile-preferences";
+  deviceSpeechCatalog,
+  deviceSpeechModelActions,
+  deviceSpeechModelStatesAtom,
+} from "../../native/deviceSpeechModels";
 import { saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  iosVoiceEngineAtom,
+  iosVoiceModelAtom,
   localVoiceTranscriberAtom,
   useGlobalVoiceInput,
 } from "../voice-input/VoiceInputProvider";
 import { SettingsSection } from "./components/SettingsSection";
+import { isDownloading, type VoiceModel, type VoiceModelList } from "./VoiceModelSection";
 
-export function DeviceVoiceEngineSection() {
+export function useDeviceVoiceModels() {
   const gt = useGT();
-  const engine = useAtomValue(iosVoiceEngineAtom);
-  const apple = useAtomValue(localVoiceTranscriberAtom);
-  const modelState = useAtomValue(parakeetUltraStateAtom);
+  const activeId = useAtomValue(iosVoiceModelAtom);
+  const catalog = useAtomValue(deviceSpeechModelStatesAtom);
   const { isBusy } = useGlobalVoiceInput();
   const savePreferences = useAtomCommand(saveMobilePreferences);
-  const appleSpeech = "Apple Speech";
-  const model = "Parakeet Ultra";
-  const actions = parakeetUltraActions;
+  const actions = deviceSpeechModelActions;
 
-  const select = async (choice: DeviceVoiceEngine) => {
-    if (choice === engine) return;
-    const result = await savePreferences({ deviceVoiceEngine: choice });
+  const models = deviceSpeechCatalog.map((model): VoiceModel => {
+    const state = catalog.kind === "ready" ? catalog.states[model.id] : undefined;
+    return {
+      ...model,
+      active: activeId === model.id,
+      state:
+        state?.kind === "ready"
+          ? "installed"
+          : state?.kind === "missing" || !state
+            ? "downloadable"
+            : state.kind,
+      ...(state?.kind === "downloading" ? { downloaded: (model.size * state.percent) / 100 } : {}),
+    };
+  });
+
+  const select = async (id: string | null) => {
+    if (id === activeId) return;
+    const result = await savePreferences({ deviceVoiceModelId: id });
     if (result._tag === "Failure") Dialog.alert(gt("Could not save transcription choice"));
   };
 
-  let description: string;
-  let action: ReactNode = null;
-  switch (modelState.kind) {
-    case "checking":
-      description = gt("Checking model…");
-      break;
-    case "unavailable":
-      description = gt("Transcription unavailable");
-      break;
-    case "missing":
-    case "failed":
-      description =
-        modelState.kind === "failed"
-          ? gt("Download failed. Try again.")
-          : parakeetUltraSize === null
-            ? gt("Transcription unavailable")
-            : gt("Download {size} for offline dictation.", {
-                size: formatBytes(parakeetUltraSize),
-              });
-      action = actions && (
-        <ListActionRow
-          icon="arrow.down.circle"
-          label={gt("Download {model}", { model })}
-          onPress={() =>
-            void actions.download().catch(() => Dialog.alert(gt("Could not download the model")))
-          }
-        />
-      );
-      break;
-    case "downloading":
-    case "verifying":
-      description =
-        modelState.kind === "downloading"
-          ? gt("Downloading {model}…", { model })
-          : gt("Verifying download…");
-      action = actions && (
-        <ListActionRow
-          label={gt("Cancel download")}
-          onPress={() =>
-            void actions.cancel().catch(() => Dialog.alert(gt("Could not cancel the download")))
-          }
-        />
-      );
-      break;
-    case "cancelling":
-      description = gt("Cancelling download…");
-      break;
-    case "ready":
-      description = gt("Detects the spoken language and transcribes after you stop.");
-      action = actions && (
-        <ListActionRow
-          icon="trash"
-          label={gt("Remove {model}", { model })}
-          tone="danger"
-          disabled={isBusy}
-          onPress={() =>
-            Dialog.confirm({
-              title: gt("Remove {model}?", { model }),
-              message: gt("Download the model again to use it for dictation."),
-              confirmText: gt("Remove", { $context: "verb" }),
-              destructive: true,
-              onConfirm: () =>
-                void actions.remove().catch(() => Dialog.alert(gt("Could not remove the model"))),
-            })
-          }
-        />
-      );
-      break;
+  const voice: VoiceModelList = {
+    models,
+    loading: catalog.kind === "checking",
+    canManage: catalog.kind === "ready" && activeId !== undefined && actions !== null,
+    busy: isBusy,
+    downloading: models.some(isDownloading),
+    download: (model) => {
+      if (!actions) return;
+      Dialog.confirm({
+        title: gt("Download {model}?", { model: model.name }),
+        message: gt("Download {size} for offline dictation.", { size: formatBytes(model.size) }),
+        confirmText: gt("Download", { $context: "verb" }),
+        onConfirm: () =>
+          void actions
+            .download(model.id)
+            .catch(() => Dialog.alert(gt("Could not download the model"))),
+      });
+    },
+    select: (model) => void select(model.id),
+    cancel: (model) =>
+      void actions?.cancel(model.id).catch(() => Dialog.alert(gt("Could not cancel the download"))),
+    remove: (model) => {
+      if (!actions) return;
+      Dialog.confirm({
+        title: gt("Remove {model}?", { model: model.name }),
+        message: gt("Download the model again to use it for dictation."),
+        confirmText: gt("Remove", { $context: "verb" }),
+        destructive: true,
+        onConfirm: () =>
+          void actions.remove(model.id).catch(() => Dialog.alert(gt("Could not remove the model"))),
+      });
+    },
+  };
+  return { voice, activeId, select };
+}
+
+export function DeviceVoiceEngineSection() {
+  const gt = useGT();
+  const navigation = useNavigation();
+  const apple = useAtomValue(localVoiceTranscriberAtom);
+  const { voice, activeId, select } = useDeviceVoiceModels();
+  const appleSpeech = "Apple Speech";
+  const active = voice.models.find((model) => model.active);
+  const pending = voice.models.find(isDownloading);
+
+  let detail = gt("Transcription models");
+  if (pending?.state === "downloading") {
+    detail = gt("Downloading {model} · {percent}%", {
+      model: pending.name,
+      percent: Math.round(((pending.downloaded ?? 0) / pending.size) * 100),
+    });
+  } else if (pending?.state === "verifying") {
+    detail = gt("Verifying {model}…", { model: pending.name });
+  } else if (pending?.state === "cancelling") {
+    detail = gt("Cancelling download…");
+  } else if (active?.state === "installed") {
+    detail = gt("Local model · {size}", { size: formatBytes(active.size) });
+  } else if (!voice.models.some((model) => model.state === "installed")) {
+    detail = gt("No model installed · Choose one to download");
   }
 
   return (
@@ -115,27 +117,23 @@ export function DeviceVoiceEngineSection() {
         label={appleSpeech}
         description={
           apple === null
-            ? gt("Requires iOS 26 or later and a supported device and language.")
+            ? gt(
+                "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.",
+              )
             : undefined
         }
-        selected={engine === "apple-speech"}
-        disabled={engine === "checking"}
-        onPress={() => void select("apple-speech")}
+        selected={activeId === null}
+        disabled={activeId === undefined}
+        onPress={() => void select(null)}
       />
-      <ListChoiceRow
-        label={model}
-        description={description}
-        selected={engine === "parakeet-ultra"}
-        disabled={engine === "checking" || modelState.kind !== "ready"}
-        separated
-        onPress={() => void select("parakeet-ultra")}
-      />
-      {modelState.kind === "downloading" ? (
-        <View className="bg-grouped-card px-4 pb-3">
-          <Progress label={description} value={modelState.percent / 100} />
-        </View>
+      {voice.models.length > 0 ? (
+        <ListRow
+          label={active?.name ?? gt("Local model")}
+          description={detail}
+          selected={activeId !== undefined && activeId !== null}
+          onPress={() => navigation.navigate("SettingsVoiceModels", { source: "device" })}
+        />
       ) : null}
-      {action ? <View className="border-t border-border-subtle">{action}</View> : null}
     </SettingsSection>
   );
 }

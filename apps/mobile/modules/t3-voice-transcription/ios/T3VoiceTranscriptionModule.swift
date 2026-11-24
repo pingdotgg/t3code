@@ -2,24 +2,24 @@ import ExpoModulesCore
 import Foundation
 
 public class T3VoiceTranscriptionModule: Module {
-  private let parakeetUltra = ParakeetUltraModel()
+  private let models = DeviceSpeechModelStore()
 
-  private func publishParakeetUltraState(_ snapshot: ParakeetUltraModel.Snapshot) {
-    sendEvent("parakeetUltraState", snapshot.payload)
+  private func publishModelStates(_ snapshot: DeviceSpeechModelStore.Snapshot) {
+    sendEvent("deviceSpeechModelStates", snapshot.payload)
   }
 
   public func definition() -> ModuleDefinition {
     Name("T3VoiceTranscription")
-    Events("parakeetUltraState")
+    Events("deviceSpeechModelStates")
 
     OnCreate {
-      let model = self.parakeetUltra
-      Task { await model.pruneSupersededModels() }
+      let models = self.models
+      Task { await models.prepareStorage() }
     }
 
     OnDestroy {
-      let model = self.parakeetUltra
-      Task { await model.stop() }
+      let models = self.models
+      Task { await models.stop() }
     }
 
     Function("isAppleSpeechAvailable") {
@@ -46,33 +46,34 @@ public class T3VoiceTranscriptionModule: Module {
       try VoiceRecordingPCM.signed16(file: uri)
     }
 
-    Function("getParakeetUltraSize") { ParakeetUltraArtifact.byteCount }
+    Function("getDeviceSpeechCatalog") { DeviceSpeechCatalog.models.map(\.payload) }
 
-    AsyncFunction("getParakeetUltraState") { () async -> [String: Any] in
-      await self.parakeetUltra.snapshot(publish: self.publishParakeetUltraState).payload
+    AsyncFunction("getDeviceSpeechModelStates") { () async -> [String: Any] in
+      await self.models.snapshot(publish: self.publishModelStates).payload
     }
 
-    AsyncFunction("startParakeetUltraDownload") { () async in
-      await self.parakeetUltra.startDownload { [weak self] snapshot in
-        self?.publishParakeetUltraState(snapshot)
+    AsyncFunction("startDeviceSpeechModelDownload") { (modelId: String) async throws in
+      try await self.models.startDownload(modelId) { [weak self] snapshot in
+        self?.publishModelStates(snapshot)
       }
     }
 
-    AsyncFunction("cancelParakeetUltraDownload") { () async in
-      await self.parakeetUltra.cancelDownload(publish: self.publishParakeetUltraState)
+    AsyncFunction("cancelDeviceSpeechModelDownload") { (modelId: String) async in
+      await self.models.cancelDownload(modelId, publish: self.publishModelStates)
     }
 
-    AsyncFunction("removeParakeetUltra") { () async throws in
-      try await self.parakeetUltra.remove(publish: self.publishParakeetUltraState)
+    AsyncFunction("removeDeviceSpeechModel") { (modelId: String) async throws in
+      try await self.models.remove(modelId, publish: self.publishModelStates)
     }
 
-    AsyncFunction("transcribeWithParakeetUltra") { (id: String, uri: URL) async throws -> String in
-      try await self.parakeetUltra.transcribe(
-        id: id, file: uri, publish: self.publishParakeetUltraState)
+    AsyncFunction("transcribeWithDeviceSpeechModel") {
+      (modelId: String, id: String, uri: URL) async throws -> [String: String] in
+      try await self.models.transcribe(
+        modelId: modelId, id: id, file: uri, publish: self.publishModelStates).payload
     }
 
-    AsyncFunction("cancelParakeetUltraTranscription") { (id: String) async in
-      await self.parakeetUltra.cancelInference(id: id)
+    AsyncFunction("cancelDeviceSpeechInference") { (id: String) async in
+      await self.models.cancelInference(id: id)
     }
   }
 }

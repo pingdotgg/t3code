@@ -2,7 +2,7 @@ import CTranscribe
 import Foundation
 import Synchronization
 
-final class ParakeetUltraCancellation: Sendable {
+final class SpeechInferenceCancellation: Sendable {
   private let cancelled = Mutex(false)
 
   var isCancelled: Bool { cancelled.withLock { $0 } }
@@ -16,13 +16,24 @@ final class ParakeetUltraCancellation: Sendable {
   }
 }
 
-enum ParakeetUltraEngine {
+enum DeviceSpeechEngine {
+  struct Transcript: Sendable {
+    let text: String
+    let language: String?
+
+    var payload: [String: String] {
+      var result = ["text": text]
+      result["language"] = language
+      return result
+    }
+  }
+
   private struct Failure: Error {
     let status: transcribe_status
   }
 
-  static func transcribe(file: URL, model: URL, cancellation: ParakeetUltraCancellation) throws
-    -> String
+  static func transcribe(file: URL, model: URL, cancellation: SpeechInferenceCancellation) throws
+    -> Transcript
   {
     try cancellation.check()
     let samples = try VoiceRecordingPCM.float32(file: file, checkCancellation: cancellation.check)
@@ -35,8 +46,8 @@ enum ParakeetUltraEngine {
 
   private static func run(
     _ samples: [Float], model: URL, backend: transcribe_backend_request,
-    cancellation: ParakeetUltraCancellation
-  ) throws -> String {
+    cancellation: SpeechInferenceCancellation
+  ) throws -> Transcript {
     try cancellation.check()
 
     var loadParameters = transcribe_model_load_params()
@@ -54,7 +65,7 @@ enum ParakeetUltraEngine {
       session,
       { data in
         guard let data else { return false }
-        return Unmanaged<ParakeetUltraCancellation>.fromOpaque(data).takeUnretainedValue()
+        return Unmanaged<SpeechInferenceCancellation>.fromOpaque(data).takeUnretainedValue()
           .isCancelled
       }, context.toOpaque())
     defer {
@@ -71,7 +82,13 @@ enum ParakeetUltraEngine {
     try cancellation.check()
     try check(status)
     guard !transcribe_was_truncated(session) else { throw CocoaError(.fileReadTooLarge) }
-    return transcribe_full_text(session).map { String(cString: $0) } ?? ""
+    let language = transcribe_detected_language(session).flatMap { code in
+      let language = String(cString: code)
+      return language.isEmpty ? nil : language
+    }
+    return Transcript(
+      text: transcribe_full_text(session).map { String(cString: $0) } ?? "",
+      language: language)
   }
 
   private static func check(_ status: transcribe_status) throws {
