@@ -31,37 +31,22 @@ export function readPastedComposerClipboard(
   plainTextOnly = false,
 ) {
   const plain = readPastedPlainText(clipboardData);
-  if (plainTextOnly || !plain) return { text: plain, context: null };
+  if (plainTextOnly || !plain) return { text: plain, context: null, hasCopiedContext: false };
   const html = clipboardData.getData("text/html");
   const text = restorePastedMarkdownLinks(plain, html);
-  return { text, context: readPastedComposerContext(clipboardData, text, html) };
-}
-
-export type PastedComposerClipboard = ReturnType<typeof readPastedComposerClipboard>;
-
-/** Pasted thread links count as context too, so they become chips like a copied chip does. */
-function readPastedComposerContext(
-  clipboardData: Pick<DataTransfer, "getData">,
-  pastedText: string,
-  html: string,
-): ComposerContextClipboardFragment | null {
-  const decodedFragment =
+  const copied =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
     decodeComposerContextClipboardHtml(html);
-  const threads = threadLinkContextReferences(
-    pastedText,
-    decodedFragment?.records ?? [],
-    threadTitle,
-  );
+  const threads = threadLinkContextReferences(text, copied?.records ?? [], threadTitle);
   const source =
-    decodedFragment?.source ??
+    copied?.source ??
     (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
-  if (source === null) return null;
+  if (source === null) return { text, context: null, hasCopiedContext: false };
   const pastedIds = new Set<string>(
     collectComposerContextReferences(threads.text).map((occurrence) => occurrence.contextId),
   );
   const records = new Map<string, ComposerContextRecord>();
-  for (const record of [...(decodedFragment?.records ?? []), ...threads.records]) {
+  for (const record of [...(copied?.records ?? []), ...threads.records]) {
     if (
       record.kind === "preview-annotation" &&
       !("payload" in record) &&
@@ -72,12 +57,19 @@ function readPastedComposerContext(
     }
     records.set(record.contextId, record);
   }
-  return {
+  const context: ComposerContextClipboardFragment = {
     version: 1,
     source,
     records: [...records.values()].filter((record) => pastedIds.has(record.contextId)),
   };
+  return {
+    text,
+    context,
+    hasCopiedContext: copied?.records.some((record) => pastedIds.has(record.contextId)) ?? false,
+  };
 }
+
+export type PastedComposerClipboard = ReturnType<typeof readPastedComposerClipboard>;
 
 export function importPastedComposerText(
   { text: pastedText, context: fragment }: PastedComposerClipboard,

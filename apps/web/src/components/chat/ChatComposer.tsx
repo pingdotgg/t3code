@@ -3032,14 +3032,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
     const paste = readClipboard(bypassAutoAttachment);
     const pastedContext = Boolean(paste.context?.records.length);
-    const canAttachFiles = !pastedContext && activeThreadId !== null && files.length > 0;
+    const canAttachFiles = !paste.hasCopiedContext && activeThreadId !== null && files.length > 0;
     const htmlImageContent =
       canAttachFiles && plainText.length > 0
         ? clipboardHtmlImageContent(event.clipboardData.getData("text/html"))
         : "none";
     if (
       folders.length > 0 ||
-      (canAttachFiles &&
+      (!pastedContext &&
+        canAttachFiles &&
         shouldHandleComposerAttachmentPaste({
           files,
           plainText,
@@ -3056,7 +3057,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
 
-    if (pastedContext) return;
     const imagesBesideText = imagesToAttachBesidePastedText({
       files,
       plainText,
@@ -3064,6 +3064,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       htmlHasImageAndText: htmlImageContent === "image-and-text",
     });
     if (imagesBesideText.length > 0) void addComposerAttachments(imagesBesideText);
+    if (pastedContext) return;
     if (!foldPastedText(paste.text, bypassAutoAttachment)) {
       return;
     }

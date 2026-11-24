@@ -25,6 +25,12 @@ describe("restoring pasted Markdown links", () => {
       expected: "Read [the guide](https://example.com/guide).",
     },
     {
+      case: "visible link overrides inside a hidden ancestor",
+      plain: "Guide",
+      html: '<span style="visibility:hidden">Skip <a style="visibility:visible" href="https://example.com/"><span style="display:none;visibility:visible">Skip </span>Guide</a></span>',
+      expected: "[Guide](https://example.com/)",
+    },
+    {
       case: "destinations without an external link scheme and anchors with no label",
       plain: "Local, unavailable, and !Guide",
       html: '<a href="/local">Local</a>, <a>unavailable</a>, and !<a href="https://example.com/guide">Guide</a><a href="https://example.com/empty"></a>',

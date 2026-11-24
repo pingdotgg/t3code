@@ -5,10 +5,15 @@ import { test, WEB } from "./t3.ts";
 
 const LABEL = "Setup guide";
 const URL = "https://example.com/setup";
+const UNKNOWN_THREAD_URL = "https://app.t3.codes/threads/env-1/thread-1";
 const PIXEL =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVR4AQEEAPv/AP8AAAMBAQCNHeWCAAAAAElFTkSuQmCC";
 
-for (const mode of ["Paste as Text", "Paste with an image"] as const) {
+for (const mode of [
+  "Paste as Text",
+  "Paste with an image",
+  "Paste a thread link with an image",
+] as const) {
   test(
     `${mode} respects the focused composer's clipboard mode`,
     WEB,
@@ -51,11 +56,21 @@ for (const mode of ["Paste as Text", "Paste with an image"] as const) {
           );
           return null;
         },
-        { mode, label: LABEL, url: URL, pixel: PIXEL },
+        {
+          mode,
+          label: LABEL,
+          url: mode === "Paste a thread link with an image" ? UNKNOWN_THREAD_URL : URL,
+          pixel: PIXEL,
+        },
       );
 
-      if (mode === "Paste with an image") {
+      if (mode !== "Paste as Text") {
         await expect(screen.getByRole("button", "Remove setup.png")).toBeVisible();
+      }
+      if (mode === "Paste a thread link with an image") {
+        const text = await browser.evaluate(() => document.activeElement?.textContent ?? "");
+        expect(text).toBe(`[${LABEL}](${UNKNOWN_THREAD_URL})`);
+        return;
       }
       await browser.keyboard.press("Enter");
       await screen.getByText("second fixture turn complete").waitFor();
