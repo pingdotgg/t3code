@@ -706,6 +706,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
           },
         }),
         Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Environment, {}),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
       ),
     ),
