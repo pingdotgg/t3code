@@ -260,32 +260,54 @@ export function createThreadTriageOutbox<R, E, SendError>(input: {
   }
 
   /**
-   * Undo of a queued change cancels it on the device, without a server call. Changes are only
-   * sent while the shell is synchronized; then the environment is asked, so one that is being
-   * sent right now is undone there.
+   * Undo of a queued change cancels it on the device, without a server call, and says so with
+   * `cancelledOnDevice`. Changes are only sent while the shell is synchronized; then the
+   * environment is asked, so one that is being sent right now is undone there, after it.
    */
   function cancelQueued<I extends { readonly threadId: ThreadId }, CE>(
     command: AtomCommand<Target<I>, { readonly sequence: number }, CE>,
     cancels: PendingThreadTriage["action"]["type"],
-  ): typeof command {
+  ) {
+    const cancelled = { sequence: 0, cancelledOnDevice: true } as const;
     return {
       label: command.label,
-      run: (registry, target) =>
+      run: (registry: AtomRegistry.AtomRegistry, target: Target<I>) =>
         Effect.suspend(() => {
           const { environmentId } = target;
-          const pending = pendingFor(registry, environmentId, target.input.threadId);
-          const forgetPending = forget(registry, pending?.commandId);
-          const cancelled = Effect.as(forgetPending, { sequence: 0 });
-          if (pending?.action.type !== cancels) {
-            return command.run(registry, target).pipe(Effect.tap(() => forgetPending));
-          }
-          return registry.get(input.shellStatusAtom(environmentId)) !== "live"
-            ? cancelled
-            : command.run(registry, target).pipe(
-                Effect.tap(() => forgetPending),
-                // The connection dropped before the shell noticed, so nothing was sent.
-                Effect.catchIf(isUnavailable, () => cancelled),
+          const { threadId } = target.input;
+          const sent = command
+            .run(registry, target)
+            .pipe(
+              Effect.tap(() =>
+                forget(registry, pendingFor(registry, environmentId, threadId)?.commandId),
+              ),
+            );
+          // Storage decides, so the change cancelled is the one stored now, also by another tab.
+          let removed = false;
+          const cancelOnDevice = <A, X>(otherwise: Effect.Effect<A, X>) =>
+            update(registry, (stored) => {
+              const kept = stored.filter(
+                (entry) =>
+                  entry.environmentId !== environmentId ||
+                  entry.threadId !== threadId ||
+                  entry.action.type !== cancels,
               );
+              removed = kept.length !== stored.length;
+              return removed ? kept : stored;
+            }).pipe(
+              provideAtomRuntime(registry, input.runtime),
+              Effect.flatMap((): Effect.Effect<A | typeof cancelled, X> =>
+                removed ? Effect.succeed(cancelled) : otherwise,
+              ),
+            );
+          return registry.get(input.shellStatusAtom(environmentId)) === "live"
+            ? sent.pipe(
+                // The connection dropped before the shell noticed, so nothing was sent.
+                Effect.catchIf(isUnavailable, (unavailable) =>
+                  cancelOnDevice(Effect.fail(unavailable)),
+                ),
+              )
+            : cancelOnDevice(sent);
         }),
     };
   }

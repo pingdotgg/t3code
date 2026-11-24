@@ -80,17 +80,11 @@ export function planThreadUndo(
 }
 
 /**
- * Undo of a settle that is still waiting to sync cancels it on the device. The server never
- * cleared the thread's placement, and restoring it would fail against the offline environment.
+ * True when a step cancelled a change that was still waiting to sync. The server never applied
+ * it, so the rest of the plan has nothing to restore and would fail against the offline host.
  */
-export function skipPlacementForQueuedSettle(
-  plan: ThreadUndoPlan,
-  waitingToSync: boolean,
-): ThreadUndoPlan {
-  const [first, ...rest] = plan;
-  return waitingToSync && first.action === "unsettle"
-    ? [first, ...rest.filter((step) => step.action !== "pin" && step.action !== "reorderActive")]
-    : plan;
+export function cancelledOnDevice(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "cancelledOnDevice" in value;
 }
 
 export async function executeThreadUndo<Result>(

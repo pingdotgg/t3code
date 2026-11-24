@@ -134,6 +134,7 @@ function useThreadActionExecutor(
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
     restoreUnsettledAt?: string | null,
+    onSucceeded?: (value: unknown) => void,
   ) => {
     const triage = action === "settle" || action === "unsettle";
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action), triage)) return false;
@@ -202,6 +203,7 @@ function useThreadActionExecutor(
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
         return false;
       }
+      onSucceeded?.(result.value);
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
       }
@@ -291,17 +293,16 @@ export function useThreadListActions(): {
       claim,
       undo: async () => {
         try {
+          let cancelledOnDevice = false;
           await ThreadUndo.executeThreadUndo(
-            ThreadUndo.skipPlacementForQueuedSettle(
-              plan,
-              appAtomRegistry
-                .get(threadEnvironment.pendingSyncAtom(thread.environmentId))
-                .has(thread.id),
-            ),
+            plan,
             async (step) => {
+              if (cancelledOnDevice) return true;
               switch (step.action) {
                 case "unsettle":
-                  return unsettleThread(thread, step.restoreUnsettledAt);
+                  return unsettleThread(thread, step.restoreUnsettledAt, (value) => {
+                    cancelledOnDevice = ThreadUndo.cancelledOnDevice(value);
+                  });
                 case "unsnooze":
                   return unsnoozeThread(thread);
                 case "pin":
@@ -482,7 +483,9 @@ export function useThreadListActions(): {
   const unsettleThread = async (
     thread: EnvironmentThreadShell,
     restoreUnsettledAt?: string | null,
-  ) => (await executeAction("unsettle", thread, undefined, restoreUnsettledAt)) === true;
+    onSucceeded?: (value: unknown) => void,
+  ) =>
+    (await executeAction("unsettle", thread, undefined, restoreUnsettledAt, onSucceeded)) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
     if (!checkThreadOperationPermission(thread, m(msg("Could not pin thread")))) return false;
     if (!environmentConfigLoaded(thread.environmentId)) {

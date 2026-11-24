@@ -895,14 +895,32 @@ describe("settle and snooze while the environment is offline", () => {
     Effect.gen(function* () {
       const h = yield* makeHarness({ connected: false });
       yield* Effect.exit(h.commands.settle.run(h.registry, target));
-      expect(Exit.isSuccess(yield* Effect.exit(h.commands.unsettle.run(h.registry, undo)))).toBe(
-        true,
-      );
+      // The undo plan stops here: the server never cleared the placement or snooze.
+      expect(yield* h.commands.unsettle.run(h.registry, undo)).toMatchObject({
+        cancelledOnDevice: true,
+      });
       expect(h.registry.get(h.pendingSyncAtom).size).toBe(0);
       expect(yield* queued(h)).toEqual([]);
       expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
       yield* h.reconnect();
       yield* expectNothingSent(h);
+    }),
+  );
+
+  it.effect("waking cancels the snooze stored now, also when another tab replaced it", () =>
+    Effect.gen(function* () {
+      const storage = { value: null as string | null };
+      const h = yield* makeHarness({ connected: false, storage });
+      const otherTab = yield* makeHarness({ connected: false, storage });
+      yield* Effect.exit(h.commands.snooze.run(h.registry, snooze));
+      yield* Effect.exit(
+        otherTab.commands.snooze.run(otherTab.registry, {
+          ...snooze,
+          input: { ...snooze.input, snoozedUntil: "2099-02-01T00:00:00.000Z" },
+        }),
+      );
+      yield* h.commands.unsnooze.run(h.registry, undo);
+      expect(yield* queued(h)).toEqual([]);
     }),
   );
 
