@@ -267,7 +267,12 @@ async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<st
   reserveMarkup(tag.length * 2 + spans.length + 5);
   return `<${tag}${spans}>${children}</${tag}>`;
 }
-async function odfHtml(node: XmlNode, archive: JSZip, imageAlt = ""): Promise<string> {
+async function odfHtml(
+  node: XmlNode,
+  archive: JSZip,
+  imageAlt = "",
+  inRepeatedRow = false,
+): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
@@ -298,6 +303,7 @@ async function odfHtml(node: XmlNode, archive: JSZip, imageAlt = ""): Promise<st
       "text:user-index-source",
       "text:alphabetical-index-source",
       "text:bibliography-source",
+      "table:covered-table-cell",
     ].includes(node.name)
   )
     return "";
@@ -310,7 +316,12 @@ async function odfHtml(node: XmlNode, archive: JSZip, imageAlt = ""): Promise<st
           .join(" ")
       : "";
   let children = "";
-  for (const child of node.children) children += await odfHtml(child, archive, childImageAlt);
+  const repeatedRow =
+    node.name === "table:table-row"
+      ? Number(node.attrs["table:number-rows-repeated"]) > 1
+      : inRepeatedRow;
+  for (const child of node.children)
+    children += await odfHtml(child, archive, childImageAlt, repeatedRow);
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -329,7 +340,18 @@ async function odfHtml(node: XmlNode, archive: JSZip, imageAlt = ""): Promise<st
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  const markup = `<${tag}>${children}</${tag}>`;
+  let spans = "";
+  // Spans on repeated cells or rows would multiply past the preview's table limits.
+  if (tag === "td" && count === 1)
+    for (const [name, attr, max] of [
+      ["colspan", "table:number-columns-spanned", TABLE_PREVIEW_MAX_COLUMNS],
+      ["rowspan", "table:number-rows-spanned", repeatedRow ? 1 : TABLE_PREVIEW_MAX_ROWS],
+    ] as const) {
+      const span = Number(node.attrs[attr]);
+      if (max > 1 && Number.isSafeInteger(span) && span > 1)
+        spans += ` ${name}="${Math.min(span, max)}"`;
+    }
+  const markup = `<${tag}${spans}>${children}</${tag}>`;
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
@@ -363,13 +385,15 @@ export async function openDocument(
             ["table:table-cell", "table:covered-table-cell"].includes(child.name),
           )) {
             const value =
-              find(cell, "text:p", "office:annotation").map(text).join("\n") ||
-              cell.attrs["office:value"] ||
-              cell.attrs["office:date-value"] ||
-              cell.attrs["office:time-value"] ||
-              cell.attrs["office:boolean-value"] ||
-              cell.attrs["office:string-value"] ||
-              "";
+              cell.name === "table:covered-table-cell"
+                ? ""
+                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                  cell.attrs["office:value"] ||
+                  cell.attrs["office:date-value"] ||
+                  cell.attrs["office:time-value"] ||
+                  cell.attrs["office:boolean-value"] ||
+                  cell.attrs["office:string-value"] ||
+                  "";
             const count = repeat(
               cell.attrs["table:number-columns-repeated"],
               TABLE_PREVIEW_MAX_COLUMNS + 1,
@@ -474,6 +498,15 @@ function tracebackLines(value: unknown): unknown {
     index && !frames[index - 1]!.endsWith("\n") ? `\n${frame}` : frame,
   );
 }
+// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
+// redraws leave on the line. Walking the frames from the last keeps this linear.
+function lastFrame(line: string): string {
+  let row = "";
+  for (const frame of line.split("\r").reverse())
+    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
+    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
+  return row;
+}
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024) throw new PreviewError({ code: "notebook-too-large" });
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
@@ -502,9 +535,13 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           }
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          const text = terminalOutputPlainText(
+          const plain = terminalOutputPlainText(
             notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
           );
+          const text =
+            output.output_type === "stream" && /\r(?!\n)/.test(plain)
+              ? plain.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
+              : plain;
           if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
           const summary = [output.ename, output.evalue]
             .filter((part) => typeof part === "string")
@@ -598,13 +635,15 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   const hidden = () => state.skip || state.deleted || state.hiddenText;
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
+  const decodeBytes = () => {
+    if (!encodedLength) return;
+    run += escape(
+      (fonts.get(state.font) ?? state.decoder).decode(encoded.subarray(0, encodedLength)),
+    );
+    encodedLength = 0;
+  };
   const flush = () => {
-    if (encodedLength) {
-      run += escape(
-        (fonts.get(state.font) ?? state.decoder).decode(encoded.subarray(0, encodedLength)),
-      );
-      encodedLength = 0;
-    }
+    decodeBytes();
     if (completedLength + html.length + run.length > 8 * 1024 * 1024)
       throw new PreviewError({ code: "rtf-too-much-content" });
     if (!run) return;
@@ -621,6 +660,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       return;
     }
     if (skip) return;
+    decodeBytes();
     run += escape(value);
     if (completedLength + html.length + run.length > 8 * 1024 * 1024)
       throw new PreviewError({ code: "rtf-too-much-content" });
@@ -651,7 +691,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         emitByte(Number.parseInt(hex, 16));
         continue;
       }
-      flush();
+      // \u, \uc and skipped fallbacks change no formatting, so a character written as two \u
+      // words stays in one run.
+      if (fallback === 0 && !/^uc?-?\d/.test(source.slice(i, i + 4))) flush();
       if (next === "\\" || next === "{" || next === "}") {
         i++;
         emit(next);
@@ -667,7 +709,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         const character = RTF_CHARACTERS.get(next!);
         if (character) emit(character);
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-        else if ((next === "\n" || next === "\r") && !hidden()) html += "<br>";
+        else if (next === "\n" || next === "\r") {
+          if (fallback > 0) fallback--;
+          else if (!hidden()) html += "<br>";
+        }
         i++;
         continue;
       }
@@ -768,7 +813,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         fallback = 0;
         // TextEdit writes a soft line break as U+2028, where Chromium does not break the line.
         if (arg !== 0x2028) emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
-        else if (!hidden()) html += "<br>";
+        else if (!hidden()) {
+          flush();
+          html += "<br>";
+        }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
       else if (word === "cell") emit("\t", state.skip);

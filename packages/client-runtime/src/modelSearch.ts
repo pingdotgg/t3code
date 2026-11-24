@@ -9,6 +9,7 @@ export type ModelPickerSearchableModel = {
   driverKind: string;
   providerDisplayName: string;
   name: string;
+  slug?: string;
   shortName?: string;
   subProvider?: string;
   isFavorite?: boolean;
@@ -24,6 +25,7 @@ function getModelPickerSearchFields(model: ModelPickerSearchableModel): SearchFi
     { value: model.subProvider ?? "", weight: 20 },
     { value: model.driverKind, weight: 30 },
     { value: model.providerDisplayName, weight: 30 },
+    model.slug ?? "",
   ];
 }
 

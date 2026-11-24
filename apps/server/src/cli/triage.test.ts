@@ -21,6 +21,7 @@ import { expect, vi } from "vite-plus/test";
 
 import { cli } from "../binCli.ts";
 import { buildTriageLaunchPrompt } from "../triage/triagePrompt.ts";
+import { matchAgentAnswer } from "./triage.ts";
 
 const cliPath = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 
@@ -107,6 +108,18 @@ it.live.each([
       ).toContain("context.md");
     }),
 );
+
+it.each([
+  { answer: "2", picked: "codex" },
+  { answer: " 1 ", picked: "claude" },
+  { answer: "CLAUDE", picked: "claude" },
+  { answer: "1.5", picked: undefined },
+  { answer: "1x", picked: undefined },
+  { answer: "2codex", picked: undefined },
+  { answer: "3", picked: undefined },
+])("the agent picker reads $answer as $picked", ({ answer, picked }) => {
+  expect(matchAgentAnswer([{ id: "claude" }, { id: "codex" }], answer)?.id).toBe(picked);
+});
 
 it.live(
   "requires an explicit choice when Codex and Antigravity are installed without a terminal",
