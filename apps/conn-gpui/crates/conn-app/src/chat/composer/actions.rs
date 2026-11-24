@@ -323,10 +323,16 @@ fn render_stop_button(
             }))
         })
         .conn_tooltip("Interrupt", tokens)
+        // Solid white (`destructive_foreground`) while the run can be interrupted, in both themes;
+        // dim only when it cannot (Nick, #324).
         .child(icons::icon(
             icons::SQUARE,
             12.0,
-            hsla(tokens.destructive_foreground),
+            if disabled {
+                hsla_alpha(tokens.destructive_foreground, 0.60)
+            } else {
+                hsla(tokens.destructive_foreground)
+            },
         ))
         .into_any_element()
 }
@@ -401,6 +407,7 @@ fn render_implement_split(
         let highlight = hsla(tokens.shell_highlight);
         let menu = div()
             .id("chat-composer-implement-popup")
+            .a11y_group("composer.implement-popup", "Implement plan")
             .absolute()
             .bottom_full()
             .right_0()

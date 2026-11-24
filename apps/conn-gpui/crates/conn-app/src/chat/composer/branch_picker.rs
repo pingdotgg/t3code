@@ -351,6 +351,7 @@ impl Composer {
             let tip = worktree_path.map_or_else(|| label.clone(), str::to_owned);
             return div()
                 .id("composer-workspace-locked")
+                .a11y_group("composer.workspace-locked", "Workspace locked")
                 .flex()
                 .flex_row()
                 .items_center()
@@ -642,6 +643,7 @@ impl Composer {
 
         let mut list = div()
             .id("composer-branch-list")
+            .a11y_group("composer.branch-list", "Branches")
             .flex()
             .flex_col()
             .max_h(px(LIST_MAX_HEIGHT_PX))
@@ -711,6 +713,7 @@ impl Composer {
 
         let mut popup = div()
             .id("composer-branch-popup")
+            .a11y_group("composer.branch-picker", "Branch picker")
             .w(px(PICKER_WIDTH_PX))
             .flex()
             .flex_col()
@@ -743,6 +746,7 @@ impl Composer {
             popup = popup.child(
                 div()
                     .id("composer-branch-start-from-remote")
+                    .a11y_button("composer.branch-start-from-remote", "Start from remote")
                     .flex()
                     .flex_row()
                     .items_center()

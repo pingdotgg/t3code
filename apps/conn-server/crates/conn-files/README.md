@@ -13,7 +13,7 @@ reference is the T3 server's `apps/server/src/workspace/*`, `assets/*` and `atta
 | `projects.writeFile`                    | Only inside a project root or a thread worktree `git worktree list` names; no `.git`; existing ancestors resolved; `O_NOFOLLOW`                             |
 | `projects.listEntries`                  | One folder (links inside the root only, ignored marks from `git check-ignore`), or the whole tree capped at 25,000                                          |
 | `projects.listIgnoredFiles`             | `git ls-files --others --ignored --directory`, first 200                                                                                                    |
-| `projects.searchEntries`                | Fuzzy path search (nucleo), `*`/`?` globs, `kind`, `imageOnly`                                                                                              |
+| `projects.searchEntries`                | Fuzzy path search (nucleo), `*`/`?`/`{a,b}` globs, `kind`, `imageOnly`; an exact relative path also in ignored nested worktrees                             |
 | `projects.searchContents`               | ripgrep's searcher; literal or regex, case, whole word; 500 matches, 100 per file, 1.5 s budget                                                             |
 | `filesystem.browse`, `getMetadata`      | As T3                                                                                                                                                       |
 | `shell.openInEditor`                    | A server host has no desktop: always `ExternalLauncherCommandNotFoundError`; `availableEditors` is empty so clients hide it                                 |

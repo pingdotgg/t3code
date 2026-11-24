@@ -152,6 +152,20 @@ impl ChatView {
             .update(cx, |c, cx| c.discard_draft_key(&key, cx))
     }
 
+    /// The model picker is open.
+    pub(crate) fn model_picker_open(&self, cx: &gpui_kit::App) -> bool {
+        self.composer.read(cx).model_picker_is_open()
+    }
+
+    /// Drops a started thread's unsent input for good, as its deletion does
+    /// (`clearComposerDraftForThread`).
+    pub(crate) fn forget_thread_draft(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+        let key = thread_draft_key(thread_id);
+        self.composer.update(cx, |c, cx| {
+            c.discard_draft_key(&key, cx);
+        });
+    }
+
     /// What each new-thread draft holds that outlives a restart, by draft id.
     pub(crate) fn saved_drafts(&self, cx: &gpui_kit::App) -> Vec<(String, DraftContent)> {
         self.composer

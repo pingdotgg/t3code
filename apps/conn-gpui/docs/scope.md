@@ -25,7 +25,7 @@ Every feature belongs to **one** primary owner. Anything duplicated across layer
 
 | # | Feature / Subsystem | Decision | Rationale / Driver | `conn-server` impact |
 | --- | --- | --- | --- | --- |
-| 1 | **Environments, Linking & Relay** | **`Orbit`** | All node/server discovery, auto-pairing, and environment switching come from Orbit Gateway. | Drop Clerk/T3 Connect, manual peer-link UI, standalone relay & authorized-clients UI; keep bearer/scope auth Orbit & mobile need. |
+| 1 | **Environments, Linking & Relay** | **`Orbit`** *(with one exception: linked environments in the thread list, see §2.1)* | All node/server discovery, auto-pairing, and environment switching come from Orbit Gateway. | Drop Clerk/T3 Connect, manual peer-link UI, standalone relay & authorized-clients UI; keep bearer/scope auth Orbit & mobile need. |
 | 2 | **Themes, Appearance & Profile Sync** | **`Orbit`** | Presets + custom palettes + workspaces + per-device settings sync through Orbit profiles (`PATCH /profiles/{id}/settings`). | Drop server theme publishing (`conn_theme_set` / theme store). |
 | 3 | **Provider Accounts, OAuth & Load Balancing** | **`Drop`** | Models run through **`ai-router` / proxy API / CLI**. Zero Codex multi-account, ChatGPT account picker, OAuth wizards, usage-limit sources, or load balancing. | Delete `limits/`, multi-account auth, ChatGPT OAuth, load-balancing config. |
 | 4 | **Provider Drivers** | **`Subset`** | Keep `claude`, `codex`, and `acp` drivers configured against `ai-router` / local CLI — no per-provider account setup wizards. | Keep `conn-provider-{claude,codex,acp}`, strip account/OAuth branches. |
@@ -73,6 +73,24 @@ Every feature belongs to **one** primary owner. Anything duplicated across layer
 | 31 | **Browser Profile Import Wizard & Multi-Profile Tabs** | **`Drop`** | Single CEF profile + Vault autofill + test logins keeps browser state simple and reliable. |
 | 32 | **Custom Thread Title & Commit Writing Prompt Settings** | **`Drop`** | Use clean repo-convention defaults instead of extra prompt-config UI. |
 | 33 | **Notifications Granularity & Per-Event Rules** | **`Subset` / `Drop`** | Simple on/off native macOS notification when a thread finishes or needs approval. |
+
+---
+
+### 2.1 Linked environments in the thread list (Nick's ruling, 2026-11-23)
+
+> **Ruling:** *"I just want the same state in Conn GPUI as I have in the current Conn."* This **overrides §2 #1 only for linked environments in `conn-gpui`'s thread list.** Everything else in #1 stands: discovery, pairing and credentials still come from Orbit Gateway (Orbit-first discovery is unchanged), and Clerk / T3 Connect, manual peer-link UI, the standalone relay and the authorized-clients UI stay dropped.
+
+What `conn-gpui` does, as Conn does (`orbitGateway/environmentProvider.ts`, `Sidebar.tsx`):
+
+- **One connection per registered Orbit server.** A Node's server is paired automatically (`POST /conn/environments/{id}/pairings`, one single-use code, exchanged once for a bearer token kept in `orbit-sessions.json`). An Instance's server is connected only after the user connected it once; an asleep Instance's server cannot mint a pairing link. A failed pairing waits 5 minutes before it is tried again. The planner is `conn_orbit::linked::plan_linked_environments`; connections are `conn_client::environments::EnvironmentSet`.
+- **One merged list.** Every environment's projects and threads are listed together (`conn_state::environments`): newest activity first, an id two environments hold belongs to the first (the primary, then the others in the order they appeared), projects group by repository across environments while a folder is one project only within its environment (`derivePhysicalProjectKey`).
+- **Environment marker.** A thread of another environment carries its machine icon on its row and the environment's name on its hover card and details card (`EnvironmentMachineIcon`, `environmentLabel`).
+- **Opening a thread of another environment** subscribes its timeline on that environment's connection, and the chat, commands and sends for it go there.
+- **Saved environments keep listing while asleep or offline.** Each linked environment's last shell is saved in `~/Library/Application Support/conn-gpui/linked-shells/` (Conn keeps the same in its connection cache), and listed from that file until its connection syncs. Conn marks nothing grey for these, and neither does GPUI. A server the Gateway leaves out for 2 minutes across lists is forgotten with its pairing, saved shell and choices.
+- **The per-environment switch** (Settings › Connections › Linked environments, as Conn's `setEnabled`): off holds the environment off and takes its threads out of every list while it stays saved. An Orbit Instance's server is linked with the switch on its row in Orbit Instances; once it runs it is paired and kept like a Node's. The choices live in `linked-environments.json`.
+- **Settled shelf, message search and the composer** work across environments as Conn's do: the shelf pages each environment on its own cut, a message search asks every connected environment, and the composer offers the catalog of the open thread's environment.
+
+Not in this exception: Clerk / T3 Connect accounts, manual link UI and per-link toggles (`peerLinks.*`, the agent-facing `/mcp` links), and the link-and-relay settings. Known differences from Conn are listed in `docs/status.md`.
 
 ---
 

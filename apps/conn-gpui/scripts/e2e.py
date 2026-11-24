@@ -7,7 +7,7 @@ loopback socket (`CONN_GPUI_AUTOMATION`), asserting against the live AccessKit
 tree, clipboard, app state dump, and crash/stderr logs.
 
 Usage:
-  CARGO_FLAGS="--features cef" ./scripts/run-app.sh --applications
+  ./scripts/run-app.sh --applications
   python3 scripts/e2e.py
 """
 from __future__ import annotations
@@ -189,10 +189,6 @@ def flow_database_panel_click_and_vault(client: AutomationClient) -> None:
 
 
 def flow_browser_cef_snapshot_and_act(client: AutomationClient) -> None:
-    state = client.call({"cmd": "browser-state"})
-    if state.get("cef") is False:
-        print("  [skip] browser CEF flow (built without --features cef)")
-        return
     html = (
         "data:text/html,"
         "<html><head><title>Conn E2E</title></head><body>"

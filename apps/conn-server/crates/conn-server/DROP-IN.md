@@ -136,6 +136,43 @@ Not proven: a live turn through the tarball, Codex from the tarball (it needs no
 the release workflow itself (it has not run), and the server under Orbit's real
 `t3.service` with this layout (the earlier proof ran an older binary as `bin/t3`).
 
+### macOS app bundle (2026-11-23)
+
+On a Mac the server runs as `Conn Server.app` (`com.nckrtl.conn-server`, `LSUIElement`), not
+as a bare executable. `tools/macos-app.sh --from <folder with conn-server and sdk-host/> --out
+<dir>` builds it: the binary in `Contents/MacOS`, `sdk-host/` and Conn's icon in
+`Contents/Resources`, signed with Developer ID and the hardened runtime.
+
+**Why.** For a bare executable TCC keys a grant by its path (`client_type` 1 in `TCC.db`), so
+each new install path asked again and listed one more nameless entry without an icon. Screen
+capture comes from the server's children, not from the server: agents run `screencapture`, and
+the Device panel's serve-sim stream loads LiveKit's WebRTC framework, which links ScreenCaptureKit
+and `CGDisplayStream`. The prompts named "conn-server", which suggests, but does not prove, that
+macOS charged those children to the launchd process.
+
+**Not yet proven.** Two things are open until a test with real prompts passes:
+
+- *Attribution:* that a child's Screen Recording or Accessibility request is charged to the
+  bundle (`com.nckrtl.conn-server`, its name and icon) when launchd runs the bundle's Mach-O
+  directly, not through LaunchServices.
+- *Persistence:* that TCC keys that grant by bundle id and team, and keeps it when the bundle is
+  replaced by a rebuild with the same designated requirement.
+
+The test is a disposable GUI LaunchAgent whose children ask for Screen Recording and
+Accessibility, then a rebuilt bundle at the same and at another path. A pass covers only those
+two services and those requests. It says nothing yet about Files and Folders, Automation or the
+serve-sim stream; claim those only after a test of each.
+
+**Install.** Keep the bundle at one path (`~/Applications/Conn Server.app`) and replace it in
+place on updates. The launchd job runs `Contents/MacOS/conn-server` and sets
+`AssociatedBundleIdentifiers` to `com.nckrtl.conn-server`, which Apple documents for Login Items
+attribution; whether it changes TCC attribution is part of the test above. On macOS only, the
+server finds the SDK host in `Contents/Resources` inside a `.app`, after the folder beside the
+binary. `CFBundleVersion` must be a build number that `CFBundleGetVersionNumber` can parse; the
+packager checks that before signing. The git commit goes in `ConnServerCommit`. The bundle is
+not notarized, so `spctl` rejects it ("Unnotarized Developer ID"); that does not matter for a
+launchd job, because Gatekeeper checks only quarantined files.
+
 ## 2. Conn desktop's local backend
 
 | What       | Desktop does                                                                                                                                                                                                                                                                 | Reference                                                                                                               | Conn Server                                                                                                                                                                |

@@ -567,14 +567,31 @@ fn snapshot_failed<E>(reason: &str, error: EngineError<E>) -> Response {
     .with_status(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// `GET /api/orchestration/shell`: always the full snapshot, which is valid for any query.
-async fn shell_snapshot(State(state): State<AppState>, headers: HeaderMap) -> Response {
+/// `GET /api/orchestration/shell` (`answerShellSnapshot`): `{"resumable":true}` when the
+/// shell stream can resume from `resumeFrom`, else the snapshot with the query's omissions,
+/// as `subscribeShell` trims it.
+async fn shell_snapshot(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
     let engine = match orchestration_access(&state, &headers) {
         Ok(engine) => engine,
         Err(response) => return *response,
     };
-    match engine.shell_snapshot().await {
-        Ok(snapshot) => Json(snapshot).into_response(),
+    let flag = |name: &str| query.get(name).is_some_and(|v| v == "1");
+    let options = conn_engine::HttpShellQuery {
+        omit_idle_subagents: flag("omitIdleSubagents"),
+        omit_older_settled: flag("omitOlderSettled"),
+        // `Number.isSafeInteger(resumeFrom) && resumeFrom >= 0`.
+        resume_from: query
+            .get("resumeFrom")
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v < (1 << 53)),
+    };
+    match engine.http_shell_snapshot(options).await {
+        Ok(Some(snapshot)) => Json(snapshot).into_response(),
+        Ok(None) => Json(json!({"resumable": true})).into_response(),
         Err(error) => snapshot_failed("orchestration_snapshot_failed", error),
     }
 }
@@ -933,12 +950,14 @@ mod tests {
             ))
             .unwrap(),
         );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
         let mut deps = crate::methods::Deps {
             environment: Some(environment),
             engine: Some(engine),
             ..Default::default()
         };
-        deps.mcp = crate::routes::mcp::service(&deps);
+        deps.mcp = crate::routes::mcp::service(&deps, addr);
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
@@ -948,8 +967,6 @@ mod tests {
             engine: None,
             deps,
         };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, router(state)).await });
         (addr, auth)
     }
@@ -1335,6 +1352,31 @@ mod tests {
         assert_eq!(status, 200, "{body}");
         let snapshot: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(snapshot["projects"][0]["title"], "P");
+        // `answerShellSnapshot`: a current cursor gets the small confirmation; a cursor past
+        // the head or one that is not a safe integer gets the snapshot again.
+        let sequence = snapshot["snapshotSequence"].as_u64().unwrap();
+        let (status, body) = get(
+            &format!("{shell}?resumeFrom={sequence}"),
+            &[header, &bearer],
+        )
+        .await;
+        assert_eq!((status, body.as_str()), (200, r#"{"resumable":true}"#));
+        for cursor in [
+            format!("{}", sequence + 1),
+            "-1".into(),
+            "abc".into(),
+            "9007199254740992".into(),
+        ] {
+            let (status, body) =
+                get(&format!("{shell}?resumeFrom={cursor}"), &[header, &bearer]).await;
+            assert_eq!(status, 200, "{body}");
+            let replaced: Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(replaced["snapshotSequence"], sequence, "{cursor}");
+        }
+        // The opt-in gives the trimmed snapshot a fresh `subscribeShell` sends.
+        let (_, body) = get(&format!("{shell}?omitOlderSettled=1"), &[header, &bearer]).await;
+        let trimmed: Value = serde_json::from_str(&body).unwrap();
+        assert!(trimmed["olderSettled"].is_object(), "{trimmed}");
         // An unknown thread is a plain 404, never the structured not-found error.
         let (status, body) = get("/api/orchestration/threads/nope", &[header, &bearer]).await;
         assert_eq!((status, body.as_str()), (404, ""));

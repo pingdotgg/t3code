@@ -57,6 +57,7 @@ async fn main() {
             settings_base_url: None,
             cwd: scenario["cwd"].as_str().map(std::path::PathBuf::from),
             checked_at: "2026-01-01T00:00:00.000Z".to_owned(),
+            manifest: &Default::default(),
         };
         let host = &host;
         let entry = check(input, |options, extra, timeout| async move {

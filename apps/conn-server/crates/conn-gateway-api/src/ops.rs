@@ -3,7 +3,7 @@
 //! One struct per Gateway operation in `operations.txt`.
 
 /// sha256 of `openapi.json`, the document this code comes from.
-pub const OPENAPI_SHA256: &str = "b7126ffb2a9909c32ec476f456d4c99e276fcfbf0cf61736301ec70f51cfd28c";
+pub const OPENAPI_SHA256: &str = "1419c0a8a7e365100bb48d1d6c02469cced0803df79a7dd30518671cc3e33b6f";
 /// The `operationId` of every generated operation.
 pub const OPERATION_IDS: &[&str] = &[
     "conn-environment-cleanup",
@@ -68,7 +68,6 @@ pub struct ConnEnvironmentCleanup {
     pub environment: String,
     /// A permanent key scoped to this operation kind, binding caller and command as well as target and input. The same request returns the existing operation with HTTP 202; a changed identity returns operation.idempotency_conflict (409).
     pub idempotency_key: Option<String>,
-    pub body: crate::types::ConnEnvironmentCleanupRequest,
 }
 /// A 2xx answer of [`ConnEnvironmentCleanup`], by status.
 #[derive(Debug, Clone)]
@@ -83,7 +82,7 @@ impl crate::GatewayOperation for ConnEnvironmentCleanup {
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[202, 204];
     const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
-    type Body = crate::types::ConnEnvironmentCleanupRequest;
+    type Body = crate::NoBody;
     type Success = ConnEnvironmentCleanupSuccess;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -102,7 +101,7 @@ impl crate::GatewayOperation for ConnEnvironmentCleanup {
             .collect()
     }
     fn body(&self) -> Option<&Self::Body> {
-        Some(&self.body)
+        None
     }
     fn decode_success(
         status: u16,
@@ -198,7 +197,6 @@ pub struct ConnEnvironmentRenew {
     pub environment: String,
     /// A permanent key scoped to this operation kind, binding caller and command as well as target and input. The same request returns the existing operation with HTTP 202; a changed identity returns operation.idempotency_conflict (409).
     pub idempotency_key: Option<String>,
-    pub body: crate::types::ConnEnvironmentRenewRequest,
 }
 impl crate::GatewayOperation for ConnEnvironmentRenew {
     const ID: &'static str = "conn-environment-renew";
@@ -207,7 +205,7 @@ impl crate::GatewayOperation for ConnEnvironmentRenew {
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[202];
     const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422, 503];
-    type Body = crate::types::ConnEnvironmentRenewRequest;
+    type Body = crate::NoBody;
     type Success = crate::types::ConnEnvironmentRenewResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -226,7 +224,7 @@ impl crate::GatewayOperation for ConnEnvironmentRenew {
             .collect()
     }
     fn body(&self) -> Option<&Self::Body> {
-        Some(&self.body)
+        None
     }
     fn decode_success(
         status: u16,
@@ -381,7 +379,6 @@ pub struct ConnInstanceComplete {
     pub instance_id: String,
     /// A permanent key scoped to this operation kind, binding caller and command as well as target and input. The same request returns the existing operation with HTTP 202; a changed identity returns operation.idempotency_conflict (409).
     pub idempotency_key: String,
-    pub body: crate::types::ConnInstanceCompleteRequest,
 }
 impl crate::GatewayOperation for ConnInstanceComplete {
     const ID: &'static str = "conn-instance-complete";
@@ -390,7 +387,7 @@ impl crate::GatewayOperation for ConnInstanceComplete {
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[202];
     const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422, 503];
-    type Body = crate::types::ConnInstanceCompleteRequest;
+    type Body = crate::NoBody;
     type Success = crate::types::ConnInstanceCompleteResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -409,7 +406,7 @@ impl crate::GatewayOperation for ConnInstanceComplete {
             .collect()
     }
     fn body(&self) -> Option<&Self::Body> {
-        Some(&self.body)
+        None
     }
     fn decode_success(
         status: u16,
@@ -556,9 +553,7 @@ impl crate::GatewayOperation for ConnInstanceNameCheck {
         }
     }
 }
-/**`GET /api/v1/conn/instances/{instance_id}/work`: conn:instance:work
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/instances/{instance_id}/work`: conn:instance:work
 #[derive(Debug, Clone)]
 pub struct ConnInstanceWork {
     pub instance_id: String,
@@ -598,14 +593,11 @@ impl crate::GatewayOperation for ConnInstanceWork {
         }
     }
 }
-/**`POST /api/v1/conn/launches/{operation_id}/cancel`: Cancel a Conn launch before handoff
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`), also in `ConnLaunchSnapshot`.*/
+///`POST /api/v1/conn/launches/{operation_id}/cancel`: Cancel a Conn launch before handoff
 #[derive(Debug, Clone)]
 pub struct ConnLaunchCancel {
     /// Numeric Conn launch Operation ID.
     pub operation_id: i64,
-    pub body: Option<crate::types::ConnLaunchCancelRequest>,
 }
 impl crate::GatewayOperation for ConnLaunchCancel {
     const ID: &'static str = "conn-launch-cancel";
@@ -613,8 +605,8 @@ impl crate::GatewayOperation for ConnLaunchCancel {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/launches/{operation_id}/cancel";
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[202];
-    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
-    type Body = crate::types::ConnLaunchCancelRequest;
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409];
+    type Body = crate::NoBody;
     type Success = crate::types::ConnLaunchCancelResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -630,7 +622,7 @@ impl crate::GatewayOperation for ConnLaunchCancel {
         Vec::new()
     }
     fn body(&self) -> Option<&Self::Body> {
-        self.body.as_ref()
+        None
     }
     fn decode_success(
         status: u16,
@@ -642,9 +634,7 @@ impl crate::GatewayOperation for ConnLaunchCancel {
         }
     }
 }
-/**`POST /api/v1/conn/launches`: Admit a durable Conn launch
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`), also in `ConnLaunchSnapshot`.*/
+///`POST /api/v1/conn/launches`: Admit a durable Conn launch
 #[derive(Debug, Clone)]
 pub struct ConnLaunchCreate {
     /// Stable launch UUID scoped to the initiating Node.
@@ -686,9 +676,7 @@ impl crate::GatewayOperation for ConnLaunchCreate {
         }
     }
 }
-/**`GET /api/v1/conn/launches`: List visible Conn launches
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`), also in `ConnLaunchSnapshot`.*/
+///`GET /api/v1/conn/launches`: List visible Conn launches
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConnLaunchList;
 impl crate::GatewayOperation for ConnLaunchList {
@@ -723,9 +711,7 @@ impl crate::GatewayOperation for ConnLaunchList {
         }
     }
 }
-/**`POST /api/v1/conn/launches/{operation_id}/retry`: Retry launch recovery or application completion
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`), also in `ConnLaunchSnapshot`.*/
+///`POST /api/v1/conn/launches/{operation_id}/retry`: Retry launch recovery or application completion
 #[derive(Debug, Clone)]
 pub struct ConnLaunchRetry {
     /// Numeric Conn launch Operation ID.
@@ -767,9 +753,7 @@ impl crate::GatewayOperation for ConnLaunchRetry {
         }
     }
 }
-/**`GET /api/v1/conn/launches/{operation_id}`: Read a Conn launch
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`), also in `ConnLaunchSnapshot`.*/
+///`GET /api/v1/conn/launches/{operation_id}`: Read a Conn launch
 #[derive(Debug, Clone)]
 pub struct ConnLaunchShow {
     /// Numeric Conn launch Operation ID.
@@ -810,11 +794,7 @@ impl crate::GatewayOperation for ConnLaunchShow {
         }
     }
 }
-/**`POST /api/v1/conn/managed/ack`: conn:managed:ack
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).
-
- TODO(6200): the document names no auth; `ManagedBearer` comes from the `/api/v1/conn/managed/` path.*/
+///`POST /api/v1/conn/managed/ack`: conn:managed:ack
 #[derive(Debug, Clone)]
 pub struct ConnManagedAck {
     pub body: crate::types::ConnManagedAckRequest,
@@ -825,7 +805,7 @@ impl crate::GatewayOperation for ConnManagedAck {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/managed/ack";
     const AUTH: crate::AuthKind = crate::AuthKind::ManagedBearer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 409, 422];
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
     type Body = crate::types::ConnManagedAckRequest;
     type Success = crate::types::ConnManagedAckResponse;
     type Error = crate::types::Error;
@@ -851,11 +831,7 @@ impl crate::GatewayOperation for ConnManagedAck {
         }
     }
 }
-/**`POST /api/v1/conn/managed/authority`: conn:managed:authority
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).
-
- TODO(6200): the document names no auth; `ManagedBearer` comes from the `/api/v1/conn/managed/` path.*/
+///`POST /api/v1/conn/managed/authority`: conn:managed:authority
 #[derive(Debug, Clone)]
 pub struct ConnManagedAuthority {
     pub body: crate::types::ConnManagedAuthorityRequest,
@@ -866,7 +842,7 @@ impl crate::GatewayOperation for ConnManagedAuthority {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/managed/authority";
     const AUTH: crate::AuthKind = crate::AuthKind::ManagedBearer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 409, 422];
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
     type Body = crate::types::ConnManagedAuthorityRequest;
     type Success = crate::types::ConnManagedAuthorityResponse;
     type Error = crate::types::Error;
@@ -892,11 +868,7 @@ impl crate::GatewayOperation for ConnManagedAuthority {
         }
     }
 }
-/**`POST /api/v1/conn/managed/broadcasting/auth`: conn:managed:broadcasting-auth
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).
-
- TODO(6200): the document names no auth; `ManagedBearer` comes from the `/api/v1/conn/managed/` path.*/
+///`POST /api/v1/conn/managed/broadcasting/auth`: conn:managed:broadcasting-auth
 #[derive(Debug, Clone)]
 pub struct ConnManagedBroadcastingAuth {
     pub body: crate::types::ConnManagedBroadcastingAuthRequest,
@@ -907,7 +879,7 @@ impl crate::GatewayOperation for ConnManagedBroadcastingAuth {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/managed/broadcasting/auth";
     const AUTH: crate::AuthKind = crate::AuthKind::ManagedBearer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 409, 422];
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
     type Body = crate::types::ConnManagedBroadcastingAuthRequest;
     type Success = crate::types::ConnManagedBroadcastingAuthResponse;
     type Error = crate::types::Error;
@@ -933,11 +905,7 @@ impl crate::GatewayOperation for ConnManagedBroadcastingAuth {
         }
     }
 }
-/**`POST /api/v1/conn/managed/introspect`: conn:managed:introspect
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).
-
- TODO(6200): the document names no auth; `ManagedBearer` comes from the `/api/v1/conn/managed/` path.*/
+///`POST /api/v1/conn/managed/introspect`: conn:managed:introspect
 #[derive(Debug, Clone)]
 pub struct ConnManagedIntrospect {
     pub body: crate::types::ConnManagedIntrospectRequest,
@@ -948,7 +916,7 @@ impl crate::GatewayOperation for ConnManagedIntrospect {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/managed/introspect";
     const AUTH: crate::AuthKind = crate::AuthKind::ManagedBearer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 409, 422];
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
     type Body = crate::types::ConnManagedIntrospectRequest;
     type Success = crate::types::ConnManagedIntrospectResponse;
     type Error = crate::types::Error;
@@ -974,11 +942,7 @@ impl crate::GatewayOperation for ConnManagedIntrospect {
         }
     }
 }
-/**`POST /api/v1/conn/managed/realtime`: conn:managed:realtime
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).
-
- TODO(6200): the document names no auth; `ManagedBearer` comes from the `/api/v1/conn/managed/` path.*/
+///`POST /api/v1/conn/managed/realtime`: conn:managed:realtime
 #[derive(Debug, Clone)]
 pub struct ConnManagedRealtime {
     pub body: crate::types::ConnManagedRealtimeRequest,
@@ -989,7 +953,7 @@ impl crate::GatewayOperation for ConnManagedRealtime {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/managed/realtime";
     const AUTH: crate::AuthKind = crate::AuthKind::ManagedBearer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 409, 422];
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
     type Body = crate::types::ConnManagedRealtimeRequest;
     type Success = crate::types::ConnManagedRealtimeResponse;
     type Error = crate::types::Error;
@@ -1015,9 +979,7 @@ impl crate::GatewayOperation for ConnManagedRealtime {
         }
     }
 }
-/**`POST /api/v1/conn/environments/{environment}/managed-tokens`: conn:managed:token:create
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`POST /api/v1/conn/environments/{environment}/managed-tokens`: conn:managed:token:create
 #[derive(Debug, Clone)]
 pub struct ConnManagedTokenCreate {
     pub environment: String,
@@ -1028,7 +990,7 @@ impl crate::GatewayOperation for ConnManagedTokenCreate {
     const METHOD: crate::Method = crate::Method::Post;
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/environments/{environment}/managed-tokens";
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
-    const SUCCESS_STATUSES: &'static [u16] = &[200, 201];
+    const SUCCESS_STATUSES: &'static [u16] = &[201];
     const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
     type Body = crate::types::ConnManagedTokenCreateRequest;
     type Success = crate::types::ConnManagedTokenCreateResponse;
@@ -1053,14 +1015,12 @@ impl crate::GatewayOperation for ConnManagedTokenCreate {
         body: &[u8],
     ) -> Result<Self::Success, crate::DecodeError> {
         match status {
-            200 | 201 => crate::decode_json(status, body),
+            201 => crate::decode_json(status, body),
             _ => Err(crate::DecodeError::UnexpectedStatus(status)),
         }
     }
 }
-/**`GET /api/v1/conn/me`: Show the calling Node
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/me`: Show the calling Node
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConnMe;
 impl crate::GatewayOperation for ConnMe {
@@ -1095,9 +1055,7 @@ impl crate::GatewayOperation for ConnMe {
         }
     }
 }
-/**`PUT /api/v1/conn/me/profile`: Bind the calling Node to a profile
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`PUT /api/v1/conn/me/profile`: Bind the calling Node to a profile
 #[derive(Debug, Clone)]
 pub struct ConnMeProfile {
     pub body: crate::types::ConnMeProfileRequest,
@@ -1180,7 +1138,6 @@ impl crate::GatewayOperation for ConnNodeEnvironmentsRestart {
 pub struct ConnOperationCancel {
     /// Numeric operation ID.
     pub operation: i64,
-    pub body: Option<crate::types::ConnOperationCancelRequest>,
 }
 impl crate::GatewayOperation for ConnOperationCancel {
     const ID: &'static str = "conn-operation-cancel";
@@ -1188,8 +1145,8 @@ impl crate::GatewayOperation for ConnOperationCancel {
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/operations/{operation}/cancel";
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
-    type Body = crate::types::ConnOperationCancelRequest;
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409];
+    type Body = crate::NoBody;
     type Success = crate::types::ConnOperationCancelResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -1205,7 +1162,7 @@ impl crate::GatewayOperation for ConnOperationCancel {
         Vec::new()
     }
     fn body(&self) -> Option<&Self::Body> {
-        self.body.as_ref()
+        None
     }
     fn decode_success(
         status: u16,
@@ -1308,9 +1265,7 @@ impl crate::GatewayOperation for ConnPairingCreate {
         }
     }
 }
-/**`GET /api/v1/conn/environments/{environment}/pairings`: List pairings on a T3 server
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/environments/{environment}/pairings`: List pairings on a T3 server
 #[derive(Debug, Clone)]
 pub struct ConnPairingList {
     pub environment: String,
@@ -1401,9 +1356,7 @@ impl crate::GatewayOperation for ConnPairingRevoke {
         }
     }
 }
-/**`GET /api/v1/conn/environments/{environment}/pairings/{pairing}`: Read a one-time pairing URL
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/environments/{environment}/pairings/{pairing}`: Read a one-time pairing URL
 #[derive(Debug, Clone)]
 pub struct ConnPairingShow {
     pub environment: String,
@@ -1802,16 +1755,15 @@ impl crate::GatewayOperation for ConnRealtimeShow {
 pub struct ConnReservationCreate {
     /// Numeric Project ID.
     pub project: i64,
-    pub body: Option<crate::types::ConnReservationCreateRequest>,
 }
 impl crate::GatewayOperation for ConnReservationCreate {
     const ID: &'static str = "conn-reservation-create";
     const METHOD: crate::Method = crate::Method::Post;
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/projects/{project}/reservations";
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
-    const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
-    type Body = crate::types::ConnReservationCreateRequest;
+    const SUCCESS_STATUSES: &'static [u16] = &[200, 202];
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409];
+    type Body = crate::NoBody;
     type Success = crate::types::ConnReservationCreateResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -1827,14 +1779,14 @@ impl crate::GatewayOperation for ConnReservationCreate {
         Vec::new()
     }
     fn body(&self) -> Option<&Self::Body> {
-        self.body.as_ref()
+        None
     }
     fn decode_success(
         status: u16,
         body: &[u8],
     ) -> Result<Self::Success, crate::DecodeError> {
         match status {
-            200 => crate::decode_json(status, body),
+            200 | 202 => crate::decode_json(status, body),
             _ => Err(crate::DecodeError::UnexpectedStatus(status)),
         }
     }
@@ -1895,7 +1847,7 @@ impl crate::GatewayOperation for ConnReservationRelease {
     const METHOD: crate::Method = crate::Method::Delete;
     const PATH_TEMPLATE: &'static str = "/api/v1/conn/reservations/{reservation}";
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
-    const SUCCESS_STATUSES: &'static [u16] = &[200];
+    const SUCCESS_STATUSES: &'static [u16] = &[202];
     const ERROR_STATUSES: &'static [u16] = &[403, 404, 409];
     type Body = crate::NoBody;
     type Success = crate::types::ConnReservationReleaseResponse;
@@ -1919,7 +1871,7 @@ impl crate::GatewayOperation for ConnReservationRelease {
         body: &[u8],
     ) -> Result<Self::Success, crate::DecodeError> {
         match status {
-            200 => crate::decode_json(status, body),
+            202 => crate::decode_json(status, body),
             _ => Err(crate::DecodeError::UnexpectedStatus(status)),
         }
     }
@@ -1963,9 +1915,7 @@ impl crate::GatewayOperation for ConnReservationShow {
         }
     }
 }
-/**`GET /api/v1/conn/tasks`: conn:task:list
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/tasks`: conn:task:list
 #[derive(Debug, Clone)]
 pub struct ConnTaskList {
     pub project: Option<i64>,
@@ -2019,9 +1969,7 @@ impl crate::GatewayOperation for ConnTaskList {
         }
     }
 }
-/**`GET /api/v1/conn/tasks/{task}`: conn:task:show
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/tasks/{task}`: conn:task:show
 #[derive(Debug, Clone)]
 pub struct ConnTaskShow {
     pub task: String,
@@ -2058,9 +2006,7 @@ impl crate::GatewayOperation for ConnTaskShow {
         }
     }
 }
-/**`GET /api/v1/conn/threads`: List the thread index of container T3 servers
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/conn/threads`: List the thread index of container T3 servers
 #[derive(Debug, Clone)]
 pub struct ConnThreadList {
     pub project: Option<i64>,
@@ -2152,7 +2098,6 @@ pub struct InstanceWake {
     pub instance: i64,
     /// A permanent key scoped to this operation kind, target and input. The same request returns the existing operation with HTTP 202; a changed identity returns operation.idempotency_conflict (409).
     pub idempotency_key: Option<String>,
-    pub body: crate::types::InstanceWakeRequest,
 }
 impl crate::GatewayOperation for InstanceWake {
     const ID: &'static str = "instance-wake";
@@ -2161,7 +2106,7 @@ impl crate::GatewayOperation for InstanceWake {
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[202];
     const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422, 503];
-    type Body = crate::types::InstanceWakeRequest;
+    type Body = crate::NoBody;
     type Success = crate::types::InstanceWakeResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
@@ -2180,7 +2125,7 @@ impl crate::GatewayOperation for InstanceWake {
             .collect()
     }
     fn body(&self) -> Option<&Self::Body> {
-        Some(&self.body)
+        None
     }
     fn decode_success(
         status: u16,
@@ -2272,41 +2217,32 @@ impl crate::GatewayOperation for ProjectList {
         }
     }
 }
-/**`GET /api/v1/broadcasting/auth`: Authorize the orbit broadcast channel
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`POST /api/v1/broadcasting/auth`: Authorize the orbit broadcast channel
 #[derive(Debug, Clone)]
 pub struct RealtimeAuth {
-    pub socket_id: String,
-    pub channel_name: String,
+    pub body: crate::types::RealtimeAuthRequest,
 }
 impl crate::GatewayOperation for RealtimeAuth {
     const ID: &'static str = "realtime-auth";
-    const METHOD: crate::Method = crate::Method::Get;
+    const METHOD: crate::Method = crate::Method::Post;
     const PATH_TEMPLATE: &'static str = "/api/v1/broadcasting/auth";
     const AUTH: crate::AuthKind = crate::AuthKind::WireGuardPeer;
     const SUCCESS_STATUSES: &'static [u16] = &[200];
-    const ERROR_STATUSES: &'static [u16] = &[403];
-    type Body = crate::NoBody;
+    const ERROR_STATUSES: &'static [u16] = &[403, 404, 409, 422];
+    type Body = crate::types::RealtimeAuthRequest;
     type Success = crate::types::RealtimeAuthResponse;
     type Error = crate::types::Error;
     fn path(&self) -> String {
         "/api/v1/broadcasting/auth".to_owned()
     }
     fn query(&self) -> Vec<(&'static str, String)> {
-        [
-            Some(("socket_id", self.socket_id.clone())),
-            Some(("channel_name", self.channel_name.clone())),
-        ]
-            .into_iter()
-            .flatten()
-            .collect()
+        Vec::new()
     }
     fn headers(&self) -> Vec<(&'static str, String)> {
         Vec::new()
     }
     fn body(&self) -> Option<&Self::Body> {
-        None
+        Some(&self.body)
     }
     fn decode_success(
         status: u16,
@@ -2318,9 +2254,7 @@ impl crate::GatewayOperation for RealtimeAuth {
         }
     }
 }
-/**`GET /api/v1/realtime`: Show the Reverb connection
-
- TODO(6200): this operation's schemas hold untyped objects (`serde_json::Value`).*/
+///`GET /api/v1/realtime`: Show the Reverb connection
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RealtimeShow;
 impl crate::GatewayOperation for RealtimeShow {
