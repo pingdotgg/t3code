@@ -215,7 +215,7 @@ export const relayAccountDeletions = pgTable(
   },
   (table) => [
     index("idx_relay_account_deletions_pending")
-      .on(table.requestedAt)
+      .on(table.attempts, table.requestedAt)
       .where(sql`${table.completedAt} is null`),
   ],
 );

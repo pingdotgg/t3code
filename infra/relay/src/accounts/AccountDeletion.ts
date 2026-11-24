@@ -1,5 +1,5 @@
 import { RelayApi } from "@t3tools/contracts/relay";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +18,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as RelayConfiguration from "../Config.ts";
 import { RELAY_DPOP_ACCESS_TOKEN_TTL } from "../auth/RelayTokens.ts";
 import * as RelayDb from "../db.ts";
+import * as HeldHooks from "../hooks/HeldHooks.ts";
+import * as HookInbox from "../hooks/HookInbox.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
 import {
   relayAccountDeletions,
@@ -39,6 +41,7 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
     stage: Schema.Literals([
       "record-request",
       "list-environments",
+      "clear-held-webhooks",
       "deprovision",
       "delete-rows",
       "unlink-t3chat",
@@ -51,6 +54,8 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
   }
 }
 
+const isAccountDeletionFailed = Schema.is(AccountDeletionFailed);
+
 export class AccountDeletionQueueFailed extends Schema.TaggedError<AccountDeletionQueueFailed>()(
   "AccountDeletionQueueFailed",
   { cause: Schema.Defect() },
@@ -62,7 +67,12 @@ const DELETION_SETTLE = Duration.sum(
   Duration.fromInputUnsafe(RELAY_DPOP_ACCESS_TOKEN_TTL),
   Duration.minutes(5),
 );
-const PENDING_BATCH_SIZE = 10;
+const PENDING_BATCH_SIZE = 25;
+
+const identityKey = (identity: {
+  readonly environmentId: string;
+  readonly environmentPublicKey: string;
+}) => `${identity.environmentId}\u0000${identity.environmentPublicKey}`;
 
 /** Hard-deletes everything the relay holds for a cloud account. Safe to retry. */
 export class AccountDeletion extends Context.Service<
@@ -88,6 +98,7 @@ const make = Effect.gen(function* () {
   const transactions = yield* RelayDb.RelayTransactions;
   const config = yield* RelayConfiguration.RelayConfiguration;
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
+  const inbox = yield* HookInbox.HookInbox;
   // unlinkEnvironmentRecord reads these from context; capture them once for the service.
   const unlinkContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof unlinkEnvironmentRecord>>>();
@@ -109,21 +120,37 @@ const make = Effect.gen(function* () {
         .from(relayEnvironmentLinks)
         .where(eq(relayEnvironmentLinks.userId, userId)),
       db
-        .select({ environmentId: relayManagedEndpointAllocations.environmentId })
+        .select({
+          environmentId: relayManagedEndpointAllocations.environmentId,
+          tunnelName: relayManagedEndpointAllocations.tunnelName,
+        })
         .from(relayManagedEndpointAllocations)
         .where(eq(relayManagedEndpointAllocations.userId, userId)),
     ]).pipe(Effect.mapError(fail("list-environments")));
     const environmentIds = [...new Set([...links, ...allocations].map((row) => row.environmentId))];
     // Credentials and activity rows belong to an environment identity (id and key), not an account.
-    const identities = [
-      ...new Map(
-        links.map((link) => [`${link.environmentId}\u0000${link.environmentPublicKey}`, link]),
-      ).entries(),
-    ]
+    const identities = [...new Map(links.map((link) => [identityKey(link), link])).entries()]
       .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([, identity]) => identity);
 
-    // Revoke, clear held webhooks, and delete each Cloudflare tunnel and DNS record before
+    // Unlink only logs a failed clear; here it must fail the pass while the allocation that names
+    // the inbox still exists, or a retry could no longer find it.
+    const { managedEndpointNamespace } = config;
+    if (managedEndpointNamespace !== undefined) {
+      yield* Effect.forEach(
+        allocations.flatMap((allocation) => {
+          const endpointKey = HeldHooks.endpointKeyForTunnelName(
+            managedEndpointNamespace,
+            allocation.tunnelName,
+          );
+          return endpointKey === null ? [] : [endpointKey];
+        }),
+        (endpointKey) => inbox.clear({ endpointKey }),
+        { discard: true },
+      ).pipe(Effect.mapError(fail("clear-held-webhooks")));
+    }
+
+    // Revoke and delete each Cloudflare tunnel and DNS record before
     // dropping rows, so no live tunnel is left without the allocation that tracks it.
     yield* Effect.forEach(
       environmentIds,
@@ -157,7 +184,22 @@ const make = Effect.gen(function* () {
               sql`select pg_advisory_xact_lock(hashtext(${identity.environmentId}), hashtext(${identity.environmentPublicKey}))`,
             );
           }
-          yield* db.delete(relayEnvironmentLinks).where(eq(relayEnvironmentLinks.userId, userId));
+          const deletedLinks = yield* db
+            .delete(relayEnvironmentLinks)
+            .where(eq(relayEnvironmentLinks.userId, userId))
+            .returning({
+              environmentId: relayEnvironmentLinks.environmentId,
+              environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+            });
+          // A link written after the identities were read is not locked or cleaned below. Roll
+          // back and let the next sweep start over with it.
+          const locked = new Set(identities.map(identityKey));
+          const unlocked = deletedLinks.filter((link) => !locked.has(identityKey(link)));
+          if (unlocked.length > 0) {
+            return yield* fail("delete-rows")(
+              new Error(`${unlocked.length} link(s) changed during deletion; retrying`),
+            );
+          }
           for (const identity of identities) {
             const sameIdentity = (
               table:
@@ -172,7 +214,9 @@ const make = Effect.gen(function* () {
             const stillLinked = yield* db
               .select({ environmentId: relayEnvironmentLinks.environmentId })
               .from(relayEnvironmentLinks)
-              .where(sameIdentity(relayEnvironmentLinks))
+              .where(
+                and(sameIdentity(relayEnvironmentLinks), isNull(relayEnvironmentLinks.revokedAt)),
+              )
               .limit(1);
             if (stillLinked.length > 0) continue;
             yield* db
@@ -188,7 +232,11 @@ const make = Effect.gen(function* () {
             .where(eq(relayManagedTunnelLimits.userId, userId));
         }),
       )
-      .pipe(Effect.mapError(fail("delete-rows")));
+      .pipe(
+        Effect.mapError((cause) =>
+          isAccountDeletionFailed(cause) ? cause : fail("delete-rows")(cause),
+        ),
+      );
 
     if (t3Chat.available) {
       // T3 Chat owns the link; only ask it to drop one that exists.
@@ -224,7 +272,8 @@ const make = Effect.gen(function* () {
       .select()
       .from(relayAccountDeletions)
       .where(isNull(relayAccountDeletions.completedAt))
-      .orderBy(relayAccountDeletions.requestedAt)
+      // Fewest failures first, so deletions that keep failing cannot starve newer ones.
+      .orderBy(asc(relayAccountDeletions.attempts), asc(relayAccountDeletions.requestedAt))
       .limit(PENDING_BATCH_SIZE)
       .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
     let completed = 0;

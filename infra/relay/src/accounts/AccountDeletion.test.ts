@@ -24,10 +24,11 @@ const signingSecret = `whsec_${Base64.encode(signingKey)}`;
 
 const config = {
   clerkWebhookSigningSecret: Redacted.make(signingSecret),
-  managedEndpointNamespace: undefined,
+  managedEndpointNamespace: "dev",
 } as unknown as RelayConfiguration.RelayConfiguration["Service"];
 
 const SIGNED_AT_SECONDS = 1_800_000_000;
+const OWN_TUNNEL = "t3coderelay-managedendpoint-dev-0123456789abcdef";
 
 const clerkRequest = Effect.fn(function* (
   event: unknown,
@@ -113,7 +114,9 @@ const layerAccountDeletionTest = (fakeDb: RelayDb.RelayDb["Service"], calls: Arr
           getForUser: () => Effect.succeed(null),
         }),
         Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
-        Layer.mock(HookInbox.HookInbox, {}),
+        Layer.mock(HookInbox.HookInbox, {
+          clear: ({ endpointKey }) => Effect.sync(() => void calls.push(`clear ${endpointKey}`)),
+        }),
         Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {
           prepareDeprovision: () => Effect.succeed(null),
           deprovision: ({ environmentId }) =>
@@ -135,6 +138,8 @@ describe("AccountDeletion", () => {
     "tears down tunnels, then locks each environment identity before deleting its rows",
     () => {
       const calls: Array<string> = [];
+      let linksAtDelete: ReadonlyArray<{ environmentId: string; environmentPublicKey: string }> =
+        [];
       const ownLinks = [
         { environmentId: "env-shared", environmentPublicKey: "key-b" },
         { environmentId: "env-own", environmentPublicKey: "key-a" },
@@ -154,7 +159,7 @@ describe("AccountDeletion", () => {
                 // Teardown removed the allocation, so the remaining-allocation check finds none.
                 return calls.some((call) => call.startsWith("deprovision"))
                   ? []
-                  : [{ environmentId: "env-own" }];
+                  : [{ environmentId: "env-own", tunnelName: OWN_TUNNEL }];
               });
               // The per-identity check after the user's links are deleted: another account
               // still links env-shared under the same key.
@@ -170,17 +175,23 @@ describe("AccountDeletion", () => {
           }),
         }),
         delete: (table: Table) => ({
-          where: (condition: SQL | undefined) =>
-            Effect.sync(() => {
+          where: (condition: SQL | undefined) => {
+            const done = Effect.sync(() => {
               calls.push(`delete ${getTableName(table)} ${params(condition).join(",")}`);
-            }),
+            });
+            return Object.assign(done, {
+              returning: () => Effect.as(done, linksAtDelete),
+            });
+          },
         }),
       } as unknown as RelayDb.RelayDb["Service"];
 
+      linksAtDelete = ownLinks;
       return Effect.gen(function* () {
         const accounts = yield* AccountDeletion.AccountDeletion;
         yield* accounts.deleteAccount({ userId: "user_1" });
         expect(calls.filter((call) => !call.startsWith("select"))).toEqual([
+          "clear 0123456789abcdef",
           "deprovision env-shared",
           "deprovision env-own",
           "lock env-own,key-a",
@@ -194,6 +205,19 @@ describe("AccountDeletion", () => {
           "delete relay_managed_tunnel_limits user_1",
           "unlink-t3chat user_1",
         ]);
+
+        // A link with a new key committed after the identities were read: the pass rolls back
+        // before deleting anything it has not locked, and the next sweep starts over.
+        calls.length = 0;
+        linksAtDelete = [
+          ...ownLinks,
+          { environmentId: "env-own", environmentPublicKey: "key-new" },
+        ];
+        const failure = yield* Effect.flip(accounts.deleteAccount({ userId: "user_1" }));
+        expect(failure.stage).toBe("delete-rows");
+        expect(calls.filter((call) => call.startsWith("delete")).at(-1)).toBe(
+          "delete relay_environment_links user_1",
+        );
       }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
     },
   );
@@ -224,10 +248,12 @@ describe("AccountDeletion", () => {
         }),
       }),
       delete: (table: Table) => ({
-        where: (condition: SQL | undefined) =>
-          Effect.sync(() => {
+        where: (condition: SQL | undefined) => {
+          const done = Effect.sync(() => {
             calls.push(`delete ${getTableName(table)} ${params(condition).join(",")}`);
-          }),
+          });
+          return Object.assign(done, { returning: () => Effect.as(done, []) });
+        },
       }),
     } as unknown as RelayDb.RelayDb["Service"];
 

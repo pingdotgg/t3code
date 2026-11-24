@@ -214,9 +214,9 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     severity: "page",
     name: "T3 Connect relay: account deletions failing",
     description:
-      "Failed account deletion passes in 2 h. The cron retries every 5 min, so one stuck deletion fails 24 times in 2 h; a one-off Cloudflare blip fails once or twice. Healthy: 0. Pending rows and their attempts are in relay_account_deletions.",
+      "Failed account deletion passes, plus sweeps that failed outright, in 2 h. The cron retries every 5 min, so one stuck deletion or a broken sweep fails 24 times in 2 h; a one-off Cloudflare blip fails once or twice. Healthy: 0. Pending rows and their attempts are in relay_account_deletions.",
     query: (dataset) =>
-      `['${dataset}']\n| where name == "relay.account_deletion.process_pending"\n| summarize failed = sum(toint(['attributes.custom']['relay.account_deletion.failed']))`,
+      `['${dataset}']\n| where name == "relay.account_deletion.process_pending"\n| summarize passes = sum(toint(['attributes.custom']['relay.account_deletion.failed'])), sweeps = countif(error == true)\n| project failed = coalesce(passes, 0) + sweeps`,
     operator: "AboveOrEqual",
     threshold: 12,
     rangeMinutes: 120,

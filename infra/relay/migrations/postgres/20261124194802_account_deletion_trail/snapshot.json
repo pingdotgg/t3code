@@ -2,7 +2,7 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "91c33923-e6fe-4297-88d5-8cfeec262dfa",
+  "id": "0a77840f-76b7-46b8-9df4-14f4a48beeec",
   "prevIds": ["0538d0fe-4847-4c62-85fb-420aa62709b3"],
   "footprints": [
     {
@@ -32,6 +32,7 @@
       "reads": [
         "n|tbl|public.relay_account_deletions",
         "n|sch|public",
+        "n|col|public.relay_account_deletions.attempts",
         "n|col|public.relay_account_deletions.requested_at"
       ]
     }
@@ -61,6 +62,13 @@
         "name": "idx_relay_account_deletions_pending",
         "nameExplicit": true,
         "columns": [
+          {
+            "value": "attempts",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
           {
             "value": "requested_at",
             "isExpression": false,
