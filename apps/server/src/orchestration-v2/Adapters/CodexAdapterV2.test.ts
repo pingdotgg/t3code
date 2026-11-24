@@ -15,6 +15,7 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
@@ -4076,7 +4077,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("reports MCP servers Codex is still starting until they settle", () =>
+  it.effect("reports MCP servers starting only until the thread's turn opens", () =>
     Effect.gen(function* () {
       const nativeThreadId = "mcp-startup-phase-thread";
       const nativeTurnId = "mcp-startup-phase-turn";
@@ -4112,6 +4113,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           status("docs", "starting"),
           status("search", "starting"),
           ...preamble.slice(turnStart),
+          // Codex may answer without these, so once the turn is open they are not startup.
+          status("late", "starting"),
           status("docs", "ready"),
           status("search", "failed"),
           {
@@ -4128,23 +4131,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ],
       });
       let runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
-      // The turn start republishes the session record, so it must still carry the phase then.
-      const turnRunning = yield* Deferred.make<void>();
-      let phaseWhileRunning: string | undefined;
+      // Turn start republishes the session record, so it must carry the phase until the turn opens.
+      const reported = yield* Deferred.make<void>();
+      let republished: OrchestrationV2ProviderSession | undefined;
       const harness = yield* makeCodexReplayHarness(
         transcript,
         (event) =>
-          event.type === "provider_turn.updated" && event.providerTurn.status === "running"
-            ? Deferred.succeed(turnRunning, undefined)
+          event.type === "provider_session.updated" &&
+          event.providerSession.startupPhase !== undefined
+            ? Deferred.succeed(reported, undefined)
             : Effect.void,
         undefined,
         undefined,
         (entry) =>
-          entry.label === "mcp-docs-ready"
-            ? Deferred.await(turnRunning).pipe(
+          entry.label === "turn/start"
+            ? Deferred.await(reported).pipe(
                 Effect.andThen(
                   Effect.sync(() => {
-                    phaseWhileRunning = runtime?.providerSession.startupPhase;
+                    republished = runtime?.providerSession;
                   }),
                 ),
               )
@@ -4163,14 +4167,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* harness.firstTerminal;
       const updates = harness.events.flatMap((event) =>
         event.type === "provider_session.updated"
-          ? [event.providerSession.startupPhase ?? null]
+          ? [
+              event.providerSession.startupPhase === undefined
+                ? null
+                : `${event.providerSession.startupPhase} for ${event.providerSession.startupPhaseThreadId}`,
+            ]
           : event.type === "provider_turn.updated" && event.providerTurn.status === "running"
             ? ["turn running"]
             : [],
       );
-      // One report while any server starts, kept past turn/start, cleared once the last one settles.
-      assert.deepEqual(updates, ["mcp", "turn running", null]);
-      assert.equal(phaseWhileRunning, "mcp");
+      assert.deepEqual(updates, [`mcp for ${harness.threadId}`, null, "turn running"]);
+      assert.equal(republished?.startupPhase, "mcp");
+      assert.equal(republished?.startupPhaseThreadId, harness.threadId);
       assert.isUndefined(harness.runtime.providerSession.startupPhase);
     }).pipe(
       Effect.provide(
@@ -4992,7 +5000,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         transcript,
         (event) =>
           event.type === "provider_session.updated"
-            ? Queue.offer(startupPhases, event.providerSession.startupPhase ?? null)
+            ? Queue.offer(
+                startupPhases,
+                event.providerSession.startupPhase === undefined
+                  ? null
+                  : `${event.providerSession.startupPhase} for ${event.providerSession.startupPhaseThreadId}`,
+              )
             : Effect.void,
         (method, params) =>
           Effect.sync(() => {
@@ -5021,13 +5034,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(resumed.status, "idle");
       assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
       assert.deepEqual(resumeThreadEnvs, [harness.threadId, undefined, explicitThreadId]);
-      // Each resume is reported while Codex loads the thread, then cleared.
-      assert.deepEqual(Array.from(yield* Queue.takeN(startupPhases, 6)), [
-        "resume",
+      // Each resume is reported for its thread while Codex loads it; one with no app thread is not.
+      assert.deepEqual(Array.from(yield* Queue.takeN(startupPhases, 4)), [
+        `resume for ${harness.threadId}`,
         null,
-        "resume",
-        null,
-        "resume",
+        `resume for ${explicitThreadId}`,
         null,
       ]);
     }).pipe(

@@ -431,6 +431,14 @@ describe("thread execution presentation", () => {
         providerSessions: [{ ...session, startupPhase: "a-later-server's-phase" }],
       })?.providerStartingLabel,
     ).toBe("Starting Claude");
+    // A session shared by several threads shows its phase only on the thread it names.
+    const sharedPhase = (threadId: ThreadId) =>
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, startupPhase: "mcp", startupPhaseThreadId: threadId }],
+      })?.providerStartingLabel;
+    expect(sharedPhase(v2Projection.thread.id)).toBe("Starting Claude MCP servers");
+    expect(sharedPhase(ThreadId.make("another-thread"))).toBe("Starting Claude");
     expect(
       deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
     ).toBe("Starting");

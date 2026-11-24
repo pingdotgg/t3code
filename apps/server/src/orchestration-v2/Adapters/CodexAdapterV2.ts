@@ -2518,34 +2518,56 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        // MCP servers Codex reports as starting, by native thread; its first model request waits on them.
+        // Every Codex thread shares this session, so a phase names the one thread it describes.
+        // Once a turn opens Codex may answer without its servers, so only a thread still
+        // starting counts its MCP servers.
+        const appThreadByNativeThread = new Map<string, ThreadId>();
         const startingMcpServers = new Map<string, Set<string>>();
-        let resumingThreads = 0;
-        let reportedStartupPhase: string | undefined;
+        const resumingThreads = new Set<ThreadId>();
+        let reportedStartupPhase:
+          | { readonly phase: string; readonly threadId: ThreadId }
+          | undefined;
+        const currentStartupPhase = () => {
+          const resuming = [...resumingThreads].at(-1);
+          if (resuming !== undefined) return { phase: "resume", threadId: resuming };
+          for (const nativeThreadId of [...startingMcpServers.keys()].reverse()) {
+            const threadId = appThreadByNativeThread.get(nativeThreadId);
+            if (threadId !== undefined) return { phase: "mcp", threadId };
+          }
+          return undefined;
+        };
+        const withStartupPhase = (record: OrchestrationV2ProviderSession) =>
+          reportedStartupPhase === undefined
+            ? record
+            : {
+                ...record,
+                startupPhase: reportedStartupPhase.phase,
+                startupPhaseThreadId: reportedStartupPhase.threadId,
+              };
         const reportStartupPhase = Effect.fn("CodexAdapterV2.reportStartupPhase")(function* () {
-          const phase =
-            resumingThreads > 0 ? "resume" : startingMcpServers.size > 0 ? "mcp" : undefined;
-          if (phase === reportedStartupPhase) return;
-          reportedStartupPhase = phase;
+          const next = currentStartupPhase();
+          if (
+            next?.phase === reportedStartupPhase?.phase &&
+            next?.threadId === reportedStartupPhase?.threadId
+          ) {
+            return;
+          }
+          reportedStartupPhase = next;
           yield* emitProviderEvent({
             type: "provider_session.updated",
             driver: CODEX_PROVIDER,
-            providerSession: {
-              ...session,
-              ...(phase === undefined ? {} : { startupPhase: phase }),
-              updatedAt: yield* DateTime.now,
-            },
+            providerSession: withStartupPhase({ ...session, updatedAt: yield* DateTime.now }),
           });
         });
-        const reportingResume = <A, E, R>(resume: Effect.Effect<A, E, R>) =>
+        const reportingResume = <A, E, R>(threadId: ThreadId, resume: Effect.Effect<A, E, R>) =>
           Effect.sync(() => {
-            resumingThreads += 1;
+            resumingThreads.add(threadId);
           }).pipe(
             Effect.andThen(reportStartupPhase()),
             Effect.andThen(resume),
             Effect.ensuring(
               Effect.suspend(() => {
-                resumingThreads -= 1;
+                resumingThreads.delete(threadId);
                 return reportStartupPhase();
               }),
             ),
@@ -2735,6 +2757,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
           if (existing !== undefined) {
             return existing;
+          }
+          const openingNativeThreadId = input.turnInput.providerThread.nativeThreadRef?.nativeId;
+          if (openingNativeThreadId != null && startingMcpServers.delete(openingNativeThreadId)) {
+            yield* reportStartupPhase();
           }
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: CODEX_PROVIDER,
@@ -5341,7 +5367,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const starting = startingMcpServers.get(payload.threadId) ?? new Set<string>();
             if (payload.status === "starting") starting.add(payload.name);
             else starting.delete(payload.name);
-            if (starting.size === 0) startingMcpServers.delete(payload.threadId);
+            const turnOpen =
+              (yield* findActiveTurnByNativeThreadId(payload.threadId)) !== undefined;
+            if (starting.size === 0 || turnOpen) startingMcpServers.delete(payload.threadId);
             else startingMcpServers.set(payload.threadId, starting);
             yield* reportStartupPhase();
             const failures =
@@ -8246,9 +8274,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           providerSessionId: input.providerSessionId,
           // Turn start republishes this record, so it carries the step MCP startup is still on.
           get providerSession() {
-            return reportedStartupPhase === undefined
-              ? session
-              : { ...session, startupPhase: reportedStartupPhase };
+            return withStartupPhase(session);
           },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
@@ -8325,6 +8351,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     : {}),
                 }),
               ),
+              Effect.tap((response) => {
+                appThreadByNativeThread.set(response.thread.id, threadInput.threadId);
+                return reportStartupPhase();
+              }),
               Effect.map((response): OrchestrationV2ProviderThread =>
                 providerThreadFromCodexThread({
                   appThreadId: threadInput.threadId,
@@ -8350,6 +8380,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* rejectIfRetired;
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
               const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
+              if (appThreadId != null) appThreadByNativeThread.set(nativeThreadId, appThreadId);
               const resume = resumeNativeThread(nativeThreadId, {
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
@@ -8369,7 +8400,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               rootProviderThreads.set(nativeThreadId, threadInput.providerThread);
               goalUpdatesHeld.add(nativeThreadId);
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(reportingResume(resume)),
+                Effect.andThen(appThreadId == null ? resume : reportingResume(appThreadId, resume)),
                 withAppServerDeadline("thread/resume"),
                 Effect.flatMap(decodeCodexResumeMetadata),
                 // Stay registered: a lost or undecodable response may still have resumed the thread.

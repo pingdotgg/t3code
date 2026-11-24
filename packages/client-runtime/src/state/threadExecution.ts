@@ -161,9 +161,21 @@ export function presentProviderStarting(input: {
   };
 }
 
+// A session shared by several threads names the one thread its phase describes.
+function startupPhaseFor(
+  projection: ThreadStructure,
+  session: OrchestrationV2ProviderSession | undefined,
+) {
+  return session?.startupPhaseThreadId === undefined ||
+    session.startupPhaseThreadId === projection.thread.id
+    ? session?.startupPhase
+    : undefined;
+}
+
 function providerStarting(
   run: OrchestrationV2ThreadProjection["runs"][number],
   session: OrchestrationV2ProviderSession | undefined,
+  phase: string | undefined,
   providers: ProviderDrivers | undefined,
 ) {
   return presentProviderStarting({
@@ -171,11 +183,11 @@ function providerStarting(
     driver:
       session?.driver ??
       providers?.find((provider) => provider.instanceId === run.providerInstanceId)?.driver,
-    phase: session?.startupPhase,
+    phase,
   });
 }
 
-// A session can serve several threads, so its phase only describes a run that is still silent.
+// A phase only describes a run that has not answered yet.
 function runHasProviderOutput(projection: ThreadStructure, runId: RunId) {
   return projection.turnItems.some(
     (item) => item.runId === runId && item.providerTurnId !== null && item.type !== "user_message",
@@ -193,6 +205,7 @@ function summarizeThreadRun(
   const session = projection.providerSessions.findLast(
     (candidate) => candidate.providerInstanceId === run.providerInstanceId,
   );
+  const phase = startupPhaseFor(projection, session);
   return {
     runId: run.id,
     status: run.status,
@@ -208,12 +221,12 @@ function summarizeThreadRun(
     // preparing after their turn opens and report that step until the first output.
     ...(turnStatus === undefined
       ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
-        ? providerStarting(run, session, providers)
+        ? providerStarting(run, session, phase, providers)
         : {}
       : turnStatus === "pending" || turnStatus === "running"
-        ? session?.startupPhase === undefined || runHasProviderOutput(projection, run.id)
+        ? phase === undefined || runHasProviderOutput(projection, run.id)
           ? {}
-          : providerStarting(run, session, providers)
+          : providerStarting(run, session, phase, providers)
         : { turnEnded: true }),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
