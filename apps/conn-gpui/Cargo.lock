@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "conn-contract"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1378,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "conn-wire"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
