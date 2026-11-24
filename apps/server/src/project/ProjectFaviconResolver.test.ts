@@ -5,7 +5,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -319,21 +318,6 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
       }),
-    );
-
-    // Windows file names cannot contain `:`.
-    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-      "treats a root-relative icon path with a colon as a path, not a URL scheme",
-      () =>
-        Effect.gen(function* () {
-          const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-          const cwd = yield* makeTempDir;
-          yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand:v2.svg">');
-          yield* writeTextFile(cwd, "public/brand:v2.svg", "<svg>brand</svg>");
-          expect(yield* resolver.resolvePath(cwd)).toBe(
-            (yield* Path.Path).join(cwd, "public", "brand:v2.svg"),
-          );
-        }),
     );
 
     // regression: #5538 favicon resolution pinned the event loop

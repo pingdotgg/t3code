@@ -154,9 +154,6 @@ function* extractIconHrefs(source: string): Generator<string> {
   }
 }
 
-// A path through a file (ENOTDIR) or a symlink loop names no file either.
-const isBadResource = (error: PlatformError.PlatformError) => error.reason._tag === "BadResource";
-
 export const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
@@ -166,6 +163,17 @@ export const optionOnNotFound = <A, R>(
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
     }),
+  );
+
+// A path through a file (ENOTDIR) or a symlink loop names no file either.
+const optionOnMissing = <A, R>(
+  effect: Effect.Effect<A, PlatformError.PlatformError, R>,
+): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
+  optionOnNotFound(effect).pipe(
+    Effect.catchIf(
+      (error) => error.reason._tag === "BadResource",
+      () => Effect.succeedNone,
+    ),
   );
 
 export const make = Effect.gen(function* () {
@@ -207,8 +215,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(candidate)) {
         continue;
       }
-      const stats = yield* optionOnNotFound(fileSystem.stat(candidate.value.absolutePath)).pipe(
-        Effect.catchIf(isBadResource, () => Effect.succeedNone),
+      const stats = yield* optionOnMissing(fileSystem.stat(candidate.value.absolutePath)).pipe(
         Effect.mapError(
           (cause) =>
             new ProjectFaviconResolutionError({
@@ -247,8 +254,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    const stats = yield* optionOnNotFound(fileSystem.stat(sourcePath.absolutePath)).pipe(
-      Effect.catchIf(isBadResource, () => Effect.succeedNone),
+    const stats = yield* optionOnMissing(fileSystem.stat(sourcePath.absolutePath)).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -263,13 +269,12 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(stats) || stats.value.type !== "File") {
       return null;
     }
-    const source = yield* optionOnNotFound(
+    const source = yield* optionOnMissing(
       fileSystem.open(sourcePath.absolutePath, { flag: "r" }).pipe(
         Effect.flatMap((file) => file.readAlloc(ICON_SOURCE_SCAN_BYTES)),
         Effect.scoped,
       ),
     ).pipe(
-      Effect.catchIf(isBadResource, () => Effect.succeedNone),
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -381,8 +386,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const stats = yield* optionOnNotFound(fileSystem.stat(cached)).pipe(
-      Effect.catchIf(isBadResource, () => Effect.succeedNone),
+    const stats = yield* optionOnMissing(fileSystem.stat(cached)).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
