@@ -438,8 +438,9 @@ pub(crate) fn make_helpers(
     binary: &Path,
     bundle_id: &str,
 ) -> Result<PathBuf, WebError> {
-    let bytes = std::fs::read(binary)?;
-    let stamped = format!("v2\n{}\n{bundle_id}", hex(&Sha256::digest(&bytes)));
+    // The stamp names the binary by its size and modification time, so a start that finds the
+    // helpers current reads and hashes nothing (the dev binary alone is over 100 MB).
+    let stamped = binary_stamp(binary, bundle_id)?;
     let stamp = layout.version_dir().join("helpers.stamp");
     let dir = Layout::frameworks_in(&layout.version_dir());
     let all_there = HELPER_KINDS
@@ -448,6 +449,7 @@ pub(crate) fn make_helpers(
     if all_there && std::fs::read_to_string(&stamp).is_ok_and(|s| s == stamped) {
         return Ok(layout.helper_executable());
     }
+    let bytes = std::fs::read(binary)?;
     let web_bundle_id = format!("{bundle_id}.web");
     let contents = layout.runtime_bundle().join("Contents");
     std::fs::create_dir_all(&contents)?;
@@ -455,31 +457,72 @@ pub(crate) fn make_helpers(
         contents.join("Info.plist"),
         runtime_bundle_plist(&web_bundle_id),
     )?;
-    for (suffix, id_end) in HELPER_KINDS {
-        let name = format!("{HELPER_NAME}{suffix}");
-        let exe = helper_executable_in(&dir, suffix);
-        let helper_macos_dir = exe
-            .parent()
-            .ok_or_else(|| WebError::Runtime("invalid helper executable path".into()))?;
-        let helper_contents_dir = helper_macos_dir
-            .parent()
-            .ok_or_else(|| WebError::Runtime("invalid helper Contents path".into()))?;
-        let helper_app_dir = helper_contents_dir
-            .parent()
-            .ok_or_else(|| WebError::Runtime("invalid helper .app path".into()))?;
-        std::fs::create_dir_all(helper_macos_dir)?;
-        let fresh = exe.with_extension("new");
-        std::fs::write(&fresh, &bytes)?;
-        set_mode(&fresh, 0o755);
-        std::fs::rename(&fresh, &exe)?;
-        std::fs::write(
-            helper_contents_dir.join("Info.plist"),
-            helper_plist(&name, &format!("{web_bundle_id}.helper{id_end}")),
-        )?;
-        ad_hoc_sign_helper(helper_app_dir)?;
+    // Each helper is a copy of the binary that is signed ad hoc, about a second apiece, so they
+    // are made side by side.
+    let results: Vec<Result<(), WebError>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = HELPER_KINDS
+            .iter()
+            .map(|(suffix, id_end)| {
+                let (bytes, dir, web_bundle_id) = (&bytes, &dir, &web_bundle_id);
+                scope.spawn(move || make_helper(bytes, dir, web_bundle_id, suffix, id_end))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err(WebError::Runtime("helper build panicked".into())))
+            })
+            .collect()
+    });
+    for result in results {
+        result?;
     }
     std::fs::write(&stamp, &stamped)?;
     Ok(layout.helper_executable())
+}
+
+/// Names `binary` for the helpers stamp: size, modification time and bundle id.
+fn binary_stamp(binary: &Path, bundle_id: &str) -> Result<String, WebError> {
+    let meta = std::fs::metadata(binary)?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos());
+    Ok(format!("v3\n{}\n{modified}\n{bundle_id}", meta.len()))
+}
+
+/// Writes one helper app: the binary, its `Info.plist`, and an ad-hoc signature.
+fn make_helper(
+    bytes: &[u8],
+    dir: &Path,
+    web_bundle_id: &str,
+    suffix: &str,
+    id_end: &str,
+) -> Result<(), WebError> {
+    let name = format!("{HELPER_NAME}{suffix}");
+    let exe = helper_executable_in(dir, suffix);
+    let helper_macos_dir = exe
+        .parent()
+        .ok_or_else(|| WebError::Runtime("invalid helper executable path".into()))?;
+    let helper_contents_dir = helper_macos_dir
+        .parent()
+        .ok_or_else(|| WebError::Runtime("invalid helper Contents path".into()))?;
+    let helper_app_dir = helper_contents_dir
+        .parent()
+        .ok_or_else(|| WebError::Runtime("invalid helper .app path".into()))?;
+    std::fs::create_dir_all(helper_macos_dir)?;
+    let fresh = exe.with_extension("new");
+    std::fs::write(&fresh, bytes)?;
+    set_mode(&fresh, 0o755);
+    std::fs::rename(&fresh, &exe)?;
+    std::fs::write(
+        helper_contents_dir.join("Info.plist"),
+        helper_plist(&name, &format!("{web_bundle_id}.helper{id_end}")),
+    )?;
+    ad_hoc_sign_helper(helper_app_dir)
 }
 
 #[cfg(target_os = "macos")]

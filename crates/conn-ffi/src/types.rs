@@ -1128,7 +1128,11 @@ pub(crate) fn map_timeline_entry_with_context(
                 status: (*status).into(),
                 status_label: status_label.to_owned(),
                 settled: subagent_settled(*status),
-                summary: summary.clone(),
+                // The iPhone card shows one plain line; the model holds the Markdown.
+                summary: summary
+                    .as_deref()
+                    .map(conn_state::plain_subagent_detail)
+                    .filter(|line| !line.is_empty()),
                 remote_label: remote_label.clone(),
                 created_at: created_at.clone(),
                 started_at: started_at.clone(),

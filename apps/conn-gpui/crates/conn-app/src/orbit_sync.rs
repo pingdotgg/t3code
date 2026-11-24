@@ -62,6 +62,31 @@ pub(crate) struct OrbitSettingsInfo {
     pub(crate) has_backup: bool,
     /// Optional status/error banner shown in the Orbit section.
     pub(crate) notice: Option<String>,
+    /// The environments listed beside the connected one, with their switches.
+    pub(crate) linked_environments: Vec<LinkedEnvironmentInfo>,
+    /// Orbit Instance servers chosen for linking or already paired.
+    pub(crate) linked_instance_ids: Vec<String>,
+}
+
+/// How a linked environment stands, for its Settings row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkedEnvironmentState {
+    Connected,
+    Connecting,
+    /// Not connected: asleep or unreachable. Its saved threads still list.
+    Offline,
+    /// Switched off by the user.
+    Off,
+}
+
+/// One linked environment on the Connections settings page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LinkedEnvironmentInfo {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) enabled: bool,
+    pub(crate) state: LinkedEnvironmentState,
+    pub(crate) thread_count: usize,
 }
 
 /// Full result returned by a background Orbit Gateway sync fetch.
@@ -166,6 +191,8 @@ impl OrbitSyncState {
             section_changes,
             has_backup,
             notice: self.notice.clone(),
+            linked_environments: Vec::new(),
+            linked_instance_ids: Vec::new(),
         }
     }
 
@@ -621,33 +648,6 @@ pub(crate) fn workspace_tile_color(color: &str, fallback: Rgba) -> Rgba {
     hex.map(Rgba::hex).unwrap_or(fallback)
 }
 
-/// Returns crisp 1-2 character uppercase monogram initials for a workspace name.
-#[must_use]
-pub(crate) fn workspace_monogram(name: &str) -> String {
-    let words: Vec<&str> = name
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .collect();
-    match words.as_slice() {
-        [] => "W".to_owned(),
-        [single] => single
-            .chars()
-            .take(2)
-            .collect::<String>()
-            .to_ascii_uppercase(),
-        [first, second, ..] => {
-            let mut out = String::with_capacity(2);
-            if let Some(c) = first.chars().next() {
-                out.push(c.to_ascii_uppercase());
-            }
-            if let Some(c) = second.chars().next() {
-                out.push(c.to_ascii_uppercase());
-            }
-            out
-        }
-    }
-}
-
 /// Fetches `/me`, `/profiles`, `/profiles/{id}/settings`, and the Orbit Nodes & Instances fleet.
 pub(crate) async fn fetch_orbit_profile() -> Result<OrbitFetchResult, ProfileError> {
     let client =
@@ -824,13 +824,6 @@ pub(crate) async fn wake_orbit_instance(instance_id: i64) -> Result<Option<i64>,
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn workspace_monogram_uses_two_initials_or_prefix() {
-        assert_eq!(workspace_monogram("Orbit Core"), "OC");
-        assert_eq!(workspace_monogram("conn"), "CO");
-        assert_eq!(workspace_monogram("   "), "W");
-    }
 
     #[test]
     fn workspace_tile_color_parses_hex_and_named_palettes() {

@@ -47,62 +47,13 @@ pub(super) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
             target["providerInstanceId"] =
                 cx.projection(&thread_id).await?["thread"]["modelSelection"]["instanceId"].clone();
         }
-        let selection = match resolve_target(cx, &parent["thread"], &target, accepted) {
-            Err(super::ToolError::Failure {
-                code: "provider_unavailable" | "model_unavailable",
-                ..
-            }) if let Some(refresh) = &cx.config().refresh_provider
-                && (target["providerInstanceId"].is_string()
-                    || !target["driverKind"].is_string()) =>
-            {
-                let id = target["providerInstanceId"]
-                    .as_str()
-                    .or_else(|| parent["thread"]["modelSelection"]["instanceId"].as_str())
-                    .unwrap_or_default();
-                refresh(id.to_owned()).await;
-                resolve_target(cx, &parent["thread"], &target, accepted)?
-            }
-            result => result?,
-        };
-        let mut runtime = threads::resolve_runtime_mode(
-            parent["thread"]["runtimeMode"]
-                .as_str()
-                .unwrap_or("approval-required"),
+        let selection = resolve_target_rechecking(cx, &parent["thread"], &target, accepted).await?;
+        let runtime = runtime_mode_for(
+            cx,
+            &parent["thread"],
+            &selection,
             request["runtimeMode"].as_str(),
         )?;
-        if let Some(provider) = (cx.config().providers)()
-            .iter()
-            .find(|p| p["instanceId"] == selection["instanceId"])
-            && let Some(supported) = provider["supportedRuntimeModes"]
-                .as_array()
-                .filter(|s| !s.is_empty())
-            && !supported.iter().any(|m| *m == runtime)
-        {
-            if request["runtimeMode"]
-                .as_str()
-                .is_some_and(|m| m != "inherit")
-            {
-                return Err(fail(
-                    "invalid_request",
-                    format!(
-                        "Provider {} does not offer runtime mode {runtime}, so it would run as approval-required. Use one of: {}.",
-                        selection["instanceId"].as_str().unwrap_or_default(),
-                        supported
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                ));
-            }
-            runtime = supported
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|m| super::runtime_rank(m) <= super::runtime_rank(&runtime))
-                .max_by_key(|m| super::runtime_rank(m))
-                .unwrap_or("approval-required")
-                .to_owned();
-        }
         let interaction = threads::resolve_interaction_mode(
             parent["thread"]["interactionMode"]
                 .as_str()
@@ -225,6 +176,79 @@ fn title(parent: &Value, request: &Value, index: usize) -> String {
     format!("{prefix}...")
 }
 
+/// The parent's or the requested runtime mode, fitted to the modes the target provider offers
+/// (T3 `resolveRuntimeMode`): an inherited mode steps down, a requested one it lacks fails.
+pub(super) fn runtime_mode_for(
+    cx: &Cx<'_>,
+    parent: &Value,
+    selection: &Value,
+    requested: Option<&str>,
+) -> Result<String, super::ToolError> {
+    let mut runtime = threads::resolve_runtime_mode(
+        parent["runtimeMode"]
+            .as_str()
+            .unwrap_or("approval-required"),
+        requested,
+    )?;
+    if let Some(provider) = (cx.config().providers)()
+        .iter()
+        .find(|p| p["instanceId"] == selection["instanceId"])
+        && let Some(supported) = provider["supportedRuntimeModes"]
+            .as_array()
+            .filter(|s| !s.is_empty())
+        && !supported.iter().any(|m| *m == runtime)
+    {
+        if requested.is_some_and(|m| m != "inherit") {
+            return Err(fail(
+                "invalid_request",
+                format!(
+                    "Provider {} does not offer runtime mode {runtime}, so it would run as approval-required. Use one of: {}.",
+                    selection["instanceId"].as_str().unwrap_or_default(),
+                    supported
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ));
+        }
+        runtime = supported
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|m| super::runtime_rank(m) <= super::runtime_rank(&runtime))
+            .max_by_key(|m| super::runtime_rank(m))
+            .unwrap_or("approval-required")
+            .to_owned();
+    }
+    Ok(runtime)
+}
+
+/// TS `resolveTargetRechecking`: a named or inherited instance whose snapshot refuses the target
+/// is refreshed once and resolved again. A driver-only target names no instance to refresh.
+pub(super) async fn resolve_target_rechecking(
+    cx: &Cx<'_>,
+    parent: &Value,
+    target: &Value,
+    accepted: bool,
+) -> ToolResult {
+    match resolve_target(cx, parent, target, accepted) {
+        Err(super::ToolError::Failure {
+            code: "provider_unavailable" | "model_unavailable",
+            ..
+        }) if let Some(refresh) = &cx.config().refresh_provider
+            && let Some(id) = target["providerInstanceId"].as_str().or_else(|| {
+                (!target["driverKind"].is_string())
+                    .then(|| parent["modelSelection"]["instanceId"].as_str())
+                    .flatten()
+            }) =>
+        {
+            refresh(id.to_owned()).await;
+            resolve_target(cx, parent, target, accepted)
+        }
+        result => result,
+    }
+}
+
 fn resolve_target(cx: &Cx<'_>, parent: &Value, target: &Value, accepted: bool) -> ToolResult {
     let inherited = &parent["modelSelection"];
     let providers = (cx.config().providers)();
@@ -324,7 +348,9 @@ fn resolve_target(cx: &Cx<'_>, parent: &Value, target: &Value, accepted: bool) -
             ),
         ));
     }
-    let descriptors = advertised.and_then(|m| m["capabilities"]["optionDescriptors"].as_array());
+    let descriptors = advertised
+        .and_then(|m| m["capabilities"]["optionDescriptors"].as_array())
+        .map(Vec::as_slice);
     let inherited_model = inherited["model"].as_str().unwrap_or_default();
     let canonical = |m| {
         advertised_model(models, m)
@@ -334,7 +360,8 @@ fn resolve_target(cx: &Cx<'_>, parent: &Value, target: &Value, accepted: bool) -
     let mut options: Option<Vec<Value>> = (instance == inherited_id
         && canonical(inherited_model) == canonical(model))
     .then(|| inherited["options"].as_array().cloned())
-    .flatten();
+    .flatten()
+    .map(|options| legacy_ultracode_effort(descriptors, options));
     if let (Some(options), Some(descriptors)) = (&mut options, descriptors) {
         options.retain(|o| descriptors.iter().any(|d| d["id"] == o["id"]));
     }
@@ -347,6 +374,7 @@ fn resolve_target(cx: &Cx<'_>, parent: &Value, target: &Value, accepted: bool) -
                 .collect(),
             _ => return Err(fail("invalid_request", "Invalid model options.")),
         };
+        let requested = legacy_ultracode_effort(descriptors, requested);
         let mut problems = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for selection in &requested {
@@ -417,7 +445,35 @@ fn resolve_target(cx: &Cx<'_>, parent: &Value, target: &Value, accepted: bool) -
     Ok(selection)
 }
 
-fn constraints(provider: &Value) -> Vec<&str> {
+/// TS `withLegacyUltracodeEffort` (`packages/shared/src/model.ts`): the retired `effort:
+/// "ultracode"` level becomes `effort: "xhigh"` plus `ultracode: true` on a model that advertises
+/// the boolean option.
+fn legacy_ultracode_effort(descriptors: Option<&[Value]>, mut options: Vec<Value>) -> Vec<Value> {
+    let value_of = |options: &[Value], id: &str| {
+        options
+            .iter()
+            .find(|o| o["id"] == id)
+            .map(|o| o["value"].clone())
+    };
+    let advertised = descriptors
+        .into_iter()
+        .flatten()
+        .any(|d| d["id"] == "ultracode" && d["type"] == "boolean");
+    if !advertised || value_of(&options, "effort") != Some(json!("ultracode")) {
+        return options;
+    }
+    for option in &mut options {
+        if option["id"] == "effort" && option["value"] == "ultracode" {
+            *option = json!({"id": "effort", "value": "xhigh"});
+        }
+    }
+    if value_of(&options, "ultracode").is_none() {
+        options.push(json!({"id": "ultracode", "value": true}));
+    }
+    options
+}
+
+pub(super) fn constraints(provider: &Value) -> Vec<&str> {
     if provider["enabled"] == false {
         return vec!["Provider instance is disabled."];
     }

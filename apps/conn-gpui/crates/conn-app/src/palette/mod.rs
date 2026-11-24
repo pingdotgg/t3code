@@ -676,7 +676,7 @@ impl Render for CommandPalette {
                     ),
             ),
         )
-        .with_priority(3)
+        .with_priority(crate::panels::chrome::MODAL_LAYER_PRIORITY)
     }
 }
 

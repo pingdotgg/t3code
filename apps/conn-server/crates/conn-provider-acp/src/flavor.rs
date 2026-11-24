@@ -127,6 +127,11 @@ pub struct Flavor {
     /// `supportsImagePrompts`: image blocks go even when `promptCapabilities.image` is
     /// false (Grok accepts them).
     pub(crate) supports_image_prompts: bool,
+    /// The error an agent's error reply becomes when the flavor recognises it; `None` keeps
+    /// the generic failure with the reply's message.
+    pub(crate) rpc_failure: fn(&crate::protocol::RpcError) -> Option<conn_provider::ProviderError>,
+    /// A stdout line that ends the connection with a failure (`connection::Signal`).
+    pub(crate) stdout_signal: Option<crate::connection::Signal>,
 }
 
 /// `extractBackgroundTaskId`, `isBackgroundCommandTool`, `extractBackgroundTaskCompletion`,
@@ -405,6 +410,8 @@ pub static GROK: Flavor = Flavor {
     background: Some(GROK_BACKGROUND),
     mcp_over_http: false,
     supports_image_prompts: true,
+    rpc_failure: |_| None,
+    stdout_signal: None,
 };
 
 /// `grokLaunchRuntimeMode`.

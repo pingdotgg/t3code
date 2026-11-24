@@ -15,6 +15,7 @@ pub(crate) mod controls;
 pub(crate) mod projects;
 pub(crate) mod providers;
 pub(crate) mod scheduled_tasks;
+mod terminal;
 
 use conn_client::{Connection, ConnectionStatus};
 use conn_theme::{Appearance, Rgba, ShellGeometry, Tokens};
@@ -56,6 +57,7 @@ const NAV_ROW_HEIGHT_PX: f32 = 32.0;
 pub(crate) enum SettingsPage {
     General,
     Appearance,
+    Terminal,
     Connections,
     Providers,
     Projects,
@@ -63,9 +65,10 @@ pub(crate) enum SettingsPage {
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 7] = [
+const ALL_PAGES: [SettingsPage; 8] = [
     SettingsPage::General,
     SettingsPage::Appearance,
+    SettingsPage::Terminal,
     SettingsPage::Connections,
     SettingsPage::Providers,
     SettingsPage::Projects,
@@ -78,6 +81,7 @@ impl SettingsPage {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Terminal => "Terminal",
             Self::Connections => "Connections",
             Self::Providers => "Providers",
             Self::Projects => "Projects",
@@ -90,6 +94,7 @@ impl SettingsPage {
         match self {
             Self::General => IconName::SlidersHorizontal,
             Self::Appearance => IconName::Palette,
+            Self::Terminal => IconName::SquareTerminal,
             Self::Connections => IconName::Plug,
             Self::Providers => IconName::Bot,
             Self::Projects => IconName::Folder,
@@ -123,6 +128,16 @@ pub(crate) enum SettingsEvent {
     OrbitWakeInstance {
         instance_id: i64,
         server_id: String,
+    },
+    /// Conn's per-environment switch on a linked environment (`setEnabled`).
+    LinkedEnvironmentEnabled {
+        environment_id: String,
+        enabled: bool,
+    },
+    /// Links an Orbit Instance's server, or stops choosing it.
+    LinkInstance {
+        server_id: String,
+        linked: bool,
     },
     OrbitToggleSyncWorkspaces(bool),
     OrbitToggleSyncAppearance(bool),
@@ -193,6 +208,11 @@ pub(crate) struct SettingsModal {
     search_input: Entity<InputState>,
     _search_sub: Subscription,
     new_profile_input: Entity<InputState>,
+    /// Settings → Terminal: the font family text field.
+    terminal_family_input: Entity<InputState>,
+    _terminal_family_sub: Subscription,
+    /// Settings → Terminal: the font weight slider and dropdown (`terminal.rs`).
+    terminal_weight: terminal::TerminalWeightUi,
     show_stopped_instances: bool,
     direct_server_url_input: Entity<InputState>,
     direct_server_token_input: Entity<InputState>,
@@ -256,6 +276,24 @@ impl SettingsModal {
                 cx.notify();
             }
         });
+
+        let terminal_family = crate::terminal_settings::current(cx).font_family;
+        let terminal_family_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Theme monospace font")
+                .default_value(terminal_family)
+        });
+        let terminal_family_sub = cx.subscribe(
+            &terminal_family_input,
+            |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let family = input.read(cx).value().to_string();
+                    crate::terminal_settings::update(cx, |s| s.font_family = family);
+                    // The new family has its own weights: a new slider range.
+                    this.terminal_weight.rebuild(cx);
+                }
+            },
+        );
 
         let operator_cfg = conn_desktop::operator::OperatorConfig::load_effective();
         let operator_url = operator_cfg.base_url;
@@ -327,6 +365,9 @@ impl SettingsModal {
             search_input,
             _search_sub: search_sub,
             new_profile_input,
+            terminal_family_input,
+            _terminal_family_sub: terminal_family_sub,
+            terminal_weight: terminal::TerminalWeightUi::new(cx),
             show_stopped_instances: false,
             direct_server_url_input,
             direct_server_token_input,
@@ -683,6 +724,7 @@ impl SettingsModal {
             match self.active_page {
                 SettingsPage::General => self.render_general_page(),
                 SettingsPage::Appearance => self.render_appearance_page(cx),
+                SettingsPage::Terminal => self.render_terminal_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
                 SettingsPage::Providers => self.providers.clone().into_any_element(),
                 SettingsPage::Projects => self.projects.clone().into_any_element(),
@@ -1296,10 +1338,43 @@ impl SettingsModal {
                     }));
             }
 
+            let is_linked = self.orbit.linked_instance_ids.contains(&sid);
+            let link_entity = cx.entity();
+            let link_sid = sid.clone();
+            let link_switch = pill_switch(
+                SharedString::from(format!("conn-settings-link-{sid}")),
+                is_linked,
+                &self.tokens,
+                move |_window, cx| {
+                    link_entity.update(cx, |this, cx| {
+                        let linked = !this.orbit.linked_instance_ids.contains(&link_sid);
+                        if linked {
+                            this.orbit.linked_instance_ids.push(link_sid.clone());
+                        } else {
+                            this.orbit.linked_instance_ids.retain(|id| id != &link_sid);
+                        }
+                        cx.emit(SettingsEvent::LinkInstance {
+                            server_id: link_sid.clone(),
+                            linked,
+                        });
+                        cx.notify();
+                    });
+                },
+            );
             instance_rows.push(settings_row(
                 &title,
-                Some(&subtitle),
-                btn.into_any_element(),
+                Some(&format!(
+                    "{subtitle} · {}",
+                    if is_linked { "linked" } else { "not linked" }
+                )),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(link_switch)
+                    .child(btn)
+                    .into_any_element(),
                 &self.tokens,
                 &self.geometry,
             ));
@@ -1873,6 +1948,57 @@ impl SettingsModal {
                 &self.geometry,
             ));
         }
+        // Linked environments (Conn: Settings › Connections, saved backends with a switch).
+        let mut linked_rows: Vec<AnyElement> = Vec::new();
+        for (idx, environment) in self.orbit.linked_environments.iter().enumerate() {
+            let state_text = match environment.state {
+                crate::orbit_sync::LinkedEnvironmentState::Connected => {
+                    format!("Connected · {} threads", environment.thread_count)
+                }
+                crate::orbit_sync::LinkedEnvironmentState::Connecting => "Connecting…".to_owned(),
+                crate::orbit_sync::LinkedEnvironmentState::Offline => format!(
+                    "Offline or asleep · showing {} saved threads",
+                    environment.thread_count
+                ),
+                crate::orbit_sync::LinkedEnvironmentState::Off => {
+                    "Switched off · its threads are not listed".to_owned()
+                }
+            };
+            let entity = cx.entity();
+            let switch = pill_switch(
+                SharedString::from(format!("conn-settings-linked-env-{}", environment.id)),
+                environment.enabled,
+                &self.tokens,
+                move |_window, cx| {
+                    entity.update(cx, |this, cx| {
+                        let Some(row) = this.orbit.linked_environments.get_mut(idx) else {
+                            return;
+                        };
+                        row.enabled = !row.enabled;
+                        cx.emit(SettingsEvent::LinkedEnvironmentEnabled {
+                            environment_id: row.id.clone(),
+                            enabled: row.enabled,
+                        });
+                        cx.notify();
+                    });
+                },
+            );
+            linked_rows.push(settings_row(
+                &environment.label,
+                Some(&state_text),
+                switch.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+        if !linked_rows.is_empty() {
+            page = page.child(settings_section(
+                "Linked environments",
+                linked_rows,
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
         if !instance_rows.is_empty() {
             page = page.child(settings_section(
                 "Orbit Instances",
@@ -2045,7 +2171,7 @@ impl Render for SettingsModal {
                     .child(modal),
             ),
         )
-        .with_priority(2)
+        .with_priority(crate::panels::chrome::MODAL_LAYER_PRIORITY)
     }
 }
 

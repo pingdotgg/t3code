@@ -147,6 +147,13 @@ impl Agent {
                             break;
                         }
                     }
+                    // Not in T3's script: a line that is not JSON-RPC (`agy`'s sign-in URL).
+                    Some("emit_raw") => {
+                        out.push(Value::String(
+                            entry["line"].as_str().unwrap_or_default().to_owned(),
+                        ));
+                        script.cursor += 1;
+                    }
                     _ => {
                         let workspace = script.workspace.clone();
                         let frame = materialize(&entry["frame"], &workspace);
@@ -169,9 +176,11 @@ impl Agent {
             }
         }
         for message in out {
-            let _ = events
-                .send(ProcEvent::Line(Line::Text(message.to_string())))
-                .await;
+            let line = match message {
+                Value::String(raw) => raw,
+                frame => frame.to_string(),
+            };
+            let _ = events.send(ProcEvent::Line(Line::Text(line))).await;
         }
         alive
     }

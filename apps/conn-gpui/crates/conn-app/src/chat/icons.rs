@@ -75,13 +75,18 @@ fn conn_icon_path(icon: ConnToolIcon) -> &'static str {
 
 /// Title to show for a tool row. A Conn MCP tool call (`mcp__conn__conn_thread_send`, any provider
 /// spelling, or the pre-rename `t3` forms) gets Conn's friendly label; other rows keep their title.
+/// The label is always one line, like web's `truncate whitespace-nowrap` cell; a command also
+/// loses its `sh -c "…"` wrapper (`commandDisplayText`).
 pub(super) fn tool_display_title<'a>(kind: &str, title: &'a str) -> Cow<'a, str> {
+    if kind == "command" {
+        return Cow::Owned(super::command_label::command_row_label(title));
+    }
     if is_fixed_kind(kind) {
-        return Cow::Borrowed(title);
+        return super::command_label::collapse_whitespace(title);
     }
     match conn_tool_presentation(title) {
         Some(found) => found.display_name,
-        None => Cow::Borrowed(title),
+        None => super::command_label::collapse_whitespace(title),
     }
 }
 

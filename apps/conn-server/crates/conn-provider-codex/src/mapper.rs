@@ -143,6 +143,8 @@ struct Turn {
     running_tools: Vec<Value>,
     running_compactions: Vec<String>,
     latest_failure: Option<(String, Option<String>, Value)>,
+    /// Why a hook stopped the turn (`hookStopReason`); Codex still reports it completed.
+    hook_stop_reason: Option<String>,
 }
 
 impl Turn {
@@ -646,6 +648,7 @@ impl<E: Env> Mapper<E> {
             running_tools: Vec::new(),
             running_compactions: Vec::new(),
             latest_failure: None,
+            hook_stop_reason: None,
         };
         push_event(
             out,
@@ -908,8 +911,8 @@ impl<E: Env> Mapper<E> {
             | "thread/name/updated"
             | "thread/readState/changed"
             | "skills/changed"
-            | "hook/started"
-            | "hook/completed" => {}
+            | "hook/started" => {}
+            "hook/completed" => self.hook_completed(p),
             other => out.push(Out::Skipped(format!("notification {other}"))),
         }
     }
@@ -1618,6 +1621,42 @@ impl<E: Env> Mapper<E> {
         ));
     }
 
+    /// `hook/completed` that stopped a turn: its stop entries become the turn's reason, on
+    /// the turn and thread it names (T3's `hook/completed` handler).
+    fn hook_completed(&mut self, p: &Value) {
+        let run = &p["run"];
+        if run["status"] != "stopped" {
+            return;
+        }
+        let (Some(turn_id), Some(thread)) = (p["turnId"].as_str(), p["threadId"].as_str()) else {
+            return;
+        };
+        let Some(turn) = self.turns.get_mut(turn_id) else {
+            return;
+        };
+        if turn.native_thread_id != thread {
+            return;
+        }
+        let reason = run["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry["kind"] == "stop")
+            .filter_map(|entry| entry["text"].as_str().map(conn_support::text::js_trim))
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if reason.is_empty() {
+            return;
+        }
+        let source = run["source"]
+            .as_str()
+            .map(|s| format!(" ({s})"))
+            .unwrap_or_default();
+        let event = run["eventName"].as_str().unwrap_or_default();
+        turn.hook_stop_reason = Some(format!("{event} hook{source}: {reason}"));
+    }
+
     fn turn_completed(&mut self, p: &Value, out: &mut Vec<Out>) {
         let native = p["turn"]["id"].as_str().unwrap_or_default().to_owned();
         if !self.turns.contains_key(&native) {
@@ -1753,18 +1792,22 @@ impl<E: Env> Mapper<E> {
         }
         // A child's turn ends on its own thread; only a root turn ends the engine's run.
         if turn.subagent.is_none() {
-            push_event(
-                out,
-                json!({
-                    "type": "turn.terminal",
-                    "providerThreadId": turn.provider_thread_id,
-                    "providerTurnId": turn.provider_turn_id,
-                    "runOrdinal": turn.run_ordinal,
-                    "status": terminal_status,
-                    "failure": failure,
-                    "threadDisposition": "reusable",
-                }),
-            );
+            let mut terminal = json!({
+                "type": "turn.terminal",
+                "providerThreadId": turn.provider_thread_id,
+                "providerTurnId": turn.provider_turn_id,
+                "runOrdinal": turn.run_ordinal,
+                "status": terminal_status,
+                "failure": failure,
+                "threadDisposition": "reusable",
+            });
+            // T3's failed terminal carries no reason.
+            if terminal_status != "failed"
+                && let Some(reason) = &turn.hook_stop_reason
+            {
+                terminal["reason"] = json!(reason);
+            }
+            push_event(out, terminal);
         }
         // `retainSettledContext`: a completed turn stays while its background commands run, so
         // their output and end still show, and a root turn's ending command wakes the agent.

@@ -12,6 +12,16 @@ use crate::{LinkAsk, LinkInfo, PeerCall, PeerFailure, Peers};
 struct StandIn {
     enabled: bool,
     calls: Mutex<Vec<PeerCall>>,
+    /// Waits on run `first` end at `release`, and report run `second` as the thread's answer.
+    overlap: bool,
+    /// Every call answers `thread_not_found`; from the second call on, only after `release`.
+    gone: bool,
+    /// With `gone`, the first call waits at the barrier too.
+    hold_first: bool,
+    gone_calls: std::sync::atomic::AtomicUsize,
+    /// Notified when a call reaches the barrier.
+    waiting: tokio::sync::Notify,
+    release: tokio::sync::Notify,
 }
 
 impl Peers for StandIn {
@@ -47,6 +57,49 @@ impl Peers for StandIn {
     }
 
     fn call(&self, call: PeerCall) -> BoxFuture<'_, Result<Value, PeerFailure>> {
+        if self.gone {
+            let call = self
+                .gone_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Box::pin(async move {
+                if call > 0 || self.hold_first {
+                    self.waiting.notify_one();
+                    self.release.notified().await;
+                }
+                Err(PeerFailure {
+                    code: "thread_not_found".into(),
+                    message: "Thread gone".into(),
+                })
+            });
+        }
+        if self.overlap {
+            return Box::pin(async move {
+                match call.tool.as_str() {
+                    // The wait on `first` holds at the barrier and names the newer `second`
+                    // as the thread's answer; the wait on `second` ends with it.
+                    "conn_thread_wait" if call.arguments["runId"] == "first" => {
+                        self.waiting.notify_one();
+                        self.release.notified().await;
+                        Ok(
+                            json!({"threadId":"shared","runId":"first","status":"completed",
+                            "timedOut":false,"resultRun":{"runId":"second","status":"completed"}}),
+                        )
+                    }
+                    "conn_thread_wait" => {
+                        assert_eq!(call.arguments["runId"], "second");
+                        Ok(
+                            json!({"threadId":"shared","runId":"second","status":"completed",
+                            "timedOut":false,"resultRun":{"runId":"second","status":"completed"}}),
+                        )
+                    }
+                    "conn_thread_read" => Ok(json!({"recentRuns":[], "items":[
+                        {"itemId":"i1","type":"assistant_message","runId":"first","text":"First report"},
+                        {"itemId":"i2","type":"assistant_message","runId":"second","text":"Second report"}
+                    ], "hasMore":false})),
+                    tool => panic!("Unexpected peer call {tool}"),
+                }
+            });
+        }
         crate::lock(&self.calls).push(call);
         Box::pin(async { Ok(json!({"threads": [], "total": 0})) })
     }
@@ -389,4 +442,290 @@ async fn a_native_sessions_scopes_hold_for_a_linked_environment() {
         crate::lock(&peers.calls).is_empty(),
         "nothing went to the peer"
     );
+}
+
+/// Records a remote task of `parent` on the shared thread there, for run `run`.
+async fn remote_task(f: &Fixture, parent: &str, run: &str) -> String {
+    let engine = &f.service.config.engine;
+    let projection = engine.get_thread_projection(parent.into()).await.unwrap();
+    let owner = &projection["runs"][0];
+    engine.remote_task(json!({
+        "type":"delegated_task.remote.request","commandId":run,"threadId":parent,
+        "parentThreadId":parent,"parentRunId":owner["id"],"parentNodeId":owner["rootNodeId"],
+        "task":run,"modelSelection":owner["modelSelection"],"driver":"remote",
+        "remoteChild":{"threadId":"shared","environmentId":"env-peer","label":"Peer","runId":run},
+        "completionWake":"always"
+    })).await.unwrap();
+    format!("node:delegated-task:{run}")
+}
+
+/// What the parent store holds for `task`, read on a fresh connection: the task as last
+/// recorded, how often it went from no result to a result, and the wake messages naming it.
+fn stored_task(f: &Fixture, parent: &str, task: &str) -> (Value, usize, usize) {
+    let db = rusqlite::Connection::open(f.dir.join("engine.sqlite")).unwrap();
+    let mut rows = db
+        .prepare(
+            "SELECT json_extract(event, '$.payload') FROM events
+             WHERE thread_id = ?1 AND type = 'subagent.updated'
+               AND json_extract(event, '$.payload.id') = ?2 ORDER BY seq",
+        )
+        .unwrap();
+    let rows: Vec<Value> = rows
+        .query_map([parent, task], |row| row.get::<_, String>(0))
+        .unwrap()
+        .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+        .collect();
+    let results = rows
+        .windows(2)
+        .filter(|pair| pair[0]["result"].is_null() && pair[1]["result"].is_string())
+        .count();
+    let wakes: usize = db
+        .query_row(
+            "SELECT count(DISTINCT json_extract(event, '$.payload.id')) FROM events
+             WHERE thread_id = ?1 AND type = 'message.updated'
+               AND instr(json_extract(event, '$.payload.text'), ?2) > 0",
+            [parent, &format!("Delegated task {task} ")],
+            |row| row.get(0),
+        )
+        .unwrap();
+    (rows.last().cloned().unwrap_or(Value::Null), results, wakes)
+}
+
+/// `RemoteDelegation.test.ts`, "a follow-up there ends with its own reply, not one queued
+/// behind it": a follow-up recorded on the same thread there, before or during this task's
+/// wait, keeps its answer from this task.
+#[tokio::test(flavor = "current_thread")]
+async fn a_follow_up_recorded_during_the_wait_keeps_its_reply() {
+    for during in [true, false] {
+        let peer = Arc::new(StandIn {
+            enabled: true,
+            overlap: true,
+            ..Default::default()
+        });
+        let f = fixture_full(
+            &format!("overlap-{during}"),
+            None,
+            FakeProvider::new("claudeAgent"),
+            Some(peer.clone()),
+        );
+        let mut client = Client::open(&f.service, client(true)).await;
+        let parent = launch_as_swamp(&mut client, "Parent", "hang", "full-access", "default").await;
+        until_provider_turn(&f, &parent).await;
+        let original = remote_task(&f, &parent, "original").await;
+        f.service.config.engine.remote_task(json!({
+            "type":"delegated_task.remote.complete","commandId":"original-ended","threadId":parent,
+            "parentThreadId":parent,"taskId":original,"status":"completed","result":"Original report",
+            "stoppedThere":"ran-out"
+        })).await.unwrap();
+        let first = remote_task(&f, &parent, "first").await;
+        let second = "node:delegated-task:second".to_owned();
+        if !during {
+            remote_task(&f, &parent, "second").await;
+        }
+        let follow = f.service.follow_for_test(&parent, &first);
+        let record = async {
+            peer.waiting.notified().await;
+            if during {
+                remote_task(&f, &parent, "second").await;
+            }
+            peer.release.notify_one();
+        };
+        tokio::join!(follow, record);
+        // The follow-up's own follower ends with its own run.
+        f.service.follow_for_test(&parent, &second).await;
+        for (task, run, report) in [
+            (&first, "first", "First report"),
+            (&second, "second", "Second report"),
+        ] {
+            let (row, results, _) = stored_task(&f, &parent, task);
+            assert_eq!(row["remoteChild"]["runId"], run, "during: {during}");
+            assert_eq!(row["result"], report, "{task}, during: {during}");
+            assert_eq!(results, 1, "{task}, during: {during}");
+        }
+    }
+}
+
+/// `RemoteDelegation.test.ts`, "fifth audit retries a refused completion after a transient
+/// local write failure": the follower that met a final refusal there keeps trying to record
+/// it here, and records it once.
+#[tokio::test(flavor = "current_thread")]
+async fn a_final_refusal_is_recorded_after_a_failed_local_write() {
+    let peer = Arc::new(StandIn {
+        enabled: true,
+        gone: true,
+        ..Default::default()
+    });
+    let f = fixture_full(
+        "refusal-write",
+        None,
+        FakeProvider::new("claudeAgent"),
+        Some(peer.clone()),
+    );
+    let mut client = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut client, "Parent", "hang", "full-access", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let task = remote_task(&f, &parent, "first").await;
+    let db = rusqlite::Connection::open(f.dir.join("engine.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER refuse_result BEFORE INSERT ON events
+           WHEN NEW.type = 'subagent.updated'
+           BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;",
+    )
+    .unwrap();
+    // The back-off between attempts runs on the paused clock.
+    tokio::time::pause();
+    let mut follow = std::pin::pin!(f.service.follow_for_test(&parent, &task));
+    // A second call there means the first completion failed here and the follower went on.
+    let retried = tokio::select! {
+        () = &mut follow => false,
+        () = peer.waiting.notified() => true,
+    };
+    db.execute_batch("DROP TRIGGER refuse_result").unwrap();
+    if retried {
+        peer.release.notify_one();
+        follow.await;
+    }
+    let engine = &f.service.config.engine;
+    assert!(engine.open_remote_tasks(10).await.unwrap().is_empty());
+    let (row, results, wakes) = stored_task(&f, &parent, &task);
+    assert_eq!(row["status"], "failed");
+    assert!(
+        row["result"].as_str().unwrap().contains("Thread gone"),
+        "{row}"
+    );
+    assert_eq!(results, 1, "one result was recorded");
+    assert_eq!(wakes, 1);
+}
+
+/// `RemoteDelegation.ts` `followGaveUp`: after repeated failures here the follower still
+/// fails the task, retrying that last write with back-off until the store takes it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_follower_past_its_defect_limit_still_records_the_task_once() {
+    let peer = Arc::new(StandIn {
+        enabled: true,
+        gone: true,
+        ..Default::default()
+    });
+    let f = fixture_full(
+        "give-up-write",
+        None,
+        FakeProvider::new("claudeAgent"),
+        Some(peer.clone()),
+    );
+    let mut client = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut client, "Parent", "hang", "full-access", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let task = remote_task(&f, &parent, "first").await;
+    // Every read and write of the parent's rows fails until the table comes back.
+    let db = rusqlite::Connection::open(f.dir.join("engine.sqlite")).unwrap();
+    db.execute_batch("ALTER TABLE entities RENAME TO entities_away")
+        .unwrap();
+    tokio::time::pause();
+    let mut follow = std::pin::pin!(f.service.follow_for_test(&parent, &task));
+    let ended_while_broken = tokio::select! {
+        () = &mut follow => true,
+        () = tokio::time::sleep(std::time::Duration::from_secs(3600)) => false,
+    };
+    db.execute_batch("ALTER TABLE entities_away RENAME TO entities")
+        .unwrap();
+    if !ended_while_broken {
+        follow.await;
+    }
+    let engine = &f.service.config.engine;
+    assert!(engine.open_remote_tasks(10).await.unwrap().is_empty());
+    let (row, results, wakes) = stored_task(&f, &parent, &task);
+    assert_eq!(row["status"], "failed");
+    assert!(
+        row["result"]
+            .as_str()
+            .unwrap()
+            .contains("failed repeatedly"),
+        "{row}"
+    );
+    assert_eq!(results, 1);
+    assert_eq!(wakes, 1);
+}
+
+/// `RemoteDelegation.ts`: followers run in a scope the server closes at shutdown. A follower
+/// waiting out its back-off stops with the server and writes nothing afterwards, even once the
+/// store works again; the task stays open for the next start.
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_stops_a_follower_in_its_back_off() {
+    let peer = Arc::new(StandIn {
+        enabled: true,
+        gone: true,
+        ..Default::default()
+    });
+    let f = fixture_full(
+        "follower-shutdown",
+        None,
+        FakeProvider::new("claudeAgent"),
+        Some(peer.clone()),
+    );
+    let mut client = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut client, "Parent", "hang", "full-access", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let task = remote_task(&f, &parent, "first").await;
+    let db = rusqlite::Connection::open(f.dir.join("engine.sqlite")).unwrap();
+    db.execute_batch("ALTER TABLE entities RENAME TO entities_away")
+        .unwrap();
+    tokio::time::pause();
+    f.service.follow_remote_task(&parent, &task);
+    // Past the defect limit, the follower waits out its back-off.
+    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    f.service.stop_remote_tasks().await;
+    db.execute_batch("ALTER TABLE entities_away RENAME TO entities")
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    let (row, results, wakes) = stored_task(&f, &parent, &task);
+    assert!(row["result"].is_null(), "{row}");
+    assert_eq!((results, wakes), (0, 0));
+    let engine = &f.service.config.engine;
+    assert_eq!(
+        engine.open_remote_tasks(10).await.unwrap(),
+        vec![(parent.clone(), task.clone())]
+    );
+    // A follower asked for after the stop never starts.
+    f.service.follow_remote_task(&parent, &task);
+    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    assert_eq!(stored_task(&f, &parent, &task).1, 0);
+}
+
+/// A completion already handed to the engine when the server stops is not dropped half way:
+/// the stop waits until it committed, so the task keeps its one result and its parent's wake.
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_drains_a_completion_already_submitted() {
+    let peer = Arc::new(StandIn {
+        enabled: true,
+        gone: true,
+        hold_first: true,
+        ..Default::default()
+    });
+    let f = fixture_full(
+        "follower-drain",
+        None,
+        FakeProvider::new("claudeAgent"),
+        Some(peer.clone()),
+    );
+    let mut client = Client::open(&f.service, client(true)).await;
+    let parent = launch_as_swamp(&mut client, "Parent", "hang", "full-access", "default").await;
+    until_provider_turn(&f, &parent).await;
+    let task = remote_task(&f, &parent, "first").await;
+    let hold = Arc::new(crate::remote_tasks::WriteHold::default());
+    *crate::lock(&f.service.remote.hold) = Some(hold.clone());
+    f.service.follow_remote_task(&parent, &task);
+    peer.waiting.notified().await;
+    peer.release.notify_one();
+    // The follower has handed its completion over; the engine has not taken it yet.
+    hold.entered.notified().await;
+    let mut stop = std::pin::pin!(f.service.stop_remote_tasks());
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(stop.as_mut().poll(cx).is_pending()))
+            .await;
+    assert!(pending, "the stop waits for the write it was handed");
+    hold.release.notify_one();
+    stop.await;
+    let (row, results, wakes) = stored_task(&f, &parent, &task);
+    assert!(!row["result"].is_null(), "{row}");
+    assert_eq!((results, wakes), (1, 1));
 }

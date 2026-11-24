@@ -149,6 +149,8 @@ pub(crate) struct HoverCardModel {
     pub(crate) project: Option<String>,
     pub(crate) environment: Option<String>,
     pub(crate) branch: Option<String>,
+    /// The linked issues (`issueBadge`), listed here instead of on the row.
+    pub(crate) issues: Option<conn_state::sidebar_rows::IssueBadge>,
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) subagents: Option<i64>,
@@ -252,6 +254,7 @@ pub(crate) fn hover_card_model(
         project: project.and_then(|p| non_empty(Some(&p.title))),
         environment: non_empty(environment_label),
         branch: non_empty(thread.branch.as_deref()),
+        issues: conn_state::sidebar_rows::issue_badge(thread),
         provider: provider_label(&thread.provider_instance_id),
         model: thread
             .model_selection
@@ -271,6 +274,7 @@ fn detail_row_count(model: &HoverCardModel) -> usize {
     usize::from(model.project.is_some())
         + usize::from(model.environment.is_some())
         + usize::from(model.branch.is_some())
+        + usize::from(model.issues.is_some())
         + 1
         + usize::from(model.subagents.is_some())
         + usize::from(model.handed_off_from.is_some())
@@ -393,6 +397,7 @@ mod tests {
             project: Some("p".to_owned()),
             environment: None,
             branch: Some("b".to_owned()),
+            issues: None,
             provider: "Claude".to_owned(),
             model: "m".to_owned(),
             subagents: None,

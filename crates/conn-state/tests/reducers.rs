@@ -825,6 +825,45 @@ fn thread_replays_real_conn_server_turn_and_permission_fixtures() {
 }
 
 #[test]
+fn a_childs_pending_approval_reaches_its_parent_with_the_childs_own_details() {
+    let frames = parse_json_array(include_str!("fixtures/thread_permission_stream.json"));
+    let card_index = frames
+        .iter()
+        .position(|f| f["event"]["payload"]["type"] == "approval_request")
+        .expect("fixture has an approval card");
+    let mut child = ThreadState::default();
+    for frame in &frames[..=card_index] {
+        child.apply(decode_thread(frame.clone()));
+    }
+    let threads = std::collections::HashMap::from([("child".to_owned(), child)]);
+    let listed = |id: &str| conn_state::ChildApprovalThread {
+        id: id.to_owned(),
+        title: "Review #278".to_owned(),
+    };
+
+    let approvals = conn_state::child_approvals(&[listed("child"), listed("unsynced")], &threads);
+    assert_eq!(approvals.len(), 1, "an unsynchronized child adds nothing");
+    let approval = &approvals[0];
+    assert_eq!(approval.thread_id, "child");
+    assert_eq!(approval.title, "Review #278");
+    assert!(approval.answerable);
+    assert_eq!(
+        Some(&approval.request_id),
+        threads["child"]
+            .pending_approvals()
+            .first()
+            .map(|a| &a.request_id)
+    );
+    // The card shows the prompt, else the request kind.
+    let kind = conn_state::request_kind_label(approval.details.request_kind);
+    assert_eq!(
+        approval.detail,
+        approval.details.prompt.as_deref().unwrap_or(kind)
+    );
+    assert!(!approval.detail.is_empty());
+}
+
+#[test]
 fn pending_approvals_follow_their_runtime_request() {
     let frames = parse_json_array(include_str!("fixtures/thread_permission_stream.json"));
     let is_runtime_request = |frame: &Value| frame["event"]["type"] == "runtime-request.updated";
@@ -2491,7 +2530,8 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
             title: "Code Reviewer".to_owned(),
             role: "codex".to_owned(),
             status: TurnItemStatus::Running,
-            summary: Some("Reading main.rs cargo test".to_owned()),
+            // The card renders the Markdown; `plain_subagent_detail` gives web's one plain line.
+            summary: Some("Reading [main.rs](src/main.rs)\n- `cargo test`".to_owned()),
             remote_label: None,
             created_at: Some("2026-11-22T10:00:05.000Z".to_owned()),
             started_at: Some("2026-11-22T10:00:00.000Z".to_owned()),
@@ -2540,6 +2580,10 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
         (SubagentTone::Stopped, "Stopped")
     );
     assert_eq!(format_subagent_display_title("Plain title"), "Plain title");
+    assert_eq!(
+        conn_state::plain_subagent_detail("Reading [main.rs](src/main.rs)\n- `cargo test`"),
+        "Reading main.rs cargo test"
+    );
 }
 
 #[test]
@@ -2821,4 +2865,194 @@ fn shell_enrichment_snapshot_preserves_threads_and_sequence() {
             .map(|r| r.canonical_key.as_str()),
         Some("github.com/nckrtl/conn-demo")
     );
+}
+
+/// The item a resumed stream replays after a deletion (recorded from conn-engine) goes
+/// through the reducer: the cached timeline is gone and the thread reads as deleted, as T3's
+/// detail cache does (`threads.ts`).
+#[test]
+fn a_replayed_deletion_evicts_the_cached_thread() {
+    let mut state = ThreadState::new("t1");
+    let snapshot = json!({
+        "kind": "snapshot",
+        "snapshotSequence": 5,
+        "projection": {
+            "thread": {
+                "createdBy": "user",
+                "creationSource": "web",
+                "id": "t1",
+                "projectId": "proj-1",
+                "title": "Test thread",
+                "providerInstanceId": "claudeAgent",
+                "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                "runtimeMode": "full-access",
+                "interactionMode": "default",
+                "branch": null,
+                "worktreePath": null,
+                "lineage": { "rootThreadId": "t1", "parentThreadId": null, "relationshipToParent": null },
+                "forkedFrom": null,
+                "activeProviderThreadId": null,
+                "createdAt": "2026-11-13T09:00:00.000Z",
+                "updatedAt": "2026-11-13T09:00:10.000Z",
+                "archivedAt": null,
+                "settledOverride": null,
+                "settledAt": null,
+                "deletedAt": null
+            },
+            "runs": [
+                {
+                    "id": "run-1",
+                    "threadId": "t1",
+                    "ordinal": 1,
+                    "providerInstanceId": "claudeAgent",
+                    "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                    "providerThreadId": null,
+                    "userMessageId": "msg-u1",
+                    "rootNodeId": null,
+                    "activeAttemptId": null,
+                    "status": "completed",
+                    "requestedAt": "2026-11-13T09:00:00.000Z",
+                    "startedAt": "2026-11-13T09:00:01.000Z",
+                    "completedAt": "2026-11-13T09:00:10.000Z",
+                    "checkpointId": null,
+                    "contextHandoffId": null
+                }
+            ],
+            "attempts": [],
+            "nodes": [],
+            "subagents": [],
+            "providerSessions": [],
+            "providerThreads": [],
+            "providerTurns": [],
+            "runtimeRequests": [],
+            "messages": [],
+            "plans": [],
+            "turnItems": [],
+            "checkpointScopes": [],
+            "checkpoints": [{
+                "id": "cp-1",
+                "threadId": "t1",
+                "scopeId": "scope-1",
+                "runId": "run-1",
+                "nodeId": "node-1",
+                "parentCheckpointId": null,
+                "ordinalWithinScope": 1,
+                "appRunOrdinal": 1,
+                "ref": "refs/conn/cp-1",
+                "status": "ready",
+                "files": [{ "path": "README.md", "kind": "modified", "additions": 1, "deletions": 0 }],
+                "capturedAt": "2026-11-13T09:00:10.000Z"
+            }],
+            "contextHandoffs": [],
+            "contextTransfers": [],
+            "visibleTurnItems": [
+                {
+                    "position": 0,
+                    "visibility": "local",
+                    "sourceThreadId": "t1",
+                    "sourceItemId": "item-u1",
+                    "item": {
+                        "id": "item-u1",
+                        "threadId": "t1",
+                        "runId": "run-1",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 1,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-13T09:00:00.000Z",
+                        "completedAt": "2026-11-13T09:00:00.000Z",
+                        "updatedAt": "2026-11-13T09:00:00.000Z",
+                        "createdBy": "user",
+                        "creationSource": "web",
+                        "type": "user_message",
+                        "messageId": "msg-u1",
+                        "inputIntent": "turn_start",
+                        "text": "Run tests",
+                        "attachments": []
+                    }
+                },
+                {
+                    "position": 1,
+                    "visibility": "local",
+                    "sourceThreadId": "t1",
+                    "sourceItemId": "item-cmd1",
+                    "item": {
+                        "id": "item-cmd1",
+                        "threadId": "t1",
+                        "runId": "run-1",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 2,
+                        "status": "completed",
+                        "title": "cargo test",
+                        "startedAt": "2026-11-13T09:00:02.000Z",
+                        "completedAt": "2026-11-13T09:00:05.000Z",
+                        "updatedAt": "2026-11-13T09:00:05.000Z",
+                        "type": "command_execution",
+                        "input": "cargo test -p conn-state",
+                        "output": "ok",
+                        "exitCode": 0
+                    }
+                },
+                {
+                    "position": 2,
+                    "visibility": "local",
+                    "sourceThreadId": "t1",
+                    "sourceItemId": "item-a1",
+                    "item": {
+                        "id": "item-a1",
+                        "threadId": "t1",
+                        "runId": "run-1",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 3,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-13T09:00:06.000Z",
+                        "completedAt": "2026-11-13T09:00:10.000Z",
+                        "updatedAt": "2026-11-13T09:00:10.000Z",
+                        "type": "assistant_message",
+                        "messageId": "msg-a1",
+                        "text": "All tests passed.",
+                        "streaming": false
+                    }
+                }
+            ],
+            "updatedAt": "2026-11-13T09:00:10.000Z"
+        }
+    });
+    state.apply(decode_thread(snapshot.clone()));
+    assert!(!state.entries.is_empty());
+    assert_eq!(state.latest_run_id(), Some("run-1"));
+    assert!(state.checkpoint_for_run("run-1").is_some());
+    assert!(!state.deleted);
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/thread_deleted_replay.json"))
+        .expect("fixture is JSON");
+    assert!(state.apply(decode_thread(fixture["item"].clone())));
+    assert!(state.deleted);
+    assert!(state.entries.is_empty());
+    assert!(!state.working);
+    assert!(state.pending_requests.is_empty());
+    assert_eq!(state.latest_run_id(), None, "no cached run is left");
+    assert!(
+        state.checkpoint_for_run("run-1").is_none(),
+        "nor its checkpoint"
+    );
+    assert_eq!(state.active_run_id(), None);
+
+    // The thread created again under its ID: the stream's snapshot is authoritative.
+    state.apply(decode_thread(snapshot));
+    assert!(!state.deleted);
+    assert!(!state.entries.is_empty());
+    assert_eq!(state.latest_run_id(), Some("run-1"));
 }
