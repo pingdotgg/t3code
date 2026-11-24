@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
@@ -70,6 +70,20 @@ export class LiveActivityDeliveryMarkPersistenceError extends Schema.TaggedError
   }
 }
 
+export class LiveActivityAggregatePrunePersistenceError extends Schema.TaggedError<LiveActivityAggregatePrunePersistenceError>()(
+  "LiveActivityAggregatePrunePersistenceError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to clear the last aggregate of ended Live Activities.";
+  }
+}
+
+// Outlasts the finished-row display window, the only time an ended baseline still suppresses a replayed alert.
+export const ENDED_LIVE_ACTIVITY_AGGREGATE_RETENTION_MINUTES = 60;
+
 export interface DeviceRow {
   readonly user_id: string;
   readonly device_id: string;
@@ -123,6 +137,8 @@ export class LiveActivities extends Context.Service<
       readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
       readonly invalidatedAt: string;
     }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
+    /** Drops the thread and project titles kept on activities that ended and stayed ended. */
+    readonly clearEndedAggregates: Effect.Effect<void, LiveActivityAggregatePrunePersistenceError>;
   }
 >()("t3code-relay/agentActivity/LiveActivities") {}
 
@@ -410,6 +426,29 @@ const make = Effect.gen(function* () {
           ),
         );
       },
+    ),
+
+    clearEndedAggregates: Effect.gen(function* () {
+      const before = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, {
+          minutes: ENDED_LIVE_ACTIVITY_AGGREGATE_RETENTION_MINUTES,
+        }),
+      );
+      yield* Effect.annotateCurrentSpan({ "relay.live_activities_prune.before": before });
+      yield* db
+        .update(relayLiveActivities)
+        .set({ lastAggregateJson: null })
+        .where(
+          and(
+            isNotNull(relayLiveActivities.lastAggregateJson),
+            lt(relayLiveActivities.updatedAt, before),
+            // Android updates keep the old endedAt, so a delivery after it means the card is live again.
+            gte(relayLiveActivities.endedAt, relayLiveActivities.lastLiveActivityDeliveryAt),
+          ),
+        );
+    }).pipe(
+      Effect.mapError((cause) => new LiveActivityAggregatePrunePersistenceError({ cause })),
+      Effect.withSpan("relay.live_activities.clear_ended_aggregates"),
     ),
   });
 });

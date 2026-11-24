@@ -472,6 +472,7 @@ describe("relay environment authentication", () => {
       create: () => Effect.die("unused create"),
       authenticate: () => Effect.fail(failure),
       revokeForEnvironmentPublicKey: () => Effect.die("unused revoke"),
+      pruneRevoked: Effect.die("unused pruneRevoked"),
     };
 
     return Effect.gen(function* () {
@@ -542,6 +543,7 @@ function layerRelayUnlinkTest(input?: {
           Effect.die("unexpected Live Activity preference update"),
         setHoldWebhooksWhileOffline: () => Effect.die("unused setHoldWebhooksWhileOffline"),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
+        pruneRevoked: Effect.die("unused pruneRevoked"),
       }),
     ),
     Layer.succeed(
@@ -550,6 +552,7 @@ function layerRelayUnlinkTest(input?: {
         create: () => Effect.die("unused create"),
         authenticate: () => Effect.die("unused authenticate"),
         revokeForEnvironmentPublicKey: input?.revokeCredential ?? (() => Effect.succeed(false)),
+        pruneRevoked: Effect.die("unused pruneRevoked"),
       }),
     ),
     Layer.succeed(

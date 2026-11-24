@@ -7,10 +7,11 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
+import { MAX_AGENT_ACTIVITY_ROW_TTL_MS } from "./agentActivityPayloads.ts";
 
 export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedError<AgentActivityRowUpsertPersistenceError>()(
   "AgentActivityRowUpsertPersistenceError",
@@ -38,17 +39,18 @@ export class AgentActivityRowDeletePersistenceError extends Schema.TaggedError<A
   }
 }
 
-export class AgentActivityRowPruneTerminalPersistenceError extends Schema.TaggedError<AgentActivityRowPruneTerminalPersistenceError>()(
-  "AgentActivityRowPruneTerminalPersistenceError",
+export class AgentActivityRowPrunePersistenceError extends Schema.TaggedError<AgentActivityRowPrunePersistenceError>()(
+  "AgentActivityRowPrunePersistenceError",
   {
-    updatedBefore: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to prune terminal agent activity rows updated before ${this.updatedBefore}.`;
+    return "Failed to prune finished and expired agent activity rows.";
   }
 }
+
+const TERMINAL_AGENT_ACTIVITY_ROW_RETENTION_MINUTES = 30;
 
 export class AgentActivityRowListPersistenceError extends Schema.TaggedError<AgentActivityRowListPersistenceError>()(
   "AgentActivityRowListPersistenceError",
@@ -69,9 +71,8 @@ export class AgentActivityRows extends Context.Service<
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
     }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
-    readonly pruneTerminal: (input: {
-      readonly updatedBefore: string;
-    }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
+    /** Deletes finished rows after a short grace and any row the read side already treats as expired. */
+    readonly prune: Effect.Effect<void, AgentActivityRowPrunePersistenceError>;
     readonly remove: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -180,28 +181,33 @@ const make = Effect.gen(function* () {
         );
     }),
 
-    pruneTerminal: Effect.fn("relay.agent_activity_rows.prune_terminal")(function* (input) {
+    prune: Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const terminalBefore = DateTime.formatIso(
+        DateTime.subtract(now, { minutes: TERMINAL_AGENT_ACTIVITY_ROW_RETENTION_MINUTES }),
+      );
+      const expiredBefore = DateTime.formatIso(
+        DateTime.subtract(now, { milliseconds: MAX_AGENT_ACTIVITY_ROW_TTL_MS }),
+      );
       yield* Effect.annotateCurrentSpan({
-        "relay.agent_activity_prune.before": input.updatedBefore,
+        "relay.agent_activity_prune.terminal_before": terminalBefore,
+        "relay.agent_activity_prune.expired_before": expiredBefore,
       });
       yield* db
         .delete(relayAgentActivityRows)
         .where(
-          and(
-            sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
-            lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
-          ),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new AgentActivityRowPruneTerminalPersistenceError({
-                updatedBefore: input.updatedBefore,
-                cause,
-              }),
+          or(
+            and(
+              sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
+              lt(relayAgentActivityRows.updatedAt, terminalBefore),
+            ),
+            lt(relayAgentActivityRows.updatedAt, expiredBefore),
           ),
         );
-    }),
+    }).pipe(
+      Effect.mapError((cause) => new AgentActivityRowPrunePersistenceError({ cause })),
+      Effect.withSpan("relay.agent_activity_rows.prune"),
+    ),
 
     listForUser: Effect.fn("relay.agent_activity_rows.list_for_user")(function* (input) {
       return yield* db

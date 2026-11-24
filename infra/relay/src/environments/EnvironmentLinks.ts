@@ -9,10 +9,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, ne, notExists, or, sql } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
-import { relayEnvironmentLinks } from "../persistence/schema.ts";
+import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
   readonly environmentPublicKey: string;
@@ -100,6 +101,20 @@ export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedError<En
   }
 }
 
+export class EnvironmentLinkPrunePersistenceError extends Schema.TaggedError<EnvironmentLinkPrunePersistenceError>()(
+  "EnvironmentLinkPrunePersistenceError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to prune revoked environment links";
+  }
+}
+
+export const REVOKED_ENVIRONMENT_LINK_RETENTION_DAYS = 30;
+const ENVIRONMENT_LINK_PRUNE_BATCH_SIZE = 1_000;
+
 export class EnvironmentLinks extends Context.Service<
   EnvironmentLinks,
   {
@@ -155,6 +170,8 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
+    /** Deletes links revoked before the retention period; returns how many were removed. */
+    readonly pruneRevoked: Effect.Effect<number, EnvironmentLinkPrunePersistenceError>;
   }
 >()("t3code-relay/environments/EnvironmentLinks") {}
 
@@ -532,6 +549,63 @@ const make = Effect.gen(function* () {
         );
       return rows.length > 0;
     }),
+
+    pruneRevoked: Effect.gen(function* () {
+      const before = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, { days: REVOKED_ENVIRONMENT_LINK_RETENTION_DAYS }),
+      );
+      yield* Effect.annotateCurrentSpan({ "relay.environment_links_prune.before": before });
+      // Tunnel limits read a revoked link to skip an allocation whose teardown is still owed.
+      const prunable = and(
+        lt(relayEnvironmentLinks.revokedAt, before),
+        notExists(
+          new QueryBuilder()
+            .select({ userId: relayManagedEndpointAllocations.userId })
+            .from(relayManagedEndpointAllocations)
+            .where(
+              and(
+                eq(relayManagedEndpointAllocations.userId, relayEnvironmentLinks.userId),
+                eq(
+                  relayManagedEndpointAllocations.environmentId,
+                  relayEnvironmentLinks.environmentId,
+                ),
+              ),
+            ),
+        ),
+      );
+      const keys = yield* db
+        .select({
+          userId: relayEnvironmentLinks.userId,
+          environmentId: relayEnvironmentLinks.environmentId,
+        })
+        .from(relayEnvironmentLinks)
+        .where(prunable)
+        .limit(ENVIRONMENT_LINK_PRUNE_BATCH_SIZE);
+      if (keys.length === 0) return 0;
+      const deleted = yield* db
+        .delete(relayEnvironmentLinks)
+        .where(
+          and(
+            prunable,
+            or(
+              ...keys.map((key) =>
+                and(
+                  eq(relayEnvironmentLinks.userId, key.userId),
+                  eq(relayEnvironmentLinks.environmentId, key.environmentId),
+                ),
+              ),
+            ),
+          ),
+        )
+        .returning({ environmentId: relayEnvironmentLinks.environmentId });
+      yield* Effect.annotateCurrentSpan({
+        "relay.environment_links_prune.deleted": deleted.length,
+      });
+      return deleted.length;
+    }).pipe(
+      Effect.mapError((cause) => new EnvironmentLinkPrunePersistenceError({ cause })),
+      Effect.withSpan("relay.environment_links.prune_revoked"),
+    ),
   });
 });
 

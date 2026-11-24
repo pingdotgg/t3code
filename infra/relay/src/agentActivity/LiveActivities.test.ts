@@ -3,10 +3,13 @@ import type {
   RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayDb from "../db.ts";
+import { makePgliteRelayDb } from "../persistence/pgliteTestDb.ts";
 import { relayLiveActivities } from "../persistence/schema.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 
@@ -135,4 +138,43 @@ describe("LiveActivities", () => {
       ),
     );
   });
+
+  it.effect("clears the aggregate of activities that ended over an hour ago and stayed ended", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-06-01T00:00:00.000Z");
+      yield* TestClock.setTime(now);
+      const minutesAgo = (minutes: number) =>
+        DateTime.formatIso(DateTime.makeUnsafe(now - minutes * 60_000));
+      const { db, layer } = yield* makePgliteRelayDb;
+      const activity = (deviceId: string, endedAt: string, lastDeliveryAt: string) => ({
+        userId: "user-1",
+        deviceId,
+        endedAt,
+        lastAggregateJson: aggregate,
+        lastLiveActivityDeliveryAt: lastDeliveryAt,
+        createdAt: minutesAgo(600),
+        updatedAt: lastDeliveryAt,
+      });
+      yield* Effect.promise(() =>
+        db.insert(relayLiveActivities).values([
+          activity("ended", minutesAgo(61), minutesAgo(61)),
+          activity("recently-ended", minutesAgo(59), minutesAgo(59)),
+          // Android keeps an old endedAt while later updates show the card again.
+          activity("updated-after-end", minutesAgo(180), minutesAgo(120)),
+        ]),
+      );
+      const liveActivities = yield* Effect.service(LiveActivities.LiveActivities).pipe(
+        Effect.provide(LiveActivities.layer.pipe(Layer.provide(layer))),
+      );
+
+      yield* liveActivities.clearEndedAggregates;
+      const rows = yield* Effect.promise(() => db.select().from(relayLiveActivities));
+      expect(
+        rows
+          .filter((row) => row.lastAggregateJson !== null)
+          .map((row) => row.deviceId)
+          .toSorted(),
+      ).toEqual(["recently-ended", "updated-after-end"]);
+    }),
+  );
 });

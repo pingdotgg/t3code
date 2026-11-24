@@ -4,13 +4,16 @@ import { drizzle } from "drizzle-orm/pglite";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
-import { relayEnvironmentLinks } from "../persistence/schema.ts";
+import { makePgliteRelayDb } from "../persistence/pgliteTestDb.ts";
+import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 
 describe("EnvironmentLinks", () => {
@@ -202,4 +205,58 @@ describe("EnvironmentLinks", () => {
       ),
     );
   });
+
+  it.effect(
+    "prunes links revoked over 30 days ago unless their tunnel teardown is still owed",
+    () =>
+      Effect.gen(function* () {
+        const now = Date.parse("2026-06-01T00:00:00.000Z");
+        yield* TestClock.setTime(now);
+        const daysAgo = (days: number) =>
+          DateTime.formatIso(DateTime.makeUnsafe(now - days * 86_400_000));
+        const { db, layer } = yield* makePgliteRelayDb;
+        const link = (environmentId: string, revokedAt: string | null) => ({
+          userId: "user-1",
+          environmentId,
+          environmentPublicKey: "key-1",
+          endpointHttpBaseUrl: "https://environment.test",
+          endpointWsBaseUrl: "wss://environment.test",
+          endpointProviderKind: "cloudflare_tunnel",
+          revokedAt,
+          createdAt: daysAgo(90),
+          updatedAt: revokedAt ?? daysAgo(90),
+        });
+        yield* Effect.promise(() =>
+          db
+            .insert(relayEnvironmentLinks)
+            .values([
+              link("old-revoked", daysAgo(31)),
+              link("owed-teardown", daysAgo(31)),
+              link("recently-revoked", daysAgo(29)),
+              link("active", null),
+            ]),
+        );
+        yield* Effect.promise(() =>
+          db.insert(relayManagedEndpointAllocations).values({
+            userId: "user-1",
+            environmentId: "owed-teardown",
+            hostname: "owed.example",
+            tunnelName: "owed-tunnel",
+            createdAt: daysAgo(90),
+            updatedAt: daysAgo(40),
+          }),
+        );
+        const links = yield* Effect.service(EnvironmentLinks.EnvironmentLinks).pipe(
+          Effect.provide(EnvironmentLinks.layer.pipe(Layer.provide(layer))),
+        );
+
+        expect(yield* links.pruneRevoked).toBe(1);
+        const remaining = yield* Effect.promise(() => db.select().from(relayEnvironmentLinks));
+        expect(remaining.map((row) => row.environmentId).toSorted()).toEqual([
+          "active",
+          "owed-teardown",
+          "recently-revoked",
+        ]);
+      }),
+  );
 });

@@ -7,7 +7,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, eq, exists, isNull, ne, notExists } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, lt, ne, notExists } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -56,6 +56,20 @@ export class EnvironmentCredentialRevokePersistenceError extends Schema.TaggedEr
   }
 }
 
+export class EnvironmentCredentialPrunePersistenceError extends Schema.TaggedError<EnvironmentCredentialPrunePersistenceError>()(
+  "EnvironmentCredentialPrunePersistenceError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to prune revoked environment credentials";
+  }
+}
+
+export const REVOKED_ENVIRONMENT_CREDENTIAL_RETENTION_DAYS = 30;
+const ENVIRONMENT_CREDENTIAL_PRUNE_BATCH_SIZE = 1_000;
+
 export interface EnvironmentCredentialPrincipal {
   readonly credentialId: string;
   readonly environmentId: string;
@@ -79,6 +93,8 @@ export class EnvironmentCredentials extends Context.Service<
       readonly environmentId: string;
       readonly environmentPublicKey: string;
     }) => Effect.Effect<boolean, EnvironmentCredentialRevokePersistenceError>;
+    /** Deletes credentials revoked before the retention period; returns how many were removed. */
+    readonly pruneRevoked: Effect.Effect<number, EnvironmentCredentialPrunePersistenceError>;
   }
 >()("t3code-relay/environments/EnvironmentCredentials") {}
 
@@ -286,6 +302,35 @@ const make = Effect.gen(function* () {
         );
       return rows.length > 0;
     }),
+
+    pruneRevoked: Effect.gen(function* () {
+      const before = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, {
+          days: REVOKED_ENVIRONMENT_CREDENTIAL_RETENTION_DAYS,
+        }),
+      );
+      yield* Effect.annotateCurrentSpan({ "relay.environment_credentials_prune.before": before });
+      const deleted = yield* db
+        .delete(relayEnvironmentCredentials)
+        .where(
+          inArray(
+            relayEnvironmentCredentials.credentialId,
+            new QueryBuilder()
+              .select({ credentialId: relayEnvironmentCredentials.credentialId })
+              .from(relayEnvironmentCredentials)
+              .where(lt(relayEnvironmentCredentials.revokedAt, before))
+              .limit(ENVIRONMENT_CREDENTIAL_PRUNE_BATCH_SIZE),
+          ),
+        )
+        .returning({ credentialId: relayEnvironmentCredentials.credentialId });
+      yield* Effect.annotateCurrentSpan({
+        "relay.environment_credentials_prune.deleted": deleted.length,
+      });
+      return deleted.length;
+    }).pipe(
+      Effect.mapError((cause) => new EnvironmentCredentialPrunePersistenceError({ cause })),
+      Effect.withSpan("relay.environment_credentials.prune_revoked"),
+    ),
   });
 });
 

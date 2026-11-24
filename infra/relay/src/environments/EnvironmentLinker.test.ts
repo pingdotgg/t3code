@@ -138,11 +138,13 @@ function layerTest(input?: {
             Effect.die("unexpected Live Activity preference update"),
           setHoldWebhooksWhileOffline: () => Effect.void,
           revokeForUser: () => Effect.succeed(false),
+          pruneRevoked: Effect.succeed(0),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
           create: () => Effect.succeed("t3env_credential_secret"),
           authenticate: () => Effect.succeedNone,
           revokeForEnvironmentPublicKey: () => Effect.succeed(false),
+          pruneRevoked: Effect.succeed(0),
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           reconcileOrigin: () => Effect.succeed("ready"),
