@@ -771,8 +771,14 @@ function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
   return { childrenByParent, commandById };
 }
 
+interface TerminalProcessTableEntry {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly name: string;
+}
+
 function processTableSnapshotFromProcesses(
-  processes: ReadonlyArray<ResourceMonitorProcessTableEntry>,
+  processes: ReadonlyArray<TerminalProcessTableEntry>,
 ): TerminalProcessTableSnapshot {
   const childrenByParent = new Map<number, number[]>();
   const commandById = new Map<number, string>();
@@ -1697,6 +1703,10 @@ interface TerminalManagerOptions {
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
+  processTable?: Effect.Effect<
+    ReadonlyArray<TerminalProcessTableEntry>,
+    TerminalSubprocessCheckError
+  >;
   foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
