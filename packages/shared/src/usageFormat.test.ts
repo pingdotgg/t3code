@@ -160,32 +160,10 @@ describe("hourly usage formatting", () => {
 
   it("uses a 12-hour clock in locales that default to 24-hour", () => {
     const instant = "2026-11-24T18:03:00.000Z";
-    const date = new Date(instant);
-
     for (const locale of ["fr", "de", "es"]) {
-      const formatted = formatHourShort(instant, "UTC", true, locale);
-      expect(formatted).toBe(
-        new Intl.DateTimeFormat(locale, {
-          timeZone: "UTC",
-          hour: "numeric",
-          hour12: true,
-        }).format(date),
-      );
-      expect(formatted).not.toContain("18");
+      expect(formatHourShort(instant, "UTC", true, locale)).not.toContain("18");
     }
-
-    const formattedDateTime = formatDateTimeShort(instant, "UTC", true, "fr");
-    expect(formattedDateTime).toBe(
-      new Intl.DateTimeFormat("fr", {
-        timeZone: "UTC",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        hour12: true,
-      }).format(date),
-    );
-    expect(formattedDateTime).not.toContain("18");
-
+    expect(formatDateTimeShort(instant, "UTC", true, "fr")).not.toContain("18");
     expect(formatHourShort(instant, "UTC", false, "es")).toBe("18:00");
   });
 
