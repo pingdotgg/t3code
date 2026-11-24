@@ -235,7 +235,8 @@ If that port is already in use, choose another with
 
 [app.t3.codes](https://app.t3.codes) needs an HTTPS endpoint. It connects directly
 to your server; a hosted pairing link does not make an unreachable backend
-reachable or convert HTTP to HTTPS.
+reachable or convert HTTP to HTTPS. Opening a hosted pairing link shows the
+server address and asks you to confirm before adding it.
 
 For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
@@ -421,7 +422,11 @@ the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
 Linked environments is a beta. Turn it on for both machines in **Settings →
-Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+Labs**; on mobile, **Settings → Labs** lists each connected machine. On a
+headless server, open its address in a browser and pair to reach its **Settings
+→ Labs**, or add `"linkedEnvironmentsEnabled": true` to `settings.json` in its
+`userdata` directory, such as `~/.t3/userdata/settings.json`; a running server
+picks it up. While it is
 off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
@@ -464,11 +469,58 @@ an address you trust: the code is sent there.
   machine's own threads, projects or settings, and they skip its project setup
   scripts.
 - The link shows up in that machine's **Settings → Sharing & access** like any
-  outside agent. Revoke it there to end it. **Forget** on this machine only
-  removes it here.
+  outside agent, and can be revoked there. **Forget** on this machine also ends
+  it there when that machine confirms it. If it can't, such as when it is
+  offline or on an older T3 Code, Forget says so; revoke it in that machine's
+  Sharing & access.
 - A link stays valid while agents use it. One unused for 30 days expires, as
   does one to a machine on an older T3 Code after 30 days; link again with a
   new pairing code.
+
+On web and desktop, **Settings → Environments** opens as a map of your machines:
+this app, each environment with one line per route (the one in use is
+highlighted), and the machines an environment links to. Select a machine to
+manage it, or switch to **List** for the same controls as rows. To link from
+the map, drag the plus on an environment onto another machine, or press it and
+pick one. If this app is connected to both machines, knows an address the first
+can reach the other at, and its session on the other one manages access there,
+it needs no pairing code.
+
+A machine this app is not connected to, shown only because another environment
+links to it, can still be linked without a code when that link has full access:
+drop the plus on it and the environment holding the link gets the pairing code
+from it. Your session on that environment must manage access there and already
+have the access you pick. The result
+is a separate link with the access you pick, listed and revocable on the linked
+machine like any other. Links still do not chain.
+
+A link goes one way. To let the other machine's agents work back, tick **Also
+link … back** when you create the link, or select a one-way link and use
+**Link back…**. It is offered when this app is connected to both machines and
+may manage access on each. Two machines linked to each other at the same access
+are drawn as one line with an arrowhead at each end; they are still two links,
+and each is forgotten on its own.
+
+To link one environment to several machines at once, Shift-click the machines
+(or Shift-drag a box around them, or press Space on a focused machine), then
+drag the environment's plus onto any of them, or use **Link several…** above
+the map. Dropping the plus on a stack offers the stack's machines. The dialog
+ticks the machines it can link without a pairing code and says why for the
+rest. When this app is connected to none of them, each needs a pairing code,
+so the map says so and offers to link one at a time instead.
+
+Large setups fold: machines known only through links that share the same
+linking environments and access levels become one stack, and once this app
+knows more than 12 environments, the ones that are not connected and have no
+links fold by state. Select a stack to list and filter every machine in it.
+Opening a stack on the map draws its first 24 below its card: the rest of the
+map stays where it is and the map grows taller, so pan or press the fit button
+to see all of it. **Find a machine** above the map searches by name, and Enter
+goes to the first match. The **?** button above the map lists these gestures.
+
+The map draws the links of the machines this app is connected to; a machine it
+is not connected to may hold links the map cannot show. A link reaches one
+machine and does not carry on through that machine's own links.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
@@ -476,6 +528,38 @@ one `target.projectId` names), and this thread wakes with its result when it
 ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
+
+### Read a linked machine's threads
+
+You can read a thread on a linked machine without connecting this app to it. Open
+a task that was delegated there from the thread's agents, or a thread link that
+points there, and the thread opens read-only, streamed through the machine you
+are connected to over its link. It follows the thread live. On web and desktop
+it opens as a tab in the right panel, beside the thread you are in, or in the
+main view with ⌘/Ctrl-click, like
+[subagents and side chats](thread-sidebar.md#open-a-thread-beside-the-one-you-are-in).
+On mobile it opens in the inspector on layouts that have one, where Maximize
+fills the screen, and as its own screen elsewhere. It shows the same timeline as
+any other thread on web and desktop, and a shorter read-only list on mobile.
+
+- The view is marked **Read-only** with both machines' names. To reply, approve
+  or stop the thread, choose **Connect to interact**. When the link has full
+  access, this app pairs with that machine in one step and opens the thread
+  there; you need permission to manage access on the machine you are connected
+  to. Otherwise the add-environment form opens for that machine and asks for a
+  pairing code you create on it.
+- This app connects to that machine directly, so it must be able to reach one of
+  the addresses the link uses. If it cannot, the view says so and stays
+  read-only. The new connection appears in that machine's **Settings → Sharing &
+  access**, named after this device and the machine it came through, and is
+  revoked there like any other.
+- Files, images and published visuals stay on that machine and do not load
+  here. A command's output shows as of when you open its row.
+- If this app is already connected to that machine, the thread opens there as
+  usual instead.
+- You need permission to read threads on the machine you are connected to, and
+  Linked environments must be on there. Both machines need a version of T3 Code
+  that has this view.
 
 ## Manage or revoke access
 

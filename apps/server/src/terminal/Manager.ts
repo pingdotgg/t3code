@@ -42,6 +42,7 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { stripAppImageRuntimeEnv } from "@t3tools/shared/appImageRuntimeEnv";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
 
@@ -242,6 +243,8 @@ export class TerminalManager extends Context.Service<
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
 
+    readonly hasActiveSubprocess: (input: { readonly threadId: string }) => Effect.Effect<boolean>;
+
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
       registerCleanup?: (stop: () => void) => void,
@@ -413,7 +416,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history.value(),
+    history: session.history.value() + unfinishedSequenceReplay(session),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -916,11 +919,12 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const powershell = windowsPowerShellPath(yield* HostProcess.Environment);
   const command =
     '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
-      command: "powershell.exe",
+      command: powershell,
       args: ["-NoProfile", "-NonInteractive", "-Command", command],
       timeout,
       maxOutputBytes: 262_144,
@@ -1268,8 +1272,25 @@ function shouldStripDcsSequence(content: string): boolean {
   return /^[01]?[$+][qr]/.test(content);
 }
 
+// Ghostty reports colours as `rgb:rrrr/gggg/bbbb`; a lone shorter `rgb:` value only sets one.
+const LONE_SHORT_RGB_SETTER =
+  /^\d+;rgb:(?![\da-f]{4}\/[\da-f]{4}\/[\da-f]{4}$)[\da-f]{1,4}\/[\da-f]{1,4}\/[\da-f]{1,4}$/i;
+
 function shouldStripOscSequence(content: string): boolean {
-  return /^(10|11|12);(?:\?|rgb:)/.test(content);
+  return /^(10|11|12);(?:\?|rgb:)/.test(content) && !LONE_SHORT_RGB_SETTER.test(content);
+}
+
+// An OSC 4 whose every colour is "?" reports palette entries and sets none. Ghostty skips C0
+// controls inside an OSC, runs one that CAN or SUB ends, and reads the pairs past empty fields.
+function isOscPaletteQuery(content: string): boolean {
+  if (!/^[\0-\x1f]*4/.test(content) || !content.includes("?")) return false;
+  const [code, ...pairs] = content
+    .replace(/[\0-\x1f]+/g, "")
+    .split(";")
+    .filter((field) => field !== "");
+  return (
+    code === "4" && pairs.length > 1 && pairs.every((field, at) => at % 2 === 0 || field === "?")
+  );
 }
 
 function stripStringTerminator(value: string): string {
@@ -1379,7 +1400,32 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
 const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
 
-function sanitizeTerminalHistoryChunk(
+// Clients keep this much output and drop a sequence their trim cuts through, so none of them
+// could replay a longer string or CSI whole.
+const MAX_HELD_SEQUENCE_LENGTH = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
+// ESC and four intermediates: libghostty ignores every intermediate past the fourth.
+const MAX_HELD_ESCAPE_LENGTH = 5;
+// Leads the held text of a string or CSI that outgrew its limit and stays out of history. Only its
+// introducer is still held, with a final ESC or high surrogate that may begin its end. Other held
+// text starts with ESC.
+const OVERSIZED_SEQUENCE = "\u0018";
+// Stands in for the ESC of an oversized sequence, which ended any string history left open.
+const STRING_TERMINATOR = "\u001b\\";
+
+// Longer held text is cut to its introducer in a snapshot, so it cannot push history out of the
+// client's budget or add its size to every resync.
+const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
+
+// History leaves out the sequence the terminal is still inside. A client that starts from a
+// snapshot needs it, or it prints the rest of the sequence as text.
+function unfinishedSequenceReplay(session: TerminalSessionState): string {
+  const held = session.pendingHistoryControlSequence;
+  if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
+  if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
+  return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
+}
+
+export function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
 ): { visibleText: string; pendingControlSequence: string } {
@@ -1387,9 +1433,12 @@ function sanitizeTerminalHistoryChunk(
     return { visibleText: data, pendingControlSequence: "" };
   }
 
-  const input = `${pendingControlSequence}${data}`;
-  // Only the pending prefix's final ESC can begin a terminator split across chunks.
-  const pendingScanStart = Math.max(0, pendingControlSequence.length - 1);
+  const resumesOversized = pendingControlSequence.startsWith(OVERSIZED_SEQUENCE);
+  const held = resumesOversized ? pendingControlSequence.slice(1) : pendingControlSequence;
+  const input = `${held}${data}`;
+  // Only the held text's final code unit, an ESC or a high surrogate, can begin an end split
+  // across chunks.
+  const pendingScanStart = Math.max(0, held.length - 1);
   let visibleText = "";
   let index = 0;
   // Set when a C1 code point began the sequence at `index`: the ESC form that stands in for it.
@@ -1406,6 +1455,7 @@ function sanitizeTerminalHistoryChunk(
       // Empty for a sequence the input introduces itself, which starts with ESC at `index`.
       const prefix = c1Introducer;
       c1Introducer = "";
+      const oversized = resumesOversized && index === 0;
       const contentStart = prefix.length > 0 ? index : index + 2;
       const nextCodePoint = (prefix || input).charCodeAt(prefix.length > 0 ? 1 : index + 1);
       if (Number.isNaN(nextCodePoint)) {
@@ -1413,19 +1463,21 @@ function sanitizeTerminalHistoryChunk(
       }
 
       if (nextCodePoint === 0x5b) {
-        let cursor = contentStart;
+        // A held CSI has not ended, so only its last code unit is scanned again.
+        let cursor = index === 0 ? Math.max(contentStart, pendingScanStart) : contentStart;
         // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
         // print in ground state. None join the parameters; only executed ones survive a strip.
-        let body = "";
-        let executedControls = "";
+        const executedControls = () =>
+          input.slice(contentStart, cursor).replace(/[^\x00-\x0f]+/g, "");
         while (cursor < input.length) {
           const cursorCodePoint = input.charCodeAt(cursor);
           const cancelled = isControlSequenceCancel(cursorCodePoint);
           if (cancelled || isCsiFinalByte(cursorCodePoint)) {
-            if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
+            const body = input.slice(contentStart, cursor).replace(/[^\x20-\x7e]+/g, "");
+            if (!oversized && (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? ""))) {
               append(prefix + input.slice(index, cursor + 1));
             } else {
-              append(executedControls);
+              append(executedControls());
             }
             index = cursor + 1;
             break;
@@ -1437,10 +1489,10 @@ function sanitizeTerminalHistoryChunk(
             if (c1) {
               // The CSI ends here undispatched, so it is kept only when the terminal is back in
               // ground with nothing to answer.
-              if (c1.next.length === 0 && !c1.query) {
+              if (!oversized && c1.next.length === 0 && !c1.query) {
                 append(prefix + input.slice(index, end));
               } else {
-                append(executedControls + c1.safe);
+                append(executedControls() + c1.safe);
               }
               c1Introducer = c1.next;
               index = end;
@@ -1451,19 +1503,24 @@ function sanitizeTerminalHistoryChunk(
           }
           // An ESC abandons the CSI and starts the next sequence, which may be stripped.
           if (cursorCodePoint === 0x1b) {
-            append(executedControls);
+            append(executedControls());
             index = cursor;
             break;
-          }
-          if (cursorCodePoint < 0x10) {
-            executedControls += input[cursor];
-          } else if (cursorCodePoint >= 0x20 && cursorCodePoint !== 0x7f) {
-            body += input[cursor];
           }
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
+          const unfinished = prefix + input.slice(index);
+          if (oversized || unfinished.length > MAX_HELD_SEQUENCE_LENGTH) {
+            // The terminal has run these controls already, so history takes them as they come.
+            append((oversized ? "" : STRING_TERMINATOR) + executedControls());
+            const endStart = /[\ud800-\udbff]$/.exec(unfinished)?.[0] ?? "";
+            return {
+              visibleText,
+              pendingControlSequence: `${OVERSIZED_SEQUENCE}\u001b[${endStart}`,
+            };
+          }
+          return { visibleText, pendingControlSequence: unfinished };
         }
         continue;
       }
@@ -1480,13 +1537,36 @@ function sanitizeTerminalHistoryChunk(
           nextCodePoint === 0x5d,
         );
         if (stringEnd === null) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
+          const unfinished = prefix + input.slice(index);
+          if (oversized || unfinished.length > MAX_HELD_SEQUENCE_LENGTH) {
+            append(oversized ? "" : STRING_TERMINATOR);
+            const endStart = /[\u001b\ud800-\udbff]$/.exec(unfinished)?.[0] ?? "";
+            return {
+              visibleText,
+              pendingControlSequence: OVERSIZED_SEQUENCE + unfinished.slice(0, 2) + endStart,
+            };
+          }
+          return { visibleText, pendingControlSequence: unfinished };
         }
         const { end, c1 } = stringEnd;
         const content = stripStringTerminator(
           prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
         );
+        // ST ends what the query's ESC cut short and leaves ground state, as the query does when it
+        // has its own terminator. Without one, the query ends at the next ESC, which history may
+        // strip, so ST would not replay the same and the query stays.
+        if (
+          !oversized &&
+          nextCodePoint === 0x5d &&
+          isOscPaletteQuery(content) &&
+          /[\x07\x18\x1a]$|\x1b\\$/.test(input.slice(index, end))
+        ) {
+          append("\u001b\\");
+          index = end;
+          continue;
+        }
         const strip =
+          oversized ||
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
         if (c1 === undefined || (!strip && c1.effect.next.length === 0 && !c1.effect.query)) {
@@ -1505,7 +1585,10 @@ function sanitizeTerminalHistoryChunk(
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return {
+          visibleText,
+          pendingControlSequence: input.slice(index, index + MAX_HELD_ESCAPE_LENGTH),
+        };
       }
       // ESC Z (DECID) is the legacy primary device attributes query.
       if (nextCodePoint !== 0x5a) {
@@ -1559,46 +1642,6 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
     return true;
   }
   return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
-}
-
-const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
-const APPIMAGE_PATH_LIKE_ENV_KEYS = [
-  "PATH",
-  "LD_LIBRARY_PATH",
-  "XDG_DATA_DIRS",
-  "GSETTINGS_SCHEMA_DIR",
-] as const;
-
-function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
-  return segment === appDir || segment.startsWith(`${appDir}/`);
-}
-
-// AppImage mount paths would make PTY tools resolve against the mount instead of the user's system.
-function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (env.APPIMAGE === undefined && env.APPDIR === undefined) return env;
-
-  const scrubbed: NodeJS.ProcessEnv = { ...env };
-  for (const key of APPIMAGE_RUNTIME_ENV_KEYS) {
-    delete scrubbed[key];
-  }
-
-  const appDir = env.APPDIR?.replace(/\/+$/, "");
-  if (appDir) {
-    for (const key of APPIMAGE_PATH_LIKE_ENV_KEYS) {
-      const value = scrubbed[key];
-      if (value === undefined) continue;
-      const kept = value
-        .split(":")
-        .filter((segment) => segment.length > 0 && !isPathSegmentUnderAppDir(segment, appDir));
-      if (kept.length > 0) {
-        scrubbed[key] = kept.join(":");
-      } else {
-        delete scrubbed[key];
-      }
-    }
-  }
-
-  return scrubbed;
 }
 
 function createTerminalSpawnEnv(
@@ -2764,15 +2807,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               .join(":"),
           };
     // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.
+    const shellCommand = candidate.shell.includes("/")
+      ? path.resolve(session.cwd, candidate.shell)
+      : candidate.shell;
     const executable =
       platform !== "win32"
-        ? resolveExecutable(
-            candidate.shell.includes("/")
-              ? path.resolve(session.cwd, candidate.shell)
-              : candidate.shell,
-            platform,
-            lookupEnv,
-          )
+        ? yield* Effect.promise(async () => resolveExecutable(shellCommand, platform, lookupEnv))
         : candidate.shell;
     if (executable === undefined) {
       return yield* trySpawn(
@@ -3938,6 +3978,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* closeIdle(input);
   });
 
+  const hasActiveSubprocess = Effect.fn("terminal.hasActiveSubprocess")(function* (input: {
+    readonly threadId: string;
+  }) {
+    // Settling closes stopOnSettle sessions, so their work must not hold settlement back.
+    const running = (yield* sessionsForThread(input.threadId)).filter(
+      (session): session is TerminalSessionState & { pid: number } =>
+        session.status === "running" && Number.isInteger(session.pid) && !session.stopOnSettle,
+    );
+    if (running.length === 0) return false;
+    const { inspector } = yield* acquireSubprocessInspector(
+      platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+    );
+    // A failed process query falls back to the last poll's answer.
+    const isActive = (session: (typeof running)[number]) =>
+      Result.isFailure(inspector)
+        ? Effect.succeed(session.hasRunningSubprocess)
+        : inspector.success(session.pid, session.shell).pipe(
+            Effect.map((result) => result.hasRunningSubprocess),
+            Effect.orElseSucceed(() => session.hasRunningSubprocess),
+          );
+    return Option.isSome(yield* Effect.findFirst(running, isActive));
+  });
+
   return TerminalManager.of({
     open,
     getShell,
@@ -3951,6 +4014,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     close,
     closeIdle,
     closeOnSettle,
+    hasActiveSubprocess,
     subscribe,
     subscribeMetadata,
   });

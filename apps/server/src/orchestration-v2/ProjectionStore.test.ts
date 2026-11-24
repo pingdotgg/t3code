@@ -2520,6 +2520,18 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     subagents.length,
   );
   // Both reads stay inside their indexes: no scan of the thread's nodes or provider threads.
+  // A dispatcher's statistics: the mostly NULL owner and session indexes match every row.
+  yield* sql`ANALYZE orchestration_v2_projection_provider_threads`;
+  yield* sql`DELETE FROM sqlite_stat1 WHERE tbl = 'orchestration_v2_projection_provider_threads'`;
+  for (const [index, stat] of [
+    ["sqlite_autoindex_orchestration_v2_projection_provider_threads_1", "5531 1"],
+    ["orchestration_v2_projection_provider_threads_thread_idx", "5531 1"],
+    ["orchestration_v2_projection_provider_threads_owner_idx", "5531 5531"],
+    ["orchestration_v2_projection_provider_threads_session_idx", "5531 2766"],
+  ] as const) {
+    yield* sql`INSERT INTO sqlite_stat1 VALUES ('orchestration_v2_projection_provider_threads', ${index}, ${stat})`;
+  }
+  yield* sql`ANALYZE sqlite_schema`;
   for (const [table, seeks] of [
     [
       "nodes",
@@ -2528,11 +2540,16 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         "SEARCH settled USING COVERING INDEX",
         "SEARCH settled_node USING COVERING INDEX",
         "subagents_settled_idx (thread_id=?)",
+        "SEARCH run USING COVERING INDEX orchestration_v2_projection_runs_run_status_idx",
       ],
     ],
     [
       "provider_threads",
-      ["MULTI-INDEX OR", "provider_threads_session_idx (provider_session_id=?)"],
+      [
+        "SEARCH orchestration_v2_projection_provider_threads USING INTEGER PRIMARY KEY",
+        "provider_threads_session_idx (provider_session_id=?)",
+        "SEARCH run USING COVERING INDEX orchestration_v2_projection_runs_run_status_idx",
+      ],
     ],
   ] as const) {
     const query = commandTrace.statements.find((statement) =>
@@ -2836,6 +2853,31 @@ const recordsThreadCreated = (threadId: ThreadId) =>
       deletedAt: null,
     },
   }) as never;
+
+const snapshotsReadDeletedThreadAsMissing = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = ThreadId.make("thread:records:deleted-snapshot");
+  const created: { readonly payload: object } = recordsThreadCreated(threadId);
+  yield* store.apply(created as never);
+  assert.equal((yield* store.getThreadSnapshot(threadId)).projection.thread.id, threadId);
+  yield* store.apply({
+    id: EventId.make(`event:${threadId}:deleted`),
+    type: "thread.deleted",
+    threadId,
+    providerInstanceId,
+    occurredAt: recordsAt(1),
+    payload: { ...created.payload, deletedAt: recordsAt(1) },
+  } as never);
+
+  for (const read of [
+    store.getThreadSnapshot(threadId),
+    store.getThreadSnapshotWindow(threadId, { rowLimit: 10 }),
+  ]) {
+    assert.equal((yield* Effect.flip(read))._tag, "ProjectionStoreThreadNotFoundError");
+  }
+  // Forks of the thread still read its rows.
+  assert.equal((yield* store.getThreadProjection(threadId)).thread.id, threadId);
+});
 
 const queryPlan = Effect.fn("queryPlan")(function* (statement: string | undefined) {
   assert.isDefined(statement);
@@ -3197,6 +3239,14 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     yield* createThread({ name: "archived-child", parent: "root", root: "root", archived: true });
     yield* createThread({ name: "other", worktreePath: "/repo" });
     yield* createThread({ name: "other-child", parent: "other", root: "other", worktreePath });
+    yield* createThread({
+      name: "aliased-child",
+      parent: "other",
+      root: "other",
+      worktreePath: `${worktreePath}/`,
+    });
+    yield* createThread({ name: "cased", worktreePath: worktreePath.toUpperCase() });
+    yield* createThread({ name: "windows", worktreePath: "C:\\Répo\\WT" });
 
     const family = (threadId: ThreadId) =>
       store
@@ -3208,26 +3258,39 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.sameMembers([...(yield* family(id("grandchild")))], tree);
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
-    // Includes another root's idle child on the same path, which a shell may leave out.
+    // Includes another root's idle child on the same path, which a shell may leave out, under any
+    // spelling of that path. POSIX paths keep their case.
     const { statements, tracer } = traceSqlStatements();
     const onWorktree = yield* store
       .getShellSnapshot({ location: "active", worktreePath })
       .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
-      [id("root"), id("child"), id("other-child")],
+      [id("root"), id("child"), id("other-child"), id("aliased-child")],
     );
-    // A path names a few threads; scanning every thread parses every payload.
+    const onWindowsWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath: "c:/Répo/wt/" })
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(
+      onWindowsWorktree.threads.map((thread) => thread.id),
+      [id("windows")],
+    );
+    // A path, ASCII or not, names a few threads; scanning every thread parses every payload.
     const sql = yield* SqlClient.SqlClient;
-    const threadQuery = statements.find((statement) =>
+    const threadQueries = statements.filter((statement) =>
       statement.includes("AS latest_run_stop_requested"),
     );
-    assert.isDefined(threadQuery);
-    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
-      `EXPLAIN QUERY PLAN ${threadQuery}`,
-      [],
-    )).map((row) => row.detail);
-    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
+    assert.lengthOf(threadQueries, 2);
+    for (const threadQuery of threadQueries) {
+      const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${threadQuery}`,
+        [],
+      )).map((row) => row.detail);
+      assert.isFalse(
+        threadPlan.some((detail) => detail.startsWith("SCAN t ")),
+        threadPlan.join("\n"),
+      );
+    }
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),
@@ -3904,6 +3967,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     () => runlessNativeSubagentNeedsRecovery,
   );
   it.effect(
+    "snapshot reads report a deleted thread as missing",
+    () => snapshotsReadDeletedThreadAsMissing,
+  );
+  it.effect(
     "worktree path and title lookups skip deleted threads, and can include archived ones",
     () => threadWorktreePathsIncludeArchivedOnRequest,
   );
@@ -4243,6 +4310,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
 
+      // A tracked repository's scope names the run that first changed it, here one outside the
+      // window, while its newest checkpoint belongs to a run inside it.
+      const repositoryScope = {
+        id: CheckpointScopeId.make("scope:bounded-sql-history:repository"),
+        threadId,
+        runId: RunId.make("run:bounded-sql-history:1"),
+        nodeId: NodeId.make("node:bounded-sql-history:1"),
+        parentScopeId: scopeId,
+        providerThreadId: null,
+        kind: "manual" as const,
+        ordinalWithinParent: 1,
+        advancesAppRunCount: false,
+        cwd: "/repo/worktree/api",
+        label: "api",
+        repositoryPath: "/repo/worktree/api",
+        createdAt: now,
+      };
+      const repositoryCheckpointId = CheckpointId.make("checkpoint:bounded-sql-history:repository");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-scope"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: repositoryScope,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-checkpoint"),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: repositoryCheckpointId,
+          threadId,
+          scopeId: repositoryScope.id,
+          runId: RunId.make("run:bounded-sql-history:1000"),
+          nodeId: NodeId.make("node:bounded-sql-history:1000"),
+          parentCheckpointId: null,
+          ordinalWithinScope: 1_000,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("refs/t3/bounded-sql-history/repository/1000"),
+          status: "ready",
+          files: [{ path: "src/main.ts", kind: "modified", additions: 1, deletions: 0 }],
+          capturedAt: now,
+        },
+      });
+
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
           projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
@@ -4261,11 +4374,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.deepEqual(
           snapshot.projection.checkpointScopes.map((scope) => scope.id),
-          [scopeId],
+          [scopeId, repositoryScope.id],
         );
+        assert.deepEqual(snapshot.projection.checkpointScopes[1], repositoryScope);
         assert.deepEqual(
           snapshot.projection.checkpoints.map((checkpoint) => checkpoint.id),
-          [baselineId],
+          [repositoryCheckpointId, baselineId],
         );
       }
       const humanWindow = () =>
@@ -5593,6 +5707,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ),
         );
       }
+
+      // Recovery cancels a run that had started; its delivered queued message stays.
+      const setCancelledStartedAt = (startedAt: string | null) => sql`
+        UPDATE orchestration_v2_projection_runs
+        SET payload_json = json_set(payload_json, '$.startedAt', ${startedAt})
+        WHERE run_id = ${cancelledRunId}
+      `;
+      yield* setCancelledStartedAt(nowIso);
+      const startedCancelledSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      assert.isTrue(
+        startedCancelledSnapshot.projection.visibleTurnItems.some((row) =>
+          String(row.sourceItemId).includes(":cancelled:"),
+        ),
+      );
+      yield* setCancelledStartedAt(null);
 
       // A steer moves the cancelled queued message outside the window.
       const steeredItemId = "turn-item:bounded-sql-history:steered-output";
@@ -7567,6 +7698,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [
             "message:turn-start-commands:compact",
             "message:turn-start-commands:goal",
+            "message:turn-start-commands:later",
             "message:turn-start-commands:rolled-back",
           ],
         );
@@ -8044,6 +8176,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: task,
       });
 
+      const output = { value: { verdict: "merge" }, submittedAt: "2026-11-11T00:00:00.000Z" };
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-delegated-completion:output"),
+        type: "run.output-submitted",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { runId, output },
+      });
+
+      // Lifecycle writers hold the run as it was when the turn started.
       const { delegatedCompletion: _delegatedCompletion, ...staleRun } = run;
       const { completionDelivery: _completionDelivery, ...staleTask } = task;
       yield* projectionStore.apply({
@@ -8054,7 +8199,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodeId: rootNodeId,
         providerInstanceId,
         occurredAt: later,
-        payload: { ...staleRun, status: "interrupted", completedAt: later },
+        payload: {
+          ...staleRun,
+          // An earlier submission, read before the latest one landed.
+          output: { value: { verdict: "fix-first" }, submittedAt: "2026-11-10T00:00:00.000Z" },
+          status: "interrupted",
+          completedAt: later,
+        },
       });
       yield* projectionStore.apply({
         id: EventId.make("event:projection-delegated-completion:stale-task"),
@@ -8075,6 +8226,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
+      assert.deepEqual(projection.runs[0]?.output, output);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
       assert.deepEqual(
         (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {

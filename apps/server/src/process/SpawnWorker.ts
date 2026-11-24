@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 
 // Windows runs CreateProcess synchronously on the calling thread, and antivirus or a busy disk can
 // hold it for seconds; Linux's spawn waits for chdir and the PATH search, which a hung mount
@@ -503,10 +504,14 @@ class SpawnWorkerPool {
       if (!killed) killPid();
       done();
     };
-    this.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-      stdio: "ignore",
-      windowsHide: true,
-    })
+    this.spawn(
+      windowsSystem32Path(process.env, "taskkill.exe"),
+      ["/pid", String(pid), "/T", "/F"],
+      {
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    )
       .on("error", () => finish(false))
       .on("exit", (code) => finish(code === 0));
   }

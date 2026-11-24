@@ -35,6 +35,7 @@ import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
@@ -80,6 +81,10 @@ import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookF
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
+
+/** The task a create carrying this idempotency key writes, and rewrites when the key is replayed. */
+export const scheduledTaskIdForCommand = (commandId: CommandId) =>
+  ScheduledTaskId.make(`scheduled-task:${commandId}`);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
@@ -90,6 +95,13 @@ const WEBHOOK_DEDUPE_LOG_PER_MINUTE = 10;
 const WEBHOOK_FILTERED_LOG_PER_MINUTE = 10;
 const WEBHOOK_DELIVERY_LOG_BODY_LIMIT = 64 * 1024;
 const WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT = 64 * 1024;
+const loggedWebhookPrompt = (prompt: string) =>
+  prompt.slice(
+    0,
+    splitsSurrogatePair(prompt, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)
+      ? WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT - 1
+      : WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT,
+  );
 const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
 // Enforce the relay's per-task/minute limit here too; tunnel hostnames are public.
 const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
@@ -1472,9 +1484,9 @@ export const layer = Layer.effect(
           : null;
       const id =
         input.id ??
-        ScheduledTaskId.make(
-          input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
-        );
+        (input.commandId
+          ? scheduledTaskIdForCommand(input.commandId)
+          : ScheduledTaskId.make(`scheduled-task:${uuid}`));
       // Look up by the *resolved* id so idempotent creates (commandId replays)
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
@@ -1947,7 +1959,7 @@ export const layer = Layer.effect(
                 ${loggedBody},
                 ${input.request.body.byteLength}, ${truncated ? 1 : 0}, ${input.outcome},
                 ${input.signatureVerified ? 1 : 0}, ${encodeMissingFieldsJson(input.missing)},
-                ${input.renderedPrompt?.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT) ?? null},
+                ${input.renderedPrompt === null ? null : loggedWebhookPrompt(input.renderedPrompt)},
                 ${input.error ?? null}
               WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${input.taskId})
               -- A held request retried after a rate limit reuses its relay
@@ -2636,7 +2648,7 @@ export const layer = Layer.effect(
               } else {
                 if (taskJson !== null)
                   yield* sql`UPDATE scheduled_task_webhook_pending SET task_json = ${taskJson} WHERE delivery_id = ${entry.delivery_id}`;
-                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
+                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${loggedWebhookPrompt(rendered.prompt)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
                 if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
               }
               yield* remove;
