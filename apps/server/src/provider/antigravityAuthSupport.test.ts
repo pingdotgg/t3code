@@ -411,16 +411,68 @@ describe("Antigravity stdout compatibility", () => {
     }),
   );
 
-  it.effect("bounds unfinished protocol lines", () =>
+  it.effect("streams protocol lines larger than 16 MiB without buffering or rejecting them", () =>
     Effect.gen(function* () {
-      const result = yield* makeAntigravityStdoutTransform()(
-        Stream.make(new Uint8Array(16 * 1024 * 1024), encode("x")),
-      ).pipe(Stream.runDrain, Effect.result);
+      const urls: string[] = [];
+      const payloadChunk = new Uint8Array(1024 * 1024).fill(97); // 1 MiB of "a"
+      const prefix = encode('{"jsonrpc":"2.0","method":"session/update","params":{"text":"');
+      const suffix = encode('"}}\n');
+      const after = encode('{"jsonrpc":"2.0","id":3,"result":{}}\n');
+      const chunks: Uint8Array[] = [prefix];
+      for (let index = 0; index < 17; index++) chunks.push(payloadChunk);
+      chunks.push(suffix, encode(authLine), after);
+
+      let totalBytes = 0;
+      let trailing = "";
+      yield* makeAntigravityStdoutTransform({
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      })(Stream.fromIterable(chunks)).pipe(
+        Stream.runForEach((chunk) =>
+          Effect.sync(() => {
+            totalBytes += chunk.byteLength;
+            trailing = (trailing + new TextDecoder().decode(chunk)).slice(-128);
+          }),
+        ),
+      );
+
+      expect(totalBytes).toBe(
+        prefix.byteLength + 17 * payloadChunk.byteLength + suffix.byteLength + after.byteLength,
+      );
+      expect(trailing.endsWith('"}}\n{"jsonrpc":"2.0","id":3,"result":{}}\n')).toBe(true);
+      expect(urls).toEqual([authorizationUrl]);
+    }),
+  );
+
+  it.effect("preserves non-auth lines that partially match the login prefix across chunks", () =>
+    Effect.gen(function* () {
+      const chunks = [
+        encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX.slice(0, 12)),
+        encode("different text\n"),
+        encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX.slice(0, 8)),
+      ];
+      const output = yield* makeAntigravityStdoutTransform()(Stream.fromIterable(chunks)).pipe(
+        Stream.decodeText(),
+        Stream.mkString,
+      );
+      expect(output).toBe(
+        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX.slice(0, 12)}different text\n${ANTIGRAVITY_AUTH_STDOUT_PREFIX.slice(0, 8)}`,
+      );
+    }),
+  );
+
+  it.effect("bounds oversized login lines without waiting for a newline", () =>
+    Effect.gen(function* () {
+      const result = yield* makeAntigravityStdoutTransform({
+        onAuthorizationUrl: () => Effect.void,
+      })(Stream.make(encode(ANTIGRAVITY_AUTH_STDOUT_PREFIX), new Uint8Array(20_000).fill(97))).pipe(
+        Stream.runDrain,
+        Effect.result,
+      );
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isSuccess(result)) return;
       expect(result.failure).toMatchObject({
         _tag: "AcpTransportError",
-        detail: "Antigravity sent a protocol line that is too large.",
+        detail: "Antigravity returned an invalid Google sign-in URL.",
       });
     }),
   );
