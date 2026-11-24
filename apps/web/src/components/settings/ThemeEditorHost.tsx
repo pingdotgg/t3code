@@ -50,25 +50,22 @@ export function ThemeEditorHost() {
       editableEnvironmentId !== published.environmentId
     )
       return false;
+    const input = {
+      themeId: edited.id,
+      expectedRevision: published.theme.publishedRevision,
+      theme: environmentThemeFile(edited, published.theme),
+    };
     const { setThemeEditorSaving } = useThemeEditorStore.getState();
     setThemeEditorSaving(session.id, true);
-    try {
-      const result = await saveEnvironmentTheme({
-        environmentId: published.environmentId,
-        input: {
-          themeId: edited.id,
-          expectedRevision: published.theme.publishedRevision,
-          theme: environmentThemeFile(edited, published.theme),
-        },
-      });
-      if (result._tag === "Success") return true;
-      const error = Option.getOrNull(Cause.findErrorOption(result.cause));
-      // The server's refusal says what to change, such as CSS that loads files.
-      if (error?._tag === "EnvironmentThemeError") throw new Error(error.message);
-      return false;
-    } finally {
-      setThemeEditorSaving(session.id, false);
-    }
+    const result = await saveEnvironmentTheme({
+      environmentId: published.environmentId,
+      input,
+    }).finally(() => setThemeEditorSaving(session.id, false));
+    if (result._tag === "Success") return true;
+    const error = Option.getOrNull(Cause.findErrorOption(result.cause));
+    // The server's refusal says what to change, such as CSS that loads files.
+    if (error?._tag === "EnvironmentThemeError") throw new Error(error.message);
+    return false;
   };
 
   const handleSaved = (
