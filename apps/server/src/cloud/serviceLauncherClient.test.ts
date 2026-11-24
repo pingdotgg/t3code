@@ -6,6 +6,7 @@ import * as PlatformError from "effect/PlatformError";
 import { assert, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 
 import {
@@ -83,11 +84,42 @@ it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
       };
       const host = new FakeLauncherProcess({ protocol, childVersion: "1.1.0", update: pending });
       host.env["HOME"] = root;
-      const client = yield* makeClient(host, "1.1.0");
+      // The launcher reloads the user manager after commit, so oomd's watch must already be mirrored.
+      const bin = path.join(root, "bin");
+      const calls = path.join(root, "systemctl-calls");
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(
+        path.join(bin, "systemctl"),
+        [
+          "#!/bin/sh",
+          `echo "$*" >>'${calls}'`,
+          'case "$*" in',
+          "  *ControlGroup*) echo /user.slice/user-1000.slice/user@1000.service ;;",
+          "  *ManagedOOMMemoryPressureLimit*) echo 0 ;;",
+          "  *ManagedOOMMemoryPressure\\ *) echo kill ;;",
+          "esac",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.chmod(path.join(bin, "systemctl"), 0o755);
+      host.env["PATH"] = `${bin}:/usr/bin:/bin`;
+      const sentPrepared = yield* Deferred.make<void>();
+      const send = host.send;
+      host.send = (message, callback) => {
+        Deferred.doneUnsafe(sentPrepared, Effect.void);
+        return send(message, callback);
+      };
+      const client = yield* makeClient(host, "1.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+      );
       const prepared = yield* Effect.forkChild(client.prepareTrial({ baseDir }), {
         startImmediately: true,
       });
-      yield* Effect.yieldNow;
+      yield* Deferred.await(sentPrepared);
+      // Nothing runs systemctl after "prepared", so the log is what ran before it.
+      expect(yield* fs.readFileString(calls)).toContain(
+        "--user set-property --runtime -- -.slice ManagedOOMMemoryPressure=kill",
+      );
       expect(host.sent).toEqual([{ type: "prepared", updateId: "update-1" }]);
       assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
 
@@ -327,8 +359,13 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
   );
 
   it.effect.each([
-    { name: "leading", searchPath: (missing: string) => `:${missing}`, moved: true },
-    { name: "trailing", searchPath: (missing: string) => `${missing}:`, moved: true },
+    // The working-directory t3 is checked by its execute bits, which Windows hosts do not set.
+    ...(HostProcess.Platform.defaultValue() === "win32"
+      ? []
+      : [
+          { name: "leading", searchPath: (missing: string) => `:${missing}`, moved: true },
+          { name: "trailing", searchPath: (missing: string) => `${missing}:`, moved: true },
+        ]),
     { name: "whole", searchPath: () => "", moved: false },
   ])("treats a $name empty PATH entry like the shell does", ({ searchPath, moved }) =>
     Effect.gen(function* () {

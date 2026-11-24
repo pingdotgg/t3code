@@ -349,6 +349,27 @@ describe("IssueService", () => {
     }),
   );
 
+  it.effect(
+    "does not call a GitHub issue URL unbrowsable when no project is a GitHub checkout",
+    () =>
+      Effect.gen(function* () {
+        // A plain folder project, while GitHub itself is a supported tracker.
+        const service = yield* makeService({
+          projects: [project({ id: "folder" })],
+          trackers: [fakeTracker()],
+        });
+        const resolved = yield* service
+          .resolveUrl("https://github.com/acme/web/issues/1", "folder" as ProjectId)
+          .pipe(Effect.result);
+        if (resolved._tag === "Failure") {
+          expect(resolved.failure).not.toMatchObject({
+            _tag: "IssueUnavailableError",
+            reason: "tracker-unsupported",
+          });
+        }
+      }),
+  );
+
   it.effect("resolves both legacy Azure work item URLs through the bound project", () =>
     Effect.gen(function* () {
       const tracker = IssueTrackerKind.make("azure-devops");
@@ -890,6 +911,62 @@ describe("IssueService with a standalone tracker", () => {
         _tag: "IssueOperationError",
         operation: "listProjects",
       });
+    }),
+  );
+
+  it.effect("orders merged entries by createdAt when sort is created and updatedAt otherwise", () =>
+    Effect.gen(function* () {
+      const seenSorts: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "web", repository: "acme/web" }),
+          project({ id: "api", repository: "acme/api" }),
+        ],
+        trackers: [
+          fakeTracker({
+            listIssues: (input) => {
+              seenSorts.push(input.sort);
+              if (input.scope === "acme/web") {
+                return Effect.succeed({
+                  items: [
+                    {
+                      ...issue("old-created-recent-update"),
+                      createdAt: "2026-07-06T01:00:00+02:00",
+                      updatedAt: "2026-07-10T00:00:00Z",
+                    },
+                  ],
+                  nextCursor: null,
+                });
+              }
+              return Effect.succeed({
+                items: [
+                  {
+                    ...issue("new-created-older-update"),
+                    createdAt: "2026-07-05T23:30:00Z",
+                    updatedAt: "2026-07-06T00:00:00Z",
+                  },
+                ],
+                nextCursor: null,
+              });
+            },
+          }),
+        ],
+      });
+
+      const byCreated = yield* service.list({ state: "open", sort: "created" });
+      expect(seenSorts).toEqual(["created", "created"]);
+      expect(byCreated.entries.map((entry) => entry.key)).toEqual([
+        "new-created-older-update",
+        "old-created-recent-update",
+      ]);
+
+      seenSorts.length = 0;
+      const byUpdated = yield* service.list({ state: "open" });
+      expect(seenSorts).toEqual(["updated", "updated"]);
+      expect(byUpdated.entries.map((entry) => entry.key)).toEqual([
+        "old-created-recent-update",
+        "new-created-older-update",
+      ]);
     }),
   );
 });
