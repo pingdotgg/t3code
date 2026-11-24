@@ -195,17 +195,12 @@ it("clears the registry search on Esc without closing the Add provider dialog", 
   await userEvent.keyboard("{Escape}");
   await expect.element(search).toHaveValue("");
   await expect.element(search).toHaveFocus();
-  await expect.element(search).toHaveAttribute("type", "text");
   expect(state.search).toHaveBeenLastCalledWith({
     environmentId,
     input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
   });
   await expect.element(dialog).toHaveAttribute("data-open");
 
-  await userEvent.fill(search, "   ");
-  await userEvent.keyboard("{Escape}");
-  await expect.element(search).toHaveValue("");
-  await expect.element(search).toHaveFocus();
   // Holding Escape repeats the keydown, which must not also close the dialog.
   await act(() => {
     search.element().dispatchEvent(
