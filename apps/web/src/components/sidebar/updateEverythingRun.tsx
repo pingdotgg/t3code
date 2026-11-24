@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   ServerUpdateTerminalError,
   nudgeReconnectDuringUpdateRestart,
@@ -409,13 +410,12 @@ function followHandedOffServers(
               ) {
                 return;
               }
-              settle(
-                new ServerUpdateTerminalError({
-                  targetVersion: server.targetVersion,
-                  status: outcome.status,
-                  ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
-                }).message,
-              );
+              const error = new ServerUpdateTerminalError({
+                targetVersion: server.targetVersion,
+                status: outcome.status,
+                ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+              });
+              settle(thrownErrorMessage(error, m) ?? error.message);
             },
             { immediate: true },
           );
