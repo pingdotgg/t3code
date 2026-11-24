@@ -751,10 +751,12 @@ export function createEnvironmentThreadShellAtoms(input: {
         const parent = thread.delegatedFrom;
         if (
           parent !== undefined &&
-          environmentIds.has(parent.environmentId) &&
-          // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
+          // A settled task stays hidden even when its parent is archived, deleted or gone,
+          // so old delegated tasks never flood the list; a live one stays listed on its own.
+          (!isChildRunLive(thread) ||
+            (environmentIds.has(parent.environmentId) &&
+              get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)
+                ?.archivedAt === null))
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
