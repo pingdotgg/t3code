@@ -235,7 +235,12 @@ export default function FileBrowserPanel({
       const position = pointerIsFresh
         ? { x: pointer.x, y: pointer.y }
         : { x: anchorRect.left, y: anchorRect.bottom };
-      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileTarget = {
+        environmentId,
+        filePath: relativePath,
+        workspaceRoot: cwd,
+        isDirectory: item.kind === "directory",
+      };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });

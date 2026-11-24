@@ -67,6 +67,8 @@ export class RunContext extends Context.Service<
     readonly forStep: (name: string) => Context.Context<InStep>;
     /** The steps running now, which a cancelled run's cleanup waits for. */
     readonly inFlight: InFlight;
+    /** Have the engine see the agent turn behind the open wait `wait` through, and wake it. */
+    readonly watchTurn: (wait: string) => Effect.Effect<void>;
   }
 >()("t3/workflows/workflow/RunContext") {}
 
@@ -867,6 +869,9 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             names: new Set(),
             forStep: (name) => forStep(store, keyValues, link, forge, runId, name),
             inFlight: link.inFlight,
+            watchTurn: Effect.fn("RunContext.watchTurn")(function* (wait: string) {
+              if (link.current !== undefined) yield* link.current.watchTurn(runId, wait);
+            }),
           }),
         ),
       );
