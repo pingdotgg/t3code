@@ -3543,6 +3543,18 @@ describe("v2 run and attempt history", () => {
         }
       },
     );
+
+    it("gives a kept final_answer reply its own copy row", () => {
+      for (const nativeSteer of [false, true]) {
+        const rows = rowsFor(4, "completed", "showAll", "final_answer", nativeSteer);
+        const keptReply = rows.find((row) => row.id === "old-reply-entry");
+        expect(keptReply).toMatchObject({
+          kind: "message",
+          showAssistantMeta: true,
+          showAssistantCopyButton: true,
+        });
+      }
+    });
   });
 
   it("hides the interruption request while keeping intervening work and the result", () => {
