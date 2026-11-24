@@ -501,6 +501,10 @@ pub async fn serve_with_instances(
         }
         // Pull request watches: a sweep every two minutes, as T3's `PullRequestWatchReactor`.
         crate::methods::pull_requests::start_watches(&state.deps);
+        // Peer links made with dated sessions: upgraded to until-revoked at start and daily.
+        if let Some(peers) = &state.deps.peers {
+            peers.start_upkeep();
+        }
         // Worktree cleanup: at start, hourly, and on rule changes and deletions, as T3's
         // `StorageCleanup`.
         let cleanup = crate::worktree_cleanup::WorktreeCleanup::new(
