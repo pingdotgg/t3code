@@ -89,7 +89,7 @@ describe("McpAppFrame", () => {
       screen.getByTitle("Demo app").element().parentElement?.parentElement?.style.height;
 
     (firstApp as Window).postMessage("collapse", "*");
-    await expect.poll(rowHeight).toBe("0px");
+    await vi.waitFor(() => expect(rowHeight()).toBe("0px"));
 
     using _timers = fakeTimers();
     (firstApp as Window).postMessage("close", "*");
