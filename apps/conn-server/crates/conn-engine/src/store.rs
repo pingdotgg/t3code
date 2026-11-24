@@ -616,16 +616,19 @@ impl Store {
         };
         let mut projection = serde_json::Map::new();
         projection.insert("thread".into(), thread.clone());
-        // Nodes and provider turns grow with every turn; a window reads its cohort's only.
+        // Nodes, provider turns and subagents grow with every turn; a window reads its
+        // cohort's only.
         for kind in COLLECTIONS {
-            if !matches!(kind, "turnItems" | "messages" | "nodes" | "providerTurns") {
+            if !matches!(
+                kind,
+                "turnItems" | "messages" | "nodes" | "providerTurns" | "subagents"
+            ) {
                 projection.insert(
                     kind.into(),
                     Value::Array(entities(&self.conn, thread_id, kind)?),
                 );
             }
         }
-        self.add_subagent_provider_threads(&mut projection)?;
         projection.insert("updatedAt".into(), Value::String(activity_at));
         let mut index = crate::history::IndexRows::default();
         self.inherited_rows(&thread, &mut index)?;
@@ -650,7 +653,7 @@ impl Store {
             .map_err(err)?;
         rows.into_iter()
             .map(|mut row| {
-                if row["visibility"] != "synthetic" {
+                if !crate::history::is_generated(&row["item"]) {
                     let source = row["sourceThreadId"].as_str().unwrap_or_default();
                     let id = row["sourceItemId"].as_str().unwrap_or_default();
                     let body: String = stmt
@@ -701,7 +704,7 @@ impl Store {
                json_extract(body, '$.runId') IN (SELECT value FROM json_each(?2))
                OR json_extract(body, '$.status') IN ('pending', 'starting', 'running', 'waiting'))
              ORDER BY first_seq",
-            params![thread_id, Value::from(cohort).to_string()],
+            params![thread_id, Value::from(cohort.clone()).to_string()],
         )?;
         let provider_turns = self.query_json(
             "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'providerTurns' AND (
@@ -710,8 +713,26 @@ impl Store {
              ORDER BY first_seq",
             params![thread_id, Value::from(attempts).to_string()],
         )?;
+        // T3's windowed subagent read: the live ones, and those of the cohort's runs and nodes.
+        let node_ids: Vec<Value> = nodes.iter().map(|node| node["id"].clone()).collect();
+        let subagents = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'subagents' AND (
+               json_extract(body, '$.status') IN ('pending', 'starting', 'running', 'waiting')
+               OR json_extract(body, '$.runId') IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.parentNodeId') IN (SELECT value FROM json_each(?3)))
+             ORDER BY first_seq",
+            params![
+                thread_id,
+                Value::from(cohort).to_string(),
+                Value::from(node_ids).to_string()
+            ],
+        )?;
         control["nodes"] = Value::Array(nodes);
         control["providerTurns"] = Value::Array(provider_turns);
+        if let Value::Object(map) = &mut control {
+            map.insert("subagents".into(), Value::Array(subagents));
+            self.add_subagent_provider_threads(map)?;
+        }
         let rows = self.materialize_rows(window.rows)?;
         let turn_items = history::window_turn_items(&control["thread"]["id"], &rows, dependencies);
         let (message_ids, run_ids) = history::message_scope(&control, &turn_items);
@@ -757,7 +778,7 @@ impl Store {
         conversation_only: bool,
     ) -> StoreResult<Option<Value>> {
         use crate::history;
-        let Some((control, index)) = self.timeline_index(thread_id)? else {
+        let Some((_, index)) = self.timeline_index(thread_id)? else {
             return Ok(None);
         };
         let mut page = history::page_rows(
@@ -769,11 +790,19 @@ impl Store {
         );
         drop(index);
         page.rows = self.materialize_rows(std::mem::take(&mut page.rows))?;
-        let subagents = control["subagents"]
-            .as_array()
-            .map_or(&[][..], Vec::as_slice);
+        let ids: Vec<Value> = page
+            .rows
+            .iter()
+            .filter(|row| row["item"]["type"] == "subagent")
+            .map(|row| row["item"]["subagentId"].clone())
+            .collect();
+        let subagents = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'subagents'
+             AND id IN (SELECT value FROM json_each(?2)) ORDER BY first_seq",
+            params![thread_id, Value::from(ids).to_string()],
+        )?;
         Ok(Some(history::page_body(
-            thread_id, sequence, page, subagents,
+            thread_id, sequence, page, &subagents,
         )))
     }
 

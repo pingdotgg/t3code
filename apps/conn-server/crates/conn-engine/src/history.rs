@@ -117,8 +117,8 @@ fn encoded_bytes(value: &Value) -> usize {
 }
 
 /// The timeline as an index: each visible row with its encoded size (`rowBytes`, and
-/// `itemBytes` for the item alone) and only [`INDEX_FIELDS`] of its item. A synthetic row
-/// (a fork marker) keeps its whole item: it is not stored, and it is small.
+/// `itemBytes` for the item alone) and only [`INDEX_FIELDS`] of its item. A fork marker keeps
+/// its whole item, synthetic or inherited: it is generated, not stored, and it is small.
 #[derive(Default)]
 pub(crate) struct IndexRows(pub(crate) Vec<Value>);
 
@@ -141,7 +141,7 @@ impl RowSink for IndexRows {
         let item_bytes = encoded_bytes(&item);
         row["rowBytes"] = json!(encoded_bytes(&row) + item_bytes + r#","item":"#.len());
         row["itemBytes"] = json!(item_bytes);
-        row["item"] = if visibility == "synthetic" {
+        row["item"] = if is_generated(&item) {
             item
         } else {
             let mut light = serde_json::Map::new();
@@ -155,6 +155,11 @@ impl RowSink for IndexRows {
         self.0.push(row);
         Ok(true)
     }
+}
+
+/// A fork marker (`makeForkMarkerTurnItem`): the index holds its body, which no row stores.
+pub(crate) fn is_generated(item: &Value) -> bool {
+    item["type"] == "fork"
 }
 
 fn size_of(row: &Value, key: &str) -> usize {
@@ -421,10 +426,15 @@ pub(crate) fn page_rows(
     if conversation_only {
         out.retain(|row| is_conversation_item(&row["item"]));
     }
+    // When the byte budget trimmed the page, the next page starts at the trimmed one.
     Page {
         rows: out,
-        next_cursor: page.next_cursor,
-        has_more_history: page.has_more_history,
+        next_cursor: if bounded.has_more_history {
+            bounded.next_cursor
+        } else {
+            page.next_cursor
+        },
+        has_more_history: bounded.has_more_history || page.has_more_history,
     }
 }
 
@@ -756,6 +766,38 @@ mod tests {
         assert_eq!(ids(&page).last().map(String::as_str), Some("a5"));
         assert!(!page.has_more_history && page.next_cursor.is_none());
         assert_eq!(decode_cursor("nope"), Err(InvalidCursor));
+    }
+
+    /// When the byte budget trims an older page, the next cursor starts at the trimmed page,
+    /// so paging still reaches every row (T3's `getThreadHistoryPage`).
+    #[test]
+    fn paging_reaches_every_row_when_a_page_exceeds_its_byte_budget() {
+        let index = index_of(
+            (0..30)
+                .flat_map(|n| {
+                    let [user, mut reply] = turn(n);
+                    if n < 20 {
+                        reply["text"] = json!("x".repeat(65_536));
+                    }
+                    [user, reply]
+                })
+                .collect(),
+        );
+        let window = select_window(&json!({"thread": {"id": "t1"}}), &index, &[], 1);
+        let mut seen = ids(&window);
+        let mut cursor = window.next_cursor;
+        while let Some(next) = cursor {
+            let page = page_rows(&index, 1, &decode_cursor(&next).unwrap(), None, false);
+            assert_eq!(page.has_more_history, page.next_cursor.is_some());
+            let mut older = ids(&page);
+            older.append(&mut seen);
+            seen = older;
+            cursor = page.next_cursor;
+        }
+        let all: Vec<String> = (0..30)
+            .flat_map(|n| [format!("u{n}"), format!("a{n}")])
+            .collect();
+        assert_eq!(seen, all);
     }
 
     /// Without a user turn, a window stops at 75 rows.

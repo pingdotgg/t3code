@@ -5486,6 +5486,17 @@ async fn a_fork_transcript_inherits_the_source_history_through_the_fork_run() {
             .all(|(at, row)| row["position"] == at)
     );
     assert_eq!(nested.last().unwrap()["item"]["id"], "turn-item:fork:t4");
+    // A bounded snapshot of the fork of a fork shows the same rows: the first fork's marker
+    // is generated, not stored.
+    let mut bounded = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "t4", "acceptBoundedSnapshot": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let first = next(&mut bounded).await;
+    assert_eq!(first["kind"], "snapshot", "{first}");
+    assert_eq!(first["projection"]["visibleTurnItems"], json!(nested));
 
     // Deleting the source keeps the fork's inherited history, as in T3.
     dispatch(
@@ -5983,4 +5994,72 @@ async fn a_bounded_snapshot_stays_within_its_byte_budget() {
     let sent = view.to_string().len();
     assert!(sent <= 1_048_576, "{sent}");
     assert_eq!(view["hasMoreHistory"], true);
+}
+
+/// T3's windowed subagent read: a bounded snapshot sends the live subagents and those of its
+/// runs, not an old one outside the window.
+#[tokio::test(flavor = "current_thread")]
+async fn a_bounded_snapshot_leaves_out_old_subagents() {
+    let db = TempDb::new("bounded-subagents");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    for i in 0..12 {
+        dispatch(
+            &engine,
+            message("t1", &format!("send-{i}"), &format!("turn {i}")),
+        )
+        .await;
+        until_run_ends(&mut stream).await;
+    }
+    let subagent = |id: &str, run: &str, status: &str| {
+        crate::store::Draft::new(
+            "t1",
+            "subagent.updated",
+            json!({"id": id, "threadId": "t1", "runId": run,
+                "parentNodeId": format!("node:{run}:root"), "origin": "provider_native",
+                "createdBy": "agent", "driver": "claudeAgent", "providerInstanceId": "claudeAgent",
+                "providerThreadId": null, "childThreadId": null, "nativeTaskRef": null,
+                "prompt": "p".repeat(10_000), "title": "Task", "model": null, "status": status,
+                "result": "done", "startedAt": "2026-01-01T00:00:00.000Z",
+                "completedAt": "2026-01-01T00:00:01.000Z",
+                "updatedAt": "2026-01-01T00:00:01.000Z"}),
+        )
+    };
+    engine
+        .inner()
+        .db(move |store| {
+            let mut tx = store.tx()?;
+            tx.append(subagent("old", "run:t1:1", "completed"))?;
+            tx.append(subagent("recent", "run:t1:12", "completed"))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        projection(&engine, "t1").await["subagents"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let mut bounded = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "t1", "acceptBoundedSnapshot": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let view = next(&mut bounded).await;
+    assert_eq!(view["hasMoreHistory"], true);
+    let kept: Vec<&str> = view["projection"]["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(kept, ["recent"]);
 }
