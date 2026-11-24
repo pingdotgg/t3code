@@ -11301,6 +11301,46 @@ async fn a_detached_session_keeps_its_folder_in_use_until_it_exits() {
     assert!(engine.open_session_cwds().await.unwrap().is_empty());
 }
 
+/// #327's review: archiving deletes the thread's session rows and closes only its current
+/// session, so a session a fresh schedule moved aside keeps its folder in use from memory.
+#[tokio::test(flavor = "current_thread")]
+async fn an_archived_threads_detached_session_keeps_its_folder_in_use() {
+    let db = TempDb::new("detached-archived");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    let fire = |command: &str, text: &str| {
+        fresh_message(
+            "t1",
+            command,
+            text,
+            json!({"scheduledTaskId": "task:busy", "dispatchMode": {"type": "queue_after_active"}}),
+        )
+    };
+    dispatch(&engine, fire("c2", "background-hold")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, fire("c3", "second")).await;
+    until_run_ends(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}),
+    )
+    .await;
+    // The archive's session close ran.
+    assert!(
+        settled_statuses(&db, "provider-session.detach")
+            .await
+            .iter()
+            .all(|s| s == "succeeded")
+    );
+    assert_eq!(count(&provider.closed), 1, "the busy session stays open");
+    assert_eq!(engine.open_session_cwds().await.unwrap(), [ROOT]);
+}
+
 /// Force stop ends every session of the thread: the current one and one a fresh schedule
 /// moved aside while it still ran background work.
 #[tokio::test(flavor = "current_thread")]

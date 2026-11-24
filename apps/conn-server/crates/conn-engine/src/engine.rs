@@ -708,21 +708,20 @@ impl SqliteEngine {
     /// The folders open provider sessions work in. A session can outlive its run, so a
     /// worktree it works in is still in use (`ProviderSessionManager.isLive`).
     pub async fn open_session_cwds(&self) -> Result<Vec<String>, String> {
+        let threads: Vec<String> = crate::lock(&self.inner.live).keys().cloned().collect();
         // A session a fresh run moved aside still runs in its folder (T3 checks each provider
-        // session, `storageCleanup.ts`).
-        let mut threads: std::collections::BTreeSet<String> =
-            crate::lock(&self.inner.live).keys().cloned().collect();
-        threads.extend(
-            crate::lock(&self.inner.detached)
-                .iter()
-                .map(|(thread, _)| thread.clone()),
-        );
+        // session, `storageCleanup.ts`). Its folder comes from memory: archiving deletes the
+        // thread's session rows and closes only the current session.
+        let detached: Vec<String> = crate::lock(&self.inner.detached)
+            .iter()
+            .filter_map(|(_, live)| live.cwd.clone())
+            .collect();
         if threads.is_empty() {
-            return Ok(Vec::new());
+            return Ok(detached);
         }
         self.inner
             .db(move |store| {
-                let mut cwds = Vec::new();
+                let mut cwds = detached;
                 for thread in threads {
                     let tx = store.tx()?;
                     let sessions = tx.entities(&thread, "providerSessions");

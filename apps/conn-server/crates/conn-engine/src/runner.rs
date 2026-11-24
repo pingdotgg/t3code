@@ -50,6 +50,9 @@ pub(crate) struct LiveThread {
     held_since: Mutex<Option<u64>>,
     /// The provider session's id, for its provider threads.
     provider_session_id: String,
+    /// The folder the session works in. Kept here: archiving deletes the session rows while a
+    /// session a fresh run moved aside still runs (worktree cleanup must not remove it).
+    pub(crate) cwd: Option<String>,
     /// `backgroundTasksEndWithProcess`: releasing the session clears its threads' rosters.
     background_tasks_end_with_process: bool,
     /// The agent tools this session got; revoked when its process ends
@@ -571,6 +574,7 @@ impl Inner {
                     .as_str()
                     .unwrap_or_default()
                     .to_owned(),
+                cwd: provider_session["cwd"].as_str().map(str::to_owned),
                 background_tasks_end_with_process: opened.background_tasks_end_with_process,
                 tools,
                 loaded_key: Mutex::new(None),
