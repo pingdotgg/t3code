@@ -83,6 +83,8 @@ describe("HistorySwipeNavigation", () => {
     ["end", "forward", 130, "release first", true],
     ["end", "back", -130, "next from edge", false],
     ["end", "back", -130, "next wheel before begin", true],
+    ["end", "back", -130, "vertical wheel before begin", false],
+    ["end", "back", -112, "a wobble past the origin", true],
     ["end", "back", -130, "shift held", false],
     ["end", "back", -80, "wheel first", false],
     ["cancel", "back", -130, "wheel first", false],
@@ -124,14 +126,23 @@ describe("HistorySwipeNavigation", () => {
       using _performance = vi.spyOn(performance, "now").mockReturnValue(firstWheel.timeStamp);
 
       // Chromium's first wheel can arrive before IPC, and the last wheel can arrive after it.
-      if (nextFromScroller || order === "next wheel before begin") {
+      if (nextFromScroller || order.endsWith("before begin")) {
         sendPhase({ kind: "begin", at: at - 100 });
         sendPhase({ kind: "cancel", at: at - 10 });
+      }
+      if (order === "vertical wheel before begin") {
+        content.dispatchEvent(new WheelEvent("wheel", { deltaY: 12, bubbles: true }));
       }
       if (order !== "release first") content.dispatchEvent(firstWheel);
       sendPhase({ kind: "begin", at });
       if (order === "wheel first") {
         content.dispatchEvent(new WheelEvent("wheel", { deltaX: deltaX * 0.2, bubbles: true }));
+      }
+      if (order === "a wobble past the origin") {
+        // Native net delta is -112, but the wheel distance clamps at the origin and reaches 130.
+        for (const delta of [40, -130]) {
+          content.dispatchEvent(new WheelEvent("wheel", { deltaX: delta, bubbles: true }));
+        }
       }
       scrollEnds.forEach((listener) => listener());
       expect(navigateHistory).not.toHaveBeenCalled();

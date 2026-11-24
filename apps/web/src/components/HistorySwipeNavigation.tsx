@@ -127,7 +127,8 @@ export function HistorySwipeNavigation() {
     let gesture: SwipeGesture | null = null;
     let gestureStartedAt = 0;
     let contact: NativeContact | "idle" | null = null;
-    let unclaimedWheel: { event: WheelEvent; path: EventTarget[] } | undefined;
+    type UnclaimedWheel = { event: WheelEvent; path: EventTarget[] };
+    let unclaimedWheels: UnclaimedWheel[] = [];
     let unclaimedFrame: number | undefined;
     let releaseFrame: number | undefined;
 
@@ -139,10 +140,9 @@ export function HistorySwipeNavigation() {
       const swipe = gesture;
       gesture = { kind: "ignored" };
       if (swipe?.kind !== "tracking") return;
+      // The net native delta never exceeds the clamped wheel distance; it covers wheel events still in flight.
       const distance = native
-        ? swipe.direction === "back"
-          ? -native.deltaX
-          : native.deltaX
+        ? Math.max(swipe.distance, swipe.direction === "back" ? -native.deltaX : native.deltaX)
         : swipe.distance;
       if (
         completed &&
@@ -160,7 +160,7 @@ export function HistorySwipeNavigation() {
     const clearUnclaimedWheel = () => {
       if (unclaimedFrame !== undefined) cancelAnimationFrame(unclaimedFrame);
       unclaimedFrame = undefined;
-      unclaimedWheel = undefined;
+      unclaimedWheels = [];
     };
     const finishNativeContact = (ending: NativeRelease) => {
       clearReleaseFrame();
@@ -185,15 +185,13 @@ export function HistorySwipeNavigation() {
       release(true);
       gesture = null;
     });
-    const onWheel = (event: WheelEvent, buffered?: NonNullable<typeof unclaimedWheel>) => {
+    const onWheel = (event: WheelEvent, buffered?: UnclaimedWheel) => {
       const at = event.timeStamp;
       if (contact === "idle") {
-        // IPC can arrive after the first wheel event of the next gesture.
-        if (event.shiftKey || (!event.ctrlKey && Math.abs(event.deltaX) > Math.abs(event.deltaY))) {
-          unclaimedWheel = { event, path: event.composedPath() };
-          if (unclaimedFrame === undefined) {
-            unclaimedFrame = requestAnimationFrame(clearUnclaimedWheel);
-          }
+        // IPC can arrive after the first wheel events of the next gesture; they still decide ownership.
+        unclaimedWheels.push({ event, path: event.composedPath() });
+        if (unclaimedFrame === undefined) {
+          unclaimedFrame = requestAnimationFrame(clearUnclaimedWheel);
         }
         return;
       }
@@ -263,7 +261,7 @@ export function HistorySwipeNavigation() {
       // Translate the event wall time at receipt so sleep since page load cannot skew the match.
       const at = phase.at - Date.now() + performance.now();
       if (phase.kind === "begin") {
-        const wheel = unclaimedWheel;
+        const wheels = unclaimedWheels;
         clearUnclaimedWheel();
         clearReleaseFrame();
         if (contact !== null || gestureStartedAt < at - NATIVE_TIMESTAMP_TOLERANCE_MS) {
@@ -271,7 +269,7 @@ export function HistorySwipeNavigation() {
           gesture = null;
         }
         contact = { at };
-        if (wheel) onWheel(wheel.event, wheel);
+        for (const wheel of wheels) onWheel(wheel.event, wheel);
       } else if (phase.kind === "end" && contact && contact !== "idle") {
         if (gesture?.kind === "tracking" || gesture?.kind === "ignored") {
           finishNativeContact(phase);
