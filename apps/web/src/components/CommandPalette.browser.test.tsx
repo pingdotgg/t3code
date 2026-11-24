@@ -308,4 +308,48 @@ describe("CommandPalette open intents", () => {
       }),
     );
   });
+
+  it("stays in a submenu on repeated, modified, or composing Backspace and pops on plain Backspace", async () => {
+    setup({ projects: [makeProject("Acme"), makeProject("Beta")] });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    const rootInput = page.getByPlaceholder("Search commands, projects, and threads...");
+    await expect.element(rootInput).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    await expect
+      .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
+      .toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Enter}");
+
+    const submenuInput = page.getByPlaceholder("Search...");
+    await expect.element(submenuInput).toHaveFocus();
+
+    await userEvent.keyboard("acm");
+    await expect.element(submenuInput).toHaveValue("acm");
+    await userEvent.keyboard("{Backspace}{Backspace}{Backspace}");
+    await expect.element(submenuInput).toBeVisible();
+    await expect.element(submenuInput).toHaveValue("");
+
+    for (const init of [
+      { repeat: true },
+      { ctrlKey: true },
+      { altKey: true },
+      { isComposing: true },
+      { keyCode: 229 },
+    ] satisfies ReadonlyArray<KeyboardEventInit>) {
+      const event = new KeyboardEvent("keydown", {
+        key: "Backspace",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      await act(() => submenuInput.element().dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+      await expect.element(submenuInput).toBeVisible();
+    }
+
+    await userEvent.keyboard("{Backspace}");
+    await expect.element(rootInput).toHaveFocus();
+  });
 });
