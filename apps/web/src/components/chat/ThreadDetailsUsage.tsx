@@ -143,14 +143,18 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
           ariaValue={
             used !== null
               ? gt("{used}% used", { used })
-              : gt("{usedTokens} tokens used", { usedTokens })
+              : usedTokens !== null
+                ? gt("{usedTokens} tokens used", { usedTokens })
+                : gt("Unavailable")
           }
           tooltip={
             <>
               <span className="text-foreground">
                 {used !== null
                   ? gt("Context: {used}% used", { used })
-                  : gt("Context: {usedTokens} tokens used", { usedTokens })}
+                  : usedTokens !== null
+                    ? gt("Context: {usedTokens} tokens used", { usedTokens })
+                    : gt("Unavailable")}
               </span>
               {maxTokens !== null ? (
                 <span className="text-muted-foreground">

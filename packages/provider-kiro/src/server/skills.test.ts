@@ -28,6 +28,17 @@ describe("discoverKiroSkills", () => {
       yield* writeSkill(path.join(home, ".kiro", "skills"), "shared", "User copy");
       yield* writeSkill(path.join(home, ".kiro", "skills"), "global", "Global skill");
       yield* writeSkill(path.join(cwd, ".kiro", "skills"), "shared", "Project copy");
+      yield* fileSystem.writeFileString(
+        path.join(cwd, ".kiro", "skills", "shared", "SKILL.md"),
+        [
+          "---",
+          "name: shared # project override",
+          "description: >-",
+          "  Project copy",
+          "---",
+          "",
+        ].join("\n"),
+      );
       yield* writeSkill(path.join(cwd, ".agents", "skills"), "agent-only", "Agent skill");
       yield* writeSkill(
         path.join(home, "projects", ".kiro", "skills"),

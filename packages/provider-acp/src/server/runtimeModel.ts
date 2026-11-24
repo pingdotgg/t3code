@@ -1651,10 +1651,13 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     case "usage_update": {
       const currency = upd.cost?.currency.trim().slice(0, 32);
       const t3Meta = isRecord(upd._meta) ? upd._meta.t3 : undefined;
-      const percentageOnly =
-        isRecord(t3Meta) && typeof t3Meta.usedPercentage === "number"
-          ? t3Meta.usedPercentage
-          : undefined;
+      const percentageOnly = isRecord(t3Meta)
+        ? Option.getOrUndefined(
+            Schema.decodeUnknownOption(
+              Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+            )(t3Meta.usedPercentage),
+          )
+        : undefined;
       events.push({
         _tag: "UsageUpdated",
         usage: {

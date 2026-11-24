@@ -3,18 +3,25 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
+
+const decodeSkillMetadata = Schema.decodeUnknownOption(
+  fromYaml(
+    Schema.Struct({
+      name: Schema.optional(Schema.String),
+      description: Schema.optional(Schema.String),
+    }),
+  ),
+);
 
 function parseSkill(contents: string, folderName: string) {
   const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(contents)?.[1];
   if (header === undefined) return { name: folderName };
-  const values = new Map<string, string>();
-  for (const line of header.split(/\r?\n/)) {
-    const match = /^([A-Za-z][\w-]*):\s*(.*?)\s*$/.exec(line);
-    if (match?.[1] && match[2])
-      values.set(match[1].toLowerCase(), match[2].replace(/^["']|["']$/g, ""));
-  }
-  const name = values.get("name")?.trim() ?? folderName;
-  const description = values.get("description")?.trim();
+  const metadata = Option.getOrUndefined(decodeSkillMetadata(header));
+  if (metadata === undefined) return undefined;
+  const name = metadata.name?.trim() ?? folderName;
+  const description = metadata.description?.trim();
   return {
     name,
     ...(description ? { description } : {}),
@@ -51,7 +58,13 @@ const discoverRoot = Effect.fn("KiroSkills.discoverRoot")(function* (input: {
     const contents = yield* fileSystem.readFileString(skillPath).pipe(Effect.option);
     if (Option.isNone(contents)) continue;
     const metadata = parseSkill(contents.value, entry);
-    if (!metadata.name || metadata.name.includes("/") || metadata.name.includes("\\")) continue;
+    if (
+      metadata === undefined ||
+      !metadata.name ||
+      metadata.name.includes("/") ||
+      metadata.name.includes("\\")
+    )
+      continue;
     const realFolder = yield* fileSystem.realPath(folder).pipe(Effect.orElseSucceed(() => folder));
     skills.push({
       folder: realFolder,
