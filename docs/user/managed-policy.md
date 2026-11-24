@@ -148,8 +148,8 @@ A few settings need care:
   rules.
 - `observability` cannot be managed. Its OTLP endpoints come from each user's environment
   variables, settings file and desktop startup input, which a policy cannot override.
-- Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
-  compaction choice still wins over `idleCompaction`.
+- Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude or Antigravity instance's
+  own idle compaction choice still wins over `idleCompaction`.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
   or pin single fields with [`providers.instances`](#providers). T3 Code refuses a lock on one
   field inside an instance. A whole-instance lock covers only that instance; to cover every

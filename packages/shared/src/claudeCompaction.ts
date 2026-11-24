@@ -39,8 +39,31 @@ export function claudeResumeCompactionAge(questionAnswer: {
 }
 
 /**
- * Context size below which T3 does not suggest or run a Claude compaction:
- * the stale-thread Compact chip and idle compaction. Matches Claude Code's
+ * Matches `/compact` with or without trailing instructions, case-insensitively.
+ */
+export const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
+
+/**
+ * Context size below which T3 does not suggest or run an idle compaction:
+ * the stale-thread Compact chip and pre-expiry compaction. Matches Claude Code's
  * idleCompaction default of 200K.
  */
 export const COMPACTION_SUGGESTION_MIN_TOKENS = 200_000;
+
+// Google documents no fixed idle TTL for Gemini implicit caching; empirical Antigravity/Gemini
+// cache-hit measurements expire within ~15 minutes, so T3 uses 15m as a heuristic default.
+const ANTIGRAVITY_GEMINI_PROMPT_CACHE_TTL_MS = 15 * 60_000;
+
+/**
+ * Prompt cache lifetime for an Antigravity model id, or undefined when the
+ * model's cache lifetime is not known (for example, non-Gemini models routed
+ * through Antigravity).
+ */
+export function antigravityPromptCacheTtlMs(model: string | null | undefined): number | undefined {
+  if (model == null) return undefined;
+  // A hub can prefix model ids, such as "ag/gemini-4-neon".
+  const base = model.split("/").at(-1)?.trim().toLowerCase() ?? "";
+  return base === "gemini" || base.startsWith("gemini-")
+    ? ANTIGRAVITY_GEMINI_PROMPT_CACHE_TTL_MS
+    : undefined;
+}

@@ -8,6 +8,7 @@ import {
   type ResolvedProviderInstanceEnvironment,
   type SecretReference,
   secretReferencesInSettings,
+  supportsIdleCompactionDriver,
   type ServerProvider,
   type SettingsSecretSlot,
   withSettingsSecrets,
@@ -70,15 +71,29 @@ interface RegistryState {
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
 
-const withoutPresentation = ({
+const withoutLiveMutableFields = ({
   displayName: _displayName,
   accentColor: _accentColor,
+  config,
   ...runtime
-}: ProviderInstanceConfig) => runtime;
+}: ProviderInstanceConfig) => {
+  if (!supportsIdleCompactionDriver(runtime.driver)) {
+    return { ...runtime, config };
+  }
+  if (config === undefined) {
+    return { ...runtime, config: {} };
+  }
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    return { ...runtime, config };
+  }
+  const { idleCompaction: _idleCompaction, ...runtimeConfig } = config as Record<string, unknown>;
+  return { ...runtime, config: runtimeConfig };
+};
 
-// Display name and accent colour are only labels; changing them must not stop the instance's sessions.
+// Display name, accent colour, and idle compaction policy are read live; changing them must not
+// stop the instance's sessions.
 const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(withoutPresentation(a), withoutPresentation(b));
+  Equal.equals(withoutLiveMutableFields(a), withoutLiveMutableFields(b));
 
 // Drivers stamp the presentation they were created with into every snapshot, so a renamed
 // instance kept live restamps what it reports.

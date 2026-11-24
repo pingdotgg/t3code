@@ -94,6 +94,13 @@ Use `/compact` to summarize a long conversation when your Antigravity runtime
 offers that command. If it is unavailable, update Antigravity in provider settings
 or send `/clear` when you need a fresh context.
 
+**Compact idle threads** in **Settings > Providers > Advanced** also applies to
+Antigravity Gemini threads over 200,000 tokens when the runtime offers `/compact`,
+using an estimated 15-minute prompt cache lifetime. Each Antigravity provider's
+settings can override the default (**When you return**, **Before the cache expires
+(beta)**, or **Never**). Non-Gemini models routed through Antigravity are skipped
+for automatic idle compaction.
+
 ### Skills and attachments
 
 Put project skills in `.agents/skills`. T3 Code also reads `.gemini/skills` and the

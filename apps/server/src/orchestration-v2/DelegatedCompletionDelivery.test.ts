@@ -827,6 +827,76 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
 
   it.effect.each([
     {
+      caseName: "matching model before deadline",
+      modelMismatch: false,
+      expired: false,
+      compacts: true,
+    },
+    {
+      caseName: "model changed before dispatch lock",
+      modelMismatch: true,
+      expired: false,
+      compacts: false,
+    },
+    {
+      caseName: "cache deadline elapsed before lock",
+      modelMismatch: false,
+      expired: true,
+      compacts: false,
+    },
+  ])(
+    "rechecks idleCompactionGuard under the lock ($caseName)",
+    ({ caseName, modelMismatch, expired, compacts }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const now = yield* DateTime.now;
+        const nowMs = DateTime.toEpochMillis(now);
+        const slug = caseName.replaceAll(" ", "-");
+        const threadId = ThreadId.make(`thread:idle-guard-${slug}`);
+        const runId = RunId.make(`run:idle-guard-${slug}`);
+        const taskId = NodeId.make(`node:idle-guard-${slug}-task`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:idle-guard-${slug}`),
+          runId,
+          rootNodeId: NodeId.make(`node:idle-guard-${slug}-root`),
+          taskId,
+          deliveryState: "delivered",
+          completionWake: "always",
+          parentRunStatus: "completed",
+          now,
+        });
+        const seeded = yield* orchestrator.getThreadProjection(threadId);
+        const compactionId = MessageId.make(`idle-compact:${threadId}:${runId}`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`server:idle-compact:${threadId}:${runId}`),
+          threadId,
+          messageId: compactionId,
+          text: "/compact",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "server",
+          idleCompaction: "beforeCacheExpires",
+          idleCompactionGuard: {
+            expectedRunId: runId,
+            expectedModelSelection: modelMismatch
+              ? { ...seeded.thread.modelSelection, model: "gemini-4-neon" }
+              : seeded.thread.modelSelection,
+            expiresAtMs: expired ? nowMs : nowMs + 60_000,
+          },
+          dispatchMode: { type: "start_immediately" },
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          projection.messages.some((message) => message.id === compactionId),
+          compacts,
+        );
+      }),
+  );
+
+  it.effect.each([
+    {
       name: "oversized UTF-8 result",
       first: "界".repeat(6_000),
       second: "small result",

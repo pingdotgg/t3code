@@ -1878,7 +1878,7 @@ function ScopedCompactIdleThreadsRow() {
       mixed={idleCompaction.mixed}
       {...setting("compact-idle-threads")}
       description={gt(
-        "When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
+        "When to compact an idle Claude or Antigravity Gemini thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude or Antigravity provider can override this.",
       )}
       resetAction={
         globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (

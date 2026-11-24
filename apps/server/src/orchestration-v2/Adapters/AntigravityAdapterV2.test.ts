@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   ChatFileAttachment,
   MessageId,
   NodeId,
@@ -3114,5 +3115,919 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
         ["Create b.txt", "running"],
       ]);
     }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 prompt cache expiry", () => {
+  it("resolves Gemini cache TTL and skips unknown non-Gemini models", () => {
+    assert.strictEqual(flavor.promptCacheTtlMs?.("gemini-4-neon"), 15 * 60_000);
+    assert.strictEqual(flavor.promptCacheTtlMs?.("ag/gemini-3.1-pro"), 15 * 60_000);
+    assert.strictEqual(flavor.promptCacheTtlMs?.("claude-opus-5-5"), undefined);
+    assert.strictEqual(flavor.promptCacheTtlMs?.("gpt-6.2-astra"), undefined);
+    assert.strictEqual(flavor.promptCacheTtlMs?.(ANTIGRAVITY_DEFAULT_MODEL), undefined);
+  });
+
+  it.effect.each([
+    {
+      label: "Gemini with advertised /compact",
+      model: "gemini-test-low",
+      compact: true,
+      expectedTtlMs: 15 * 60_000,
+      expectExpiresAt: true,
+    },
+    {
+      label: "antigravity-default resolving to Gemini with advertised /compact",
+      model: ANTIGRAVITY_DEFAULT_MODEL,
+      compact: true,
+      expectedTtlMs: 15 * 60_000,
+      expectExpiresAt: true,
+    },
+    {
+      label: "Gemini without advertised /compact",
+      model: "gemini-test-low",
+      compact: false,
+      expectedTtlMs: 15 * 60_000,
+      expectExpiresAt: false,
+    },
+  ])(
+    "emits turn tokenUsage cache expiry for $label",
+    ({ model, compact, expectedTtlMs, expectExpiresAt }) =>
+      Effect.gen(function* () {
+        const startMs = Date.parse("2026-11-23T12:00:00.000Z");
+        yield* TestClock.setTime(startMs);
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const send = (update: EffectAcpSchema.SessionUpdate) =>
+          sessionUpdate === undefined
+            ? Effect.die("the adapter must handle session updates")
+            : sessionUpdate(
+                normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+              );
+        const instanceId = ProviderInstanceId.make("antigravity-cache-expiry-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_AVAILABLE_COMMANDS: compact ? "compact" : "",
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (_payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    // Simulate reply 1 requesting a tool (closed by usage_update), then the tool
+                    // completing 1 minute later while no reply is open, re-anchoring the cache.
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId: "call_read",
+                      kind: "read",
+                      title: "Read file",
+                      status: "in_progress",
+                    });
+                    yield* send({
+                      sessionUpdate: "usage_update",
+                      used: 220_000,
+                      size: 1_048_576,
+                    });
+                    yield* TestClock.adjust("1 minute");
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "call_read",
+                      status: "completed",
+                    });
+                    yield* TestClock.adjust("30 seconds");
+                    yield* send({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Done." },
+                    });
+                    yield* send({
+                      sessionUpdate: "usage_update",
+                      used: 245_000,
+                      size: 1_048_576,
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const threadId = ThreadId.make("thread-antigravity-cache-expiry");
+        const modelSelection = { instanceId, model } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-cache-expiry"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            messageText: "Analyze the codebase",
+          }),
+        );
+        const turnEvents: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          turnEvents.push(event);
+          if (event.type === "turn.terminal") break;
+        }
+        const completedTurn = turnEvents.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.isDefined(completedTurn);
+        if (completedTurn?.type !== "provider_turn.updated") return;
+        assert.strictEqual(completedTurn.providerTurn.tokenUsage?.usedTokens, 245_000);
+        assert.strictEqual(completedTurn.providerTurn.tokenUsage?.maxTokens, 1_048_576);
+        assert.strictEqual(completedTurn.providerTurn.tokenUsage?.promptCacheTtlMs, expectedTtlMs);
+        assert.strictEqual(
+          completedTurn.providerTurn.tokenUsage?.promptCacheExpiresAt,
+          expectExpiresAt ? "2026-11-23T12:16:00.000Z" : undefined,
+        );
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "clears prior high-token cache expiry on mid-turn compaction, suppresses instructed /compact, ignores mid-reply tool completions, and picks up late /compact advertisement",
+    () =>
+      Effect.gen(function* () {
+        const startMs = Date.parse("2026-11-23T12:00:00.000Z");
+        yield* TestClock.setTime(startMs);
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let promptCall = 0;
+        const send = (update: EffectAcpSchema.SessionUpdate) =>
+          sessionUpdate === undefined
+            ? Effect.die("the adapter must handle session updates")
+            : sessionUpdate(
+                normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+              );
+        const instanceId = ProviderInstanceId.make("antigravity-cache-edge-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  // Omit compact at session start to test late advertisement before finalize.
+                  T3_ACP_AVAILABLE_COMMANDS: "",
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (_payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    promptCall += 1;
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    if (promptCall === 1) {
+                      // Turn 1: reply starts at T+0, a background tool completes mid-reply at T+2m
+                      // (must NOT advance lastModelRequestAt), usage arrives at T+3m, and `/compact`
+                      // is advertised late before turn completion.
+                      yield* send({
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Streaming answer..." },
+                      });
+                      yield* TestClock.adjust("2 minutes");
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "bg_tool",
+                        status: "completed",
+                      });
+                      yield* TestClock.adjust("1 minute");
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 245_000,
+                        size: 1_048_576,
+                      });
+                      yield* send({
+                        sessionUpdate: "available_commands_update",
+                        availableCommands: [{ name: "compact", description: "Compact context" }],
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptCall === 2) {
+                      // Turn 2: ordinary turn emits high usage, then auto-compacts mid-turn
+                      // with no follow-up usage_update.
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 260_000,
+                        size: 1_048_576,
+                      });
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "mid-turn-compact",
+                        status: "in_progress",
+                      });
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "mid-turn-compact",
+                        status: "completed",
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptCall === 3) {
+                      // Turn 3: mixed-case instructed `/COMPACT keep API notes` emits a usage_update.
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 250_000,
+                        size: 1_048_576,
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptCall === 4) {
+                      // Turn 4: parallel tools with in_progress streaming and staggered completions.
+                      // Reply 1 emits two tool calls and ends with usage_update at T+0.
+                      yield* send({
+                        sessionUpdate: "tool_call",
+                        toolCallId: "par_1",
+                        title: "Tool 1",
+                        kind: "other",
+                        status: "in_progress",
+                      });
+                      yield* send({
+                        sessionUpdate: "tool_call",
+                        toolCallId: "par_2",
+                        title: "Tool 2",
+                        kind: "other",
+                        status: "in_progress",
+                      });
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 210_000,
+                        size: 1_048_576,
+                      });
+                      // Streaming in_progress at T+30s must NOT anchor lastModelRequestAt.
+                      yield* TestClock.adjust("30 seconds");
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "par_1",
+                        status: "in_progress",
+                      });
+                      // First parallel tool completes at T+1m, second completes at T+2m (anchor).
+                      yield* TestClock.adjust("30 seconds");
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "par_1",
+                        status: "completed",
+                      });
+                      yield* TestClock.adjust("1 minute");
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "par_2",
+                        status: "completed",
+                      });
+                      // Duplicate terminal update for par_1 at T+2m30s must NOT advance the anchor.
+                      yield* TestClock.adjust("30 seconds");
+                      yield* send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "par_1",
+                        status: "completed",
+                      });
+                      // Follow-up reply finishes at T+3m with fractional usage.
+                      yield* TestClock.adjust("30 seconds");
+                      yield* send({
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Both tools finished." },
+                      });
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 250_000.4,
+                        size: 1_048_576,
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptCall === 5) {
+                      // Turn 5: `/compact` receives pre-compaction usage (ignored), completes
+                      // structured compaction, reports genuine post-compaction usage (60K), then
+                      // receives a repeated completion patch for the same compaction ID.
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 240_000,
+                        size: 1_048_576,
+                      });
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-with-usage",
+                        status: "in_progress",
+                      });
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-with-usage",
+                        status: "completed",
+                      });
+                      yield* TestClock.adjust("1 second");
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 60_000,
+                        size: 1_048_576,
+                      });
+                      yield* TestClock.adjust("1 second");
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-with-usage",
+                        status: "completed",
+                        summary: [{ type: "text", text: "Revised compaction summary" }],
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptCall === 6) {
+                      // Turn 6: ordinary turn streams unnamed assistant chunks across a delayed
+                      // revised completion patch for Turn 5's compaction ID (must keep one item),
+                      // then receives 80K usage, a second delayed patch at +2m, and an 85K usage
+                      // correction at +3m with no new model request.
+                      yield* send({
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Part 1 " },
+                      });
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-with-usage",
+                        status: "completed",
+                        summary: [{ type: "text", text: "Late cross-turn compaction summary" }],
+                      });
+                      yield* send({
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Part 2." },
+                      });
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 80_000,
+                        size: 1_048_576,
+                      });
+                      yield* TestClock.adjust("2 minutes");
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-with-usage",
+                        status: "completed",
+                        summary: [{ type: "text", text: "Late cross-turn compaction summary" }],
+                      });
+                      yield* TestClock.adjust("1 minute");
+                      yield* send({
+                        sessionUpdate: "usage_update",
+                        used: 85_000,
+                        size: 1_048_576,
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    if (promptCall === 7) {
+                      // Turn 7: `/compact` completes structured compaction with no follow-up usage.
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-no-usage",
+                        status: "completed",
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    // Turn 8: ordinary turn reports usage and leaves an in_progress compaction open
+                    // at turn end; projected settlement must not clear the measured usage.
+                    yield* send({
+                      sessionUpdate: "usage_update",
+                      used: 120_000,
+                      size: 1_048_576,
+                    });
+                    yield* send({
+                      sessionUpdate: "compaction_update",
+                      compactionId: "compact-projected-only",
+                      status: "in_progress",
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const threadId = ThreadId.make("thread-antigravity-cache-edge");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-cache-edge"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const runTurn = (ordinal: number, messageText: string) =>
+          Effect.gen(function* () {
+            const turnInput = makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              modelSelection,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+              messageText,
+            });
+            yield* session.startTurn(turnInput);
+            const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+            while (true) {
+              const event = yield* Queue.take(events);
+              collected.push(event);
+              if (event.type === "turn.terminal") break;
+            }
+            const turnUpdates = collected.filter((event) => event.type === "provider_turn.updated");
+            const threadUpdates = collected.filter(
+              (event) => event.type === "provider_thread.updated",
+            );
+            const turnItems = collected.filter((event) => event.type === "turn_item.updated");
+            return { turnInput, turnUpdates, threadUpdates, turnItems };
+          });
+
+        // Turn 1: anchor stays at T+0 (12:00) despite T+2m mid-reply tool completion,
+        // late /compact advertisement is picked up at finalize, and no extra mid-turn
+        // provider_turn.updated event is emitted for usage_update.
+        const turn1 = yield* runTurn(1, "Summarize the repo");
+        assert.lengthOf(turn1.turnUpdates, 2);
+        const turn1Completed = turn1.turnUpdates.at(-1)?.providerTurn;
+        assert.strictEqual(turn1Completed?.tokenUsage?.usedTokens, 245_000);
+        assert.strictEqual(
+          turn1Completed?.tokenUsage?.promptCacheExpiresAt,
+          "2026-11-23T12:15:00.000Z",
+        );
+
+        // Turn 2: mid-turn compaction overwrites prior 245K usage with a 0-token clear marker.
+        yield* TestClock.adjust("1 minute");
+        const turn2 = yield* runTurn(2, "Keep going");
+        const turn2Completed = turn2.turnUpdates.at(-1)?.providerTurn;
+        assert.strictEqual(turn2Completed?.tokenUsage?.usedTokens, 0);
+        assert.strictEqual(turn2Completed?.tokenUsage?.maxTokens, undefined);
+        assert.strictEqual(turn2Completed?.tokenUsage?.promptCacheTtlMs, undefined);
+        assert.strictEqual(turn2Completed?.tokenUsage?.promptCacheExpiresAt, undefined);
+
+        // Turn 3: mixed-case instructed `/COMPACT keep API notes` emits a compaction-clear marker
+        // with no cache TTL / promptCacheExpiresAt and clears pre-compaction contextUsage.
+        yield* TestClock.adjust("1 minute");
+        const turn3 = yield* runTurn(3, "/COMPACT keep API notes");
+        const turn3Completed = turn3.turnUpdates.at(-1)?.providerTurn;
+        assert.strictEqual(turn3Completed?.tokenUsage?.usedTokens, 0);
+        assert.strictEqual(turn3Completed?.tokenUsage?.maxTokens, undefined);
+        assert.strictEqual(turn3Completed?.tokenUsage?.promptCacheTtlMs, undefined);
+        assert.strictEqual(turn3Completed?.tokenUsage?.promptCacheExpiresAt, undefined);
+
+        // Turn 4: streaming tool_call_update(in_progress) is ignored and staggered parallel
+        // completions anchor promptCacheExpiresAt to the final tool completion (T+2m, not T+1m).
+        // Turn 1 ended at 12:03, Turn 2 ran at 12:04, Turn 3 ran at 12:05; Turn 4 starts at 12:06,
+        // par_1 completes at 12:07, par_2 completes at 12:08 -> expiry at 12:23, usage at 12:09.
+        yield* TestClock.adjust("1 minute");
+        const turn4 = yield* runTurn(4, "Run tools in parallel");
+        const turn4Completed = turn4.turnUpdates.at(-1)?.providerTurn;
+        assert.strictEqual(turn4Completed?.tokenUsage?.usedTokens, 250_000);
+        assert.strictEqual(
+          turn4Completed?.tokenUsage?.promptCacheExpiresAt,
+          "2026-11-23T12:23:00.000Z",
+        );
+
+        // A post-terminal title-only session_info_update at 12:10 advances providerThread.updatedAt
+        // but must preserve contextUsage.updatedAt at the 12:09 usage_update timestamp.
+        yield* TestClock.adjust("1 minute");
+        yield* send({ sessionUpdate: "session_info_update", title: "Parallel tools run" });
+        const threadUpdateAfterTitle = yield* Queue.take(events);
+        assert.strictEqual(threadUpdateAfterTitle.type, "provider_thread.updated");
+        if (threadUpdateAfterTitle.type === "provider_thread.updated") {
+          assert.strictEqual(
+            threadUpdateAfterTitle.providerThread.contextUsage?.usedTokens,
+            250_000,
+          );
+          assert.strictEqual(
+            threadUpdateAfterTitle.providerThread.contextUsage?.updatedAt,
+            "2026-11-23T12:09:00.000Z",
+          );
+        }
+
+        // Turn 5: `/compact` with pre-compaction usage -> structured compaction -> 60K usage ->
+        // repeated completion patch for the same ID preserves 60K, original completedAt,
+        // beforeTokenCount (240K), and omits cache TTL / expiry.
+        yield* TestClock.adjust("1 minute");
+        const turn5StartMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const turn5 = yield* runTurn(5, "/compact");
+        const turn5Completed = turn5.turnUpdates.at(-1)?.providerTurn;
+        const turn5Thread = turn5.threadUpdates.at(-1)?.providerThread;
+        const turn5CompactionItem = turn5.turnItems.findLast(
+          (event) => event.turnItem.type === "compaction",
+        )?.turnItem;
+        assert.strictEqual(turn5Completed?.tokenUsage?.usedTokens, 60_000);
+        assert.strictEqual(turn5Completed?.tokenUsage?.maxTokens, 1_048_576);
+        assert.strictEqual(turn5Completed?.tokenUsage?.promptCacheTtlMs, undefined);
+        assert.strictEqual(turn5Completed?.tokenUsage?.promptCacheExpiresAt, undefined);
+        assert.strictEqual(turn5Thread?.contextUsage?.usedTokens, 60_000);
+        assert.strictEqual(turn5Thread?.contextUsage?.maxTokens, 1_048_576);
+        assert.isDefined(turn5CompactionItem);
+        if (turn5CompactionItem?.type === "compaction") {
+          assert.strictEqual(turn5CompactionItem.beforeTokenCount, 240_000);
+          assert.strictEqual(turn5CompactionItem.summary, "Revised compaction summary");
+          assert.strictEqual(
+            DateTime.toEpochMillis(turn5CompactionItem.completedAt!),
+            turn5StartMs,
+          );
+        }
+
+        // Turn 6: delayed duplicate completion for Turn 5's compaction ID in a later turn is
+        // ignored (no item emitted into Turn 6, usage preserved, cache expiry stays at T6 + 15m).
+        yield* TestClock.adjust("1 minute");
+        const turn6Start = yield* DateTime.now;
+        const turn6 = yield* runTurn(6, "Follow up after compaction");
+        const turn6Completed = turn6.turnUpdates.at(-1)?.providerTurn;
+        const turn6Thread = turn6.threadUpdates.at(-1)?.providerThread;
+        assert.strictEqual(turn6Completed?.tokenUsage?.usedTokens, 85_000);
+        assert.strictEqual(turn6Completed?.tokenUsage?.maxTokens, 1_048_576);
+        assert.strictEqual(
+          turn6Completed?.tokenUsage?.promptCacheExpiresAt,
+          DateTime.formatIso(DateTime.add(turn6Start, { minutes: 15 })),
+        );
+        assert.strictEqual(turn6Thread?.contextUsage?.usedTokens, 85_000);
+        assert.deepEqual(
+          turn6.turnItems.filter((event) => event.turnItem.type === "compaction"),
+          [],
+        );
+        const turn6AssistantItems = turn6.turnItems
+          .map((event) => event.turnItem)
+          .filter((item) => item.type === "assistant_message");
+        assert.isNotEmpty(turn6AssistantItems);
+        assert.strictEqual(new Set(turn6AssistantItems.map((item) => item.id)).size, 1);
+        assert.strictEqual(turn6AssistantItems.at(-1)?.text, "Part 1 Part 2.");
+
+        // Turn 7: `/compact` with structured compaction and no follow-up usage emits clear marker.
+        yield* TestClock.adjust("1 minute");
+        const turn7 = yield* runTurn(7, "/compact");
+        const turn7Completed = turn7.turnUpdates.at(-1)?.providerTurn;
+        const turn7Thread = turn7.threadUpdates.at(-1)?.providerThread;
+        assert.strictEqual(turn7Completed?.tokenUsage?.usedTokens, 0);
+        assert.strictEqual(turn7Completed?.tokenUsage?.maxTokens, undefined);
+        assert.strictEqual(turn7Thread?.contextUsage, null);
+
+        // Turn 8: an unconfirmed in_progress compaction settled at turn end preserves measured usage.
+        yield* TestClock.adjust("1 minute");
+        const turn8 = yield* runTurn(8, "Finish with open compaction");
+        const turn8Completed = turn8.turnUpdates.at(-1)?.providerTurn;
+        const turn8Thread = turn8.threadUpdates.at(-1)?.providerThread;
+        assert.strictEqual(turn8Completed?.tokenUsage?.usedTokens, 120_000);
+        assert.strictEqual(turn8Thread?.contextUsage?.usedTokens, 120_000);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "preserves the original timestamp of legacy contextUsage across a turn with no usage_update",
+    () =>
+      Effect.gen(function* () {
+        const legacyUpdatedAtMs = Date.parse("2026-11-23T12:00:00.000Z");
+        yield* TestClock.setTime(Date.parse("2026-11-23T12:15:00.000Z"));
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        const instanceId = ProviderInstanceId.make("antigravity-legacy-usage-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_AVAILABLE_COMMANDS: "compact",
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                prompt: (_payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    yield* TestClock.adjust("1 minute");
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const threadId = ThreadId.make("thread-antigravity-legacy-usage");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-legacy-usage"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const ensuredThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const legacyProviderThread = {
+          ...ensuredThread,
+          contextUsage: { usedTokens: 293_611, maxTokens: 1_048_576 },
+          updatedAt: DateTime.makeUnsafe(legacyUpdatedAtMs),
+        };
+        // Simulate cold resume + ProviderTurnStartService adjusting maxTokens across a model switch
+        // and bumping providerThread.updatedAt to now before calling session.startTurn.
+        const resumedThread = yield* session.resumeThread({
+          threadId,
+          providerThread: legacyProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(resumedThread.contextUsage?.updatedAt, "2026-11-23T12:00:00.000Z");
+        const startNow = yield* DateTime.now;
+        const runningProviderThread = {
+          ...resumedThread,
+          contextUsage: {
+            ...resumedThread.contextUsage!,
+            maxTokens: 2_000_000,
+          },
+          status: "active" as const,
+          updatedAt: startNow,
+        };
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: runningProviderThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy,
+            now: startNow,
+            ordinal: 2,
+            messageText: "Follow up without usage",
+          }),
+        );
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          collected.push(event);
+          if (event.type === "turn.terminal") break;
+        }
+        const finalThreadUpdate = collected.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert.isDefined(finalThreadUpdate);
+        if (finalThreadUpdate?.type === "provider_thread.updated") {
+          assert.strictEqual(finalThreadUpdate.providerThread.contextUsage?.usedTokens, 293_611);
+          assert.strictEqual(finalThreadUpdate.providerThread.contextUsage?.maxTokens, 2_000_000);
+          assert.strictEqual(
+            finalThreadUpdate.providerThread.contextUsage?.updatedAt,
+            "2026-11-23T12:00:00.000Z",
+          );
+          assert.strictEqual(
+            DateTime.formatIso(finalThreadUpdate.providerThread.updatedAt),
+            "2026-11-23T12:16:00.000Z",
+          );
+        }
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "does not extend prompt inactivity timeout on delayed prior-turn compaction updates",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-23T12:00:00.000Z"));
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let promptCall = 0;
+        const turn2Dispatched = yield* Deferred.make<void>();
+        const send = (update: EffectAcpSchema.SessionUpdate) =>
+          sessionUpdate === undefined
+            ? Effect.die("the adapter must handle session updates")
+            : sessionUpdate(
+                normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
+              );
+        const instanceId = ProviderInstanceId.make("antigravity-stale-compaction-timeout-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_AVAILABLE_COMMANDS: "compact",
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: (_payload, promptOptions) =>
+                  Effect.gen(function* () {
+                    promptCall += 1;
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    if (promptCall === 1) {
+                      yield* send({
+                        sessionUpdate: "compaction_update",
+                        compactionId: "compact-stale-timeout",
+                        status: "completed",
+                      });
+                      return { stopReason: "end_turn" as const };
+                    }
+                    yield* Deferred.succeed(turn2Dispatched, undefined);
+                    return yield* Effect.never;
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const threadId = ThreadId.make("thread-antigravity-stale-compaction-timeout");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-antigravity-stale-compaction-timeout",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+
+        // Turn 1 completes compaction `compact-stale-timeout`.
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 1,
+            messageText: "/compact",
+          }),
+        );
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal") break;
+        }
+
+        // Turn 2 hangs silently. At +14m, delayed prior-turn compaction updates arrive and must not
+        // extend Turn 2's 15-minute inactivity timeout.
+        yield* session.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+            messageText: "Hang silently",
+          }),
+        );
+        yield* Deferred.await(turn2Dispatched);
+        yield* TestClock.adjust("14 minutes");
+        yield* send({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-stale-timeout",
+          status: "completed",
+          summary: [{ type: "text", text: "Late summary" }],
+        });
+        yield* send({
+          sessionUpdate: "compaction_summary_chunk",
+          compactionId: "compact-stale-timeout",
+          content: { type: "text", text: "Late summary chunk" },
+        });
+        yield* TestClock.adjust("1 minute");
+
+        let terminalEvent:
+          | Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+          | undefined;
+        while (terminalEvent === undefined) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal") {
+            terminalEvent = event;
+          }
+        }
+        assert.strictEqual(terminalEvent.status, "failed");
+        assert.include(terminalEvent.failure?.message ?? "", "15 minutes");
+      }).pipe(Effect.provide(layerSession)),
   );
 });

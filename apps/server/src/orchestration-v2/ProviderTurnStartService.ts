@@ -63,7 +63,9 @@ import {
   estimateTextTokens,
   contextUsageForHandoff,
   historicalMessage,
+  latestNativeCompactionClearOrdinal,
   latestNativeContextUsage,
+  mergeHandoffContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import {
   deliverContextHandoffs,
@@ -1154,6 +1156,7 @@ export const layer: Layer.Layer<
       );
       const handoffContextForThread = (loadedProviderThread: OrchestrationV2ProviderThread) => {
         const measuredContext = latestNativeContextUsage(projection, providerThread);
+        const clearedRunOrdinal = latestNativeCompactionClearOrdinal(projection, providerThread);
         const previousSelection =
           measuredContext?.modelSelection ??
           projection.runs.findLast(
@@ -1169,9 +1172,11 @@ export const layer: Layer.Layer<
           loadedProviderThread.nativeThreadRef?.nativeId ===
           providerThread.nativeThreadRef?.nativeId;
         const threadUsage = loadedProviderThread.contextUsage ?? providerThread.contextUsage;
-        const previousUsage = measuredContext
-          ? { ...threadUsage, ...measuredContext.usage }
-          : threadUsage;
+        const previousUsage = mergeHandoffContextUsage(
+          threadUsage,
+          measuredContext,
+          session.driver === "antigravity",
+        );
         const reuseTelemetry =
           sameSelection ||
           (previousSelection !== undefined &&
@@ -1241,10 +1246,22 @@ export const layer: Layer.Layer<
             )
             .map((source) => source.id),
         );
+        const runOrdinalById =
+          clearedRunOrdinal === undefined
+            ? null
+            : new Map(projection.runs.map((source) => [source.id, source.ordinal]));
         // Row identity survives recovery; only accepted native input and delivered history occupy the new session.
         const nativeContextEstimate = Effect.gen(function* () {
           return sameNativeThread
             ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
+                if (
+                  runOrdinalById !== null &&
+                  clearedRunOrdinal !== undefined &&
+                  item.runId !== null &&
+                  (runOrdinalById.get(item.runId) ?? Number.POSITIVE_INFINITY) <= clearedRunOrdinal
+                ) {
+                  return sum;
+                }
                 const acceptedNatively =
                   item.providerThreadId === providerThread.id &&
                   item.runId !== null &&

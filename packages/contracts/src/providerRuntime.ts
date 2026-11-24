@@ -44,6 +44,8 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
   autoCompactThreshold: Schema.optional(PositiveInt),
+  /** Timestamp of the usage report itself, preserved across metadata-only thread updates. */
+  updatedAt: Schema.optional(Schema.String),
   cost: Schema.optional(
     Schema.Struct({
       amount: Schema.Number.check(Schema.isFinite()),

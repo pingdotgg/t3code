@@ -19,8 +19,18 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
 
-// Only accepted roots with matching native identity count; row reuse must not revive old usage.
-export function latestNativeContextUsage(
+function isCompactionClearTokenUsage(
+  tokenUsage: NonNullable<OrchestrationV2ThreadProjection["providerTurns"][number]["tokenUsage"]>,
+): boolean {
+  return (
+    tokenUsage.usedTokens === 0 &&
+    tokenUsage.maxTokens == null &&
+    tokenUsage.promptCacheTtlMs == null
+  );
+}
+
+// Only accepted roots with matching native identity count; row reuse and completed compactions must not revive old usage.
+function latestNativeContextEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
   providerThread: OrchestrationV2ProviderThread,
 ) {
@@ -33,6 +43,9 @@ export function latestNativeContextUsage(
         usage: ThreadTokenUsageSnapshot;
         modelSelection: ModelSelection;
         reportedAt: string;
+        reportedAtMs: number;
+        runOrdinal: number;
+        cleared: boolean;
       }
     | undefined;
   for (const turn of projection.providerTurns) {
@@ -50,7 +63,15 @@ export function latestNativeContextUsage(
     )
       continue;
     const run = runs.get(attempt.runId);
-    if (!run || (latest && latest.reportedAt >= turn.tokenUsage.updatedAt)) continue;
+    const reportedAtMs = Date.parse(turn.tokenUsage.updatedAt);
+    if (
+      !run ||
+      (latest !== undefined &&
+        (Number.isFinite(reportedAtMs) && Number.isFinite(latest.reportedAtMs)
+          ? reportedAtMs < latest.reportedAtMs
+          : turn.tokenUsage.updatedAt < latest.reportedAt))
+    )
+      continue;
     latest = {
       usage: {
         usedTokens: turn.tokenUsage.usedTokens,
@@ -60,9 +81,60 @@ export function latestNativeContextUsage(
       },
       modelSelection: run.modelSelection,
       reportedAt: turn.tokenUsage.updatedAt,
+      reportedAtMs,
+      runOrdinal: run.ordinal,
+      cleared: isCompactionClearTokenUsage(turn.tokenUsage),
     };
   }
   return latest;
+}
+
+export function latestNativeContextUsage(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
+  providerThread: OrchestrationV2ProviderThread,
+) {
+  const latest = latestNativeContextEntry(projection, providerThread);
+  if (latest === undefined || latest.cleared) return undefined;
+  return {
+    usage: latest.usage,
+    modelSelection: latest.modelSelection,
+    reportedAt: latest.reportedAt,
+  };
+}
+
+/** Run ordinal of the latest native compaction-clear marker when no newer usage followed it. */
+export function latestNativeCompactionClearOrdinal(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
+  providerThread: OrchestrationV2ProviderThread,
+): number | undefined {
+  const latest = latestNativeContextEntry(projection, providerThread);
+  return latest?.cleared === true ? latest.runOrdinal : undefined;
+}
+
+/** Combine provider-thread telemetry with the latest turn usage, preferring whichever dated sample is newer. */
+export function mergeHandoffContextUsage(
+  threadUsage: ThreadTokenUsageSnapshot | null | undefined,
+  measuredContext:
+    | { readonly usage: ThreadTokenUsageSnapshot; readonly reportedAt: string }
+    | undefined,
+  preserveReportedAt = false,
+): ThreadTokenUsageSnapshot | null | undefined {
+  if (measuredContext === undefined) return threadUsage;
+  if (threadUsage?.updatedAt !== undefined) {
+    const threadMs = Date.parse(threadUsage.updatedAt);
+    const turnMs = Date.parse(measuredContext.reportedAt);
+    if (Number.isFinite(threadMs) && Number.isFinite(turnMs) && threadMs >= turnMs) {
+      return threadUsage;
+    }
+    return {
+      ...threadUsage,
+      ...measuredContext.usage,
+      updatedAt: measuredContext.reportedAt,
+    };
+  }
+  return preserveReportedAt
+    ? { ...threadUsage, ...measuredContext.usage, updatedAt: measuredContext.reportedAt }
+    : { ...threadUsage, ...measuredContext.usage };
 }
 
 /** Native occupancy survives selection changes; the previous model window and compaction threshold do not. */
@@ -83,6 +155,9 @@ export function contextUsageForHandoff(input: {
   return {
     usedTokens: input.previousUsage.usedTokens,
     ...(maxTokens === undefined ? {} : { maxTokens }),
+    ...(input.previousUsage.updatedAt === undefined
+      ? {}
+      : { updatedAt: input.previousUsage.updatedAt }),
   };
 }
 

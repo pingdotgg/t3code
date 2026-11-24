@@ -382,6 +382,49 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each(["claudeAgent", "antigravity"] as const)(
+    "keeps the live %s instance when only idleCompaction changes",
+    (driverKind) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          driverKind: ProviderDriverKind.make(driverKind),
+          create: (input) =>
+            Effect.gen(function* () {
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const instanceId = ProviderInstanceId.make(`${driverKind}-live`);
+        const entry = {
+          driver: ProviderDriverKind.make(driverKind),
+          enabled: false,
+          config: undefined,
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: entry },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        yield* mutator.reconcile({
+          [instanceId]: {
+            ...entry,
+            config: { idleCompaction: "onReturn" },
+          },
+        });
+        yield* mutator.reconcile({
+          [instanceId]: {
+            ...entry,
+            config: { idleCompaction: "off" },
+          },
+        });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");

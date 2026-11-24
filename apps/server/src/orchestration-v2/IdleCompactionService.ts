@@ -4,6 +4,7 @@ import {
   MessageId,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
+  supportsIdleCompactionDriver,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -20,10 +21,10 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 /**
- * Beta: when a run completes on a Claude instance set to compact before the
- * cache expires, waits until shortly before its prompt cache expires and sends
- * `/compact` as a visible T3 Code turn. Timers live in
- * memory, so a server restart skips compactions that were still waiting.
+ * Beta: when a run completes on a Claude or Antigravity instance set to compact
+ * before the cache expires, waits until shortly before its prompt cache expires
+ * and sends `/compact` as a visible T3 Code turn. Timers live in memory, so a
+ * server restart skips compactions that were still waiting.
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -37,11 +38,11 @@ export const make = Effect.gen(function* () {
       while (true) {
         const current = yield* settings.getSettings;
         const thread = yield* projections.getThread(threadId);
-        const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
-          ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
-          : thread.providerInstanceId === "claudeAgent";
+        const driver = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
+          ? current.providerInstances[thread.providerInstanceId]?.driver
+          : thread.providerInstanceId;
         if (
-          !claudeInstance ||
+          !supportsIdleCompactionDriver(driver) ||
           resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||
           !resolveProjectProviderInstanceEnabled(
             current,
@@ -117,6 +118,11 @@ export const make = Effect.gen(function* () {
           createdBy: "agent",
           creationSource: "server",
           idleCompaction: "beforeCacheExpires",
+          idleCompactionGuard: {
+            expectedRunId: runId,
+            expectedModelSelection: records.thread.modelSelection,
+            expiresAtMs: window.endMs,
+          },
           dispatchMode: { type: "start_immediately" },
         });
         return;
