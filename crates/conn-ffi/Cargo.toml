@@ -19,6 +19,8 @@ required-features = ["bindgen"]
 bindgen = ["uniffi/cli"]
 
 [dependencies]
+conn-cache = { path = "../conn-cache" }
+serde.workspace = true
 conn-client.workspace = true
 conn-contract.workspace = true
 conn-orbit.workspace = true

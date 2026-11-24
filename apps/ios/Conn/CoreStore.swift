@@ -11,6 +11,7 @@ final class CoreStore {
     private(set) var openThreadId: String?
     private(set) var serverURL: String?
     private(set) var isPaired = false
+    private(set) var offlineReader: OfflineReader?
     private(set) var isSending = false
     var lastError: String?
     /// The connected server's environment id (its `/.well-known/t3/environment`).
@@ -25,12 +26,23 @@ final class CoreStore {
     /// A link that arrived before this connection knew its environment id.
     @ObservationIgnored private var deferredLink: ThreadLink?
 
-    init() {
-        if ProcessInfo.processInfo.arguments.contains("--reset-session") {
-            KeychainStore.clearSession()
+    let scope: String
+    private(set) var linked: [String: CoreStore] = [:]
+
+    init(scope: String = "") {
+        self.scope = scope
+        if scope.isEmpty && ProcessInfo.processInfo.arguments.contains("--reset-session") {
+            clearLinkedSessions()
+            clearCacheIdentity()
+            KeychainStore.clearSession(scope: scope)
         }
-        if let stored = KeychainStore.loadSession() {
+        if let stored = KeychainStore.loadSession(scope: scope) {
             connect(serverURL: stored.serverURL, credential: .bearer(token: stored.bearerToken))
+            if scope.isEmpty {
+                for id in UserDefaults.standard.stringArray(forKey: "linkedSessions") ?? [] {
+                    if KeychainStore.loadSession(scope: id) != nil { linked[id] = CoreStore(scope: id) }
+                }
+            }
         }
     }
 
@@ -38,7 +50,8 @@ final class CoreStore {
         lastError = nil
         do {
             let parsed = try PairingURLParser.parse(raw)
-            KeychainStore.clearSession()
+            clearCacheIdentity()
+            KeychainStore.clearSession(scope: scope)
             connect(serverURL: parsed.serverURL, credential: .pairingCode(code: parsed.pairingCode))
         } catch {
             lastError = error.localizedDescription
@@ -52,6 +65,7 @@ final class CoreStore {
         }
         openThreadId = threadId
         core?.openThread(threadId: threadId)
+        restoreThread(threadId)
     }
 
     func closeThread(_ threadId: String) {
@@ -63,7 +77,7 @@ final class CoreStore {
 
     func sendMessage(threadId: String, text: String, mode: FfiSendMode = .auto) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let core else { return false }
+        guard status == .connected, !trimmed.isEmpty, let core else { return false }
         isSending = true
         lastError = nil
         defer { isSending = false }
@@ -78,7 +92,7 @@ final class CoreStore {
     }
 
     func stopThread(threadId: String) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.stopThread(threadId: threadId)
         } catch {
@@ -87,7 +101,7 @@ final class CoreStore {
     }
 
     func respondApproval(threadId: String, requestId: String, decision: FfiApprovalDecision) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.respondApproval(threadId: threadId, requestId: requestId, decision: decision)
         } catch {
@@ -96,7 +110,7 @@ final class CoreStore {
     }
 
     func respondUserInput(threadId: String, requestId: String, answers: [FfiUserInputSubmission]) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.respondUserInput(threadId: threadId, requestId: requestId, answers: answers)
         } catch {
@@ -105,7 +119,7 @@ final class CoreStore {
     }
 
     func dismissUserInput(threadId: String, requestId: String) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.dismissUserInput(threadId: threadId, requestId: requestId)
         } catch {
@@ -114,7 +128,7 @@ final class CoreStore {
     }
 
     func answerSecretRequest(threadId: String, turnItemId: String, secret: String?) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.answerSecretRequest(threadId: threadId, turnItemId: turnItemId, secret: secret)
         } catch {
@@ -123,7 +137,7 @@ final class CoreStore {
     }
 
     func settleThread(threadId: String, settled: Bool) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.settleThread(threadId: threadId, settled: settled)
         } catch {
@@ -132,7 +146,7 @@ final class CoreStore {
     }
 
     func pinThread(threadId: String, pinned: Bool) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.pinThread(threadId: threadId, pinned: pinned)
         } catch {
@@ -142,7 +156,7 @@ final class CoreStore {
 
     func renameThread(threadId: String, title: String) async {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let core else { return }
+        guard status == .connected, !trimmed.isEmpty, let core else { return }
         do {
             try await core.renameThread(threadId: threadId, title: trimmed)
         } catch {
@@ -151,7 +165,7 @@ final class CoreStore {
     }
 
     func deleteThread(threadId: String) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.deleteThread(threadId: threadId)
         } catch {
@@ -160,7 +174,7 @@ final class CoreStore {
     }
 
     func markThreadUnread(threadId: String) async {
-        guard let core else { return }
+        guard status == .connected, let core else { return }
         do {
             try await core.markThreadUnread(threadId: threadId)
         } catch {
@@ -170,7 +184,7 @@ final class CoreStore {
 
     func launchThread(projectId: String, text: String) async -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let core else { return nil }
+        guard status == .connected, !trimmed.isEmpty, let core else { return nil }
         isSending = true
         lastError = nil
         defer { isSending = false }
@@ -186,7 +200,7 @@ final class CoreStore {
 
     func launchGeneralThread(text: String) async -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let core else { return nil }
+        guard status == .connected, !trimmed.isEmpty, let core else { return nil }
         isSending = true
         lastError = nil
         defer { isSending = false }
@@ -200,16 +214,105 @@ final class CoreStore {
         }
     }
 
+    func addLinked(_ raw: String) {
+        do {
+            let parsed = try PairingURLParser.parse(raw)
+            guard !([self] + Array(linked.values)).contains(where: { $0.serverURL == parsed.serverURL }) else {
+                lastError = "This environment is already linked."
+                return
+            }
+            let id = UUID().uuidString
+            let child = CoreStore(scope: id)
+            child.connect(serverURL: parsed.serverURL, credential: .pairingCode(code: parsed.pairingCode))
+            linked[id] = child
+            UserDefaults.standard.set(Array(linked.keys), forKey: "linkedSessions")
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func removeLinked(_ id: String) {
+        linked.removeValue(forKey: id)?.disconnect()
+        UserDefaults.standard.set(Array(linked.keys), forKey: "linkedSessions")
+    }
+
+    private func clearLinkedSessions() {
+        for id in UserDefaults.standard.stringArray(forKey: "linkedSessions") ?? [] {
+            if let child = linked.removeValue(forKey: id) { child.disconnect() }
+            KeychainStore.clearSession(scope: id)
+            let defaults = UserDefaults.standard
+            if let name = defaults.string(forKey: "offlinePairing" + id) {
+                try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: name))
+            }
+            for key in ["offlinePairing", "offlineServer", "offlineEnvironment"] {
+                defaults.removeObject(forKey: key + id)
+            }
+        }
+        linked.removeAll()
+        UserDefaults.standard.removeObject(forKey: "linkedSessions")
+    }
+
+    private func clearCacheIdentity() {
+        let defaults = UserDefaults.standard
+        if let name = defaults.string(forKey: "offlinePairing" + scope) {
+            try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: name))
+        }
+        defaults.removeObject(forKey: "offlinePairing" + scope)
+        defaults.removeObject(forKey: "offlineServer" + scope)
+        defaults.removeObject(forKey: "offlineEnvironment" + scope)
+    }
+
+    private func prepareCache(_ handle: ConnCore, generation: UInt64) {
+        let defaults = UserDefaults.standard
+        if defaults.string(forKey: "offlineServer" + scope) != handle.serverUrl() {
+            clearCacheIdentity()
+        }
+        let name = defaults.string(forKey: "offlinePairing" + scope) ?? "thread-cache-" + UUID().uuidString
+        if let environmentId { defaults.set(environmentId, forKey: "offlineEnvironment" + scope) }
+        else { environmentId = defaults.string(forKey: "offlineEnvironment" + scope) }
+        defaults.set(name, forKey: "offlinePairing" + scope)
+        defaults.set(handle.serverUrl(), forKey: "offlineServer" + scope)
+        let directory = URL.applicationSupportDirectory.appending(path: name)
+        Task {
+            do {
+                let reader = try await handle.prepareOffline(directory: directory.path)
+                guard generation == activeGeneration else { return }
+                offlineReader = reader
+                let saved = await reader.savedShell()
+                guard generation == activeGeneration else { return }
+                if shell == nil { shell = saved }
+                if let id = openThreadId { restoreThread(id) }
+            } catch {
+                guard generation == activeGeneration else { return }
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func restoreThread(_ id: String) {
+        guard let reader = offlineReader, openThread == nil else { return }
+        let generation = activeGeneration
+        Task {
+            guard let cached = try? await reader.recent(thread: id),
+                  generation == activeGeneration, openThreadId == id,
+                  openThread == nil, !cached.entries.isEmpty else { return }
+            openThread = cached
+        }
+    }
+
     func reconnect() {
         core?.reconnect()
     }
 
     func disconnect() {
-        Task { await PushRegistration.shared.unregister() }
+        if scope.isEmpty {
+            clearLinkedSessions()
+            Task { await PushRegistration.shared.unregister() }
+        }
         activeGeneration &+= 1
         core?.disconnect()
         core = nil
-        KeychainStore.clearSession()
+        offlineReader = nil
+        clearCacheIdentity()
+        KeychainStore.clearSession(scope: scope)
         status = nil
         shell = nil
         openThread = nil
@@ -225,6 +328,7 @@ final class CoreStore {
     func handleScenePhase(_ phase: ScenePhase) {
         if phase == .active, core != nil {
             reconnect()
+            for child in linked.values { child.reconnect() }
         }
     }
 
@@ -233,6 +337,7 @@ final class CoreStore {
         let generation = activeGeneration
         core?.disconnect()
         core = nil
+        offlineReader = nil
 
         self.serverURL = serverURL
         self.status = .connecting
@@ -250,6 +355,7 @@ final class CoreStore {
                 listener: listener
             )
             self.core = handle
+            prepareCache(handle, generation: generation)
             self.isPaired = true
         } catch {
             self.status = .failed(message: error.localizedDescription)
@@ -262,6 +368,9 @@ final class CoreStore {
 
     /// True when that thread, or the inbox, of the connected environment is on screen.
     func isShowing(_ link: ThreadLink) -> Bool {
+        if let child = linked.values.first(where: { $0.environmentId == link.environmentId }) {
+            return isInboxVisible || child.openThreadId == link.threadId
+        }
         guard environmentId == link.environmentId else { return false }
         return openThreadId == link.threadId || isInboxVisible
     }
@@ -269,6 +378,10 @@ final class CoreStore {
     /// Opens a thread from a link: in place when it belongs to the connected environment,
     /// otherwise through Orbit (waking a sleeping Instance first).
     func open(_ link: ThreadLink) {
+        if linked.values.contains(where: { $0.environmentId == link.environmentId }) {
+            pendingLink = link
+            return
+        }
         if let environmentId {
             if environmentId == link.environmentId {
                 pendingLink = link
@@ -299,6 +412,7 @@ final class CoreStore {
                   generation == activeGeneration
             else { return }
             environmentId = id
+            UserDefaults.standard.set(id, forKey: "offlineEnvironment" + scope)
             if let link = deferredLink {
                 deferredLink = nil
                 open(link)
@@ -308,6 +422,21 @@ final class CoreStore {
 
     /// Connects to the link's environment through the Orbit Gateway, then shows the thread.
     private func connectThroughOrbit(_ link: ThreadLink) async {
+        if scope.isEmpty && isPaired {
+            let generation = activeGeneration
+            let child = linked[link.environmentId] ?? CoreStore(scope: link.environmentId)
+            linked[link.environmentId] = child
+            await child.connectThroughOrbit(link)
+            guard generation == activeGeneration, linked[link.environmentId] === child else { return }
+            if child.isPaired {
+                UserDefaults.standard.set(Array(linked.keys), forKey: "linkedSessions")
+                pendingLink = link
+            } else {
+                lastError = child.lastError
+                linked.removeValue(forKey: link.environmentId)
+            }
+            return
+        }
         do {
             let orbit = try OrbitCore(gatewayUrl: nil)
             guard let target = try await orbit.fleet().first(where: { $0.serverId == link.environmentId }) else {
@@ -322,6 +451,7 @@ final class CoreStore {
             let generation = activeGeneration
             core?.disconnect()
             core = nil
+            offlineReader = nil
             serverURL = target.url
             status = .connecting
             shell = nil
@@ -346,6 +476,7 @@ final class CoreStore {
                         return
                     }
                     core = handle
+                    prepareCache(handle, generation: generation)
                     serverURL = handle.serverUrl()
                     isPaired = true
                     pendingLink = link
@@ -368,6 +499,7 @@ final class CoreStore {
     fileprivate func handleStatus(_ newStatus: FfiConnectionStatus, generation: UInt64) {
         guard generation == activeGeneration else { return }
         status = newStatus
+        if newStatus != .connected { shell?.synchronized = false }
         if case let .failed(message) = newStatus {
             lastError = message
         } else if newStatus == .connected {
@@ -380,12 +512,12 @@ final class CoreStore {
 
     fileprivate func handleBearerIssued(_ token: String, generation: UInt64) {
         guard generation == activeGeneration, let serverURL else { return }
-        KeychainStore.saveSession(serverURL: serverURL, bearerToken: token)
+        KeychainStore.saveSession(serverURL: serverURL, bearerToken: token, scope: scope)
     }
 
     fileprivate func handleShell(_ snapshot: FfiShellSnapshot, generation: UInt64) {
         guard generation == activeGeneration else { return }
-        shell = snapshot
+        if snapshot.synchronized || shell == nil { shell = snapshot }
     }
 
     fileprivate func handleThread(_ snapshot: FfiThreadSnapshot, generation: UInt64) {

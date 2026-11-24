@@ -339,6 +339,7 @@ dependencies = [
 name = "conn-ffi"
 version = "0.1.0"
 dependencies = [
+ "conn-cache",
  "conn-client",
  "conn-contract",
  "conn-orbit",
@@ -346,6 +347,7 @@ dependencies = [
  "conn-theme",
  "conn-wire",
  "futures",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

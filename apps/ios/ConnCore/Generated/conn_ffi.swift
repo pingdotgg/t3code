@@ -739,6 +739,11 @@ public protocol ConnCoreProtocol: AnyObject, Sendable {
     func pinThread(threadId: String, pinned: Bool) async throws 
     
     /**
+     * Opens this pairing's cache on the connection runtime.
+     */
+    func prepareOffline(directory: String) async throws  -> OfflineReader
+    
+    /**
      * Drops the active socket or reconnect backoff and reconnects immediately (e.g. when the
      * iOS app returns to the foreground).
      */
@@ -1109,6 +1114,25 @@ open func pinThread(threadId: String, pinned: Bool)async throws   {
             completeFunc: ffi_conn_ffi_rust_future_complete_void,
             freeFunc: ffi_conn_ffi_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+    /**
+     * Opens this pairing's cache on the connection runtime.
+     */
+open func prepareOffline(directory: String)async throws  -> OfflineReader  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_conncore_prepare_offline(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(directory)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_u64,
+            completeFunc: ffi_conn_ffi_rust_future_complete_u64,
+            freeFunc: ffi_conn_ffi_rust_future_free_u64,
+            liftFunc: FfiConverterTypeOfflineReader_lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
@@ -1891,6 +1915,221 @@ public func FfiConverterTypeFfiTextFits_lift(_ handle: UInt64) throws -> FfiText
 #endif
 public func FfiConverterTypeFfiTextFits_lower(_ value: FfiTextFits) -> UInt64 {
     return FfiConverterTypeFfiTextFits.lower(value)
+}
+
+
+
+
+
+
+public protocol OfflineReaderProtocol: AnyObject, Sendable {
+    
+    func before(thread: String, id: String) async throws  -> FfiThreadSnapshot
+    
+    func outline(thread: String, online: Bool) async throws  -> [FfiPromptMarker]
+    
+    func promptWindow(thread: String, id: String, online: Bool) async throws  -> FfiThreadSnapshot
+    
+    func recent(thread: String) async throws  -> FfiThreadSnapshot
+    
+    func savedShell() async  -> FfiShellSnapshot?
+    
+    func serverBefore(thread: String, anchor: String, continuation: String?, snapshotCursor: String?) async throws  -> FfiThreadSnapshot
+    
+}
+open class OfflineReader: OfflineReaderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_conn_ffi_fn_clone_offlinereader(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_conn_ffi_fn_free_offlinereader(handle, $0) }
+    }
+
+    
+
+    
+open func before(thread: String, id: String)async throws  -> FfiThreadSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_before(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(thread),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiThreadSnapshot_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+open func outline(thread: String, online: Bool)async throws  -> [FfiPromptMarker]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_outline(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(thread),FfiConverterBool.lower(online)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeFfiPromptMarker.lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+open func promptWindow(thread: String, id: String, online: Bool)async throws  -> FfiThreadSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_prompt_window(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(thread),FfiConverterString.lower(id),FfiConverterBool.lower(online)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiThreadSnapshot_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+open func recent(thread: String)async throws  -> FfiThreadSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_recent(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(thread)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiThreadSnapshot_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+open func savedShell()async  -> FfiShellSnapshot?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_saved_shell(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeFfiShellSnapshot.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+open func serverBefore(thread: String, anchor: String, continuation: String?, snapshotCursor: String?)async throws  -> FfiThreadSnapshot  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_offlinereader_server_before(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(thread),FfiConverterString.lower(anchor),FfiConverterOptionString.lower(continuation),FfiConverterOptionString.lower(snapshotCursor)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiThreadSnapshot_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOfflineReader: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = OfflineReader
+
+    public static func lift(_ handle: UInt64) throws -> OfflineReader {
+        return OfflineReader(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: OfflineReader) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OfflineReader {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: OfflineReader, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOfflineReader_lift(_ handle: UInt64) throws -> OfflineReader {
+    return try FfiConverterTypeOfflineReader.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOfflineReader_lower(_ value: OfflineReader) -> UInt64 {
+    return FfiConverterTypeOfflineReader.lower(value)
 }
 
 
@@ -5498,6 +5737,76 @@ public func FfiConverterTypeFfiProject_lower(_ value: FfiProject) -> RustBuffer 
 }
 
 
+public struct FfiPromptMarker: Equatable, Hashable {
+    public var id: String
+    public var preview: String
+    public var assistantPreview: String?
+    public var hasError: Bool
+    public var hasCheckpoint: Bool
+    public var isAgentPrompt: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, preview: String, assistantPreview: String?, hasError: Bool, hasCheckpoint: Bool, isAgentPrompt: Bool) {
+        self.id = id
+        self.preview = preview
+        self.assistantPreview = assistantPreview
+        self.hasError = hasError
+        self.hasCheckpoint = hasCheckpoint
+        self.isAgentPrompt = isAgentPrompt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPromptMarker: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPromptMarker: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPromptMarker {
+        return
+            try FfiPromptMarker(
+                id: FfiConverterString.read(from: &buf), 
+                preview: FfiConverterString.read(from: &buf), 
+                assistantPreview: FfiConverterOptionString.read(from: &buf), 
+                hasError: FfiConverterBool.read(from: &buf), 
+                hasCheckpoint: FfiConverterBool.read(from: &buf), 
+                isAgentPrompt: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPromptMarker, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.preview, into: &buf)
+        FfiConverterOptionString.write(value.assistantPreview, into: &buf)
+        FfiConverterBool.write(value.hasError, into: &buf)
+        FfiConverterBool.write(value.hasCheckpoint, into: &buf)
+        FfiConverterBool.write(value.isAgentPrompt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPromptMarker_lift(_ buf: RustBuffer) throws -> FfiPromptMarker {
+    return try FfiConverterTypeFfiPromptMarker.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPromptMarker_lower(_ value: FfiPromptMarker) -> RustBuffer {
+    return FfiConverterTypeFfiPromptMarker.lower(value)
+}
+
+
 /**
  * The local answer to one question (`PendingUserInputDraftAnswer`).
  */
@@ -7567,6 +7876,8 @@ public func FfiConverterTypeFfiThemeTokens_lower(_ value: FfiThemeTokens) -> Rus
  * Point-in-time snapshot of one subscribed thread emitted to [`crate::CoreListener::on_thread`].
  */
 public struct FfiThreadSnapshot: Equatable, Hashable {
+    public var historyCursor: String?
+    public var serverPage: Bool
     public var threadId: String
     public var title: String?
     public var branch: String?
@@ -7590,7 +7901,7 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool, 
+    public init(historyCursor: String?, serverPage: Bool, threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool, 
         /**
          * Approvals still waiting for an answer, in timeline order; the card above the composer
          * shows the first (Conn mobile's `activePendingApproval`).
@@ -7599,6 +7910,8 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
          * The question the panel above the composer asks; `entries` leaves its row out, since the
          * panel shows it (Conn mobile's `feedWithoutOpenQuestionRow`).
          */pendingQuestion: FfiPendingQuestion?) {
+        self.historyCursor = historyCursor
+        self.serverPage = serverPage
         self.threadId = threadId
         self.title = title
         self.branch = branch
@@ -7629,6 +7942,8 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiThreadSnapshot {
         return
             try FfiThreadSnapshot(
+                historyCursor: FfiConverterOptionString.read(from: &buf), 
+                serverPage: FfiConverterBool.read(from: &buf), 
                 threadId: FfiConverterString.read(from: &buf), 
                 title: FfiConverterOptionString.read(from: &buf), 
                 branch: FfiConverterOptionString.read(from: &buf), 
@@ -7645,6 +7960,8 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: FfiThreadSnapshot, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.historyCursor, into: &buf)
+        FfiConverterBool.write(value.serverPage, into: &buf)
         FfiConverterString.write(value.threadId, into: &buf)
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterOptionString.write(value.branch, into: &buf)
@@ -12152,6 +12469,30 @@ fileprivate struct FfiConverterOptionTypeFfiQuestionPanel: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiShellSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = FfiShellSnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiShellSnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiShellSnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiTaskAttention: FfiConverterRustBuffer {
     typealias SwiftType = FfiTaskAttention?
 
@@ -12938,6 +13279,31 @@ fileprivate struct FfiConverterSequenceTypeFfiProject: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiPromptMarker: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPromptMarker]
+
+    public static func write(_ value: [FfiPromptMarker], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPromptMarker.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPromptMarker] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPromptMarker]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPromptMarker.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiQuestionPanelOption: FfiConverterRustBuffer {
     typealias SwiftType = [FfiQuestionPanelOption]
 
@@ -13677,6 +14043,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_method_conncore_pin_thread() != 33458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_conn_ffi_checksum_method_conncore_prepare_offline() != 62782) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_conn_ffi_checksum_method_conncore_reconnect() != 9304) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13714,6 +14083,24 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_corelistener_on_error() != 59631) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_before() != 42718) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_outline() != 14487) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_prompt_window() != 2929) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_recent() != 57075) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_saved_shell() != 26240) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_offlinereader_server_before() != 34035) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_orbitcore_bound_profile() != 29553) {

@@ -469,6 +469,8 @@ pub enum FfiTimelineEntry {
 /// Point-in-time snapshot of one subscribed thread emitted to [`crate::CoreListener::on_thread`].
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct FfiThreadSnapshot {
+    pub history_cursor: Option<String>,
+    pub server_page: bool,
     pub thread_id: String,
     pub title: Option<String>,
     pub branch: Option<String>,
@@ -657,7 +659,12 @@ pub(crate) fn build_shell_snapshot(shell: &ShellState) -> FfiShellSnapshot {
         .top_level_settled_threads()
         .into_iter()
         .map(|thread| map_thread_summary(shell, thread, true));
-    let threads = active.chain(settled).collect();
+    let children = shell
+        .threads
+        .iter()
+        .filter(|t| ShellState::is_subagent(t) && t.deleted_at.is_none())
+        .map(|t| map_thread_summary(shell, t, ShellState::is_settled(t)));
+    let threads = active.chain(settled).chain(children).collect();
 
     FfiShellSnapshot {
         projects,
@@ -900,6 +907,11 @@ pub(crate) fn build_thread_snapshot(
     let work_groups = build_work_groups(thread);
 
     FfiThreadSnapshot {
+        history_cursor: thread
+            .history_cursor
+            .clone()
+            .filter(|_| thread.has_more_history),
+        server_page: false,
         thread_id: thread.thread_id.clone(),
         title: meta.and_then(|m| m.title.clone()),
         branch: meta.and_then(|m| m.branch.clone()),
@@ -2048,8 +2060,9 @@ mod tests {
                 "t-archived",
                 "t-settled-new",
                 "t-settled-old",
+                "t-sub",
             ],
-            "active threads newest-first, then settled threads newest-first, excluding subagents"
+            "active and settled threads precede searchable children"
         );
         assert!(!snap.threads[0].settled);
         assert!(!snap.threads[0].pinned);

@@ -383,6 +383,114 @@ final class ConnSpikeUITests: XCTestCase {
         }
     }
 
+    func testOfflineLinkedChildKeepsItsPromptAcrossReconnect() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let primaryURL = env["CONN_PAIRING_URL"],
+              let linkedURL = env["CONN_LINKED_PAIRING_URL"],
+              let fixture = env["CONN_OFFLINE_FIXTURE_URL"] else {
+            throw XCTSkip("Requires two disposable servers and an offline fixture controller")
+        }
+        let app = XCUIApplication()
+        let screenshots = env["CONN_SCREENS_DIR"]
+        func transition(_ phase: String) async throws {
+            let url = try XCTUnwrap(URL(string: fixture)?.appending(path: phase))
+            let (_, response) = try await URLSession.shared.data(from: url)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        }
+        func tap(_ element: XCUIElement) {
+            XCTAssertTrue(element.waitForExistence(timeout: 15), element.description)
+            element.tap()
+        }
+        func capture(_ name: String) {
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+            saveScreenshot(named: name, dir: screenshots)
+        }
+
+        app.launch()
+        let urlField = app.textFields["pairing.urlField"]
+        tap(urlField)
+        urlField.typeText(primaryURL)
+        tap(app.buttons["pairing.connectButton"])
+        tap(app.buttons["workspace.settingsButton"])
+        tap(app.buttons.containing(.staticText, identifier: "Environments").firstMatch)
+        tap(app.buttons["Link environment"])
+        let pairField = app.alerts.textFields.firstMatch
+        tap(pairField)
+        pairField.typeText(linkedURL)
+        tap(app.alerts.buttons["Connect"])
+        try await transition("offline")
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Pinned parity reference thread"].firstMatch.waitForExistence(timeout: 15))
+        capture("01-offline-inbox")
+        tap(app.buttons["workspace.searchButton"])
+        let search = app.textFields["workspace.searchField"]
+        tap(search)
+        search.typeText("Linked child")
+        let child = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Linked child")).firstMatch
+        tap(child)
+        XCTAssertTrue(app.staticTexts["Only the linked environment has this reply"].firstMatch.waitForExistence(timeout: 15))
+        capture("02-offline-linked-child")
+        tap(app.buttons["Thread outline"])
+        let outlineSearch = app.searchFields.firstMatch
+        tap(outlineSearch)
+        outlineSearch.typeText("Outline u 573")
+        tap(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Outline u 573")).firstMatch)
+        let prompt = app.staticTexts["Outline u 573"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        XCTAssertTrue(prompt.isHittable)
+        let anchorY = prompt.frame.midY
+        capture("03-offline-anchor")
+
+        XCUIDevice.shared.press(.home)
+        try await transition("online")
+        app.activate()
+        try await transition("caught-up")
+        XCTAssertTrue(prompt.isHittable)
+        let reconnectedY = prompt.frame.midY
+        print("Outline u 573 midpoint before foreground: \(anchorY), after catch-up: \(reconnectedY)")
+        XCTAssertEqual(reconnectedY, anchorY, accuracy: 20)
+        capture("04-reconnected-anchor")
+        tap(app.buttons["Back to latest"])
+        let tail = app.staticTexts["Foreground catch-up reply"].firstMatch
+        XCTAssertTrue(tail.waitForExistence(timeout: 15))
+        XCTAssertTrue(tail.isHittable)
+        capture("05-new-tail")
+        tap(app.buttons["Thread outline"])
+        tap(outlineSearch)
+        let clearSearch = outlineSearch.buttons.firstMatch
+        if clearSearch.exists { clearSearch.tap() }
+        outlineSearch.typeText("Outline u 204")
+        tap(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Outline u 204")).firstMatch)
+        let boundary = app.staticTexts["Outline u 204"].firstMatch
+        XCTAssertTrue(boundary.waitForExistence(timeout: 10))
+        XCTAssertTrue(boundary.isHittable)
+        let feed = app.scrollViews.firstMatch
+        let older = app.staticTexts["Outline u 200"].firstMatch
+        for _ in 0..<12 where !older.isHittable {
+            let start = feed.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+            start.press(forDuration: 0.12, thenDragTo: feed.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)), withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        XCTAssertTrue(older.isHittable)
+        capture("06-server-page")
+        // This prompt range lies more than one server page beyond the cache.
+        let secondPage = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "Outline u (1[0-4][0-9]|[1-9][0-9]?)"))
+        var reachedSecondPage = false
+        for _ in 0..<35 {
+            reachedSecondPage = secondPage.allElementsBoundByIndex.contains { $0.isHittable }
+            if reachedSecondPage { break }
+            feed.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(reachedSecondPage)
+        capture("07-server-continuation")
+        tap(app.buttons["Back to latest"])
+        XCTAssertTrue(app.staticTexts["Foreground catch-up reply"].firstMatch.waitForExistence(timeout: 10))
+    }
+
     private func saveScreenshot(named name: String, dir: String?) {
         guard let dir, !dir.isEmpty else { return }
         let directory = URL(fileURLWithPath: dir, isDirectory: true)

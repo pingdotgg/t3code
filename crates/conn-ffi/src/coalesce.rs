@@ -152,6 +152,8 @@ mod tests {
 
     fn thread_snap(thread_id: &str, text: &str, working: bool) -> FfiThreadSnapshot {
         FfiThreadSnapshot {
+            history_cursor: None,
+            server_page: false,
             thread_id: thread_id.to_owned(),
             title: None,
             branch: None,

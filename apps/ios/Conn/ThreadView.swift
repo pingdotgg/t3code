@@ -13,6 +13,19 @@ struct ThreadView: View {
 
     @Environment(\.connTheme) private var theme
     @State private var draft = ""
+    @State private var readingWindow: FfiThreadSnapshot?
+    @State private var markers: [FfiPromptMarker] = []
+    @State private var outlineQuery = ""
+    @State private var showsOutline = false
+    @State private var historyNotice: String?
+    @State private var scrollTarget: String?
+    @State private var historyRequest = UUID()
+    @State private var viewport = TimelineViewport()
+    @State private var prependAnchor: UnitPoint?
+    @State private var requestedByScroll = false
+    @State private var paging = false
+    @State private var pageExhausted = false
+    @State private var userScrolling = false
     @State private var stickToBottom = true
     @State private var settled: Bool
     @State private var showingRename = false
@@ -50,6 +63,7 @@ struct ThreadView: View {
     }
 
     private var snapshot: FfiThreadSnapshot? {
+        if let readingWindow, readingWindow.threadId == threadId { return readingWindow }
         guard let current = store.openThread, current.threadId == threadId else { return nil }
         return current
     }
@@ -60,7 +74,7 @@ struct ThreadView: View {
         min(560, max(160, viewHeight - 140))
     }
 
-    private var pendingQuestion: FfiPendingQuestion? { snapshot?.pendingQuestion }
+    private var pendingQuestion: FfiPendingQuestion? { store.status == .connected ? snapshot?.pendingQuestion : nil }
 
     /// The open question's panel for its current step; the composer's text shows as the answer.
     private var questionPanelModel: FfiQuestionPanel? {
@@ -197,6 +211,7 @@ struct ThreadView: View {
 
     /// With a question open, text answers it and an empty composer runs the answer action.
     private var composerCanSend: Bool {
+        guard store.status == .connected, readingWindow == nil else { return false }
         guard let question = pendingQuestion, let panel = questionPanelModel else {
             return hasDraft && !store.isSending
         }
@@ -213,6 +228,99 @@ struct ThreadView: View {
         return "\(snapshot.entries.count):\(snapshot.working):\(snapshot.queuedCount):\(last)"
     }
 
+    private func latest() {
+        historyRequest = UUID()
+        paging = false
+        pageExhausted = false
+        readingWindow = nil
+        historyNotice = nil
+        stickToBottom = true
+        scrollTarget = "timeline-bottom"
+    }
+
+    private func readHistory(prompt: String? = nil) {
+        guard let reader = store.offlineReader, var current = snapshot else { return }
+        if prompt == nil && (paging || pageExhausted) { return }
+        let request = UUID()
+        historyRequest = request
+        paging = true
+        let online = store.status == .connected
+        Task {
+            defer { if request == historyRequest { paging = false } }
+            do {
+                if let prompt {
+                    let window = try await reader.promptWindow(thread: threadId, id: prompt, online: online)
+                    guard request == historyRequest, store.offlineReader === reader,
+                          store.openThreadId == threadId else { return }
+                    pageExhausted = window.serverPage && window.historyCursor == nil
+                    stickToBottom = false
+                    readingWindow = window
+                    scrollTarget = "e:" + prompt
+                } else {
+                    guard let first = current.entries.first(where: {
+                        switch $0 { case .user, .assistant: true; default: false }
+                    })?.entryId ?? current.entries.first?.entryId else { return }
+                    var older: [FfiTimelineEntry] = []
+                    if !current.serverPage {
+                        older = try await reader.before(thread: threadId, id: first).entries
+                    }
+                    if older.isEmpty {
+                        guard online else {
+                            if request == historyRequest { historyNotice = "Reconnect to load earlier messages." }
+                            return
+                        }
+                        var visited = Set<String>()
+                        repeat {
+                            guard request == historyRequest, store.offlineReader === reader,
+                                  store.openThreadId == threadId else { return }
+                            if current.serverPage && current.historyCursor == nil { break }
+                            let atLiveBoundary = store.openThread?.entries.first?.entryId == first
+                            let cursor = current.serverPage ? current.historyCursor
+                                : (atLiveBoundary ? store.openThread?.historyCursor : nil)
+                            if let cursor, !visited.insert(cursor).inserted { break }
+                            let page = try await reader.serverBefore(
+                                thread: threadId, anchor: first, continuation: cursor,
+                                snapshotCursor: store.openThread?.historyCursor
+                            )
+                            older = page.entries
+                            current.serverPage = true
+                            current.historyCursor = page.historyCursor
+                            current.workGroups.insert(contentsOf: page.workGroups, at: 0)
+                        } while older.isEmpty
+                    }
+                    guard request == historyRequest, store.offlineReader === reader,
+                          store.openThreadId == threadId else { return }
+                    var ids = Set(current.entries.map(\.entryId))
+                    current.entries.insert(contentsOf: older.filter { ids.insert($0.entryId).inserted }, at: 0)
+                    pageExhausted = current.serverPage && current.historyCursor == nil
+                    stickToBottom = false
+                    let visible = viewport.frames.filter { $0.value.minY >= 0 && $0.value.minY < viewHeight }
+                        .min { $0.value.minY < $1.value.minY }
+                    readingWindow = current
+                    if !older.isEmpty, let visible {
+                        let fraction = visible.value.minY / max(1, viewHeight - visible.value.height)
+                        prependAnchor = UnitPoint(x: 0.5, y: min(1, fraction))
+                        scrollTarget = visible.key
+                    }
+                }
+                historyNotice = nil
+            } catch {
+                guard request == historyRequest else { return }
+                historyNotice = error.localizedDescription
+            }
+        }
+    }
+
+    private func loadOutline() async {
+        guard let reader = store.offlineReader else { return }
+        do {
+            let result = try await reader.outline(thread: threadId, online: store.status == .connected)
+            if !Task.isCancelled { markers = result }
+        } catch {
+            if !Task.isCancelled { historyNotice = error.localizedDescription }
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -222,30 +330,49 @@ struct ThreadView: View {
                     }
 
                     if let snapshot {
+                        if !snapshot.entries.isEmpty, store.offlineReader != nil, !pageExhausted {
+                            Button("Earlier messages") { readHistory() }
+                                .disabled(paging)
+                                .font(.kitDetail)
+                        }
                         if snapshot.entries.isEmpty {
-                            Text("No messages in this thread yet.")
+                            Text(store.status == .connected ? "No messages in this thread yet." : "No saved messages for this thread.")
                                 .font(.kitDetail)
                                 .foregroundStyle(theme.mutedForeground)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 48)
                         } else {
                             let items = renderItems(for: snapshot)
+                            let anchorCandidates = Set(items.prefix(12).map(\.id))
                             ForEach(items) { item in
-                                switch item {
-                                case let .workGroup(group, entries):
-                                    WorkGroupCard(group: group, entries: entries)
-                                case let .entry(entry):
-                                    TimelineEntryRow(
-                                        threadId: threadId,
-                                        entry: entry,
-                                        store: store,
-                                        onOpenThread: onOpenThread
-                                    )
+                                Group {
+                                    switch item {
+                                    case let .workGroup(group, entries):
+                                        WorkGroupCard(group: group, entries: entries)
+                                    case let .entry(entry):
+                                        TimelineEntryRow(
+                                            threadId: threadId,
+                                            entry: entry,
+                                            store: store,
+                                            onOpenThread: onOpenThread
+                                        )
+                                    }
                                 }
+                                .background {
+                                    if anchorCandidates.contains(item.id) {
+                                        GeometryReader { geometry in
+                                            Color.clear.preference(
+                                                key: TimelineFrames.self,
+                                                value: [item.id: geometry.frame(in: .named("timeline-viewport"))]
+                                            )
+                                        }
+                                    }
+                                }
+                                .id(item.id)
                             }
                         }
 
-                        if snapshot.working {
+                        if snapshot.working && store.status == .connected {
                             HStack(spacing: Kit.Space.m) {
                                 KitStatusIcon(.working, size: 14, label: "Working")
                                 Text("Working…")
@@ -269,11 +396,31 @@ struct ThreadView: View {
                         .frame(height: 1)
                         .id("timeline-bottom")
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, Kit.contentInset)
                 .padding(.top, Kit.Space.m)
                 .padding(.bottom, Kit.Space.l)
             }
             .background(theme.background.ignoresSafeArea())
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .coordinateSpace(name: "timeline-viewport")
+            .onPreferenceChange(TimelineFrames.self) { viewport.frames = $0 }
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { userScrolling = true }
+                if phase == .idle || phase == .animating { userScrolling = false }
+                if phase == .idle && requestedByScroll {
+                    requestedByScroll = false
+                    readHistory()
+                }
+            }
+            .onScrollGeometryChange(for: Int.self) { geometry in
+                Int(min(160, geometry.contentOffset.y + geometry.contentInsets.top))
+            } action: { previous, offset in
+                if userScrolling && offset < previous && !paging {
+                    userScrolling = false
+                    requestedByScroll = true
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .onScrollGeometryChange(for: Bool.self) { geo in
                 let maxOffset = max(0, geo.contentSize.height - geo.containerSize.height)
@@ -282,16 +429,32 @@ struct ThreadView: View {
                 stickToBottom = nearBottom
             }
             .onChange(of: scrollFingerprint) { _, _ in
-                if stickToBottom {
+                if stickToBottom && readingWindow == nil {
                     withAnimation(Kit.Motion.fast) {
                         proxy.scrollTo("timeline-bottom", anchor: .bottom)
                     }
                 }
             }
+            .onChange(of: scrollTarget) { _, target in
+                if let target {
+                    proxy.scrollTo(target, anchor: prependAnchor ?? (target == "timeline-bottom" ? .bottom : .top))
+                    prependAnchor = nil
+                    scrollTarget = nil
+                }
+            }
             .kitComposerBar {
                 VStack(alignment: .leading, spacing: Kit.Space.xs) {
+                    if let historyNotice {
+                        Text(historyNotice).font(.kitDetail)
+                    }
+                    if readingWindow != nil {
+                        Button("Back to latest") { latest() }
+                    }
+                    if store.status != .connected {
+                        Text("Offline · Viewing saved messages").font(.kitDetail)
+                    }
                     // Conn mobile pins the first pending approval above the composer.
-                    if let approval = snapshot?.pendingApprovals.first {
+                    if store.status == .connected, let approval = snapshot?.pendingApprovals.first {
                         HeightCappedScroll(maxHeight: approvalMaxHeight) {
                             PendingApprovalCard(
                                 approval: approval,
@@ -392,6 +555,7 @@ struct ThreadView: View {
                             }
                         }
                     )
+                    .disabled(store.status != .connected || readingWindow != nil)
                     .accessibilityIdentifier("thread.composer")
                 }
             }
@@ -422,6 +586,14 @@ struct ThreadView: View {
             }
 
             ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showsOutline = true
+                } label: {
+                    Image(systemName: "list.bullet")
+                }
+                .accessibilityLabel("Thread outline")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
                     } label: {
@@ -442,6 +614,39 @@ struct ThreadView: View {
                 .accessibilityIdentifier("thread.moreButton")
             }
         }
+        .sheet(isPresented: $showsOutline) {
+            NavigationStack {
+                List(markers.filter {
+                    outlineQuery.isEmpty || $0.preview.localizedCaseInsensitiveContains(outlineQuery)
+                        || ($0.assistantPreview?.localizedCaseInsensitiveContains(outlineQuery) ?? false)
+                }, id: \.id) { marker in
+                    Button {
+                        showsOutline = false
+                        readHistory(prompt: marker.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(marker.preview).lineLimit(2)
+                            if let reply = marker.assistantPreview {
+                                Text(reply).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            if marker.hasError { Label("Error", systemImage: "exclamationmark.triangle") }
+                            if marker.hasCheckpoint { Label("Checkpoint", systemImage: "bookmark") }
+                        }
+                    }
+                }
+                .overlay { if markers.isEmpty { Text("No saved prompts").foregroundStyle(.secondary) } }
+                .searchable(text: $outlineQuery, prompt: "Find a prompt")
+                .navigationTitle("Thread outline")
+                .toolbar { Button("Done") { showsOutline = false } }
+                .task { await loadOutline() }
+            }
+        }
+        .onChange(of: store.status) { _, status in
+            if status == .connected { historyNotice = nil }
+            if !stickToBottom && readingWindow == nil {
+                readingWindow = store.openThread
+            }
+        }
         .alert("Rename Thread", isPresented: $showingRename) {
             TextField("Title", text: $renameDraft)
             Button("Cancel", role: .cancel) {}
@@ -456,6 +661,7 @@ struct ThreadView: View {
             store.openThread(threadId)
         }
         .onDisappear {
+            historyRequest = UUID()
             store.closeThread(threadId)
         }
     }
@@ -536,5 +742,17 @@ struct ThreadView: View {
         case let .notice(id, text, isError): "n:\(id):\(isError):\(text.count)"
         case let .other(id, label): "o:\(id):\(label.count)"
         }
+    }
+}
+
+private final class TimelineViewport {
+    var frames: [String: CGRect] = [:]
+}
+
+private struct TimelineFrames: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }

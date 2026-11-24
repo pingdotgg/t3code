@@ -14,7 +14,7 @@ struct SettingsRootSheet: View {
                     NavigationLink {
                         SettingsEnvironmentsDetailView(store: store)
                     } label: {
-                        settingsRow(icon: "desktopcomputer", label: "Environments", value: store.isPaired ? "1" : "0")
+                        settingsRow(icon: "desktopcomputer", label: "Environments", value: String(store.linked.count + (store.isPaired ? 1 : 0)))
                     }
                 }
 
@@ -95,6 +95,9 @@ private struct SettingsEnvironmentsDetailView: View {
     @Bindable var store: CoreStore
     @Environment(\.connTheme) private var theme
 
+    @State private var adding = false
+    @State private var pairingURL = ""
+
     var body: some View {
         List {
             Section("Connected Environment") {
@@ -115,10 +118,26 @@ private struct SettingsEnvironmentsDetailView: View {
                     Label("Disconnect", systemImage: "power")
                 }
             }
+            Section("Linked environments") {
+                ForEach(store.linked.keys.sorted(), id: \.self) { id in
+                    if let child = store.linked[id] {
+                        LabeledContent(child.serverURL ?? id) { ConnectionStatusPill(status: child.status) }
+                            .swipeActions {
+                                Button("Disconnect", role: .destructive) { store.removeLinked(id) }
+                            }
+                    }
+                }
+                Button("Link environment") { pairingURL = ""; adding = true }
+            }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())
+        .alert("Link environment", isPresented: $adding) {
+            TextField("Pairing URL", text: $pairingURL).textInputAutocapitalization(.never)
+            Button("Cancel", role: .cancel) {}
+            Button("Connect") { store.addLinked(pairingURL) }
+        }
         .navigationTitle("Environments")
         .navigationBarTitleDisplayMode(.inline)
     }

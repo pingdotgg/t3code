@@ -7,6 +7,7 @@
 mod approvals;
 mod coalesce;
 mod core;
+mod offline;
 mod orbit;
 mod phone_tasks;
 mod questions;
@@ -17,6 +18,7 @@ uniffi::setup_scaffolding!();
 
 pub use crate::approvals::{FfiApprovalOption, FfiButtonTone, FfiPendingApproval};
 pub use crate::core::{ConnCore, CoreListener};
+pub use crate::offline::{FfiPromptMarker, OfflineReader};
 pub use crate::orbit::{
     FfiAgentRole, FfiAgentState, FfiAttentionKind, FfiChangeTone, FfiConversationRef,
     FfiDeliverable, FfiImplementerMode, FfiInsightCard, FfiInsightId, FfiInsightTrendPoint,

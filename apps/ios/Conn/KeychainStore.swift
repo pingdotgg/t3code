@@ -11,9 +11,9 @@ enum KeychainStore {
     private static let serverURLAccount = "server-url"
     private static let bearerTokenAccount = "bearer-token"
 
-    static func loadSession() -> StoredSession? {
-        guard let serverURL = read(account: serverURLAccount),
-              let bearerToken = read(account: bearerTokenAccount),
+    static func loadSession(scope: String = "") -> StoredSession? {
+        guard let serverURL = read(account: serverURLAccount + scope),
+              let bearerToken = read(account: bearerTokenAccount + scope),
               !serverURL.isEmpty,
               !bearerToken.isEmpty else {
             return nil
@@ -21,14 +21,14 @@ enum KeychainStore {
         return StoredSession(serverURL: serverURL, bearerToken: bearerToken)
     }
 
-    static func saveSession(serverURL: String, bearerToken: String) {
-        write(serverURL, account: serverURLAccount)
-        write(bearerToken, account: bearerTokenAccount)
+    static func saveSession(serverURL: String, bearerToken: String, scope: String = "") {
+        write(serverURL, account: serverURLAccount + scope)
+        write(bearerToken, account: bearerTokenAccount + scope)
     }
 
-    static func clearSession() {
-        delete(account: serverURLAccount)
-        delete(account: bearerTokenAccount)
+    static func clearSession(scope: String = "") {
+        delete(account: serverURLAccount + scope)
+        delete(account: bearerTokenAccount + scope)
     }
 
     private static let pushDeviceIdAccount = "push-device-id"
